@@ -172,35 +172,80 @@ const sh_messages = `
 
     <div style="padding:4px 16px 0;display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch">
       ${[
-        {label:'All',n:5,active:true},
-        {label:'Dispatch',n:2},
-        {label:'Drivers',n:2},
-        {label:'Customers',n:1},
-        {label:'Broadcast',n:0},
-      ].map(c=>`<div class="filter-chip ${c.active?'fc-active':'fc-inactive'}" style="white-space:nowrap">${c.label}${c.n?' · '+c.n:''}</div>`).join('')}
+        { label: "All", n: 5, active: true },
+        { label: "Dispatch", n: 2 },
+        { label: "Drivers", n: 2 },
+        { label: "Customers", n: 1 },
+        { label: "Broadcast", n: 0 },
+      ]
+        .map(
+          (c) =>
+            `<div class="filter-chip ${c.active ? "fc-active" : "fc-inactive"}" style="white-space:nowrap">${c.label}${c.n ? " · " + c.n : ""}</div>`,
+        )
+        .join("")}
     </div>
 
     <div style="padding-top:14px">
       ${[
-        {who:'Dispatch · Jamie', msg:'Harbor Café is cash-only today — bring exact change if you can.', time:'8:42', unread:true, pinned:true, color:'#0B6E6B', init:'DJ'},
-        {who:'Luna Roastery', msg:'Can we add 3 × croissants to today\'s drop?', time:'8:18', unread:true, color:'#D28CB5', init:'LR'},
-        {who:'Route 11 · Dmitri', msg:'Running 10 min behind on stop 4, traffic.', time:'Yesterday', unread:false, color:'#5856D6', init:'DK'},
-        {who:'Broadcast · Ops', msg:'Reminder: end-of-day reconcile by 17:30.', time:'Yesterday', unread:false, color:'#8E8E93', init:'OP'},
-        {who:'Green Market', msg:'Thanks — received invoice 9821.', time:'Tue', unread:false, color:'#34C759', init:'GM'},
-      ].map((m,i)=>`
-        <div style="padding:12px 16px;display:flex;gap:12px;align-items:flex-start;${i>0?'border-top:0.5px solid var(--separator);margin-left:62px':''}">
-          ${i===0?`<div style="width:10px;display:flex;align-items:center;padding-top:18px">${m.unread?'<div style="width:10px;height:10px;border-radius:999px;background:var(--brand)"></div>':''}</div>`:`<div style="width:10px;display:flex;align-items:center;padding-top:18px;margin-left:-62px">${m.unread?'<div style="width:10px;height:10px;border-radius:999px;background:var(--brand)"></div>':''}</div>`}
+        {
+          who: "Dispatch · Jamie",
+          msg: "Harbor Café is cash-only today — bring exact change if you can.",
+          time: "8:42",
+          unread: true,
+          pinned: true,
+          color: "#0B6E6B",
+          init: "DJ",
+        },
+        {
+          who: "Luna Roastery",
+          msg: "Can we add 3 × croissants to today's drop?",
+          time: "8:18",
+          unread: true,
+          color: "#D28CB5",
+          init: "LR",
+        },
+        {
+          who: "Route 11 · Dmitri",
+          msg: "Running 10 min behind on stop 4, traffic.",
+          time: "Yesterday",
+          unread: false,
+          color: "#5856D6",
+          init: "DK",
+        },
+        {
+          who: "Broadcast · Ops",
+          msg: "Reminder: end-of-day reconcile by 17:30.",
+          time: "Yesterday",
+          unread: false,
+          color: "#8E8E93",
+          init: "OP",
+        },
+        {
+          who: "Green Market",
+          msg: "Thanks — received invoice 9821.",
+          time: "Tue",
+          unread: false,
+          color: "#34C759",
+          init: "GM",
+        },
+      ]
+        .map(
+          (m, i) => `
+        <div style="padding:12px 16px;display:flex;gap:12px;align-items:flex-start;${i > 0 ? "border-top:0.5px solid var(--separator);margin-left:62px" : ""}">
+          ${i === 0 ? `<div style="width:10px;display:flex;align-items:center;padding-top:18px">${m.unread ? '<div style="width:10px;height:10px;border-radius:999px;background:var(--brand)"></div>' : ""}</div>` : `<div style="width:10px;display:flex;align-items:center;padding-top:18px;margin-left:-62px">${m.unread ? '<div style="width:10px;height:10px;border-radius:999px;background:var(--brand)"></div>' : ""}</div>`}
           <div style="width:48px;height:48px;border-radius:999px;background:${m.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0">${m.init}</div>
           <div style="flex:1;min-width:0">
             <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px">
-              <div style="font-size:16px;font-weight:${m.unread?'700':'600'};color:var(--label);letter-spacing:-0.2px;display:flex;align-items:center;gap:6px">
-                ${m.pinned?'<svg width="10" height="10" viewBox="0 0 24 24" fill="var(--label2)"><path d="M12 2l2 6h6l-5 4 2 6-5-4-5 4 2-6-5-4h6z"/></svg>':''}${m.who}
+              <div style="font-size:16px;font-weight:${m.unread ? "700" : "600"};color:var(--label);letter-spacing:-0.2px;display:flex;align-items:center;gap:6px">
+                ${m.pinned ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="var(--label2)"><path d="M12 2l2 6h6l-5 4 2 6-5-4-5 4 2-6-5-4h6z"/></svg>' : ""}${m.who}
               </div>
               <div style="font-size:13px;color:var(--label2);font-variant-numeric:tabular-nums;flex-shrink:0">${m.time}</div>
             </div>
-            <div style="font-size:15px;color:${m.unread?'var(--label)':'var(--label2)'};margin-top:2px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${m.msg}</div>
+            <div style="font-size:15px;color:${m.unread ? "var(--label)" : "var(--label2)"};margin-top:2px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${m.msg}</div>
           </div>
-        </div>`).join('')}
+        </div>`,
+        )
+        .join("")}
     </div>
     <div style="height:20px"></div>
   </div></div>
@@ -209,7 +254,7 @@ const sh_messages = `
 </div>`;
 
 window.sharedPhones = [
-  ['01 Sign in', 'Apple-style · brand mark', sh_login],
-  ['02 Role picker', 'Multi-role switcher', sh_role],
-  ['03 Messages', 'Dispatch ↔ drivers', sh_messages],
+  ["01 Sign in", "Apple-style · brand mark", sh_login],
+  ["02 Role picker", "Multi-role switcher", sh_role],
+  ["03 Messages", "Dispatch ↔ drivers", sh_messages],
 ];

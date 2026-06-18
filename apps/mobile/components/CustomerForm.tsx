@@ -207,7 +207,9 @@ export function CustomerForm({ title, submitLabel, initial, submitting, onSubmit
                 style={[styles.tierBtn, form.pricingTier === t && styles.tierBtnActive]}
                 onPress={() => set("pricingTier", t)}
               >
-                <Text style={[styles.tierBtnText, form.pricingTier === t && styles.tierBtnTextActive]}>
+                <Text
+                  style={[styles.tierBtnText, form.pricingTier === t && styles.tierBtnTextActive]}
+                >
                   {t}
                 </Text>
               </Pressable>

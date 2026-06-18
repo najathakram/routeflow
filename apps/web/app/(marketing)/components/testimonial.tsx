@@ -26,8 +26,7 @@ export function Testimonial() {
           }}
         >
           &ldquo;We replaced a whiteboard, two group chats and a separate accounting tool with one
-          tab open on RouteFlow.{" "}
-          <em>Our drivers leave 40 minutes earlier every morning.</em>&rdquo;
+          tab open on RouteFlow. <em>Our drivers leave 40 minutes earlier every morning.</em>&rdquo;
         </p>
         <div
           style={{

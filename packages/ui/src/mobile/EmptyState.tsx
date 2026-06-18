@@ -11,25 +11,14 @@ export interface EmptyStateProps {
   onActionPress?: () => void;
 }
 
-export function EmptyState({
-  icon,
-  title,
-  subtitle,
-  actionLabel,
-  onActionPress,
-}: EmptyStateProps) {
+export function EmptyState({ icon, title, subtitle, actionLabel, onActionPress }: EmptyStateProps) {
   return (
     <View style={styles.container}>
       {icon ? <View style={styles.iconWrapper}>{icon}</View> : null}
       <Text style={styles.title}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       {actionLabel ? (
-        <MobileButton
-          variant="primary"
-          size="md"
-          onPress={onActionPress}
-          style={styles.button}
-        >
+        <MobileButton variant="primary" size="md" onPress={onActionPress} style={styles.button}>
           {actionLabel}
         </MobileButton>
       ) : null}

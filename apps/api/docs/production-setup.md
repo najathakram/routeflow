@@ -3,6 +3,7 @@
 ## Overview
 
 RouteFlow operates as a multi-tenant SaaS with:
+
 - **API**: Railway (single service, all tenants)
 - **Web dashboard**: Railway (Next.js, wildcard subdomain)
 - **Database**: Railway PostgreSQL (single DB, tenant isolation via Row-Level Security)
@@ -16,9 +17,9 @@ RouteFlow operates as a multi-tenant SaaS with:
 
 In your Cloudflare dashboard for `routeflow.io`:
 
-| Type  | Name | Value                          | Proxy |
-|-------|------|--------------------------------|-------|
-| CNAME | `*`  | `your-railway-api.up.railway.app` | ✅ ON |
+| Type  | Name  | Value                             | Proxy |
+| ----- | ----- | --------------------------------- | ----- |
+| CNAME | `*`   | `your-railway-api.up.railway.app` | ✅ ON |
 | CNAME | `api` | `your-railway-api.up.railway.app` | ✅ ON |
 | CNAME | `app` | `your-railway-web.up.railway.app` | ✅ ON |
 
@@ -30,7 +31,9 @@ In your Cloudflare dashboard for `routeflow.io`:
 ## 2. Railway — API Service
 
 ### Custom domain
+
 In **Settings → Networking → Custom Domain**:
+
 ```
 *.routeflow.io
 api.routeflow.io
@@ -41,6 +44,7 @@ api.routeflow.io
 > `TenantResolutionMiddleware` extracts the slug from the `Host` header.
 
 ### Environment variables
+
 ```env
 NODE_ENV=production
 DATABASE_URL=postgresql://...           # Railway PostgreSQL (internal URL)
@@ -66,9 +70,11 @@ ENCRYPTION_KEY=<32-byte hex — generate with: openssl rand -hex 32>
 ```
 
 ### Dockerfile (already configured — no migrations on deploy)
+
 ```dockerfile
 CMD ["node", "dist/main.js"]
 ```
+
 Schema changes are applied **manually** via `prisma db push` or migrations.
 
 ---
@@ -76,12 +82,14 @@ Schema changes are applied **manually** via `prisma db push` or migrations.
 ## 3. Railway — Web Dashboard (Next.js)
 
 ### Custom domain
+
 ```
 *.routeflow.io    → web service
 app.routeflow.io  → web service (explicit)
 ```
 
 ### Environment variables
+
 ```env
 NEXT_PUBLIC_API_URL=https://api.routeflow.io/api/v1
 ```
@@ -94,13 +102,17 @@ from the subdomain automatically — no additional config needed.
 ## 4. First-time setup after deploy
 
 ### a) Apply Row-Level Security policies
+
 ```bash
 node apps/api/scripts/apply-rls.js
 ```
+
 Run once after the initial deploy. Safe to re-run.
 
 ### b) Migrate legacy users
+
 If you have pre-SaaS users with `tenantId = NULL`:
+
 ```bash
 # Dry run first
 node apps/api/scripts/migrate-legacy-users.js --dry-run
@@ -110,6 +122,7 @@ node apps/api/scripts/migrate-legacy-users.js
 ```
 
 ### c) Create your first SUPER_ADMIN
+
 ```sql
 INSERT INTO "User" (id, email, username, password, role, status, "forcePasswordChange", "tenantId", "createdAt", "updatedAt")
 VALUES (
@@ -124,6 +137,7 @@ VALUES (
   NOW(), NOW()
 );
 ```
+
 Generate hash: `node -e "const b=require('bcrypt'); b.hash('YourPassword', 10).then(console.log)"`
 
 ---
@@ -140,12 +154,14 @@ Generate hash: `node -e "const b=require('bcrypt'); b.hash('YourPassword', 10).t
 ## 6. Mobile app (EAS)
 
 ### Staging build
+
 ```bash
 cd apps/mobile
 eas build --profile staging --platform android
 ```
 
 ### Production build
+
 ```bash
 eas build --profile production --platform all
 ```
@@ -172,11 +188,13 @@ build. The company-code screen stores the tenant slug in SecureStore and sends
 ## 8. Monitoring
 
 ### Key metrics to watch
+
 - `AuditLog` entries with `tenantId = NULL` (super-admin actions)
 - Failed login attempts per tenant
 - `POST /platform-admin/tenants/:id/impersonate` entries
 
 ### Query recent audit activity
+
 ```sql
 SELECT action, "entityType", "tenantId", "createdAt"
 FROM "AuditLog"

@@ -42,7 +42,9 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   beforeEach(async () => {
     ordersService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
-    templatesService = { findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
+    templatesService = {
+      findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
@@ -56,7 +58,10 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: CustomersService, useValue: {} },
         { provide: OrderTemplatesService, useValue: templatesService },
         { provide: PrismaService, useValue: {} },
-        { provide: TenantContextService, useValue: { run: jest.fn((id, fn) => fn()), getOrNull: jest.fn().mockReturnValue(null) } },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((id, fn) => fn()), getOrNull: jest.fn().mockReturnValue(null) },
+        },
       ],
     }).compile();
 

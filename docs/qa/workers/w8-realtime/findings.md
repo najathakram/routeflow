@@ -13,6 +13,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ## Findings
 
 ### W8-001 — Operator dispatch (createRun) emits no WebSocket event and no push to the driver
+
 - **Severity:** P1
 - **Issue:** When an operator dispatches a route run (`POST /route-runs`), `routes.service.ts::createRun()` creates the run and links orders but never calls any `gateway.emit*()` method and never calls `notifications.sendToDriver()`. The driver's mobile app has no real-time path to learn about a newly dispatched run.
 - **Evidence:** `apps/api/src/routes/routes.service.ts` lines 490–606 — `createRun()` completes with zero gateway or notification calls. `apps/api/src/gateways/routeflow.gateway.ts` line 142 — a `driver:${userId}` room exists but no service ever emits into it. `apps/api/src/notifications/notifications.service.ts` line 167 — `sendToDriver()` method exists but is never called from `routes.service.ts`.
@@ -22,6 +23,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-002 — Mobile buyer orders list has no `refetchInterval` — relies on staleTime only
+
 - **Severity:** P2
 - **Issue:** `useBuyerOrders()` (`apps/mobile/lib/api/buyer.ts` lines 142–150) sets `staleTime: 30_000` but has no `refetchInterval`. In React Native there is no "window focus" event — the query stays stale until the user navigates away and back. The customer orders screen uses pull-to-refresh only.
 - **Evidence:** `apps/mobile/lib/api/buyer.ts` lines 142–150 — no `refetchInterval`. `apps/mobile/app/(customer)/(tabs)/orders.tsx` lines 53–56 — no auto-refetch argument.
@@ -31,6 +33,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-003 — Driver route home has no `refetchInterval` on `useActiveRouteRun` / `useScheduledRouteRuns`
+
 - **Severity:** P2
 - **Issue:** `useActiveRouteRun()` (`apps/mobile/lib/api/routes.ts` lines 91–100) uses `staleTime: 30_000`, no `refetchInterval`. `useScheduledRouteRuns()` (lines 102–110) uses `staleTime: 60_000`, no `refetchInterval`. By contrast, the operator's `useLiveRoutes()` correctly uses `refetchInterval: 15_000` (line 394).
 - **Evidence:** `apps/mobile/lib/api/routes.ts` lines 91–110. `apps/mobile/app/(driver)/route/index.tsx` lines 66–68 — no supplemental polling.
@@ -40,6 +43,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-004 — Push tokens are Expo proxy tokens but server sends via Firebase FCM directly — 100% push delivery failure
+
 - **Severity:** P1
 - **Issue:** Mobile app calls `Notifications.getExpoPushTokenAsync()` which returns an `ExponentPushToken[...]` string — an Expo-managed proxy that must be sent to Expo's push service. The server (`notifications.service.ts`) feeds these tokens directly into `firebase-admin`'s `sendEachForMulticast()` which requires raw FCM registration tokens. FCM rejects every Expo token with `messaging/invalid-registration-token`. The server's cleanup code (lines 89–96) then deletes the token on first failure.
 - **Evidence:** `apps/mobile/lib/auth.ts` line 86 — `Notifications.getExpoPushTokenAsync()`. `apps/api/src/notifications/notifications.service.ts` lines 78–84 — `admin.messaging().sendEachForMulticast({ tokens: [...] })`. Lines 89–96 — token cleanup on `invalid-registration-token`.
@@ -50,6 +54,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-005 — Push notification errors silently swallowed with `.catch(() => {})`
+
 - **Severity:** P2
 - **Issue:** In `orders.service.ts`, all three `notifications.sendToCustomer()` calls use `.catch(() => {})` — discarding all errors with no logging.
 - **Evidence:** `apps/api/src/orders/orders.service.ts` lines 775, 1372, 1381.
@@ -59,6 +64,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-006 — `routes.service.ts::completeStop()` marks orders DELIVERED but emits no WebSocket event and no push
+
 - **Severity:** P2
 - **Issue:** The operator-facing stop completion path (`routes.service.ts::completeStop()`, lines 958–1036) marks orders DELIVERED in a transaction but emits nothing to the gateway and calls no push notification. The driver-facing path (`orders.service.ts::completeStop()`) correctly emits `emitStopCompleted` and calls `notifications.sendToCustomer()`.
 - **Evidence:** `apps/api/src/routes/routes.service.ts` lines 958–1037 — no gateway or notification calls. `apps/api/src/orders/orders.service.ts` lines 1348–1384 — correct emit+notify block present.
@@ -68,6 +74,7 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 ---
 
 ### W8-007 — Redis adapter async connect race — silent in-memory fallback on cold start
+
 - **Severity:** P3
 - **Issue:** `redis-io.adapter.ts` connects Redis pub/sub clients via async `Promise.all()` inside the constructor. NestJS calls `createIOServer()` synchronously before the promise resolves. On cold start, `this.adapterConstructor` is `null` and the server silently falls back to in-memory Socket.io, breaking WebSocket event distribution across multiple instances.
 - **Evidence:** `apps/api/src/gateways/redis-io.adapter.ts` lines 25–35 (async constructor), lines 39–44 (synchronous `createIOServer` checks `adapterConstructor`).
@@ -78,14 +85,14 @@ The API has a **fully implemented Socket.io gateway** (`apps/api/src/gateways/ro
 
 ## Cross-Role Event Chain Trace
 
-| Action | WS emit | Push to customer | Push to driver |
-|--------|---------|-----------------|----------------|
-| Customer places order | `emitOrderCreated` + `emitUrgentOrder` to operators | None | None |
-| Operator confirms order | `emitOrderStatusChanged` to operators + customer room | Code correct; delivery broken (W8-004) | None |
-| Driver marks stop DELIVERED (driver path) | `emitStopCompleted` to operators | Code correct; delivery broken (W8-004) | None |
-| Operator marks stop complete (web dashboard) | **None — W8-006** | **None — W8-006** | None |
-| Operator dispatches route | **None — W8-001** | None | **None — W8-001** |
-| Driver starts/completes run | `emitDriverStatusUpdated` to operators | None | None |
+| Action                                       | WS emit                                               | Push to customer                       | Push to driver    |
+| -------------------------------------------- | ----------------------------------------------------- | -------------------------------------- | ----------------- |
+| Customer places order                        | `emitOrderCreated` + `emitUrgentOrder` to operators   | None                                   | None              |
+| Operator confirms order                      | `emitOrderStatusChanged` to operators + customer room | Code correct; delivery broken (W8-004) | None              |
+| Driver marks stop DELIVERED (driver path)    | `emitStopCompleted` to operators                      | Code correct; delivery broken (W8-004) | None              |
+| Operator marks stop complete (web dashboard) | **None — W8-006**                                     | **None — W8-006**                      | None              |
+| Operator dispatches route                    | **None — W8-001**                                     | None                                   | **None — W8-001** |
+| Driver starts/completes run                  | `emitDriverStatusUpdated` to operators                | None                                   | None              |
 
 ---
 

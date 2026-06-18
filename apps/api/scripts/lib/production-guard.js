@@ -13,15 +13,16 @@
 "use strict";
 
 function productionGuard({ requireFlag } = {}) {
-  const ENV      = process.env.NODE_ENV          || "unknown";
-  const DB_URL   = process.env.DATABASE_URL      || "";
-  const RAILWAY  = process.env.RAILWAY_ENVIRONMENT;           // set by Railway in every process
-  const IS_PROD  = RAILWAY !== undefined
-                || ENV === "production"
-                || DB_URL.includes("railway.app")
-                || DB_URL.includes("railway.internal")
-                || DB_URL.includes(".rlwy.net")      // Railway external proxy URLs
-                || DB_URL.includes("rlwy.net");       // short form
+  const ENV = process.env.NODE_ENV || "unknown";
+  const DB_URL = process.env.DATABASE_URL || "";
+  const RAILWAY = process.env.RAILWAY_ENVIRONMENT; // set by Railway in every process
+  const IS_PROD =
+    RAILWAY !== undefined ||
+    ENV === "production" ||
+    DB_URL.includes("railway.app") ||
+    DB_URL.includes("railway.internal") ||
+    DB_URL.includes(".rlwy.net") || // Railway external proxy URLs
+    DB_URL.includes("rlwy.net"); // short form
 
   if (IS_PROD) {
     console.error("╔══════════════════════════════════════════════════════════╗");

@@ -4,10 +4,29 @@ import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 
 export const COMMON_UNITS = [
-  "each", "unit", "pcs", "case", "box", "bag", "pack", "dozen", "bundle", "tray", "pallet",
-  "kg", "g", "lb", "oz",
-  "L", "ml", "liter",
-  "roll", "sheet", "bottle", "can", "strip",
+  "each",
+  "unit",
+  "pcs",
+  "case",
+  "box",
+  "bag",
+  "pack",
+  "dozen",
+  "bundle",
+  "tray",
+  "pallet",
+  "kg",
+  "g",
+  "lb",
+  "oz",
+  "L",
+  "ml",
+  "liter",
+  "roll",
+  "sheet",
+  "bottle",
+  "can",
+  "strip",
 ];
 
 interface UnitComboboxProps {
@@ -64,7 +83,10 @@ export function UnitCombobox({
         value={value}
         placeholder={placeholder}
         autoComplete="off"
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
           if (e.key === "Escape") setOpen(false);
@@ -91,7 +113,10 @@ export function UnitCombobox({
               <li key={u}>
                 <button
                   type="button"
-                  onMouseDown={() => { onChange(u); setOpen(false); }}
+                  onMouseDown={() => {
+                    onChange(u);
+                    setOpen(false);
+                  }}
                   className={cn(
                     "w-full px-3 py-1.5 text-left text-sm text-navy hover:bg-surface-raised transition-colors",
                     value === u && "bg-brand-500/10 font-medium text-brand-600",
@@ -102,7 +127,7 @@ export function UnitCombobox({
               </li>
             ))
           ) : (
-            <li className="px-3 py-1.5 text-xs text-navy/40">
+            <li className="px-3 py-1.5 text-xs text-navy/70">
               New unit type — press Enter or click elsewhere to confirm
             </li>
           )}

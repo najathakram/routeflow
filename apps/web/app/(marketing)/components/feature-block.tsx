@@ -68,9 +68,7 @@ export function FeatureBlock({
                   </div>
                   <div>
                     <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>{head}</div>
-                    <div
-                      style={{ fontSize: 14, color: "var(--rf-ink-3)", lineHeight: 1.5 }}
-                    >
+                    <div style={{ fontSize: 14, color: "var(--rf-ink-3)", lineHeight: 1.5 }}>
                       {sub}
                     </div>
                   </div>

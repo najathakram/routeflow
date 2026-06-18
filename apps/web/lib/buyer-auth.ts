@@ -1,7 +1,10 @@
 import axios from "axios";
 import { BUYER_KEYS } from "./auth-keys";
 
-const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(/\/$/, "");
+const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
+  /\/$/,
+  "",
+);
 
 export interface BuyerUser {
   id: string;
@@ -12,7 +15,13 @@ export interface BuyerUser {
 export interface BuyerSeller {
   linkId: string;
   linkStatus: string;
-  tenant: { id: string; slug: string; name: string; logoKey: string | null; primaryColor: string | null };
+  tenant: {
+    id: string;
+    slug: string;
+    name: string;
+    logoKey: string | null;
+    primaryColor: string | null;
+  };
   customer: { id: string; businessName: string; email: string | null };
 }
 
@@ -51,7 +60,9 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
     const part = token.split(".")[1];
     return JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function getStoredBuyer(): BuyerUser | null {
@@ -62,14 +73,22 @@ export function getStoredBuyer(): BuyerUser | null {
   if (!payload) return null;
   if (typeof payload.exp === "number" && payload.exp * 1000 < Date.now()) return null;
   if ((payload.type as string) !== "BUYER") return null;
-  return { id: payload.sub as string, email: payload.email as string, name: payload.name as string };
+  return {
+    id: payload.sub as string,
+    email: payload.email as string,
+    name: payload.name as string,
+  };
 }
 
 export function getStoredActiveSeller(): BuyerSeller | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(BUYER_KEYS.activeSeller);
   if (!raw) return null;
-  try { return JSON.parse(raw) as BuyerSeller; } catch { return null; }
+  try {
+    return JSON.parse(raw) as BuyerSeller;
+  } catch {
+    return null;
+  }
 }
 
 export function storeActiveSeller(seller: BuyerSeller): void {
@@ -93,15 +112,26 @@ function clearBuyerPresenceCookie(): void {
 }
 
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
-  const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, { email, password });
+  const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, {
+    email,
+    password,
+  });
   localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
   localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
   setBuyerPresenceCookie();
   return data;
 }
 
-export async function buyerRegister(email: string, password: string, name: string): Promise<BuyerAuthResponse> {
-  const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/register`, { email, password, name });
+export async function buyerRegister(
+  email: string,
+  password: string,
+  name: string,
+): Promise<BuyerAuthResponse> {
+  const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/register`, {
+    email,
+    password,
+    name,
+  });
   localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
   localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
   setBuyerPresenceCookie();
@@ -112,25 +142,38 @@ export async function buyerLogout(): Promise<void> {
   try {
     const token = localStorage.getItem(BUYER_KEYS.accessToken);
     if (token) {
-      await axios.post(`${BASE_URL}/buyer/auth/logout`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await axios.post(
+        `${BASE_URL}/buyer/auth/logout`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
     }
-  } catch { /* best-effort */ }
+  } catch {
+    /* best-effort */
+  }
   localStorage.removeItem(BUYER_KEYS.accessToken);
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
-  Object.keys(localStorage).filter((k) => k.startsWith("buyerCart_")).forEach((k) => localStorage.removeItem(k));
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith("buyerCart_"))
+    .forEach((k) => localStorage.removeItem(k));
   clearBuyerPresenceCookie();
 }
 
 export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
-  const refreshToken = typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
+  const refreshToken =
+    typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.refreshToken) : null;
   if (!refreshToken) return null;
   try {
-    const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/refresh`, { refreshToken });
+    const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/refresh`, {
+      refreshToken,
+    });
     localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
     localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
     return data;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export async function buyerChangePassword(
@@ -158,19 +201,31 @@ export async function requestSellerConnection(
   return data as { message: string; linkId?: string };
 }
 
-export async function getInviteDetails(token: string): Promise<{ name: string; slug: string; logoKey: string | null }> {
+export async function getInviteDetails(
+  token: string,
+): Promise<{ name: string; slug: string; logoKey: string | null }> {
   const { data } = await axios.get(`${BASE_URL}/buyer/invites/${token}/details`);
   return {
-    name: (data as { sellerName?: string; name?: string }).sellerName ?? (data as { name?: string }).name ?? "",
-    slug: (data as { sellerSlug?: string; slug?: string }).sellerSlug ?? (data as { slug?: string }).slug ?? "",
+    name:
+      (data as { sellerName?: string; name?: string }).sellerName ??
+      (data as { name?: string }).name ??
+      "",
+    slug:
+      (data as { sellerSlug?: string; slug?: string }).sellerSlug ??
+      (data as { slug?: string }).slug ??
+      "",
     logoKey: (data as { logoKey?: string | null }).logoKey ?? null,
   };
 }
 
 export async function acceptInvite(token: string, accessToken: string): Promise<void> {
-  await axios.post(`${BASE_URL}/buyer/invites/${token}/accept`, {}, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  await axios.post(
+    `${BASE_URL}/buyer/invites/${token}/accept`,
+    {},
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
 }
 
 export async function getBuyerSellers(accessToken: string): Promise<BuyerSeller[]> {

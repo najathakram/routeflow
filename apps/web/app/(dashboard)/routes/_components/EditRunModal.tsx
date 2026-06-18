@@ -22,13 +22,7 @@ function formatLocalDate(value: string): string {
   return `${y}-${m}-${day}`;
 }
 
-export function EditRunModal({
-  run,
-  onClose,
-}: {
-  run: EditableRun;
-  onClose: () => void;
-}) {
+export function EditRunModal({ run, onClose }: { run: EditableRun; onClose: () => void }) {
   const { toast } = useToast();
   const { data: activeDriversData } = useDrivers({ status: "ACTIVE", limit: 100 });
   const initialDriverId = run.driverId ?? "";
@@ -75,19 +69,19 @@ export function EditRunModal({
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-base font-semibold text-navy">Edit Route Run</h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy">
+          <button onClick={onClose} className="text-navy/70 hover:text-navy">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60">Driver</label>
+            <label className="mb-1 block text-xs font-medium text-navy/70">Driver</label>
             <select
               value={driverId}
               onChange={(e) => setDriverId(e.target.value)}
               disabled={isInProgress}
-              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/50"
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/70"
             >
               <option value="">No driver assigned</option>
               {drivers.map((d) => (
@@ -100,18 +94,18 @@ export function EditRunModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60">Scheduled Date</label>
+            <label className="mb-1 block text-xs font-medium text-navy/70">Scheduled Date</label>
             <input
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               disabled={isInProgress}
-              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/50"
+              className="h-9 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/70"
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60">Notes</label>
+            <label className="mb-1 block text-xs font-medium text-navy/70">Notes</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}

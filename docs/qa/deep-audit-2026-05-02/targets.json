@@ -10,14 +10,34 @@
       "surface": "web-op",
       "viewport": "414x896",
       "workers": [
-        { "id": "OPS-1", "scope": "Order/Invoice/Money paranoia",
-          "scenarios": ["30-line order perf", "tax-exempt PDF math", "$0 order block",
-                        "discount > subtotal", "credit > balance clamp",
-                        "two-tab invoice race", "AR Aging realtime", "input edge: comma/emoji/50k notes"] },
-        { "id": "OPS-2", "scope": "Routes / Dispatch / Drivers",
-          "scenarios": ["12-rapid-add stop ordering", "drag-reorder persist",
-                        "optimize stops 0/1/2/12", "dispatch w/o driver", "double-dispatch same route+day",
-                        "mid-day driver reassign", "delete route w/ IN_PROGRESS run", "filter compose"] }
+        {
+          "id": "OPS-1",
+          "scope": "Order/Invoice/Money paranoia",
+          "scenarios": [
+            "30-line order perf",
+            "tax-exempt PDF math",
+            "$0 order block",
+            "discount > subtotal",
+            "credit > balance clamp",
+            "two-tab invoice race",
+            "AR Aging realtime",
+            "input edge: comma/emoji/50k notes"
+          ]
+        },
+        {
+          "id": "OPS-2",
+          "scope": "Routes / Dispatch / Drivers",
+          "scenarios": [
+            "12-rapid-add stop ordering",
+            "drag-reorder persist",
+            "optimize stops 0/1/2/12",
+            "dispatch w/o driver",
+            "double-dispatch same route+day",
+            "mid-day driver reassign",
+            "delete route w/ IN_PROGRESS run",
+            "filter compose"
+          ]
+        }
       ]
     },
     {
@@ -25,16 +45,34 @@
       "surface": "web-buyer",
       "viewport": "414x896",
       "workers": [
-        { "id": "BUYER-1", "scope": "Catalog / Cart / Checkout",
-          "scenarios": ["repeat-add SKU x5 line vs qty", "cart persist across nav",
-                        "cart 30min stale", "tier change mid-session", "empty-cart checkout",
-                        "double-tap Place Order idempotency", "skip standing-order date",
-                        "buyer cancels PENDING -> inventory restock"] },
-        { "id": "BUYER-2", "scope": "Invoices / Returns / Profile / Auth",
-          "scenarios": ["overdue balance == sum", "PDF mobile render", "multi-line return + auto credit note",
-                        "buyer self-service password reset", "forced password change after operator reset",
-                        "deep-link to /invoices/<uuid> when logged out",
-                        "token-expiry mid-flow redirect", "profile edit visible to operator"] }
+        {
+          "id": "BUYER-1",
+          "scope": "Catalog / Cart / Checkout",
+          "scenarios": [
+            "repeat-add SKU x5 line vs qty",
+            "cart persist across nav",
+            "cart 30min stale",
+            "tier change mid-session",
+            "empty-cart checkout",
+            "double-tap Place Order idempotency",
+            "skip standing-order date",
+            "buyer cancels PENDING -> inventory restock"
+          ]
+        },
+        {
+          "id": "BUYER-2",
+          "scope": "Invoices / Returns / Profile / Auth",
+          "scenarios": [
+            "overdue balance == sum",
+            "PDF mobile render",
+            "multi-line return + auto credit note",
+            "buyer self-service password reset",
+            "forced password change after operator reset",
+            "deep-link to /invoices/<uuid> when logged out",
+            "token-expiry mid-flow redirect",
+            "profile edit visible to operator"
+          ]
+        }
       ]
     },
     {
@@ -43,16 +81,34 @@
       "viewport": "375x667",
       "preflight": "OPS-2 must dispatch a NEW run for ux_driver_b before this squad starts",
       "workers": [
-        { "id": "DRIVER-1", "scope": "Run lifecycle + offline",
-          "scenarios": ["zero-stop run", "partial delivery 2/5 inventory+invoice",
-                        "skip stop with reason -> auto-complete", "signature undo+recapture",
-                        "POD photo cancel/retake leak", "cash $0.01/$0.99/$999999.99/abc",
-                        "Slow3G mid-payment rollback+retry", "force-close split-state on relaunch"] },
-        { "id": "DRIVER-2", "scope": "Map / Standing / Cash drawer / Stats",
-          "scenarios": ["map 0/5/50 stops", "standing-order auto-gen on driver day",
-                        "cash drawer 5 collections + EOD reconciliation", "stats vs COMPLETED runs after backfill",
-                        "operator cancels run while driver open", "two-driver-same-browser token isolation",
-                        "Socket.IO route.dispatched live update", "driver navigates to /home (must redirect)"] }
+        {
+          "id": "DRIVER-1",
+          "scope": "Run lifecycle + offline",
+          "scenarios": [
+            "zero-stop run",
+            "partial delivery 2/5 inventory+invoice",
+            "skip stop with reason -> auto-complete",
+            "signature undo+recapture",
+            "POD photo cancel/retake leak",
+            "cash $0.01/$0.99/$999999.99/abc",
+            "Slow3G mid-payment rollback+retry",
+            "force-close split-state on relaunch"
+          ]
+        },
+        {
+          "id": "DRIVER-2",
+          "scope": "Map / Standing / Cash drawer / Stats",
+          "scenarios": [
+            "map 0/5/50 stops",
+            "standing-order auto-gen on driver day",
+            "cash drawer 5 collections + EOD reconciliation",
+            "stats vs COMPLETED runs after backfill",
+            "operator cancels run while driver open",
+            "two-driver-same-browser token isolation",
+            "Socket.IO route.dispatched live update",
+            "driver navigates to /home (must redirect)"
+          ]
+        }
       ]
     },
     {
@@ -60,22 +116,58 @@
       "surface": "cross-role",
       "viewport": "mixed",
       "workers": [
-        { "id": "CROSS-1", "scope": "Real-time + concurrency",
-          "scenarios": ["op list auto-update on buyer order", "buyer outstanding-balance live on PAID",
-                        "driver gets new run live via Socket.IO", "two-operator product-edit conflict",
-                        "buyer cart vs operator tier change at checkout",
-                        "3-tab driver multi-run token namespace", "5x rapid refresh -> single Socket.IO conn",
-                        "logout tab A -> tab B cross-tab signout"] },
-        { "id": "CROSS-2", "scope": "Accessibility / edge inputs / browser quirks",
-          "scenarios": ["keyboard tab through login+nav+forms", "aria-label on icon-only buttons",
-                        "WCAG AA contrast secondary text", "RTL Arabic/Hebrew customer name",
-                        "5k chars Notes / 200ch product / emoji SKU", "back-button after submit (POST/RG)",
-                        "refresh on dirty Create form (beforeunload)", "/invoices/:id print stylesheet"] }
+        {
+          "id": "CROSS-1",
+          "scope": "Real-time + concurrency",
+          "scenarios": [
+            "op list auto-update on buyer order",
+            "buyer outstanding-balance live on PAID",
+            "driver gets new run live via Socket.IO",
+            "two-operator product-edit conflict",
+            "buyer cart vs operator tier change at checkout",
+            "3-tab driver multi-run token namespace",
+            "5x rapid refresh -> single Socket.IO conn",
+            "logout tab A -> tab B cross-tab signout"
+          ]
+        },
+        {
+          "id": "CROSS-2",
+          "scope": "Accessibility / edge inputs / browser quirks",
+          "scenarios": [
+            "keyboard tab through login+nav+forms",
+            "aria-label on icon-only buttons",
+            "WCAG AA contrast secondary text",
+            "RTL Arabic/Hebrew customer name",
+            "5k chars Notes / 200ch product / emoji SKU",
+            "back-button after submit (POST/RG)",
+            "refresh on dirty Create form (beforeunload)",
+            "/invoices/:id print stylesheet"
+          ]
+        }
       ]
     }
   ],
   "skip_already_fixed": [
-    "RF-001","RF-002","RF-003","RF-013","RF-014","RF-016","RF-018","RF-074","RF-076","RF-077",
-    "RF-090","RF-157","RF-176","RF-188","RF-197","RF-203","RF-209","RF-211","RF-212","RF-213","RF-222"
+    "RF-001",
+    "RF-002",
+    "RF-003",
+    "RF-013",
+    "RF-014",
+    "RF-016",
+    "RF-018",
+    "RF-074",
+    "RF-076",
+    "RF-077",
+    "RF-090",
+    "RF-157",
+    "RF-176",
+    "RF-188",
+    "RF-197",
+    "RF-203",
+    "RF-209",
+    "RF-211",
+    "RF-212",
+    "RF-213",
+    "RF-222"
   ]
 }

@@ -1,11 +1,4 @@
-import {
-  PanResponder,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { PanResponder, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, borderRadius } from "@routeflow/ui/tokens";

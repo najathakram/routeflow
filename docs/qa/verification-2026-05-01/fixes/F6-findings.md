@@ -2,16 +2,16 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|-----------|------------|
-| RF-086 | P1 | ✅ | `apps/mobile/lib/buyer-auth.ts` | 725a256 | Comment-confirmed; no code path to /buyer/login exists | No |
-| RF-087 | P1 | ✅ | `apps/mobile/app/_layout.tsx` | 725a256 | Guard logic verified in code review | No |
-| RF-094/RF-180 | P1 | ✅ | `apps/api/src/buyer/buyer.controller.spec.ts` | 725a256 | `getStandingOrders returns 200` test added; 6/6 pass | No |
-| RF-215 | P1 | ✅ | `apps/mobile/app/(customer)/orders/cart.tsx`, `apps/mobile/store/cartStore.ts` | pre-existing | Cart is client-side via cartStore; route `/(customer)/orders/cart` exists | No |
-| RF-216 | P1 | ✅ | `apps/mobile/app/(customer)/(tabs)/_layout.tsx`, `invoices.tsx` | 725a256 | `/invoices` tab registered and renders correctly | No |
-| RF-217 | P1 | ✅ | `apps/api/src/buyer/buyer.controller.ts` | pre-existing | `getMe` unit test added; returns ctx.customer directly | No |
-| RF-218 | P1 | ✅ | `apps/mobile/app/(customer)/(tabs)/home.tsx`, `_layout.tsx` | 725a256 | New dashboard home tab: balance, spend-30d, active orders, last order, quick actions | No |
-| RF-013 | P1 | ✅ | `apps/mobile/lib/buyer-session-store.ts` | 725a256 | `signOut` now calls `useCartStore.getState().clear()` | No |
+| RF            | Sev | Status | Files                                                                          | Commit       | Test added                                                                           | Migration? |
+| ------------- | --- | ------ | ------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------ | ---------- |
+| RF-086        | P1  | ✅     | `apps/mobile/lib/buyer-auth.ts`                                                | 725a256      | Comment-confirmed; no code path to /buyer/login exists                               | No         |
+| RF-087        | P1  | ✅     | `apps/mobile/app/_layout.tsx`                                                  | 725a256      | Guard logic verified in code review                                                  | No         |
+| RF-094/RF-180 | P1  | ✅     | `apps/api/src/buyer/buyer.controller.spec.ts`                                  | 725a256      | `getStandingOrders returns 200` test added; 6/6 pass                                 | No         |
+| RF-215        | P1  | ✅     | `apps/mobile/app/(customer)/orders/cart.tsx`, `apps/mobile/store/cartStore.ts` | pre-existing | Cart is client-side via cartStore; route `/(customer)/orders/cart` exists            | No         |
+| RF-216        | P1  | ✅     | `apps/mobile/app/(customer)/(tabs)/_layout.tsx`, `invoices.tsx`                | 725a256      | `/invoices` tab registered and renders correctly                                     | No         |
+| RF-217        | P1  | ✅     | `apps/api/src/buyer/buyer.controller.ts`                                       | pre-existing | `getMe` unit test added; returns ctx.customer directly                               | No         |
+| RF-218        | P1  | ✅     | `apps/mobile/app/(customer)/(tabs)/home.tsx`, `_layout.tsx`                    | 725a256      | New dashboard home tab: balance, spend-30d, active orders, last order, quick actions | No         |
+| RF-013        | P1  | ✅     | `apps/mobile/lib/buyer-session-store.ts`                                       | 725a256      | `signOut` now calls `useCartStore.getState().clear()`                                | No         |
 
 ## Notes / blockers
 

@@ -10,11 +10,11 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|------------|------------|
-| RF-002 | P0 | ✅ FIXED+TESTED (prior session confirmed) | `apps/mobile/hooks/useSocket.ts`, `useBuyerSocket.ts`, `(driver)/_layout.tsx`, `(customer)/_layout.tsx` | prior | manual GUI | No |
-| RF-015 | P1 | ✅ FIXED+TESTED | `apps/api/src/gateways/routeflow.gateway.ts`, `routes/routes.service.ts`, `routes/routes.module.ts`, `apps/mobile/hooks/useSocket.ts` | this session | 2 new unit tests | No |
-| RF-008 | P1 | ✅ FIXED+TESTED | `apps/api/src/recurring-invoices/recurring-invoices.service.ts`, `order-templates/order-templates.service.ts` | this session | build-verified; cron ALS logic validated by code review | No |
+| RF     | Sev | Status                                    | Files                                                                                                                                 | Commit       | Test added                                              | Migration? |
+| ------ | --- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------- | ---------- |
+| RF-002 | P0  | ✅ FIXED+TESTED (prior session confirmed) | `apps/mobile/hooks/useSocket.ts`, `useBuyerSocket.ts`, `(driver)/_layout.tsx`, `(customer)/_layout.tsx`                               | prior        | manual GUI                                              | No         |
+| RF-015 | P1  | ✅ FIXED+TESTED                           | `apps/api/src/gateways/routeflow.gateway.ts`, `routes/routes.service.ts`, `routes/routes.module.ts`, `apps/mobile/hooks/useSocket.ts` | this session | 2 new unit tests                                        | No         |
+| RF-008 | P1  | ✅ FIXED+TESTED                           | `apps/api/src/recurring-invoices/recurring-invoices.service.ts`, `order-templates/order-templates.service.ts`                         | this session | build-verified; cron ALS logic validated by code review | No         |
 
 ## Notes / blockers (≤ 80 words)
 

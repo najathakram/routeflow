@@ -48,24 +48,21 @@ export function useBuyerNotifications() {
     setNotifications(loadFromStorage());
   }, []);
 
-  const push = React.useCallback(
-    (n: Omit<BuyerNotification, "id" | "timestamp" | "read">) => {
-      setNotifications((prev) => {
-        const next = [
-          {
-            ...n,
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            timestamp: Date.now(),
-            read: false,
-          },
-          ...prev,
-        ].slice(0, MAX_NOTIFICATIONS);
-        saveToStorage(next);
-        return next;
-      });
-    },
-    [],
-  );
+  const push = React.useCallback((n: Omit<BuyerNotification, "id" | "timestamp" | "read">) => {
+    setNotifications((prev) => {
+      const next = [
+        {
+          ...n,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: Date.now(),
+          read: false,
+        },
+        ...prev,
+      ].slice(0, MAX_NOTIFICATIONS);
+      saveToStorage(next);
+      return next;
+    });
+  }, []);
 
   // Connect to WebSocket using the buyer's access token
   React.useEffect(() => {

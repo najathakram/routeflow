@@ -47,7 +47,9 @@ export default function AnalyticsScreen() {
                   label="Revenue"
                 />
                 <KpiCard
-                  icon={<Ionicons name="trending-down-outline" size={18} color={ios.system.redInk} />}
+                  icon={
+                    <Ionicons name="trending-down-outline" size={18} color={ios.system.redInk} />
+                  }
                   iconBg={ios.system.redWash}
                   value={fmt(finance?.expenses)}
                   label="Expenses"

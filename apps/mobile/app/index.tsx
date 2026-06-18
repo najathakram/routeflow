@@ -30,7 +30,11 @@ const FEATURES = [
 ];
 
 const STEPS = [
-  { number: 1, title: "Set Up", body: "Add products, pricing, and invite customers to their portal." },
+  {
+    number: 1,
+    title: "Set Up",
+    body: "Add products, pricing, and invite customers to their portal.",
+  },
   { number: 2, title: "Manage", body: "Receive orders, build routes, and dispatch drivers." },
   { number: 3, title: "Deliver", body: "Track runs live, capture proof of delivery, get paid." },
 ];
@@ -46,10 +50,7 @@ export default function LandingScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* ── Hero ──────────────────────────────────────────────────────── */}
         <LinearGradient
           colors={["#0f1b2d", "#152238", "#1a2d4a"]}
@@ -81,16 +82,13 @@ export default function LandingScreen() {
           </Text>
 
           <Text style={styles.heroSub}>
-            Orders, routes, drivers, invoices, and customers — all in one place.
-            Less chasing, less guessing, more delivering.
+            Orders, routes, drivers, invoices, and customers — all in one place. Less chasing, less
+            guessing, more delivering.
           </Text>
 
           {/* CTAs */}
           <View style={styles.heroActions}>
-            <Pressable
-              style={styles.primaryBtn}
-              onPress={() => router.push("/(auth)/sign-in")}
-            >
+            <Pressable style={styles.primaryBtn} onPress={() => router.push("/(auth)/sign-in")}>
               <LinearGradient
                 colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
                 start={{ x: 0, y: 0 }}
@@ -178,10 +176,7 @@ export default function LandingScreen() {
         </LinearGradient>
 
         {/* ── Footer CTA ────────────────────────────────────────────────── */}
-        <LinearGradient
-          colors={["#0f1b2d", "#152238"]}
-          style={styles.footerCta}
-        >
+        <LinearGradient colors={["#0f1b2d", "#152238"]} style={styles.footerCta}>
           <Text style={styles.footerCtaTitle}>
             Ready to run your rounds like the best in the business?
           </Text>
@@ -191,9 +186,7 @@ export default function LandingScreen() {
           <Pressable
             style={styles.footerCtaBtn}
             onPress={() =>
-              Linking.openURL(
-                "mailto:hello@routeflow.info?subject=RouteFlow%20demo%20request",
-              )
+              Linking.openURL("mailto:hello@routeflow.info?subject=RouteFlow%20demo%20request")
             }
           >
             <Text style={styles.footerCtaBtnText}>Request a demo</Text>
@@ -203,7 +196,9 @@ export default function LandingScreen() {
         {/* ── Footer note ───────────────────────────────────────────────── */}
         <View style={styles.footer}>
           <Text style={styles.footerNote}>RouteFlow · Fleet & delivery platform</Text>
-          <Text style={styles.footerNote}>© {new Date().getFullYear()} RouteFlow. All rights reserved.</Text>
+          <Text style={styles.footerNote}>
+            © {new Date().getFullYear()} RouteFlow. All rights reserved.
+          </Text>
         </View>
       </ScrollView>
     </SafeAreaView>

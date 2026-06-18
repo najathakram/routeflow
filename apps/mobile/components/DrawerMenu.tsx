@@ -1,12 +1,5 @@
 import { useEffect, useRef } from "react";
-import {
-  Animated,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@routeflow/ui/tokens";
@@ -28,10 +21,30 @@ const NAV_ITEMS: Array<{
   { id: "customers", label: "My Customers", icon: "people-outline", path: "/(driver)/customers" },
   { id: "stock", label: "Stock Check", icon: "cube-outline", path: "/(driver)/inventory" },
   { id: "history", label: "Delivery History", icon: "time-outline", path: "/(driver)/history" },
-  { id: "standing-orders", label: "Standing Orders", icon: "repeat-outline", path: "/(driver)/standing-orders" },
-  { id: "purchase-orders", label: "Purchase Orders", icon: "document-text-outline", path: "/(driver)/purchase-orders" },
-  { id: "schedule", label: "Schedule Run", icon: "calendar-outline", path: "/(driver)/route/new-run" },
-  { id: "performance", label: "Performance", icon: "stats-chart-outline", path: "/(driver)/history/performance" },
+  {
+    id: "standing-orders",
+    label: "Standing Orders",
+    icon: "repeat-outline",
+    path: "/(driver)/standing-orders",
+  },
+  {
+    id: "purchase-orders",
+    label: "Purchase Orders",
+    icon: "document-text-outline",
+    path: "/(driver)/purchase-orders",
+  },
+  {
+    id: "schedule",
+    label: "Schedule Run",
+    icon: "calendar-outline",
+    path: "/(driver)/route/new-run",
+  },
+  {
+    id: "performance",
+    label: "Performance",
+    icon: "stats-chart-outline",
+    path: "/(driver)/history/performance",
+  },
 ];
 
 export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
@@ -73,7 +86,9 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
 
   const username = user?.username ?? "Driver";
   const words = username.split(/[\s_]/).slice(0, 2);
-  const initials = words.map((w: string) => (w[0] ? w[0].toUpperCase() : "")).join("") || (username[0] ? username[0].toUpperCase() : "D");
+  const initials =
+    words.map((w: string) => (w[0] ? w[0].toUpperCase() : "")).join("") ||
+    (username[0] ? username[0].toUpperCase() : "D");
 
   const handleNav = (path: string) => {
     onClose();
@@ -121,7 +136,12 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
               accessibilityRole="button"
               accessibilityLabel={item.label}
             >
-              <Ionicons name={item.icon as any} size={22} color={colors.navy.DEFAULT} style={styles.navIcon} />
+              <Ionicons
+                name={item.icon as any}
+                size={22}
+                color={colors.navy.DEFAULT}
+                style={styles.navIcon}
+              />
               <Text style={styles.navLabel}>{item.label}</Text>
               <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
             </Pressable>
@@ -135,7 +155,12 @@ export function DrawerMenu({ visible, onClose }: DrawerMenuProps) {
             accessibilityRole="button"
             accessibilityLabel="Change Password"
           >
-            <Ionicons name="lock-closed-outline" size={22} color={colors.navy.DEFAULT} style={styles.navIcon} />
+            <Ionicons
+              name="lock-closed-outline"
+              size={22}
+              color={colors.navy.DEFAULT}
+              style={styles.navIcon}
+            />
             <Text style={styles.navLabel}>Change Password</Text>
             <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
           </Pressable>

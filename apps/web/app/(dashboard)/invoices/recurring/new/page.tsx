@@ -48,12 +48,20 @@ function CustomerSearch({
 
   if (value) {
     return (
-      <div className={cn("flex items-center justify-between rounded-lg border px-3 py-2.5", error ? "border-danger" : "border-surface-border")}>
+      <div
+        className={cn(
+          "flex items-center justify-between rounded-lg border px-3 py-2.5",
+          error ? "border-danger" : "border-surface-border",
+        )}
+      >
         <div>
           <p className="text-sm font-semibold text-navy">{value.businessName}</p>
-          {value.contactName && <p className="text-xs text-navy/50">{value.contactName}</p>}
+          {value.contactName && <p className="text-xs text-navy/70">{value.contactName}</p>}
         </div>
-        <button onClick={() => onSelect(null)} className="rounded p-1 text-navy/40 hover:text-danger transition-colors">
+        <button
+          onClick={() => onSelect(null)}
+          className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
+        >
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
@@ -68,10 +76,13 @@ function CustomerSearch({
           type="text"
           placeholder="Search customers…"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
           onFocus={() => setOpen(true)}
           className={cn(
-            "h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+            "h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
             error ? "border-danger" : "border-surface-border",
           )}
         />
@@ -79,23 +90,27 @@ function CustomerSearch({
       {error && <p className="mt-1 text-xs text-danger">{error}</p>}
       {open && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-          {customers.length === 0
-            ? <p className="px-3 py-2 text-sm text-navy/50">No customers found.</p>
-            : (
-              <ul className="max-h-48 overflow-y-auto">
-                {customers.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      className="flex w-full flex-col px-3 py-2 text-left hover:bg-surface-raised"
-                      onClick={() => { onSelect(c); setOpen(false); setQuery(""); }}
-                    >
-                      <span className="text-sm font-medium text-navy">{c.businessName}</span>
-                      {c.contactName && <span className="text-xs text-navy/50">{c.contactName}</span>}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+          {customers.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-navy/70">No customers found.</p>
+          ) : (
+            <ul className="max-h-48 overflow-y-auto">
+              {customers.map((c) => (
+                <li key={c.id}>
+                  <button
+                    className="flex w-full flex-col px-3 py-2 text-left hover:bg-surface-raised"
+                    onClick={() => {
+                      onSelect(c);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                  >
+                    <span className="text-sm font-medium text-navy">{c.businessName}</span>
+                    {c.contactName && <span className="text-xs text-navy/70">{c.contactName}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>
@@ -138,7 +153,11 @@ function ProductSearchInput({
         type="text"
         placeholder="Description / product…"
         value={query}
-        onChange={(e) => { setQuery(e.target.value); onChange(e.target.value, undefined, undefined); setOpen(true); }}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          onChange(e.target.value, undefined, undefined);
+          setOpen(true);
+        }}
         onFocus={() => setOpen(true)}
         className="h-9 w-full rounded border border-surface-border bg-white px-2.5 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
@@ -149,10 +168,14 @@ function ProductSearchInput({
               <li key={p.id}>
                 <button
                   className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                  onClick={() => { setQuery(p.name); onChange(p.name, p.id, p.pricePerUnit); setOpen(false); }}
+                  onClick={() => {
+                    setQuery(p.name);
+                    onChange(p.name, p.id, p.pricePerUnit);
+                    setOpen(false);
+                  }}
                 >
                   <span className="text-sm font-medium text-navy">{p.name}</span>
-                  <span className="text-xs text-navy/60">{fmt.format(Number(p.pricePerUnit))}</span>
+                  <span className="text-xs text-navy/70">{fmt.format(Number(p.pricePerUnit))}</span>
                 </button>
               </li>
             ))}
@@ -176,7 +199,14 @@ interface LineItemState {
 }
 
 function createEmptyItem(): LineItemState {
-  return { key: Math.random().toString(36).slice(2), description: "", qty: 1, unitPrice: 0, taxRate: 0, discount: 0 };
+  return {
+    key: Math.random().toString(36).slice(2),
+    description: "",
+    qty: 1,
+    unitPrice: 0,
+    taxRate: 0,
+    discount: 0,
+  };
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -187,7 +217,9 @@ export default function NewRecurringInvoicePage() {
   const { toast } = useToast();
   const createRecurring = useCreateRecurringInvoice();
 
-  React.useEffect(() => { setTitle("New Recurring Template"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("New Recurring Template");
+  }, [setTitle]);
 
   const [customer, setCustomer] = React.useState<Customer | null>(null);
   const [frequency, setFrequency] = React.useState<"WEEKLY" | "BIWEEKLY" | "MONTHLY">("MONTHLY");
@@ -216,8 +248,14 @@ export default function NewRecurringInvoicePage() {
     if (!nextRunAt) errs.nextRunAt = "First run date is required.";
     if (items.length === 0) errs.items = "Add at least one line item.";
     for (const it of items) {
-      if (!it.description.trim()) { errs.items = "All items need a description."; break; }
-      if (Number(it.qty) <= 0) { errs.items = "All quantities must be > 0."; break; }
+      if (!it.description.trim()) {
+        errs.items = "All items need a description.";
+        break;
+      }
+      if (Number(it.qty) <= 0) {
+        errs.items = "All quantities must be > 0.";
+        break;
+      }
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -237,14 +275,16 @@ export default function NewRecurringInvoicePage() {
       terms: terms.trim() || undefined,
       discount: parseFloat(discount) || undefined,
       shippingFee: parseFloat(shippingFee) || undefined,
-      items: items.map((it): RecurringInvoiceItem => ({
-        productId: it.productId,
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        taxRate: Number(it.taxRate) || undefined,
-        discount: Number(it.discount) || undefined,
-      })),
+      items: items.map(
+        (it): RecurringInvoiceItem => ({
+          productId: it.productId,
+          description: it.description,
+          qty: Number(it.qty),
+          unitPrice: Number(it.unitPrice),
+          taxRate: Number(it.taxRate) || undefined,
+          discount: Number(it.discount) || undefined,
+        }),
+      ),
     };
 
     createRecurring.mutate(dto, {
@@ -253,14 +293,21 @@ export default function NewRecurringInvoicePage() {
         router.push("/invoices/recurring");
       },
       onError: (err: any) => {
-        toast({ title: "Failed to create template", description: err?.response?.data?.message ?? "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to create template",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        });
       },
     });
   }
 
   return (
     <div className="space-y-5 p-6">
-      <Link href="/invoices/recurring" className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors">
+      <Link
+        href="/invoices/recurring"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+      >
         <ArrowLeft className="h-4 w-4" />
         Recurring Invoices
       </Link>
@@ -270,7 +317,6 @@ export default function NewRecurringInvoicePage() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         {/* ── Left (3/5) ── */}
         <div className="space-y-5 lg:col-span-3">
-
           {/* Customer */}
           <Card title="Customer">
             <CustomerSearch value={customer} onSelect={setCustomer} error={errors.customer} />
@@ -294,7 +340,9 @@ export default function NewRecurringInvoicePage() {
 
               {frequency !== "MONTHLY" ? (
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-navy/80">Day of Week</label>
+                  <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                    Day of Week
+                  </label>
                   <select
                     value={dayOfWeek}
                     onChange={(e) => setDayOfWeek(Number(e.target.value))}
@@ -311,18 +359,25 @@ export default function NewRecurringInvoicePage() {
                 </div>
               ) : (
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-navy/80">Day of Month</label>
+                  <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                    Day of Month
+                  </label>
                   <input
-                    type="number" min={1} max={28} value={dayOfMonth}
+                    type="number"
+                    min={1}
+                    max={28}
+                    value={dayOfMonth}
                     onChange={(e) => setDayOfMonth(Number(e.target.value))}
                     className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
-                  <p className="mt-1 text-xs text-navy/40">Use 1–28 to avoid month-end issues.</p>
+                  <p className="mt-1 text-xs text-navy/70">Use 1–28 to avoid month-end issues.</p>
                 </div>
               )}
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">First Run Date</label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  First Run Date
+                </label>
                 <input
                   type="date"
                   value={nextRunAt}
@@ -352,27 +407,42 @@ export default function NewRecurringInvoicePage() {
             <div className="space-y-2">
               {errors.items && <p className="text-xs text-danger">{errors.items}</p>}
               <div className="grid grid-cols-[1fr_70px_90px_32px] gap-2 px-1">
-                <span className="text-xs font-medium text-navy/50">Description</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Qty</span>
-                <span className="text-xs font-medium text-navy/50 text-right">Unit Price</span>
+                <span className="text-xs font-medium text-navy/70">Description</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Qty</span>
+                <span className="text-xs font-medium text-navy/70 text-right">Unit Price</span>
                 <span />
               </div>
               {items.map((item) => (
-                <div key={item.key} className="grid grid-cols-[1fr_70px_90px_32px] items-center gap-2">
+                <div
+                  key={item.key}
+                  className="grid grid-cols-[1fr_70px_90px_32px] items-center gap-2"
+                >
                   <ProductSearchInput
                     value={item.description}
                     onChange={(description, productId, unitPrice) => {
-                      updateItem(item.key, { description, productId, unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice });
+                      updateItem(item.key, {
+                        description,
+                        productId,
+                        unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                      });
                     }}
                   />
                   <input
-                    type="number" min={0.01} step={0.01} value={item.qty}
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={item.qty}
                     onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <input
-                    type="number" min={0} step={0.01} value={item.unitPrice}
-                    onChange={(e) => updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })}
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={item.unitPrice}
+                    onChange={(e) =>
+                      updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
+                    }
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <button
@@ -399,13 +469,21 @@ export default function NewRecurringInvoicePage() {
             <div className="space-y-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Notes</label>
-                <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
                   className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Terms</label>
-                <textarea rows={2} value={terms} onChange={(e) => setTerms(e.target.value)}
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Payment Terms
+                </label>
+                <textarea
+                  rows={2}
+                  value={terms}
+                  onChange={(e) => setTerms(e.target.value)}
                   className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -418,14 +496,28 @@ export default function NewRecurringInvoicePage() {
           <Card title="Adjustments">
             <div className="space-y-3">
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Invoice Discount ($)</label>
-                <input type="number" min={0} step={0.01} value={discount} onChange={(e) => setDiscount(e.target.value)}
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Invoice Discount ($)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">Shipping Fee ($)</label>
-                <input type="number" min={0} step={0.01} value={shippingFee} onChange={(e) => setShippingFee(e.target.value)}
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                  Shipping Fee ($)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={shippingFee}
+                  onChange={(e) => setShippingFee(e.target.value)}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -436,7 +528,12 @@ export default function NewRecurringInvoicePage() {
             <Button className="w-full" onClick={handleSubmit} loading={createRecurring.isPending}>
               Create Template
             </Button>
-            <Button className="mt-2 w-full" variant="secondary" href="/invoices/recurring" disabled={createRecurring.isPending}>
+            <Button
+              className="mt-2 w-full"
+              variant="secondary"
+              href="/invoices/recurring"
+              disabled={createRecurring.isPending}
+            >
               Cancel
             </Button>
           </Card>

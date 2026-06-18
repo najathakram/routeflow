@@ -78,10 +78,13 @@ const routeColumns: ColumnDef<RouteRun, unknown>[] = [
     cell: ({ row }) => (
       <span className="text-navy/70">
         {row.original.startedAt
-          ? new Date(row.original.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          ? new Date(row.original.startedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
           : row.original.scheduledDate
-          ? new Date(row.original.scheduledDate).toLocaleDateString()
-          : "—"}
+            ? new Date(row.original.scheduledDate).toLocaleDateString()
+            : "—"}
       </span>
     ),
   },
@@ -131,9 +134,7 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     header: "Date",
     enableSorting: false,
     cell: ({ row }) => (
-      <span className="text-navy/60">
-        {new Date(row.original.createdAt).toLocaleDateString()}
-      </span>
+      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
     ),
   },
 ];
@@ -204,21 +205,36 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   const totalValue = num(aging.total);
   const total = totalValue || 1;
   const buckets = [
-    { label: "Current",  value: num(aging.current),   color: "bg-success",   textColor: "text-success" },
-    { label: "1–15d",    value: num(aging.days1_15),   color: "bg-warning",   textColor: "text-warning" },
-    { label: "16–30d",   value: num(aging.days16_30),  color: "bg-orange-400",textColor: "text-orange-500" },
-    { label: "31–45d",   value: num(aging.days31_45),  color: "bg-danger",    textColor: "text-danger" },
-    { label: "45d+",     value: num(aging.days45plus), color: "bg-danger/80", textColor: "text-danger" },
+    { label: "Current", value: num(aging.current), color: "bg-success", textColor: "text-success" },
+    { label: "1–15d", value: num(aging.days1_15), color: "bg-warning", textColor: "text-warning" },
+    {
+      label: "16–30d",
+      value: num(aging.days16_30),
+      color: "bg-orange-400",
+      textColor: "text-orange-500",
+    },
+    { label: "31–45d", value: num(aging.days31_45), color: "bg-danger", textColor: "text-danger" },
+    {
+      label: "45d+",
+      value: num(aging.days45plus),
+      color: "bg-danger/80",
+      textColor: "text-danger",
+    },
   ].filter((b) => b.value > 0);
 
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
         <div className="flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-navy/40" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">AR Aging</span>
+          <DollarSign className="h-4 w-4 text-navy/70" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+            AR Aging
+          </span>
         </div>
-        <Link href="/finance/reports/ar-aging" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+        <Link
+          href="/finance/reports/ar-aging"
+          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+        >
           Full report <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
@@ -227,9 +243,13 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
         {/* Total */}
         <div className="flex items-baseline justify-between">
           <span className="text-2xl font-bold text-navy">
-            ${totalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            $
+            {totalValue.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </span>
-          <span className="text-xs text-navy/50">total outstanding</span>
+          <span className="text-xs text-navy/70">total outstanding</span>
         </div>
 
         {/* Stacked bar */}
@@ -249,7 +269,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
             <div key={b.label} className="flex items-center gap-1.5">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", b.color)} />
               <div className="min-w-0">
-                <p className="text-xs text-navy/50 truncate">{b.label}</p>
+                <p className="text-xs text-navy/70 truncate">{b.label}</p>
                 <p className={cn("text-xs font-semibold", b.textColor)}>{fmtMoney(b.value)}</p>
               </div>
             </div>
@@ -262,7 +282,13 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
 
-function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; isLoading: boolean }) {
+function OverdueInvoicesPanel({
+  invoices,
+  isLoading,
+}: {
+  invoices: Invoice[];
+  isLoading: boolean;
+}) {
   if (isLoading) {
     return (
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
@@ -270,7 +296,9 @@ function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; is
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
         <div className="space-y-3 p-4">
-          {[1, 2, 3].map((i) => <div key={i} className="h-12 animate-pulse rounded bg-navy/10" />)}
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 animate-pulse rounded bg-navy/10" />
+          ))}
         </div>
       </div>
     );
@@ -281,7 +309,7 @@ function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; is
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
         <div className="flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-danger" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
             Overdue Invoices
           </span>
           {invoices.length > 0 && (
@@ -290,7 +318,10 @@ function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; is
             </span>
           )}
         </div>
-        <Link href="/invoices?status=OVERDUE" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+        <Link
+          href="/invoices?status=OVERDUE"
+          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+        >
           View all <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
@@ -314,14 +345,17 @@ function OverdueInvoicesPanel({ invoices, isLoading }: { invoices: Invoice[]; is
                   <p className="truncate text-sm font-medium text-navy">
                     {inv.customer?.businessName ?? "Unknown"}
                   </p>
-                  <p className="mt-0.5 text-xs text-navy/50">
+                  <p className="mt-0.5 text-xs text-navy/70">
                     #{inv.invoiceNumber} &middot;{" "}
                     <span className="font-semibold text-danger">{days}d overdue</span>
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold text-danger">
-                    ${(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    $
+                    {(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", {
+                      minimumFractionDigits: 2,
+                    })}
                   </p>
                   <Link
                     href={`/invoices/${inv.id}`}
@@ -349,7 +383,15 @@ interface Product {
   unit?: string;
 }
 
-function LowStockPanel({ products, total, isLoading }: { products: Product[]; total: number; isLoading: boolean }) {
+function LowStockPanel({
+  products,
+  total,
+  isLoading,
+}: {
+  products: Product[];
+  total: number;
+  isLoading: boolean;
+}) {
   if (isLoading) {
     return (
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
@@ -357,7 +399,9 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
         <div className="space-y-3 p-4">
-          {[1, 2, 3].map((i) => <div key={i} className="h-10 animate-pulse rounded bg-navy/10" />)}
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-10 animate-pulse rounded bg-navy/10" />
+          ))}
         </div>
       </div>
     );
@@ -368,14 +412,19 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
       <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-warning" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">Low Stock</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+            Low Stock
+          </span>
           {total > 0 && (
             <span className="rounded-full bg-warning px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
               {fmt(total)}
             </span>
           )}
         </div>
-        <Link href="/products?lowStock=true" className="flex items-center gap-1 text-xs text-brand-500 hover:underline">
+        <Link
+          href="/products?lowStock=true"
+          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+        >
           View all <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
@@ -395,14 +444,24 @@ function LowStockPanel({ products, total, isLoading }: { products: Product[]; to
             return (
               <li key={p.id} className="px-4 py-3">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-navy truncate max-w-[60%]">{p.name}</span>
-                  <span className={cn("text-xs font-semibold", stockUnset ? "text-navy/40" : qty === 0 ? "text-danger" : "text-warning")}>
+                  <span className="text-sm font-medium text-navy truncate max-w-[60%]">
+                    {p.name}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-xs font-semibold",
+                      stockUnset ? "text-navy/70" : qty === 0 ? "text-danger" : "text-warning",
+                    )}
+                  >
                     {stockUnset ? "Not set" : `${qty} ${p.unit ?? "units"}`}
                   </span>
                 </div>
                 <div className="h-1 w-full overflow-hidden rounded-full bg-surface-border">
                   <div
-                    className={cn("h-full rounded-full transition-all", stockUnset ? "bg-navy/20" : qty === 0 ? "bg-danger" : "bg-warning")}
+                    className={cn(
+                      "h-full rounded-full transition-all",
+                      stockUnset ? "bg-navy/20" : qty === 0 ? "bg-danger" : "bg-warning",
+                    )}
                     style={{ width: stockUnset ? "100%" : `${pct}%` }}
                   />
                 </div>
@@ -421,13 +480,7 @@ type ViewMode = "operator" | "driver";
 
 const MODE_STORAGE_KEY = "rf-dashboard-view-mode";
 
-function ModeSwitcher({
-  mode,
-  onChange,
-}: {
-  mode: ViewMode;
-  onChange: (m: ViewMode) => void;
-}) {
+function ModeSwitcher({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode) => void }) {
   const segments: { key: ViewMode; label: string; icon: LucideIcon }[] = [
     { key: "operator", label: "Operator", icon: Briefcase },
     { key: "driver", label: "Driver", icon: Truck },
@@ -450,9 +503,7 @@ function ModeSwitcher({
             onClick={() => onChange(s.key)}
             className={cn(
               "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-              active
-                ? "bg-navy text-white"
-                : "text-navy/55 hover:text-navy",
+              active ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
             )}
           >
             <Icon className="h-3.5 w-3.5" />
@@ -506,14 +557,34 @@ export default function DashboardPage() {
 
   // ── Data fetching ──
   const POLL = { refetchInterval: 30_000 };
-  const { data: allOrdersData, isLoading: ordersLoading, isError: ordersError } = useOrders({ page: 1, limit: 100 }, POLL);
-  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders({ urgent: true, limit: 5 }, POLL);
-  const { data: recentOrdersData, isLoading: recentLoading, isError: recentError } = useOrders({ page: 1, limit: 5 }, POLL);
-  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns({ status: "SCHEDULED" }, POLL);
+  const {
+    data: allOrdersData,
+    isLoading: ordersLoading,
+    isError: ordersError,
+  } = useOrders({ page: 1, limit: 100 }, POLL);
+  const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
+    { urgent: true, limit: 5 },
+    POLL,
+  );
+  const {
+    data: recentOrdersData,
+    isLoading: recentLoading,
+    isError: recentError,
+  } = useOrders({ page: 1, limit: 5 }, POLL);
+  const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns(
+    { status: "SCHEDULED" },
+    POLL,
+  );
   const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 }, POLL);
-  const { data: lowStockData, isLoading: lowStockLoading } = useProducts({ isActive: true, stockStatus: "LOW", limit: 5 }, POLL);
+  const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
+    { isActive: true, stockStatus: "LOW", limit: 5 },
+    POLL,
+  );
   const { data: financeData, isLoading: financeLoading } = useFinanceDashboard(POLL);
-  const { data: overdueData, isLoading: overdueLoading } = useInvoices({ status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" }, POLL);
+  const { data: overdueData, isLoading: overdueLoading } = useInvoices(
+    { status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" },
+    POLL,
+  );
 
   // ── KPI calculations ──
   const activeOrders = React.useMemo(() => {
@@ -535,7 +606,7 @@ export default function DashboardPage() {
   const routesToday = routeRunsData?.meta?.total ?? 0;
   const driversOnRoad = React.useMemo(
     () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
-    [driversData]
+    [driversData],
   );
   const lowStockTotal = lowStockData?.meta?.total ?? 0;
   const todayRevenue = financeData?.summaryTable?.today?.sales ?? 0;
@@ -567,7 +638,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 p-6">
-
       {/* ── Mode switcher (dual-role users only) ── */}
       {canActAsDriver && (
         <div className="-mb-3 flex justify-end">
@@ -580,17 +650,18 @@ export default function DashboardPage() {
         <div className="flex items-start justify-between">
           <div>
             <h2 className="text-xl font-bold text-navy">
-              {greeting}{ownerName ? `, ${ownerName}` : ""}!
+              {greeting}
+              {ownerName ? `, ${ownerName}` : ""}!
             </h2>
             {businessName && (
-              <p className="text-sm text-navy/50">
+              <p className="text-sm text-navy/70">
                 Here&apos;s what&apos;s happening at {businessName} today.
               </p>
             )}
           </div>
           {/* Quick-create shortcuts */}
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-navy/40 hidden sm:block">Quick create</span>
+            <span className="text-sm font-medium text-navy/70 hidden sm:block">Quick create</span>
             <Button href="/orders?action=new" size="sm" variant="secondary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               Order
@@ -610,7 +681,7 @@ export default function DashboardPage() {
       {/* Customer / driver quick-create */}
       {!isDriver && !isOperator && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-sm font-medium text-navy/50">Quick create:</span>
+          <span className="mr-1 text-sm font-medium text-navy/70">Quick create:</span>
           <Button href="/orders?action=new" size="sm" variant="secondary">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
             New Order
@@ -620,8 +691,10 @@ export default function DashboardPage() {
 
       {/* ── KPI stat cards ── */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
-        {isOperator && (
-          financeLoading ? <StatSkeleton /> : (
+        {isOperator &&
+          (financeLoading ? (
+            <StatSkeleton />
+          ) : (
             <Link href="/finance" className="block">
               <StatCard
                 label="Today's Revenue"
@@ -630,10 +703,11 @@ export default function DashboardPage() {
                 className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
               />
             </Link>
-          )
-        )}
-        {(isOperator || isCustomer) && (
-          overdueLoading ? <StatSkeleton /> : (
+          ))}
+        {(isOperator || isCustomer) &&
+          (overdueLoading ? (
+            <StatSkeleton />
+          ) : (
             <Link href="/invoices?status=OVERDUE" className="block">
               <StatCard
                 label="Overdue Invoices"
@@ -643,13 +717,14 @@ export default function DashboardPage() {
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : ""
+                  overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : "",
                 )}
               />
             </Link>
-          )
-        )}
-        {ordersLoading ? <StatSkeleton /> : (
+          ))}
+        {ordersLoading ? (
+          <StatSkeleton />
+        ) : (
           <Link href="/orders" className="block">
             <StatCard
               label="Active Orders"
@@ -659,8 +734,10 @@ export default function DashboardPage() {
             />
           </Link>
         )}
-        {(isOperator || isDriver) && (
-          runsLoading ? <StatSkeleton /> : (
+        {(isOperator || isDriver) &&
+          (runsLoading ? (
+            <StatSkeleton />
+          ) : (
             <Link href="/routes" className="block">
               <StatCard
                 label="Scheduled Routes"
@@ -669,10 +746,11 @@ export default function DashboardPage() {
                 className="cursor-pointer transition-shadow hover:shadow-md"
               />
             </Link>
-          )
-        )}
-        {isOperator && (
-          driversLoading ? <StatSkeleton /> : (
+          ))}
+        {isOperator &&
+          (driversLoading ? (
+            <StatSkeleton />
+          ) : (
             <Link href="/drivers" className="block">
               <StatCard
                 label="Active Drivers"
@@ -680,58 +758,93 @@ export default function DashboardPage() {
                 icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : ""
+                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : "",
                 )}
               />
             </Link>
-          )
-        )}
-        {isOperator && (
-          lowStockLoading ? <StatSkeleton /> : (
+          ))}
+        {isOperator &&
+          (lowStockLoading ? (
+            <StatSkeleton />
+          ) : (
             <Link href="/products?lowStock=true" className="block">
               <StatCard
                 label="Low Stock Items"
                 value={lowStockTotal}
                 icon={
-                  <AlertTriangle className={cn("h-5 w-5", lowStockTotal > 0 ? "text-warning" : "")} />
+                  <AlertTriangle
+                    className={cn("h-5 w-5", lowStockTotal > 0 ? "text-warning" : "")}
+                  />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockTotal > 0 ? "ring-1 ring-inset ring-warning/20" : ""
+                  lowStockTotal > 0 ? "ring-1 ring-inset ring-warning/20" : "",
                 )}
               />
             </Link>
-          )
-        )}
+          ))}
       </div>
 
       {/* ── Order pipeline strip (operator only) ── */}
       {isOperator && !ordersLoading && (
         <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
           <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
-            <TrendingUp className="h-4 w-4 text-navy/40" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-navy/50">Order Pipeline</span>
-            <Link href="/orders" className="ml-auto flex items-center gap-1 text-xs text-brand-500 hover:underline">
+            <TrendingUp className="h-4 w-4 text-navy/70" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+              Order Pipeline
+            </span>
+            <Link
+              href="/orders"
+              className="ml-auto flex items-center gap-1 text-xs text-brand-500 hover:underline"
+            >
               View all <ArrowRight className="h-3 w-3" />
             </Link>
           </div>
           <div className="grid grid-cols-5 divide-x divide-surface-border">
             {[
-              { label: "Pending",          key: "PENDING" as const,          color: "text-warning",   bg: "bg-warning-bg" },
-              { label: "Confirmed",        key: "CONFIRMED" as const,        color: "text-brand-600", bg: "bg-brand-50" },
-              { label: "Out for Delivery", key: "OUT_FOR_DELIVERY" as const, color: "text-blue-600",  bg: "bg-blue-50" },
-              { label: "Delivered",        key: "DELIVERED" as const,        color: "text-success",   bg: "bg-success-bg" },
-              { label: "Cancelled",        key: "CANCELLED" as const,        color: "text-navy/60",   bg: "" },
+              {
+                label: "Pending",
+                key: "PENDING" as const,
+                color: "text-warning",
+                bg: "bg-warning-bg",
+              },
+              {
+                label: "Confirmed",
+                key: "CONFIRMED" as const,
+                color: "text-brand-600",
+                bg: "bg-brand-50",
+              },
+              {
+                label: "Out for Delivery",
+                key: "OUT_FOR_DELIVERY" as const,
+                color: "text-blue-600",
+                bg: "bg-blue-50",
+              },
+              {
+                label: "Delivered",
+                key: "DELIVERED" as const,
+                color: "text-success",
+                bg: "bg-success-bg",
+              },
+              { label: "Cancelled", key: "CANCELLED" as const, color: "text-navy/70", bg: "" },
             ].map(({ label, key, color, bg }) => (
               <Link
                 key={key}
                 href={`/orders?status=${key}`}
-                className={cn("flex flex-col items-center gap-1 px-3 py-4 text-center transition-colors hover:bg-surface-raised", bg && orderPipeline[key] > 0 && bg)}
+                className={cn(
+                  "flex flex-col items-center gap-1 px-3 py-4 text-center transition-colors hover:bg-surface-raised",
+                  bg && orderPipeline[key] > 0 && bg,
+                )}
               >
-                <span className={cn("text-2xl font-bold", orderPipeline[key] > 0 ? color : "text-navy/20")}>
+                <span
+                  className={cn(
+                    "text-2xl font-bold",
+                    orderPipeline[key] > 0 ? color : "text-navy/20",
+                  )}
+                >
                   {orderPipeline[key]}
                 </span>
-                <span className="text-xs text-navy/50">{label}</span>
+                <span className="text-xs text-navy/70">{label}</span>
               </Link>
             ))}
           </div>
@@ -759,13 +872,11 @@ export default function DashboardPage() {
       {/* ── Middle row: Urgent Orders + Route Runs + Right column (operator/driver) ── */}
       {(isOperator || isDriver) && (
         <div className={cn("grid grid-cols-1 gap-6", isOperator ? "lg:grid-cols-3" : "")}>
-
           {/* Left 2/3: Urgent Orders + Route Runs */}
           <div className={cn("flex flex-col gap-6", isOperator ? "lg:col-span-2" : "")}>
-
             {/* Urgent orders alert panel */}
-            {isOperator && (
-              urgentLoading ? (
+            {isOperator &&
+              (urgentLoading ? (
                 <div className="animate-pulse rounded-lg border border-surface-border bg-white p-5">
                   <div className="h-4 w-48 rounded bg-navy/10" />
                 </div>
@@ -774,7 +885,8 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
                     <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
                     <h2 className="text-sm font-semibold text-danger">
-                      {urgentOrders.length} Urgent Order{urgentOrders.length !== 1 ? "s" : ""} Require Attention
+                      {urgentOrders.length} Urgent Order{urgentOrders.length !== 1 ? "s" : ""}{" "}
+                      Require Attention
                     </h2>
                   </div>
                   <ul className="divide-y divide-danger/10">
@@ -784,7 +896,7 @@ export default function DashboardPage() {
                           <p className="truncate text-sm font-medium text-navy">
                             {order.customer?.businessName ?? "Unknown Customer"}
                           </p>
-                          <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/60">
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/70">
                             <Clock className="h-3 w-3" />
                             {order.lineItems?.length ?? 0} items &middot; {timeAgo(order.createdAt)}
                           </p>
@@ -804,8 +916,7 @@ export default function DashboardPage() {
                     <p className="mt-0.5 text-xs text-success/70">No urgent orders at this time.</p>
                   </div>
                 </div>
-              )
-            )}
+              ))}
 
             {/* Scheduled route runs */}
             <Card title="Scheduled Route Runs">
@@ -846,7 +957,7 @@ export default function DashboardPage() {
                 ) : (
                   <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                     {drivers.length === 0 ? (
-                      <li className="px-6 py-4 text-sm text-navy/50">No drivers found</li>
+                      <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
                     ) : (
                       drivers.map((driver: Driver) => (
                         <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
@@ -858,7 +969,9 @@ export default function DashboardPage() {
                           />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-navy">{driver.contactName}</p>
-                            <p className="mt-0.5 text-xs text-navy/60">{driver.vehiclePlate ?? driver.user?.username}</p>
+                            <p className="mt-0.5 text-xs text-navy/70">
+                              {driver.vehiclePlate ?? driver.user?.username}
+                            </p>
                           </div>
                           <Badge
                             variant={driver.status === "ACTIVE" ? "success" : "neutral"}
@@ -908,7 +1021,6 @@ export default function DashboardPage() {
           </div>
         )}
       </Card>
-
     </div>
   );
 }

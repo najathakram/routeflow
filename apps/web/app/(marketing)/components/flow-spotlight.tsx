@@ -46,9 +46,9 @@ export function FlowSpotlight() {
                 marginBottom: 28,
               }}
             >
-              The traditional distribution stack is a relay race of phone calls and paperwork —
-              each handoff loses time and money. RouteFlow turns that relay into a single
-              uninterrupted current.
+              The traditional distribution stack is a relay race of phone calls and paperwork — each
+              handoff loses time and money. RouteFlow turns that relay into a single uninterrupted
+              current.
             </p>
             <div style={{ display: "grid", gap: 14 }}>
               {STEPS.map(([t, b], i) => (

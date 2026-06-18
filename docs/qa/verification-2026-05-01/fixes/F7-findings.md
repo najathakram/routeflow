@@ -16,16 +16,16 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|------------|------------|
-| RF-011 | P1 | ✅ Fixed | `invoices.service.ts` | 323639d | ✅ unit | No |
-| RF-012 | P1 | ✅ Fixed | `invoices.service.ts` | 323639d | ✅ unit | No |
-| RF-014 | P1 | ✅ Migration written | `migrations/20260501100000_order_number_unique_index/migration.sql`, `scripts/fix-order-number-duplicates.js` | 323639d | ✅ concurrency note | ⚠️ MIGRATION REQUIRED |
-| RF-017 | P1 | ✅ Already correct | `orders.service.ts` (no change) | — | ✅ unit | No |
-| RF-172 | P1 | ✅ Already correct | `orders.service.ts` (no change) | — | ✅ unit | No |
-| NEW-v2-1 | P2 | ✅ Already correct | `vendor-bills.service.ts` — `qty = new Prisma.Decimal(item.qty)` is the full line quantity | — | — | No |
-| RF-010 | P1 | ✅ Already correct | `invoices.service.ts` line 617 — `Only DRAFT invoices can be edited` guard present | — | — | No |
-| RF-079 | P1 | ✅ Fixed (fire-and-forget path) | `invoices.service.ts` | 323639d | ✅ unit | No |
+| RF       | Sev | Status                          | Files                                                                                                         | Commit  | Test added          | Migration?            |
+| -------- | --- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------- | ------------------- | --------------------- |
+| RF-011   | P1  | ✅ Fixed                        | `invoices.service.ts`                                                                                         | 323639d | ✅ unit             | No                    |
+| RF-012   | P1  | ✅ Fixed                        | `invoices.service.ts`                                                                                         | 323639d | ✅ unit             | No                    |
+| RF-014   | P1  | ✅ Migration written            | `migrations/20260501100000_order_number_unique_index/migration.sql`, `scripts/fix-order-number-duplicates.js` | 323639d | ✅ concurrency note | ⚠️ MIGRATION REQUIRED |
+| RF-017   | P1  | ✅ Already correct              | `orders.service.ts` (no change)                                                                               | —       | ✅ unit             | No                    |
+| RF-172   | P1  | ✅ Already correct              | `orders.service.ts` (no change)                                                                               | —       | ✅ unit             | No                    |
+| NEW-v2-1 | P2  | ✅ Already correct              | `vendor-bills.service.ts` — `qty = new Prisma.Decimal(item.qty)` is the full line quantity                    | —       | —                   | No                    |
+| RF-010   | P1  | ✅ Already correct              | `invoices.service.ts` line 617 — `Only DRAFT invoices can be edited` guard present                            | —       | —                   | No                    |
+| RF-079   | P1  | ✅ Fixed (fire-and-forget path) | `invoices.service.ts`                                                                                         | 323639d | ✅ unit             | No                    |
 
 ---
 

@@ -1,5 +1,5 @@
-const fs = require('fs');
-let content = fs.readFileSync('apps/api/scripts/qa-multi-seller.js', 'utf8');
+const fs = require("fs");
+let content = fs.readFileSync("apps/api/scripts/qa-multi-seller.js", "utf8");
 
 // Fix 1.5: Use temp customer instead of CUSTOMERS.alpha.id
 const old15 = `  // ── 1.5: Expired invite ─────────────────────────────────────────────────────
@@ -37,9 +37,9 @@ const new15 = `  // ── 1.5: Expired invite ───────────
 
 if (content.includes(old15)) {
   content = content.replace(old15, new15);
-  console.log('Fixed 1.5 — using temp customer');
+  console.log("Fixed 1.5 — using temp customer");
 } else {
-  console.log('1.5 pattern NOT FOUND');
+  console.log("1.5 pattern NOT FOUND");
 }
 
 // Remove the restore block (no longer needed since we use temp customer)
@@ -51,10 +51,10 @@ const newRestore = `  // No restore needed — temp customer used for expiry tes
 
 if (content.includes(oldRestore)) {
   content = content.replace(oldRestore, newRestore);
-  console.log('Removed restore block');
+  console.log("Removed restore block");
 } else {
-  console.log('Restore block NOT FOUND');
+  console.log("Restore block NOT FOUND");
 }
 
-fs.writeFileSync('apps/api/scripts/qa-multi-seller.js', content);
-console.log('Done');
+fs.writeFileSync("apps/api/scripts/qa-multi-seller.js", content);
+console.log("Done");

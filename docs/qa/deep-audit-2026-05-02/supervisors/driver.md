@@ -22,13 +22,14 @@
 ## Counts
 
 | Severity | Product bugs | Env artifacts | Code-only suspected |
-|----------|-------------|---------------|---------------------|
-| P0 | 0 | 0 | 0 |
-| P1 | 2 | 0 | 3 |
-| P2 | 2 | 0 | 0 |
-| P3 | 1 | 2 | 0 |
+| -------- | ------------ | ------------- | ------------------- |
+| P0       | 0            | 0             | 0                   |
+| P1       | 2            | 0             | 3                   |
+| P2       | 2            | 0             | 0                   |
+| P3       | 1            | 2             | 0                   |
 
 Notes:
+
 - P1 product = token priority race (concrete repro x2 workers) + driver token not persisted (concrete repro)
 - P1 code-only suspected = 0-stop stuck, idempotency missing, Standing tab mislabeled
 - P2 product = Cash drawer stub (BUG-DRV2-4), Standing tab label (BUG-DRV2-3 treated as P2 product because the tab exists but shows wrong screen — navigable, not crashed; moved to P2 given no hard blocker)
@@ -41,13 +42,13 @@ Deduplication applied: BUG-DRV1-1 = BUG-DRV2-2 (throttle message, 1 bug counted)
 
 ## Counts by category (product only)
 
-| Category | Count |
-|----------|-------|
-| security | 2 (token priority race, token not persisted) |
-| flow-broken | 1 (0-stop stuck) |
-| money | 1 (idempotency missing) |
-| ux | 2 (Standing tab wrong, CASH RECEIVED static label) |
-| empty-state | 1 (cash drawer stub) |
+| Category    | Count                                              |
+| ----------- | -------------------------------------------------- |
+| security    | 2 (token priority race, token not persisted)       |
+| flow-broken | 1 (0-stop stuck)                                   |
+| money       | 1 (idempotency missing)                            |
+| ux          | 2 (Standing tab wrong, CASH RECEIVED static label) |
+| empty-state | 1 (cash drawer stub)                               |
 
 ---
 
@@ -68,4 +69,4 @@ Authentication layer has two compounding defects — token not written durably a
 - BUG-DRV1-1 / BUG-DRV2-2 — raw ThrottlerException message: triggered only by shared-IP throttling during concurrent worker sessions; real-world driver unlikely to hit 5 login attempts in 5 min; severity downgraded to env artifact for this audit
 - BUG-DRV1-5 — 0-stop stuck: code-analysis only; 0-stop routes are an edge case requiring deliberate operator misconfiguration; P1 SUSPECTED, recommend fix before next release but not blocking current ship window if cannot be live-verified
 - BUG-DRV1-3 — idempotency key missing: code-analysis only; risk is real on flaky networks but requires offline-queue replay to manifest; P1 SUSPECTED, fix in parallel with session bugs
-- BUG-DRV2-3 — Standing tab label: DRIVER-2 cites source code directly (_layout.tsx title='Standing' → orders screen); low ambiguity; P1 SUSPECTED for UX but product may intentionally repurpose tab — needs PM sign-off before treating as bug
+- BUG-DRV2-3 — Standing tab label: DRIVER-2 cites source code directly (\_layout.tsx title='Standing' → orders screen); low ambiguity; P1 SUSPECTED for UX but product may intentionally repurpose tab — needs PM sign-off before treating as bug

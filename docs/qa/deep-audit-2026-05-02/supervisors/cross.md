@@ -15,23 +15,23 @@
 ## Counts
 
 | Severity | Bugs |
-|----------|------|
-| P0 | 0 |
-| P1 | 4 |
-| P2 | 5 |
-| P3 | 0 |
+| -------- | ---- |
+| P0       | 0    |
+| P1       | 4    |
+| P2       | 5    |
+| P3       | 0    |
 
 ## Counts by category
 
-| Category | Bugs |
-|----------|------|
-| a11y | 3 (BUG-XR2-1, BUG-XR2-2, BUG-XR2-3) |
-| security | 2 (BUG-XR1-2, BUG-XR1-3) |
-| flow-broken | 1 (BUG-XR1-4) |
-| concurrency | 2 (BUG-XR1-1, BUG-XR1-2) |
-| ux | 2 (BUG-XR2-4, BUG-XR2-5) |
+| Category    | Bugs                                |
+| ----------- | ----------------------------------- |
+| a11y        | 3 (BUG-XR2-1, BUG-XR2-2, BUG-XR2-3) |
+| security    | 2 (BUG-XR1-2, BUG-XR1-3)            |
+| flow-broken | 1 (BUG-XR1-4)                       |
+| concurrency | 2 (BUG-XR1-1, BUG-XR1-2)            |
+| ux          | 2 (BUG-XR2-4, BUG-XR2-5)            |
 
-*(BUG-XR1-2 counted in both security and concurrency; total unique bugs = 9)*
+_(BUG-XR1-2 counted in both security and concurrency; total unique bugs = 9)_
 
 ## Verdict: HOLD
 

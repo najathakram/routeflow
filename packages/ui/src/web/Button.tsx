@@ -10,16 +10,12 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary:
-          "bg-brand-500 text-white hover:bg-brand-700 focus-visible:ring-brand-500",
+        primary: "bg-brand-500 text-white hover:bg-brand-700 focus-visible:ring-brand-500",
         secondary:
           "bg-surface-raised text-navy border border-surface-border hover:bg-surface-border focus-visible:ring-navy",
-        ghost:
-          "text-navy hover:bg-surface-raised focus-visible:ring-navy",
-        danger:
-          "bg-danger text-white hover:bg-danger/90 focus-visible:ring-danger",
-        link:
-          "text-brand-500 underline-offset-4 hover:underline focus-visible:ring-brand-500",
+        ghost: "text-navy hover:bg-surface-raised focus-visible:ring-navy",
+        danger: "bg-danger text-white hover:bg-danger/90 focus-visible:ring-danger",
+        link: "text-brand-500 underline-offset-4 hover:underline focus-visible:ring-brand-500",
       },
       size: {
         sm: "h-8 px-3 text-sm rounded-sm",
@@ -42,7 +38,8 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children">,
+  extends
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children">,
     VariantProps<typeof buttonVariants> {
   children?: React.ReactNode;
   href?: string;

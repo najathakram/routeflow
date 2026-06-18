@@ -3,12 +3,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  ListGroup,
-  ListRow,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { ListGroup, ListRow, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 
@@ -37,9 +32,7 @@ export default function DriverProfileScreen() {
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <Text style={styles.name}>{displayName}</Text>
-          <Text style={styles.role}>
-            Driver{tenantName ? ` · ${tenantName}` : ""}
-          </Text>
+          <Text style={styles.role}>Driver{tenantName ? ` · ${tenantName}` : ""}</Text>
         </View>
 
         <ListGroup header="ACCOUNT">
@@ -74,7 +67,12 @@ export default function DriverProfileScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
-  avatarBlock: { alignItems: "center", paddingVertical: 28, backgroundColor: ios.bgElev, marginBottom: 16 },
+  avatarBlock: {
+    alignItems: "center",
+    paddingVertical: 28,
+    backgroundColor: ios.bgElev,
+    marginBottom: 16,
+  },
   avatar: {
     width: 72,
     height: 72,

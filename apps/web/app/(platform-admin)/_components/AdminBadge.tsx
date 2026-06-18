@@ -23,7 +23,9 @@ export function AdminBadge({ children, variant = "status", className = "" }: Adm
   const colors = variant === "plan" ? PLAN_COLORS : STATUS_COLORS;
   const colorClass = colors[children] ?? "bg-slate-700 text-slate-400 ring-slate-600/30";
   return (
-    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${colorClass} ${className}`}>
+    <span
+      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${colorClass} ${className}`}
+    >
       {children}
     </span>
   );

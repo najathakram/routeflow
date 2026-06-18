@@ -35,11 +35,7 @@ export function ScreenHeader({ title, rightIcon, onRightPress }: ScreenHeaderPro
 
       <View style={styles.right}>
         {rightIcon ? (
-          <Pressable
-            onPress={onRightPress}
-            hitSlop={12}
-            accessibilityRole="button"
-          >
+          <Pressable onPress={onRightPress} hitSlop={12} accessibilityRole="button">
             {rightIcon}
           </Pressable>
         ) : null}

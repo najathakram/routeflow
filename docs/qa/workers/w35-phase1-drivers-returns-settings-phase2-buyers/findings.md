@@ -90,39 +90,39 @@ BUG-31 [HIGH]: Standing orders shows No standing orders - M/W/F template missing
 
 ## Bug Summary
 
-| # | Severity | Page | Description |
-|---|----------|------|-------------|
-| 1 | Critical | /drivers | Redirects to /routes immediately |
-| 2 | Critical | /drivers/add | 404 Unmatched Route |
-| 3 | Critical | /drivers/:id | 404 Unmatched Route |
-| 4 | High | /returns | Empty state despite APPROVED return in API |
-| 5 | High | /returns/:id | 404 Unmatched Route |
-| 6 | Medium | /returns | No Create Return button |
-| 7 | High | /finance/expenses | 404 Unmatched Route |
-| 8 | High | /bookkeeping | 404 Unmatched Route |
-| 9 | Medium | /vendor-bills/:id | Mark received on already-RECEIVED bill |
-| 10 | Low | /vendor-bills | Missing Partial and Void filter tabs |
-| 11 | Medium | /analytics | GET /analytics returns 404 |
-| 12 | High | /settings | No Users tab |
-| 13 | High | /settings | No Branding tab |
-| 14 | High | /settings | No Integrations tab |
-| 15 | Medium | /settings | No Send Test for notifications |
-| 16 | Medium | /settings | ZIP accepts invalid format |
-| 17 | Medium | /settings | Tax rate accepts out-of-range values |
-| 18 | High | /settings | GET /tenant/settings 404 |
-| 19 | High | /settings/users | 404 Unmatched Route |
-| 20 | Critical | Buyer /invoices | Orders list on invoices page |
-| 21 | High | Buyer /more | Orders list on more page |
-| 22 | Critical | Buyer /catalog | POST /buyer/cart/items 404 |
-| 23 | Critical | Buyer /catalog | GET /buyer/cart 404 |
-| 24 | Medium | Buyer /catalog | No Add to Cart button |
-| 25 | Medium | Buyer /catalog | No favorite button |
-| 26 | Medium | Buyer /profile | Redirects to /orders |
-| 27 | High | Buyer /standing-orders | GET /buyer/standing-orders 404 |
-| 28 | High | Buyer /standing-orders | No templates in QA data |
-| 29 | Medium | Buyer /more | Total Spend $0 despite delivered orders |
-| 30 | Medium | Buyer general | Dual tokens cause company-code page |
-| 31 | Medium | Buyer3 | OVERDUE invoice missing from seed |
-| 32 | Medium | Buyer3 | CONFIRMED order shows as PENDING in seed |
-| 33 | High | Buyer general | No dashboard/home page |
-| 34 | Medium | Buyer general | GET /buyer/me returns 404 |
+| #   | Severity | Page                   | Description                                |
+| --- | -------- | ---------------------- | ------------------------------------------ |
+| 1   | Critical | /drivers               | Redirects to /routes immediately           |
+| 2   | Critical | /drivers/add           | 404 Unmatched Route                        |
+| 3   | Critical | /drivers/:id           | 404 Unmatched Route                        |
+| 4   | High     | /returns               | Empty state despite APPROVED return in API |
+| 5   | High     | /returns/:id           | 404 Unmatched Route                        |
+| 6   | Medium   | /returns               | No Create Return button                    |
+| 7   | High     | /finance/expenses      | 404 Unmatched Route                        |
+| 8   | High     | /bookkeeping           | 404 Unmatched Route                        |
+| 9   | Medium   | /vendor-bills/:id      | Mark received on already-RECEIVED bill     |
+| 10  | Low      | /vendor-bills          | Missing Partial and Void filter tabs       |
+| 11  | Medium   | /analytics             | GET /analytics returns 404                 |
+| 12  | High     | /settings              | No Users tab                               |
+| 13  | High     | /settings              | No Branding tab                            |
+| 14  | High     | /settings              | No Integrations tab                        |
+| 15  | Medium   | /settings              | No Send Test for notifications             |
+| 16  | Medium   | /settings              | ZIP accepts invalid format                 |
+| 17  | Medium   | /settings              | Tax rate accepts out-of-range values       |
+| 18  | High     | /settings              | GET /tenant/settings 404                   |
+| 19  | High     | /settings/users        | 404 Unmatched Route                        |
+| 20  | Critical | Buyer /invoices        | Orders list on invoices page               |
+| 21  | High     | Buyer /more            | Orders list on more page                   |
+| 22  | Critical | Buyer /catalog         | POST /buyer/cart/items 404                 |
+| 23  | Critical | Buyer /catalog         | GET /buyer/cart 404                        |
+| 24  | Medium   | Buyer /catalog         | No Add to Cart button                      |
+| 25  | Medium   | Buyer /catalog         | No favorite button                         |
+| 26  | Medium   | Buyer /profile         | Redirects to /orders                       |
+| 27  | High     | Buyer /standing-orders | GET /buyer/standing-orders 404             |
+| 28  | High     | Buyer /standing-orders | No templates in QA data                    |
+| 29  | Medium   | Buyer /more            | Total Spend $0 despite delivered orders    |
+| 30  | Medium   | Buyer general          | Dual tokens cause company-code page        |
+| 31  | Medium   | Buyer3                 | OVERDUE invoice missing from seed          |
+| 32  | Medium   | Buyer3                 | CONFIRMED order shows as PENDING in seed   |
+| 33  | High     | Buyer general          | No dashboard/home page                     |
+| 34  | Medium   | Buyer general          | GET /buyer/me returns 404                  |

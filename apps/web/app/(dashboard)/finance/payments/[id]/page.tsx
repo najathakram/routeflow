@@ -9,14 +9,18 @@ import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
 
 const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash", CHECK: "Check", ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card", OTHER: "Other",
-  CREDIT_NOTE: "Credit Note", ADVANCE: "Advance",
+  CASH: "Cash",
+  CHECK: "Check",
+  ACH: "ACH / Bank Transfer",
+  CREDIT_CARD: "Credit Card",
+  OTHER: "Other",
+  CREDIT_NOTE: "Credit Note",
+  ADVANCE: "Advance",
 };
 const STATUS_STYLES: Record<string, string> = {
   PAID: "bg-success-bg text-success",
   DRAFT: "bg-warning-bg text-warning",
-  VOID: "bg-surface-raised text-navy/40",
+  VOID: "bg-surface-raised text-navy/70",
 };
 
 export default function PaymentDetailPage() {
@@ -31,13 +35,18 @@ export default function PaymentDetailPage() {
   const { data, isLoading } = useInvoicePayments({ limit: 200 });
   const voidPayment = useVoidPayment();
 
-  React.useEffect(() => { setTitle("Payment Receipt"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Payment Receipt");
+  }, [setTitle]);
 
   const payment = data?.data.find((p) => p.id === id);
 
   const handleVoid = async () => {
     if (!payment) return;
-    if (!confirm("Void this payment? This reverses its effect on the invoice and cannot be undone.")) return;
+    if (
+      !confirm("Void this payment? This reverses its effect on the invoice and cannot be undone.")
+    )
+      return;
     try {
       await voidPayment.mutateAsync({ invoiceId: payment.invoice.id, paymentId: payment.id });
       toast({ title: "Payment voided", variant: "success" });
@@ -47,14 +56,20 @@ export default function PaymentDetailPage() {
   };
 
   if (isLoading) {
-    return <div className="flex h-64 items-center justify-center p-6"><div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" /></div>;
+    return (
+      <div className="flex h-64 items-center justify-center p-6">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+      </div>
+    );
   }
 
   if (!payment) {
     return (
       <div className="p-6 text-center space-y-3">
-        <p className="text-navy/60">Payment not found.</p>
-        <button onClick={() => router.back()} className="text-brand-500 hover:underline text-sm">← Back</button>
+        <p className="text-navy/70">Payment not found.</p>
+        <button onClick={() => router.back()} className="text-brand-500 hover:underline text-sm">
+          ← Back
+        </button>
       </div>
     );
   }
@@ -65,10 +80,19 @@ export default function PaymentDetailPage() {
     <div className="mx-auto max-w-2xl space-y-6 p-6">
       {/* Back + actions */}
       <div className="flex items-center justify-between">
-        <button onClick={() => router.push("/finance/payments")} className="text-sm text-navy/60 hover:text-navy">← Back to Payments</button>
+        <button
+          onClick={() => router.push("/finance/payments")}
+          className="text-sm text-navy/70 hover:text-navy"
+        >
+          ← Back to Payments
+        </button>
         <div className="flex gap-2">
           {status !== "VOID" && (
-            <button onClick={handleVoid} disabled={voidPayment.isPending} className="rounded-lg border border-danger px-3 py-1.5 text-sm text-danger hover:bg-danger-bg transition-colors disabled:opacity-50">
+            <button
+              onClick={handleVoid}
+              disabled={voidPayment.isPending}
+              className="rounded-lg border border-danger px-3 py-1.5 text-sm text-danger hover:bg-danger-bg transition-colors disabled:opacity-50"
+            >
               {voidPayment.isPending ? "Voiding..." : "Void Payment"}
             </button>
           )}
@@ -82,29 +106,43 @@ export default function PaymentDetailPage() {
           <div>
             <h1 className="text-xl font-bold text-navy">Payment Receipt</h1>
             {payment.paymentNumber && (
-              <p className="font-mono text-sm text-navy/60 mt-0.5">{payment.paymentNumber}</p>
+              <p className="font-mono text-sm text-navy/70 mt-0.5">{payment.paymentNumber}</p>
             )}
           </div>
-          <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${STATUS_STYLES[status]}`}>{status}</span>
+          <span
+            className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${STATUS_STYLES[status]}`}
+          >
+            {status}
+          </span>
         </div>
 
         {/* Customer + date row */}
         <div className="grid grid-cols-2 gap-6 px-6 py-5 border-b border-surface-border">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/50">Received From</p>
-            <p className="mt-1 font-semibold text-navy">{payment.invoice.customer?.businessName ?? "—"}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
+              Received From
+            </p>
+            <p className="mt-1 font-semibold text-navy">
+              {payment.invoice.customer?.businessName ?? "—"}
+            </p>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/50">Payment Date</p>
-            <p className="mt-1 font-semibold text-navy">{fmtDate(payment.paidAt ?? payment.createdAt)}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">Payment Date</p>
+            <p className="mt-1 font-semibold text-navy">
+              {fmtDate(payment.paidAt ?? payment.createdAt)}
+            </p>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/50">Payment Mode</p>
-            <p className="mt-1 font-semibold text-navy">{METHOD_LABELS[payment.method] ?? payment.method}</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">Payment Mode</p>
+            <p className="mt-1 font-semibold text-navy">
+              {METHOD_LABELS[payment.method] ?? payment.method}
+            </p>
           </div>
           {payment.reference && (
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-navy/50">Reference #</p>
+              <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
+                Reference #
+              </p>
               <p className="mt-1 font-semibold text-navy">{payment.reference}</p>
             </div>
           )}
@@ -112,11 +150,20 @@ export default function PaymentDetailPage() {
 
         {/* Applied to invoice(s) */}
         <div className="px-6 py-5 border-b border-surface-border">
-          <p className="text-xs font-medium uppercase tracking-wide text-navy/50 mb-3">Applied to Invoice</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-navy/70 mb-3">
+            Applied to Invoice
+          </p>
           <div className="flex items-center justify-between rounded-lg bg-surface-raised px-4 py-3">
             <div>
-              <Link href={`/invoices/${payment.invoice.id}`} className="font-medium text-brand-600 hover:underline">{payment.invoice.invoiceNumber}</Link>
-              <p className="text-xs text-navy/50 mt-0.5">{payment.invoice.customer?.businessName}</p>
+              <Link
+                href={`/invoices/${payment.invoice.id}`}
+                className="font-medium text-brand-600 hover:underline"
+              >
+                {payment.invoice.invoiceNumber}
+              </Link>
+              <p className="text-xs text-navy/70 mt-0.5">
+                {payment.invoice.customer?.businessName}
+              </p>
             </div>
             <span className="font-semibold text-navy">{fmt(payment.amount)}</span>
           </div>
@@ -143,7 +190,7 @@ export default function PaymentDetailPage() {
         {/* Notes */}
         {payment.notes && (
           <div className="border-t border-surface-border px-6 py-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/50 mb-1">Notes</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-navy/70 mb-1">Notes</p>
             <p className="text-sm text-navy/70">{payment.notes}</p>
           </div>
         )}

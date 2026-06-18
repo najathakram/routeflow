@@ -38,7 +38,9 @@ export default function BuyerCartPage() {
   const [deliveryDate, setDeliveryDate] = React.useState("");
   const [urgent, setUrgent] = React.useState(false);
   const [forceNew, setForceNew] = React.useState(false);
-  const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(null);
+  const [orderPlaced, setOrderPlaced] = React.useState<{ id: string; orderNumber: string } | null>(
+    null,
+  );
   const [orderError, setOrderError] = React.useState<string | null>(null);
 
   // Whether we'll merge into the existing order
@@ -107,9 +109,7 @@ export default function BuyerCartPage() {
         setOrderPlaced(result);
       }
     } catch (err: any) {
-      setOrderError(
-        err?.response?.data?.message ?? "Failed to create order. Please try again.",
-      );
+      setOrderError(err?.response?.data?.message ?? "Failed to create order. Please try again.");
     }
   };
 
@@ -130,7 +130,7 @@ export default function BuyerCartPage() {
             <ShoppingCart className="h-8 w-8 text-success" />
           </div>
           <h2 className="text-xl font-bold text-navy mb-2">Order Placed!</h2>
-          <p className="text-sm text-navy/60 mb-6">
+          <p className="text-sm text-navy/70 mb-6">
             Your order <strong>{orderPlaced.orderNumber}</strong> has been submitted.
           </p>
           <div className="flex items-center justify-center gap-3">
@@ -158,14 +158,14 @@ export default function BuyerCartPage() {
       <div className="p-6">
         <button
           onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-          className="mb-4 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+          className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" /> Back to Shop
         </button>
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <ShoppingCart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">Your cart is empty</h2>
-          <p className="text-sm text-navy/60 mb-4">Add products from the shop to get started.</p>
+          <p className="text-sm text-navy/70 mb-4">Add products from the shop to get started.</p>
           <Button
             className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
             onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
@@ -181,7 +181,7 @@ export default function BuyerCartPage() {
     <div className="p-6 max-w-4xl">
       <button
         onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-        className="mb-4 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" /> Continue Shopping
       </button>
@@ -209,7 +209,7 @@ export default function BuyerCartPage() {
 
       {forceNew && activeOrder && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
-          <p className="text-sm text-navy/60">A new order will be created.</p>
+          <p className="text-sm text-navy/70">A new order will be created.</p>
           <button
             onClick={() => setForceNew(false)}
             className="text-xs font-medium text-buyer-500 hover:text-buyer-700 underline whitespace-nowrap"
@@ -225,7 +225,7 @@ export default function BuyerCartPage() {
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/50 uppercase tracking-wider">
+                <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Product</th>
                   <th className="px-4 py-2.5 text-center w-32">Qty</th>
                   <th className="px-4 py-2.5 text-right w-24">Price</th>
@@ -254,7 +254,7 @@ export default function BuyerCartPage() {
                           </div>
                           <div>
                             <p className="text-sm font-medium text-navy">{item.name}</p>
-                            <p className="text-xs text-navy/40">per {item.unit}</p>
+                            <p className="text-xs text-navy/70">per {item.unit}</p>
                           </div>
                         </div>
                       </td>
@@ -275,18 +275,20 @@ export default function BuyerCartPage() {
                                       cart.removeItem(item.productId);
                                     }
                                   }}
-                                  className="rounded p-1 text-navy/40 hover:bg-surface-raised"
+                                  className="rounded p-1 text-navy/70 hover:bg-surface-raised"
                                 >
                                   <Minus className="h-3 w-3" />
                                 </button>
                                 <input
-                                  type="number" min={0}
+                                  type="number"
+                                  min={0}
                                   value={item.boxes ?? 0}
                                   onChange={(e) => {
                                     const b = Math.max(0, Number(e.target.value));
                                     const p = item.pieces ?? 0;
                                     const qty = b * item.unitsPerBox! + p;
-                                    if (qty > 0) cart.addItem({ ...item, qty, boxes: b, pieces: p });
+                                    if (qty > 0)
+                                      cart.addItem({ ...item, qty, boxes: b, pieces: p });
                                   }}
                                   className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
                                 />
@@ -294,38 +296,51 @@ export default function BuyerCartPage() {
                                   onClick={() => {
                                     const b = (item.boxes ?? 0) + 1;
                                     const p = item.pieces ?? 0;
-                                    cart.addItem({ ...item, qty: b * item.unitsPerBox! + p, boxes: b, pieces: p });
+                                    cart.addItem({
+                                      ...item,
+                                      qty: b * item.unitsPerBox! + p,
+                                      boxes: b,
+                                      pieces: p,
+                                    });
                                   }}
-                                  className="rounded p-1 text-navy/40 hover:bg-surface-raised"
+                                  className="rounded p-1 text-navy/70 hover:bg-surface-raised"
                                 >
                                   <Plus className="h-3 w-3" />
                                 </button>
-                                <span className="text-navy/40 ml-0.5">box</span>
+                                <span className="text-navy/70 ml-0.5">box</span>
                               </div>
                               <span className="text-navy/30">+</span>
                               <div className="flex items-center gap-0.5">
                                 <input
-                                  type="number" min={0} max={(item.unitsPerBox ?? 1) - 1}
+                                  type="number"
+                                  min={0}
+                                  max={(item.unitsPerBox ?? 1) - 1}
                                   value={item.pieces ?? 0}
                                   onChange={(e) => {
                                     const b = item.boxes ?? 0;
-                                    const p = Math.max(0, Math.min(Number(e.target.value), (item.unitsPerBox ?? 1) - 1));
+                                    const p = Math.max(
+                                      0,
+                                      Math.min(Number(e.target.value), (item.unitsPerBox ?? 1) - 1),
+                                    );
                                     const qty = b * item.unitsPerBox! + p;
-                                    if (qty > 0) cart.addItem({ ...item, qty, boxes: b, pieces: p });
+                                    if (qty > 0)
+                                      cart.addItem({ ...item, qty, boxes: b, pieces: p });
                                   }}
                                   className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
                                 />
-                                <span className="text-navy/40">pcs</span>
+                                <span className="text-navy/70">pcs</span>
                               </div>
                             </div>
-                            <p className="text-[10px] text-navy/40">= {item.qty} {item.unit}</p>
+                            <p className="text-[10px] text-navy/70">
+                              = {item.qty} {item.unit}
+                            </p>
                           </div>
                         ) : (
                           // Simple qty input
                           <div className="flex items-center justify-center gap-1">
                             <button
                               onClick={() => cart.updateQty(item.productId, item.qty - 1)}
-                              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
                             >
                               <Minus className="h-3.5 w-3.5" />
                             </button>
@@ -333,12 +348,14 @@ export default function BuyerCartPage() {
                               type="number"
                               min={1}
                               value={item.qty}
-                              onChange={(e) => cart.updateQty(item.productId, Math.max(1, Number(e.target.value)))}
+                              onChange={(e) =>
+                                cart.updateQty(item.productId, Math.max(1, Number(e.target.value)))
+                              }
                               className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
                             />
                             <button
                               onClick={() => cart.updateQty(item.productId, item.qty + 1)}
-                              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
                             >
                               <Plus className="h-3.5 w-3.5" />
                             </button>
@@ -380,7 +397,7 @@ export default function BuyerCartPage() {
             <h3 className="text-sm font-semibold text-navy">Order Options</h3>
 
             <div>
-              <label className="block text-xs text-navy/50 mb-1">Requested Delivery Date</label>
+              <label className="block text-xs text-navy/70 mb-1">Requested Delivery Date</label>
               <input
                 type="date"
                 value={deliveryDate}
@@ -390,13 +407,13 @@ export default function BuyerCartPage() {
             </div>
 
             <div>
-              <label className="block text-xs text-navy/50 mb-1">Order Notes</label>
+              <label className="block text-xs text-navy/70 mb-1">Order Notes</label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Special instructions..."
                 rows={3}
-                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
+                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-500 focus:outline-none focus:ring-1 focus:ring-buyer-500"
               />
             </div>
 
@@ -418,12 +435,12 @@ export default function BuyerCartPage() {
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
             <h3 className="text-sm font-semibold text-navy">Order Summary</h3>
             <div className="flex justify-between text-sm">
-              <span className="text-navy/60">Subtotal ({cart.totalQty} items)</span>
+              <span className="text-navy/70">Subtotal ({cart.totalQty} items)</span>
               <span className="font-medium text-navy">{fmt(subtotal)}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-navy/60">Tax</span>
-              <span className="text-navy/50">Calculated at checkout</span>
+              <span className="text-navy/70">Tax</span>
+              <span className="text-navy/70">Calculated at checkout</span>
             </div>
             <div className="border-t border-surface-border pt-3 flex justify-between">
               <span className="text-sm font-semibold text-navy">Estimated Total</span>

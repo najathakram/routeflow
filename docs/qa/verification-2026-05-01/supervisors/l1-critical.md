@@ -2,79 +2,79 @@
 
 ## Coverage
 
-| Worker | Pass | Fail | Partial | Blocked |
-|--------|------|------|---------|---------|
-| v1 (GUI+API) | 8 | 4 | 0 | 8 |
-| v2 | 6 | 8 | 4 | 0 |
-| v3 | 1 | 7 | 5 | 0 |
-| r-web | 3 | 3 | 2 | 0 |
-| r-mobile | 3 | 1 | 4 | 4 (API supp: all blocked) |
+| Worker       | Pass | Fail | Partial | Blocked                   |
+| ------------ | ---- | ---- | ------- | ------------------------- |
+| v1 (GUI+API) | 8    | 4    | 0       | 8                         |
+| v2           | 6    | 8    | 4       | 0                         |
+| v3           | 1    | 7    | 5       | 0                         |
+| r-web        | 3    | 3    | 2       | 0                         |
+| r-mobile     | 3    | 1    | 4       | 4 (API supp: all blocked) |
 
 ---
 
 ## RF Status Table (P0 + P1)
 
-| RF | Sev | Verdict | Now | Worker | Notes |
-|----|-----|---------|-----|--------|-------|
-| RF-001 | P0 | Claimed fixed | VERIFIED | v1, v1-supp | tenantId non-null; dispatched runs visible to driver |
-| RF-002 | P0 | Claimed fixed | FAIL | v3 | window.io undefined; zero wss:// entries after 30 s; Socket.IO never connects |
-| RF-003 | P0 | Claimed fixed | VERIFIED | v1 | SCHEDULED run → 403 on stop-complete; guard confirmed |
-| RF-073 | P0 | Claimed fixed | VERIFIED | v1, v1-supp | PATCH role field silently ignored; role unchanged in response |
-| RF-074 | P0 | Claimed fixed | BLOCKED | v1 | /customers/* returns 500 for all operations; cascade guard untestable |
-| RF-075 | P0 | Claimed fixed | VERIFIED | v1, v1-supp | Unauthenticated fetch → 401; auth guard confirmed |
-| RF-076 | P0 | Claimed fixed | FAIL | v1 | Pre-existing SVG with embedded script served inline HTTP 200; no Content-Disposition |
-| RF-077 | P0 | Claimed fixed | VERIFIED | v1 | Separate localStorage keys confirmed; no stomping on API key layer |
-| RF-147 | P0 | Claimed fixed | VERIFIED | v1, v1-supp | Invoice from order carries correct tenantId |
-| RF-157 | P0 | Claimed fixed | FAIL | v1 | Same SVG payload accepted and served inline; XSS confirmed (API supp: upload connectivity issue blocked direct test) |
-| RF-176 | P0 | Claimed fixed | VERIFIED | v1, v1-supp | No null-tenantId JWT issued; 401 returned (minor: wrong code, should be 400) |
-| RF-197 | P0 | Claimed fixed | BLOCKED | v1 | DELETE /customers/:id → 500; cascade behavior untestable |
-| RF-203 | P0 | Claimed fixed | FAIL | v3 | /routes/create spinner 15 s → redirect /home; form never renders |
-| RF-004 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-005 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-006 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-007 | P1 | Claimed fixed | PARTIAL | v3 | Load time improved (5–7 s vs 20–40 s); no skeleton shown; blank white remains |
-| RF-008 | P1 | Claimed fixed | PARTIAL | v2 | Cron handler calls forTenant() with no ALS context; source-confirmed regression; no runtime test possible |
-| RF-009 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-010 | P1 | Claimed fixed | VERIFIED | v2 | Credit note over-invoiceTotal → 400; guard works |
-| RF-011 | P1 | Claimed fixed | FAIL | v2 | POST /invoices/:id/duplicate → 201 for order-linked invoice; double-billing live |
-| RF-012 | P1 | Claimed fixed | FAIL | v2 | PATCH discount → 200 but total unchanged; recalc not triggered |
-| RF-013 | P1 | Claimed fixed | FAIL | v2 | buyerLogout() never calls cartStore.clear(); source confirmed |
-| RF-014 | P1 | Claimed fixed | FAIL | v1, v1-supp | Duplicate orderNumber ORD-1777431385832 confirmed in live data |
-| RF-015 | P1 | Claimed fixed | PARTIAL | v2 | Source confirms no sendToDriver/WebSocket emit in createRun(); API-only check |
-| RF-016 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-017 | P1 | Claimed fixed | FAIL | v1, v1-supp | POST /orders with stock=0 product → 201; no stock check |
-| RF-018 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-019 | P1 | Not tested | NOT COVERED | — | No worker assigned; still open |
-| RF-078 | P1 | Not tested | NOT COVERED | — | Related to RF-076/157; SVG inline serving confirms gap |
-| RF-079 | P1 | Claimed fixed | BLOCKED | v1 | /customers/:id → 500; isTaxExempt untestable |
-| RF-080 | P1 | Claimed fixed | BLOCKED | v1 | DELETE /customers/bulk → 500; untestable |
-| RF-081 | P1 | Claimed fixed | FAIL | v1-supp | DRIVER token GET /returns/:id → 200 with full return data; IDOR confirmed |
-| RF-082 | P1 | Claimed fixed | VERIFIED | v1-supp | DRIVER POST /returns/:id/cancel → 403; ownership check works |
-| RF-083 | P1 | Claimed fixed | BLOCKED | v1 | /customers/:id → 500 for all roles; PII filtering untestable |
-| RF-084 | P1 | Claimed fixed | VERIFIED | v2 | Duplicate receive → 409; idempotency guard works |
-| RF-085 | P1 | Claimed fixed | VERIFIED | v2 | void after receive → stock reversal confirmed |
-| RF-086 | P1 | Claimed fixed | FAIL | v2 | buyer-api-client.ts redirects to /buyer/login → "Unmatched Route" 404 |
-| RF-087 | P1 | Claimed fixed | FAIL | v2 | /customer-login redirects to /home when operator accessToken present |
-| RF-088 | P1 | Claimed fixed | PARTIAL | v2 | Spinner on isLoading/!invoice confirmed in source; GUI blocked by RF-086 |
-| RF-089 | P1 | Claimed fixed | PARTIAL | v2 | Toast on error confirmed in source; GUI confirmation blocked |
-| RF-090 | P1 | Claimed fixed | FAIL | v2, v3 | /settings/users → "Unmatched Route"; confirmed by two workers |
-| RF-093 | P1 | Claimed fixed | VERIFIED | v1 | forcePasswordChange:true → 403 on protected routes; guard confirmed via GUI |
-| RF-094 | P1 | Claimed fixed | FAIL | v2 | GET /buyer/standing-orders → 500 |
-| RF-160 | P1 | Claimed fixed | VERIFIED | v1, v3 | 429 after ~5 rapid attempts; throttler active |
-| RF-167 | P1 | Claimed fixed | VERIFIED | v2 | GET /route-runs/my-runs → 200 with IN_PROGRESS run |
-| RF-172 | P1 | Claimed fixed | FAIL | v2, v1 | POST /orders returns same order ID for customer with PENDING order; upsert not removed |
-| RF-180 | P1 | Claimed fixed | FAIL | v2 | GET /buyer/standing-orders → 500 (also RF-094; same endpoint) |
-| RF-200 | P1 | Claimed fixed | VERIFIED | v2 | buyer/products includes inStock + stockStatus fields |
-| RF-204 | P1 | Claimed fixed | VERIFIED | v2 | Voided tab → ?status=VOID → 200 with results |
-| RF-211 | P1 | Claimed fixed | PARTIAL | v3 | /drivers renders list (redirect fixed); /drivers/add → "Unmatched Route" |
-| RF-212 | P1 | Claimed fixed | PARTIAL | v3 | /returns renders tabs (Unmatched Route fixed); API return not displayed |
-| RF-213 | P1 | Claimed fixed | FAIL | v3 | Settings shows only 3 items; Users/Branding/Integrations absent |
-| RF-215 | P1 | Claimed fixed | PARTIAL | v3 | Add to Cart local state works; GET/POST /buyer/cart → 404 |
-| RF-216 | P1 | Claimed fixed | FAIL | v3 | /invoices redirects to /orders; deep-link broken |
-| RF-217 | P1 | Claimed fixed | VERIFIED | v2 | GET /buyer/me → 200 with businessName |
-| RF-218 | P1 | Claimed fixed | FAIL | v3 | Buyer login lands /orders; no home/dashboard |
-| RF-220 | P1 | Claimed fixed | VERIFIED | v3 | Buyer2 Total Spend $95 (not $0) |
-| RF-228 | P2 | Claimed fixed | BLOCKED | v1-supp | Frontend-only; cannot verify via API curl; session collision observed in QA infra |
+| RF     | Sev | Verdict       | Now         | Worker      | Notes                                                                                                                |
+| ------ | --- | ------------- | ----------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| RF-001 | P0  | Claimed fixed | VERIFIED    | v1, v1-supp | tenantId non-null; dispatched runs visible to driver                                                                 |
+| RF-002 | P0  | Claimed fixed | FAIL        | v3          | window.io undefined; zero wss:// entries after 30 s; Socket.IO never connects                                        |
+| RF-003 | P0  | Claimed fixed | VERIFIED    | v1          | SCHEDULED run → 403 on stop-complete; guard confirmed                                                                |
+| RF-073 | P0  | Claimed fixed | VERIFIED    | v1, v1-supp | PATCH role field silently ignored; role unchanged in response                                                        |
+| RF-074 | P0  | Claimed fixed | BLOCKED     | v1          | /customers/\* returns 500 for all operations; cascade guard untestable                                               |
+| RF-075 | P0  | Claimed fixed | VERIFIED    | v1, v1-supp | Unauthenticated fetch → 401; auth guard confirmed                                                                    |
+| RF-076 | P0  | Claimed fixed | FAIL        | v1          | Pre-existing SVG with embedded script served inline HTTP 200; no Content-Disposition                                 |
+| RF-077 | P0  | Claimed fixed | VERIFIED    | v1          | Separate localStorage keys confirmed; no stomping on API key layer                                                   |
+| RF-147 | P0  | Claimed fixed | VERIFIED    | v1, v1-supp | Invoice from order carries correct tenantId                                                                          |
+| RF-157 | P0  | Claimed fixed | FAIL        | v1          | Same SVG payload accepted and served inline; XSS confirmed (API supp: upload connectivity issue blocked direct test) |
+| RF-176 | P0  | Claimed fixed | VERIFIED    | v1, v1-supp | No null-tenantId JWT issued; 401 returned (minor: wrong code, should be 400)                                         |
+| RF-197 | P0  | Claimed fixed | BLOCKED     | v1          | DELETE /customers/:id → 500; cascade behavior untestable                                                             |
+| RF-203 | P0  | Claimed fixed | FAIL        | v3          | /routes/create spinner 15 s → redirect /home; form never renders                                                     |
+| RF-004 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-005 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-006 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-007 | P1  | Claimed fixed | PARTIAL     | v3          | Load time improved (5–7 s vs 20–40 s); no skeleton shown; blank white remains                                        |
+| RF-008 | P1  | Claimed fixed | PARTIAL     | v2          | Cron handler calls forTenant() with no ALS context; source-confirmed regression; no runtime test possible            |
+| RF-009 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-010 | P1  | Claimed fixed | VERIFIED    | v2          | Credit note over-invoiceTotal → 400; guard works                                                                     |
+| RF-011 | P1  | Claimed fixed | FAIL        | v2          | POST /invoices/:id/duplicate → 201 for order-linked invoice; double-billing live                                     |
+| RF-012 | P1  | Claimed fixed | FAIL        | v2          | PATCH discount → 200 but total unchanged; recalc not triggered                                                       |
+| RF-013 | P1  | Claimed fixed | FAIL        | v2          | buyerLogout() never calls cartStore.clear(); source confirmed                                                        |
+| RF-014 | P1  | Claimed fixed | FAIL        | v1, v1-supp | Duplicate orderNumber ORD-1777431385832 confirmed in live data                                                       |
+| RF-015 | P1  | Claimed fixed | PARTIAL     | v2          | Source confirms no sendToDriver/WebSocket emit in createRun(); API-only check                                        |
+| RF-016 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-017 | P1  | Claimed fixed | FAIL        | v1, v1-supp | POST /orders with stock=0 product → 201; no stock check                                                              |
+| RF-018 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-019 | P1  | Not tested    | NOT COVERED | —           | No worker assigned; still open                                                                                       |
+| RF-078 | P1  | Not tested    | NOT COVERED | —           | Related to RF-076/157; SVG inline serving confirms gap                                                               |
+| RF-079 | P1  | Claimed fixed | BLOCKED     | v1          | /customers/:id → 500; isTaxExempt untestable                                                                         |
+| RF-080 | P1  | Claimed fixed | BLOCKED     | v1          | DELETE /customers/bulk → 500; untestable                                                                             |
+| RF-081 | P1  | Claimed fixed | FAIL        | v1-supp     | DRIVER token GET /returns/:id → 200 with full return data; IDOR confirmed                                            |
+| RF-082 | P1  | Claimed fixed | VERIFIED    | v1-supp     | DRIVER POST /returns/:id/cancel → 403; ownership check works                                                         |
+| RF-083 | P1  | Claimed fixed | BLOCKED     | v1          | /customers/:id → 500 for all roles; PII filtering untestable                                                         |
+| RF-084 | P1  | Claimed fixed | VERIFIED    | v2          | Duplicate receive → 409; idempotency guard works                                                                     |
+| RF-085 | P1  | Claimed fixed | VERIFIED    | v2          | void after receive → stock reversal confirmed                                                                        |
+| RF-086 | P1  | Claimed fixed | FAIL        | v2          | buyer-api-client.ts redirects to /buyer/login → "Unmatched Route" 404                                                |
+| RF-087 | P1  | Claimed fixed | FAIL        | v2          | /customer-login redirects to /home when operator accessToken present                                                 |
+| RF-088 | P1  | Claimed fixed | PARTIAL     | v2          | Spinner on isLoading/!invoice confirmed in source; GUI blocked by RF-086                                             |
+| RF-089 | P1  | Claimed fixed | PARTIAL     | v2          | Toast on error confirmed in source; GUI confirmation blocked                                                         |
+| RF-090 | P1  | Claimed fixed | FAIL        | v2, v3      | /settings/users → "Unmatched Route"; confirmed by two workers                                                        |
+| RF-093 | P1  | Claimed fixed | VERIFIED    | v1          | forcePasswordChange:true → 403 on protected routes; guard confirmed via GUI                                          |
+| RF-094 | P1  | Claimed fixed | FAIL        | v2          | GET /buyer/standing-orders → 500                                                                                     |
+| RF-160 | P1  | Claimed fixed | VERIFIED    | v1, v3      | 429 after ~5 rapid attempts; throttler active                                                                        |
+| RF-167 | P1  | Claimed fixed | VERIFIED    | v2          | GET /route-runs/my-runs → 200 with IN_PROGRESS run                                                                   |
+| RF-172 | P1  | Claimed fixed | FAIL        | v2, v1      | POST /orders returns same order ID for customer with PENDING order; upsert not removed                               |
+| RF-180 | P1  | Claimed fixed | FAIL        | v2          | GET /buyer/standing-orders → 500 (also RF-094; same endpoint)                                                        |
+| RF-200 | P1  | Claimed fixed | VERIFIED    | v2          | buyer/products includes inStock + stockStatus fields                                                                 |
+| RF-204 | P1  | Claimed fixed | VERIFIED    | v2          | Voided tab → ?status=VOID → 200 with results                                                                         |
+| RF-211 | P1  | Claimed fixed | PARTIAL     | v3          | /drivers renders list (redirect fixed); /drivers/add → "Unmatched Route"                                             |
+| RF-212 | P1  | Claimed fixed | PARTIAL     | v3          | /returns renders tabs (Unmatched Route fixed); API return not displayed                                              |
+| RF-213 | P1  | Claimed fixed | FAIL        | v3          | Settings shows only 3 items; Users/Branding/Integrations absent                                                      |
+| RF-215 | P1  | Claimed fixed | PARTIAL     | v3          | Add to Cart local state works; GET/POST /buyer/cart → 404                                                            |
+| RF-216 | P1  | Claimed fixed | FAIL        | v3          | /invoices redirects to /orders; deep-link broken                                                                     |
+| RF-217 | P1  | Claimed fixed | VERIFIED    | v2          | GET /buyer/me → 200 with businessName                                                                                |
+| RF-218 | P1  | Claimed fixed | FAIL        | v3          | Buyer login lands /orders; no home/dashboard                                                                         |
+| RF-220 | P1  | Claimed fixed | VERIFIED    | v3          | Buyer2 Total Spend $95 (not $0)                                                                                      |
+| RF-228 | P2  | Claimed fixed | BLOCKED     | v1-supp     | Frontend-only; cannot verify via API curl; session collision observed in QA infra                                    |
 
 ---
 
@@ -185,13 +185,13 @@ Fix: Emit WebSocket event to driver's socket room on run creation; send push not
 
 ---
 
-## New Regressions (NEW-* IDs)
+## New Regressions (NEW-\* IDs)
 
 **NEW-rweb-2 [P0]** GET /api/v1/buyer/orders → 500; buyers cannot see any orders. Repro: Login as any buyer; navigate to Orders tab; infinite spinner; API returns 500.
 
 **NEW-rweb-3 [P0]** GET /api/v1/buyer/invoices → 500; buyers cannot view invoices. Repro: Login as buyer; Invoices tab spins indefinitely; API returns 500.
 
-**NEW-v1-2 / NEW-rweb-1 [P1]** Entire /customers/* API → 500 for all operations in ux-audit tenant. Blocks 6 RF verifications (RF-074/079/080/083/197 + operator new-order flow). Repro: Any authenticated GET/POST/PATCH/DELETE to /customers → 500.
+**NEW-v1-2 / NEW-rweb-1 [P1]** Entire /customers/\* API → 500 for all operations in ux-audit tenant. Blocks 6 RF verifications (RF-074/079/080/083/197 + operator new-order flow). Repro: Any authenticated GET/POST/PATCH/DELETE to /customers → 500.
 
 **NEW-v1-1 [P1]** Frontend fires GET to wrong API host (routeflowapi-production-d504... not routeflowapi-production...); customers page 401 → empty state. Repro: Operator → Customers page; network shows 401 to wrong hostname.
 

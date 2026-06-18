@@ -9,7 +9,11 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { useCreateOrder, useActiveOrderForCustomer, type ActiveOrderSummary } from "@/lib/api/orders";
+import {
+  useCreateOrder,
+  useActiveOrderForCustomer,
+  type ActiveOrderSummary,
+} from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
 import { displayProductName } from "@/lib/product-display";
@@ -38,15 +42,15 @@ interface LineItem {
   productId: string;
   productName: string;
   unit: string;
-  listPrice: number;          // standard pricePerUnit from product catalog
-  specialPrice?: number;      // permanent customer-specific price (from CustomerPrice)
-  discountedPrice?: number;   // one-time ad-hoc price entered by operator
-  unitPrice: number;          // effective price used for display totals
-  priceType: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
-  qty: number;                // total pieces (authoritative)
-  unitsPerBox?: number;       // set when product has box packaging
-  boxes?: number;             // whole boxes (only when unitsPerBox is set)
-  pieces?: number;            // extra loose pieces (only when unitsPerBox is set)
+  listPrice: number; // standard pricePerUnit from product catalog
+  specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
+  discountedPrice?: number; // one-time ad-hoc price entered by operator
+  unitPrice: number; // effective price used for display totals
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  qty: number; // total pieces (authoritative)
+  unitsPerBox?: number; // set when product has box packaging
+  boxes?: number; // whole boxes (only when unitsPerBox is set)
+  pieces?: number; // extra loose pieces (only when unitsPerBox is set)
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -152,12 +156,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     // 2. Search by code and pick exact SKU match first, then any result
     try {
       const res = await apiClient
-        .get("/products", { params: { search: code, limit: 10, isActive: true, includeVariants: true } })
+        .get("/products", {
+          params: { search: code, limit: 10, isActive: true, includeVariants: true },
+        })
         .then((r) => r.data);
       const matches: any[] = res?.data ?? [];
-      const skuMatch = matches.find(
-        (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
-      );
+      const skuMatch = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuMatch ?? matches[0]; // exact SKU first; first search result as fallback
       if (toAdd) {
         addLineItem(toAdd);
@@ -237,14 +241,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   // ── Stop management ───────────────────────────────────────────────────────
 
-
   const addLineItem = (product: any) => {
     // If already in the list, increment qty by 1 (supports repeated scans of the same item)
     if (lineItems.some((li) => li.productId === product.id)) {
       setLineItems((prev) =>
-        prev.map((li) =>
-          li.productId === product.id ? { ...li, qty: li.qty + 1 } : li,
-        ),
+        prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
       );
       setProductSearch("");
       setDebouncedProductSearch("");
@@ -257,7 +258,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? 'SPECIAL' as const : 'STANDARD' as const;
+    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {
@@ -330,15 +331,25 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         if (rawValue === "" || isNaN(parsed)) {
           // Clear override — revert to special or list price
           const revertPrice = li.specialPrice ?? li.listPrice;
-          return { ...li, discountedPrice: undefined, unitPrice: revertPrice, priceType: li.specialPrice != null ? 'SPECIAL' : 'STANDARD' };
+          return {
+            ...li,
+            discountedPrice: undefined,
+            unitPrice: revertPrice,
+            priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+          };
         }
         const discountedPrice = Math.max(0, parsed);
         if (discountedPrice < li.listPrice) {
-          return { ...li, discountedPrice, unitPrice: discountedPrice, priceType: 'DISCOUNTED' };
+          return { ...li, discountedPrice, unitPrice: discountedPrice, priceType: "DISCOUNTED" };
         }
         // If entered price >= list price, treat as no discount
         const revertPrice = li.specialPrice ?? li.listPrice;
-        return { ...li, discountedPrice: undefined, unitPrice: revertPrice, priceType: li.specialPrice != null ? 'SPECIAL' : 'STANDARD' };
+        return {
+          ...li,
+          discountedPrice: undefined,
+          unitPrice: revertPrice,
+          priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+        };
       }),
     );
   };
@@ -359,18 +370,19 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
    */
   const submitOrder = (
     data: FormValues,
-    options: { mergeChoice?: 'merge' | 'separate'; asDraft?: boolean } = {},
+    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
     const { mergeChoice, asDraft } = options;
-    const itemsForSubmit = (asDraft
-      ? lineItems.filter((li) => li.productId && li.qty > 0)
-      : lineItems
+    const itemsForSubmit = (
+      asDraft ? lineItems.filter((li) => li.productId && li.qty > 0) : lineItems
     ).map((li) => ({
       productId: li.productId,
       qty: li.qty,
       ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
       // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
-      ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+      ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
+        ? { unitPrice: li.discountedPrice }
+        : {}),
     }));
     createOrder.mutate(
       {
@@ -380,15 +392,15 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
-        ...(asDraft ? { status: 'DRAFT' as const } : {}),
+        ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
       } as any,
       {
         onSuccess: (created: any) => {
-          if (mergeChoice === 'merge') {
+          if (mergeChoice === "merge") {
             toast({
-              title: `Merged into order ${created?.orderNumber ?? '#' + created?.id?.slice(0, 6)}`,
-              variant: 'success',
+              title: `Merged into order ${created?.orderNumber ?? "#" + created?.id?.slice(0, 6)}`,
+              variant: "success",
             });
           } else if (asDraft) {
             toast({ title: "Order saved as draft", variant: "success" });
@@ -406,7 +418,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           const body = err?.response?.data;
           if (
             err?.response?.status === 409 &&
-            body?.code === 'MERGE_CHOICE_REQUIRED' &&
+            body?.code === "MERGE_CHOICE_REQUIRED" &&
             body?.activeOrder
           ) {
             pendingFormValuesRef.current = data;
@@ -429,8 +441,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     }
     const data: FormValues = {
       notes:
-        (document.getElementById("order-notes") as HTMLTextAreaElement | null)?.value ||
-        undefined,
+        (document.getElementById("order-notes") as HTMLTextAreaElement | null)?.value || undefined,
       urgent: false,
     };
     if (activeOrderForCustomer) {
@@ -471,7 +482,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
-    const err = createOrder.error as { response?: { data?: { message?: string } }; message?: string } | null;
+    const err = createOrder.error as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    } | null;
     if (!err) return null;
     return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
   })();
@@ -485,11 +499,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       className="max-w-2xl"
       footer={
         <>
-          <Button variant="secondary" type="button" onClick={onClose}>
+          {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
+              primary (main action). Save-as-Draft was an amber button that
+              competed with the primary blue and misused a warning colour. */}
+          <Button variant="ghost" type="button" onClick={onClose}>
             Cancel
           </Button>
           <Button
-            className="bg-amber-500 text-white hover:bg-amber-600 focus-visible:ring-amber-400"
+            variant="secondary"
             type="button"
             loading={createOrder.isPending}
             onClick={onSaveDraft}
@@ -506,7 +523,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         id="create-order-form"
         onSubmit={handleSubmit(onSubmit)}
         noValidate
-        onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.preventDefault();
+        }}
         className="max-h-[65vh] overflow-y-auto pr-1"
       >
         <div className="space-y-5">
@@ -519,9 +538,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
           {/* ── Customer ── */}
           <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Customer
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Customer</p>
 
             {selectedCustomer ? (
               <div className="flex items-center justify-between rounded-lg border border-brand-300 bg-brand-50 px-3 py-2.5">
@@ -530,13 +547,15 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     {selectedCustomer.businessName}
                   </span>
                   {selectedCustomer.contactName && (
-                    <span className="ml-2 text-xs text-navy/50">{selectedCustomer.contactName}</span>
+                    <span className="ml-2 text-xs text-navy/70">
+                      {selectedCustomer.contactName}
+                    </span>
                   )}
                 </div>
                 <button
                   type="button"
                   onClick={() => setSelectedCustomer(null)}
-                  className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+                  className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
                   title="Change customer"
                 >
                   <X className="h-4 w-4" />
@@ -553,18 +572,15 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     setCustomerError("");
                   }}
                   className={cn(
-                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                    "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
                     customerError
                       ? "border-danger focus:border-transparent"
                       : "border-surface-border focus:border-transparent",
                   )}
                 />
-                {customerError && (
-                  <p className="mt-1 text-xs text-danger">{customerError}</p>
-                )}
+                {customerError && <p className="mt-1 text-xs text-danger">{customerError}</p>}
                 {filteredCustomers.length > 0 && customerSearch && (
                   <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                    
                     {filteredCustomers.map((c: any) => (
                       <li key={c.id}>
                         <button
@@ -578,7 +594,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                         >
                           <span className="font-medium">{c.businessName}</span>
                           {c.contactName && (
-                            <span className="text-xs text-navy/50">{c.contactName}</span>
+                            <span className="text-xs text-navy/70">{c.contactName}</span>
                           )}
                         </button>
                       </li>
@@ -591,9 +607,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
           {/* ── Products / Line Items ── */}
           <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Products
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Products</p>
 
             {/* Product search */}
             <div className="relative">
@@ -615,108 +629,132 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                   }
                 }}
                 className={cn(
-                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  "h-10 w-full rounded border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500",
                   lineItemsError && lineItems.length === 0
                     ? "border-danger focus:border-transparent"
                     : "border-surface-border focus:border-transparent",
                 )}
               />
-              {productSearch && (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
-                <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
-                    <li className="px-3 py-2 text-sm text-navy/50">No products found.</li>
-                  )}
-                  {filteredProducts.map((p: any) => {
-                    const hasVariants = p.variants?.length > 0;
-                    const isExpanded = expandedParentId === p.id;
-                    const alreadyAdded = lineItems.some((li) => li.productId === p.id);
-                    return (
-                      <React.Fragment key={p.id}>
-                        <li>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (hasVariants) {
-                                setExpandedParentId(isExpanded ? null : p.id);
-                              } else if (!alreadyAdded) {
-                                addLineItem(p);
-                              }
-                            }}
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
-                              alreadyAdded && !hasVariants && "opacity-40 cursor-default",
-                            )}
-                          >
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              {hasVariants && (
-                                <ChevronRight
-                                  className={cn(
-                                    "h-3.5 w-3.5 shrink-0 text-navy/40 transition-transform",
-                                    isExpanded && "rotate-90",
-                                  )}
-                                />
+              {productSearch &&
+                (filteredProducts.length > 0 || debouncedProductSearch.length > 0) && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
+                    {filteredProducts.length === 0 && debouncedProductSearch.length > 0 && (
+                      <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
+                    )}
+                    {filteredProducts.map((p: any) => {
+                      const hasVariants = p.variants?.length > 0;
+                      const isExpanded = expandedParentId === p.id;
+                      const alreadyAdded = lineItems.some((li) => li.productId === p.id);
+                      return (
+                        <React.Fragment key={p.id}>
+                          <li>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (hasVariants) {
+                                  setExpandedParentId(isExpanded ? null : p.id);
+                                } else if (!alreadyAdded) {
+                                  addLineItem(p);
+                                }
+                              }}
+                              className={cn(
+                                "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
+                                alreadyAdded && !hasVariants && "opacity-40 cursor-default",
                               )}
-                              <span className="font-medium truncate">{p.name}</span>
-                              {p.sku && <span className="text-xs text-navy/40 shrink-0">{p.sku}</span>}
-                              {hasVariants && (
-                                <span className="ml-1 text-[10px] text-navy/40 shrink-0">{p.variants.length} variants</span>
-                              )}
-                              {!hasVariants && <span className="ml-1 text-xs text-navy/50 shrink-0">{p.unit}</span>}
-                            </div>
-                            {!hasVariants && (
-                              <span className="text-xs font-medium text-navy/60 shrink-0 ml-2">
-                                ${Number(p.pricePerUnit ?? 0).toFixed(2)}
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                        {/* Expanded variants */}
-                        {hasVariants && isExpanded && p.variants.map((v: any) => {
-                          const variantAdded = lineItems.some((li) => li.productId === v.id);
-                          return (
-                            <li key={v.id} className="bg-surface-raised/50">
-                              <button
-                                type="button"
-                                onClick={() => { if (!variantAdded) addLineItem(v); }}
-                                className={cn(
-                                  "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
-                                  variantAdded && "opacity-40 cursor-default",
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {hasVariants && (
+                                  <ChevronRight
+                                    className={cn(
+                                      "h-3.5 w-3.5 shrink-0 text-navy/70 transition-transform",
+                                      isExpanded && "rotate-90",
+                                    )}
+                                  />
                                 )}
-                              >
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <span className="font-medium truncate">{v.variantName ?? v.name}</span>
-                                  {v.sku && <span className="text-xs text-navy/40 shrink-0">{v.sku}</span>}
-                                  <span className="text-xs text-navy/50 shrink-0">{v.unit}</span>
-                                </div>
-                                <span className="text-xs font-medium text-navy/60 shrink-0 ml-2">
-                                  ${Number(v.pricePerUnit ?? 0).toFixed(2)}
+                                <span className="font-medium truncate">{p.name}</span>
+                                {p.sku && (
+                                  <span className="text-xs text-navy/70 shrink-0">{p.sku}</span>
+                                )}
+                                {hasVariants && (
+                                  <span className="ml-1 text-[10px] text-navy/70 shrink-0">
+                                    {p.variants.length} variants
+                                  </span>
+                                )}
+                                {!hasVariants && (
+                                  <span className="ml-1 text-xs text-navy/70 shrink-0">
+                                    {p.unit}
+                                  </span>
+                                )}
+                              </div>
+                              {!hasVariants && (
+                                <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
+                                  ${Number(p.pricePerUnit ?? 0).toFixed(2)}
                                 </span>
-                              </button>
-                            </li>
+                              )}
+                            </button>
+                          </li>
+                          {/* Expanded variants */}
+                          {hasVariants &&
+                            isExpanded &&
+                            p.variants.map((v: any) => {
+                              const variantAdded = lineItems.some((li) => li.productId === v.id);
+                              return (
+                                <li key={v.id} className="bg-surface-raised/50">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (!variantAdded) addLineItem(v);
+                                    }}
+                                    className={cn(
+                                      "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
+                                      variantAdded && "opacity-40 cursor-default",
+                                    )}
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <span className="font-medium truncate">
+                                        {v.variantName ?? v.name}
+                                      </span>
+                                      {v.sku && (
+                                        <span className="text-xs text-navy/70 shrink-0">
+                                          {v.sku}
+                                        </span>
+                                      )}
+                                      <span className="text-xs text-navy/70 shrink-0">
+                                        {v.unit}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs font-medium text-navy/70 shrink-0 ml-2">
+                                      ${Number(v.pricePerUnit ?? 0).toFixed(2)}
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                        </React.Fragment>
+                      );
+                    })}
+                    <li className="border-t border-surface-border">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
+                        onClick={() => {
+                          const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
+                          setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
+                          setCreateProductInitialSku(
+                            looksLikeSku ? debouncedProductSearch.trim() : "",
                           );
-                        })}
-                      </React.Fragment>
-                    );
-                  })}
-                  <li className="border-t border-surface-border">
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-brand-500 hover:bg-surface-raised font-medium"
-                      onClick={() => {
-                        const looksLikeSku = /^\d{6,}$/.test(debouncedProductSearch.trim());
-                        setCreateProductInitialName(looksLikeSku ? "" : debouncedProductSearch);
-                        setCreateProductInitialSku(looksLikeSku ? debouncedProductSearch.trim() : "");
-                        setCreateProductOpen(true);
-                        setProductSearch("");
-                        setDebouncedProductSearch("");
-                      }}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Create new product{debouncedProductSearch ? `: "${debouncedProductSearch}"` : ""}
-                    </button>
-                  </li>
-                </ul>
-              )}
+                          setCreateProductOpen(true);
+                          setProductSearch("");
+                          setDebouncedProductSearch("");
+                        }}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Create new product
+                        {debouncedProductSearch ? `: "${debouncedProductSearch}"` : ""}
+                      </button>
+                    </li>
+                  </ul>
+                )}
             </div>
 
             {lineItemsError && lineItems.length === 0 && (
@@ -732,32 +770,46 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                       <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
                       {/* Price display with special/discount indicators */}
                       <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                        {li.priceType === 'SPECIAL' ? (
+                        {li.priceType === "SPECIAL" ? (
                           <>
-                            <span className="text-xs text-navy/40 line-through">${li.listPrice.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-emerald-600">${li.unitPrice.toFixed(2)} / {li.unit}</span>
-                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">Special price</span>
+                            <span className="text-xs text-navy/70 line-through">
+                              ${li.listPrice.toFixed(2)}
+                            </span>
+                            <span className="text-xs font-medium text-emerald-600">
+                              ${li.unitPrice.toFixed(2)} / {li.unit}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                              Special price
+                            </span>
                           </>
-                        ) : li.priceType === 'DISCOUNTED' ? (
+                        ) : li.priceType === "DISCOUNTED" ? (
                           <>
-                            <span className="text-xs text-navy/40 line-through">${li.listPrice.toFixed(2)}</span>
-                            <span className="text-xs font-medium text-amber-600">${li.unitPrice.toFixed(2)} / {li.unit}</span>
-                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">Discounted</span>
+                            <span className="text-xs text-navy/70 line-through">
+                              ${li.listPrice.toFixed(2)}
+                            </span>
+                            <span className="text-xs font-medium text-amber-600">
+                              ${li.unitPrice.toFixed(2)} / {li.unit}
+                            </span>
+                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                              Discounted
+                            </span>
                           </>
                         ) : (
-                          <span className="text-xs text-navy/50">${li.unitPrice.toFixed(2)} / {li.unit}</span>
+                          <span className="text-xs text-navy/70">
+                            ${li.unitPrice.toFixed(2)} / {li.unit}
+                          </span>
                         )}
                       </div>
                       {/* Price per piece (when product has box packaging) */}
                       {li.unitsPerBox && li.unitsPerBox > 1 && (
-                        <div className="mt-0.5 text-[10px] text-navy/40">
+                        <div className="mt-0.5 text-[10px] text-navy/70">
                           ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
                         </div>
                       )}
                       {/* One-time discount input (only when no special price already applied) */}
-                      {li.priceType !== 'SPECIAL' && (
+                      {li.priceType !== "SPECIAL" && (
                         <div className="mt-1 flex items-center gap-1">
-                          <span className="text-[10px] text-navy/40">One-time discount price:</span>
+                          <span className="text-[10px] text-navy/70">One-time discount price:</span>
                           <input
                             type="number"
                             min={0}
@@ -783,7 +835,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                             className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                             title="Number of whole boxes"
                           />
-                          <span className="text-xs text-navy/50">boxes</span>
+                          <span className="text-xs text-navy/70">boxes</span>
                           <span className="text-xs text-navy/30">+</span>
                           <input
                             type="number"
@@ -795,11 +847,16 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                             className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                             title="Extra loose pieces (less than a full box)"
                           />
-                          <span className="text-xs text-navy/50">pcs</span>
+                          <span className="text-xs text-navy/70">pcs</span>
                         </div>
                         <span className="text-[10px] text-navy/30">
                           1 box = {li.unitsPerBox} pcs
-                          {li.qty > 0 && <> · <span className="font-medium text-navy/40">{li.qty} pcs total</span></>}
+                          {li.qty > 0 && (
+                            <>
+                              {" "}
+                              · <span className="font-medium text-navy/70">{li.qty} pcs total</span>
+                            </>
+                          )}
                         </span>
                       </div>
                     ) : (
@@ -808,7 +865,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                           type="button"
                           onClick={() => updateQty(li.tempId, -1)}
                           disabled={li.qty <= 1}
-                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
                         >
                           −
                         </button>
@@ -818,7 +875,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                         <button
                           type="button"
                           onClick={() => updateQty(li.tempId, 1)}
-                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/60 hover:bg-surface-raised transition-colors"
+                          className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
                         >
                           +
                         </button>
@@ -826,7 +883,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     )}
                     {/* Line total */}
                     <span className="w-16 text-right text-sm font-semibold text-navy">
-                      ${computeLineSubtotal({
+                      $
+                      {computeLineSubtotal({
                         unitPrice: li.unitPrice,
                         qty: li.qty,
                         boxes: li.boxes ?? null,
@@ -847,7 +905,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-6 text-center">
-                <p className="text-sm text-navy/40">Search for products above to add line items.</p>
+                <p className="text-sm text-navy/70">Search for products above to add line items.</p>
               </div>
             )}
           </section>
@@ -877,7 +935,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </label>
-                {discountAmt > 0 && <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>}
+                {discountAmt > 0 && (
+                  <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>
+                )}
               </div>
               <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
                 <span>Total</span>
@@ -888,13 +948,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
           {/* ── Options ── */}
           <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">Options</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Options</p>
 
             {/* Requested Delivery Date */}
             <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/60">
-                Requested Delivery Date{" "}
-                <span className="font-normal text-navy/40">(optional)</span>
+              <label className="block text-xs font-medium text-navy/70">
+                Requested Delivery Date <span className="font-normal text-navy/70">(optional)</span>
               </label>
               <input
                 type="date"
@@ -918,17 +977,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                   : "border-surface-border bg-white hover:bg-surface-raised",
               )}
             >
-              <input
-                type="checkbox"
-                {...register("urgent")}
-                className="h-4 w-4 accent-danger"
-              />
-              <AlertTriangle
-                className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")}
-              />
-              <span
-                className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}
-              >
+              <input type="checkbox" {...register("urgent")} className="h-4 w-4 accent-danger" />
+              <AlertTriangle className={cn("h-4 w-4", isUrgent ? "text-danger" : "text-navy/30")} />
+              <span className={cn("text-sm font-medium", isUrgent ? "text-danger" : "text-navy")}>
                 Mark as Urgent
               </span>
             </label>
@@ -979,12 +1030,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                 onClick={() => {
                   if (pendingFormValuesRef.current)
                     submitOrder(pendingFormValuesRef.current, {
-                      mergeChoice: 'merge',
+                      mergeChoice: "merge",
                       asDraft: pendingAsDraftRef.current,
                     });
                 }}
               >
-                Merge into {mergePrompt.orderNumber ?? 'existing order'}
+                Merge into {mergePrompt.orderNumber ?? "existing order"}
               </Button>
               <Button
                 type="button"
@@ -993,12 +1044,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                 onClick={() => {
                   if (pendingFormValuesRef.current)
                     submitOrder(pendingFormValuesRef.current, {
-                      mergeChoice: 'separate',
+                      mergeChoice: "separate",
                       asDraft: pendingAsDraftRef.current,
                     });
                 }}
               >
-                Create as separate {pendingAsDraftRef.current ? 'draft' : 'order'}
+                Create as separate {pendingAsDraftRef.current ? "draft" : "order"}
               </Button>
             </div>
           ) : null
@@ -1009,8 +1060,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             <div className="font-medium text-navy">
               {mergePrompt.orderNumber ?? mergePrompt.id.slice(0, 8)}
             </div>
-            <div className="text-navy/60">
-              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} · ${mergePrompt.total.toFixed(2)}
+            <div className="text-navy/70">
+              {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} · $
+              {mergePrompt.total.toFixed(2)}
             </div>
           </div>
         )}

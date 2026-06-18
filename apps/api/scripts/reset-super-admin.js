@@ -16,7 +16,7 @@ async function main() {
 
   const result = await pool.query(
     `UPDATE "User" SET password = $1, "forcePasswordChange" = false WHERE username = $2 RETURNING id, username, role`,
-    [hash, USERNAME]
+    [hash, USERNAME],
   );
 
   if (result.rowCount === 0) {
@@ -25,7 +25,7 @@ async function main() {
       `INSERT INTO "User" (id, username, email, password, role, status, "forcePasswordChange", "createdAt", "updatedAt")
        VALUES (gen_random_uuid(), $1, $2, $3, 'SUPER_ADMIN', 'ACTIVE', false, NOW(), NOW())
        RETURNING id, username, role`,
-      [USERNAME, "najathakram@routeflow.io", hash]
+      [USERNAME, "najathakram@routeflow.io", hash],
     );
     console.log("Created:", created.rows[0]);
   } else {
@@ -36,4 +36,7 @@ async function main() {
   console.log(`Password set to: ${NEW_PASSWORD}`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

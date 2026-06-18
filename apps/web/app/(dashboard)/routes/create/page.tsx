@@ -68,9 +68,7 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): nu
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
@@ -91,7 +89,10 @@ function nnFrom(stops: StopEntry[], startIdx: number): StopEntry[] {
     let minDist = Infinity;
     remaining.forEach((s, i) => {
       const d = haversineKm(current.lat!, current.lng!, s.lat!, s.lng!);
-      if (d < minDist) { minDist = d; nearestIdx = i; }
+      if (d < minDist) {
+        minDist = d;
+        nearestIdx = i;
+      }
     });
     current = remaining.splice(nearestIdx, 1)[0];
     ordered.push(current);
@@ -115,7 +116,11 @@ function twoOpt(stops: StopEntry[]): StopEntry[] {
           haversineKm(a.lat!, a.lng!, c.lat!, c.lng!) -
           haversineKm(b.lat!, b.lng!, d.lat!, d.lng!);
         if (delta > 0.001) {
-          route = [...route.slice(0, i + 1), ...route.slice(i + 1, j + 1).reverse(), ...route.slice(j + 1)];
+          route = [
+            ...route.slice(0, i + 1),
+            ...route.slice(i + 1, j + 1).reverse(),
+            ...route.slice(j + 1),
+          ];
           improved = true;
           break outer;
         }
@@ -141,7 +146,10 @@ function nearestNeighborOrder(
     let minDist = haversineKm(depot.lat, depot.lng, withCoords[0].lat!, withCoords[0].lng!);
     for (let i = 1; i < withCoords.length; i++) {
       const d = haversineKm(depot.lat, depot.lng, withCoords[i].lat!, withCoords[i].lng!);
-      if (d < minDist) { minDist = d; nearestIdx = i; }
+      if (d < minDist) {
+        minDist = d;
+        nearestIdx = i;
+      }
     }
     best = nnFrom(withCoords, nearestIdx);
   } else {
@@ -151,7 +159,10 @@ function nearestNeighborOrder(
     for (let i = 1; i < withCoords.length; i++) {
       const candidate = nnFrom(withCoords, i);
       const dist = pathKm(candidate);
-      if (dist < bestDist) { bestDist = dist; best = candidate; }
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
     }
   }
 
@@ -170,7 +181,9 @@ export default function CreateRoutePage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  React.useEffect(() => { setTitle("Create Route"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Create Route");
+  }, [setTitle]);
 
   // ── Data fetching ──
   const { data: customersData } = useCustomers({ page: 1, limit: 500 } as any);
@@ -188,24 +201,27 @@ export default function CreateRoutePage() {
   // ── Stops state ──
   const [stops, setStops] = React.useState<StopEntry[]>([]);
 
-  const addStop = React.useCallback((customer: CustomerForMap) => {
-    if (stops.some((s) => s.customerId === customer.id)) return;
-    const addr = (customer.addresses ?? []).find((a) => a.isDefault) ?? customer.addresses?.[0];
-    setStops((prev) => [
-      ...prev,
-      {
-        id: customer.id + "-" + Date.now(),
-        customerId: customer.id,
-        customerName: customer.businessName,
-        address: addr
-          ? `${addr.line1 ?? addr.street ?? ""}, ${addr.city ?? ""}, ${addr.state ?? ""}`
-          : "—",
-        addressId: addr?.id,
-        lat: addr?.lat ?? undefined,
-        lng: addr?.lng ?? undefined,
-      },
-    ]);
-  }, [stops]);
+  const addStop = React.useCallback(
+    (customer: CustomerForMap) => {
+      if (stops.some((s) => s.customerId === customer.id)) return;
+      const addr = (customer.addresses ?? []).find((a) => a.isDefault) ?? customer.addresses?.[0];
+      setStops((prev) => [
+        ...prev,
+        {
+          id: customer.id + "-" + Date.now(),
+          customerId: customer.id,
+          customerName: customer.businessName,
+          address: addr
+            ? `${addr.line1 ?? addr.street ?? ""}, ${addr.city ?? ""}, ${addr.state ?? ""}`
+            : "—",
+          addressId: addr?.id,
+          lat: addr?.lat ?? undefined,
+          lng: addr?.lng ?? undefined,
+        },
+      ]);
+    },
+    [stops],
+  );
 
   const removeStop = React.useCallback((customerId: string) => {
     setStops((prev) => prev.filter((s) => s.customerId !== customerId));
@@ -275,7 +291,7 @@ export default function CreateRoutePage() {
         <div className="flex items-center gap-4">
           <Link
             href="/routes"
-            className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+            className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
             Routes

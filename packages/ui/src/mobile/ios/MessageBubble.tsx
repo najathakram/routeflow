@@ -16,9 +16,7 @@ export function MessageBubble({ side, text, meta }: MessageBubbleProps) {
       <View style={[styles.bubble, isRight ? styles.bubbleRight : styles.bubbleLeft]}>
         <Text style={[styles.text, isRight && styles.textRight]}>{text}</Text>
       </View>
-      {meta ? (
-        <Text style={[styles.meta, isRight && styles.metaRight]}>{meta}</Text>
-      ) : null}
+      {meta ? <Text style={[styles.meta, isRight && styles.metaRight]}>{meta}</Text> : null}
     </View>
   );
 }

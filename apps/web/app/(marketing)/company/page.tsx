@@ -100,9 +100,7 @@ export default function CompanyPage() {
                 for the American wholesale trade — the shopkeeper-to-shopkeeper economy that moves
                 the country.
               </p>
-              <p
-                style={{ fontSize: 16, color: "var(--rf-ink-2)", lineHeight: 1.7 }}
-              >
+              <p style={{ fontSize: 16, color: "var(--rf-ink-2)", lineHeight: 1.7 }}>
                 So they built RouteFlow. First for themselves, then for the distributors next door.
                 Today it&apos;s the operating system we always wished existed.
               </p>
@@ -160,10 +158,7 @@ export default function CompanyPage() {
       {/* Values */}
       <section className="sect">
         <div className="wrap">
-          <h2
-            className="display"
-            style={{ fontSize: 48, margin: "0 0 40px", textAlign: "center" }}
-          >
+          <h2 className="display" style={{ fontSize: 48, margin: "0 0 40px", textAlign: "center" }}>
             What we <em>care about.</em>
           </h2>
           <div
@@ -182,9 +177,7 @@ export default function CompanyPage() {
                   0{i + 1}
                 </div>
                 <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 10 }}>{v.title}</div>
-                <div
-                  style={{ fontSize: 14, color: "var(--rf-ink-3)", lineHeight: 1.6 }}
-                >
+                <div style={{ fontSize: 14, color: "var(--rf-ink-3)", lineHeight: 1.6 }}>
                   {v.body}
                 </div>
               </div>
@@ -215,16 +208,11 @@ export default function CompanyPage() {
             Want a guided walkthrough? Have a question about the platform? Need to talk pricing for
             a large operation? We&apos;re real people on the other end.
           </p>
-          <div
-            style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}
-          >
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <Link href="/contact" className="btn btn-primary btn-lg">
               Book a demo <ArrowIcon />
             </Link>
-            <a
-              href="mailto:hello@routeflow.info"
-              className="btn btn-ghost btn-lg"
-            >
+            <a href="mailto:hello@routeflow.info" className="btn btn-ghost btn-lg">
               Email us
             </a>
           </div>

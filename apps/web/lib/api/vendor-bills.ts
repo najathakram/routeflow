@@ -86,7 +86,9 @@ export function useProductMappings(supplierName: string) {
   return useQuery<ProductMapping[]>({
     queryKey: ["product-mappings", supplierName],
     queryFn: () =>
-      apiClient.get("/vendor-bills/product-mappings", { params: { supplierName } }).then((r) => r.data),
+      apiClient
+        .get("/vendor-bills/product-mappings", { params: { supplierName } })
+        .then((r) => r.data),
     enabled: !!supplierName,
   });
 }
@@ -129,7 +131,8 @@ export interface UpdateVendorBillDto {
 export function useUpdateVendorBill() {
   const qc = useQueryClient();
   return useMutation<VendorBill, Error, UpdateVendorBillDto>({
-    mutationFn: ({ id, ...data }) => apiClient.patch(`/vendor-bills/${id}`, data).then((r) => r.data),
+    mutationFn: ({ id, ...data }) =>
+      apiClient.patch(`/vendor-bills/${id}`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });

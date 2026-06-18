@@ -46,8 +46,7 @@ export default function AdjustStockScreen() {
           showToast(`Stock ${n > 0 ? "added" : "removed"}`);
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -64,9 +63,7 @@ export default function AdjustStockScreen() {
         {product && (
           <View style={styles.currentRow}>
             <Text style={styles.currentLabel}>Current stock</Text>
-            <Text style={styles.currentValue}>
-              {Number(product.currentStock ?? 0)} units
-            </Text>
+            <Text style={styles.currentValue}>{Number(product.currentStock ?? 0)} units</Text>
           </View>
         )}
         <FormField label="Change (+/−)" hint="Positive to add, negative to remove.">

@@ -16,7 +16,7 @@
 
 "use strict";
 const { Client } = require("pg");
-const readline   = require("readline");
+const readline = require("readline");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -26,10 +26,18 @@ const TARGET_RUN_NAME = "W32-BUG5-TEST";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function ok(msg)   { console.log(`   ✓ ${msg}`); }
-function warn(msg) { console.log(`   ⚠  ${msg}`); }
-function err(msg)  { console.log(`   ✗ ${msg}`); }
-function step(msg) { console.log(`\n${"─".repeat(60)}\n  ${msg}`); }
+function ok(msg) {
+  console.log(`   ✓ ${msg}`);
+}
+function warn(msg) {
+  console.log(`   ⚠  ${msg}`);
+}
+function err(msg) {
+  console.log(`   ✗ ${msg}`);
+}
+function step(msg) {
+  console.log(`\n${"─".repeat(60)}\n  ${msg}`);
+}
 
 async function confirm(msg) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -56,7 +64,7 @@ async function main() {
     const routeResult = await pg.query(
       `SELECT id, name, "driverId", status FROM "Route"
        WHERE "tenantId" = $1 AND name = $2 LIMIT 1`,
-      [UX_AUDIT_TENANT_ID, TARGET_RUN_NAME]
+      [UX_AUDIT_TENANT_ID, TARGET_RUN_NAME],
     );
 
     if (routeResult.rows.length === 0) {
@@ -75,7 +83,7 @@ async function main() {
     const runsResult = await pg.query(
       `SELECT id, status FROM "RouteRun"
        WHERE "routeId" = $1 AND "tenantId" = $2`,
-      [route.id, UX_AUDIT_TENANT_ID]
+      [route.id, UX_AUDIT_TENANT_ID],
     );
 
     if (runsResult.rows.length === 0) {
@@ -88,16 +96,16 @@ async function main() {
     }
 
     // Step 3: Collect all IDs to delete
-    const runIds = runsResult.rows.map(r => r.id);
+    const runIds = runsResult.rows.map((r) => r.id);
 
     // Find all stops for those runs
     let stopIds = [];
     if (runIds.length > 0) {
       const stopsResult = await pg.query(
         `SELECT id FROM "RouteRunStop" WHERE "routeRunId" = ANY($1::text[])`,
-        [runIds]
+        [runIds],
       );
-      stopIds = stopsResult.rows.map(s => s.id);
+      stopIds = stopsResult.rows.map((s) => s.id);
       if (stopIds.length > 0) {
         ok(`Found ${stopIds.length} RouteRunStop(s) to cascade-delete`);
       }
@@ -110,7 +118,7 @@ async function main() {
     warn(`  Stops:      ${stopIds.length} (will cascade-delete)`);
 
     const shouldProceed = await confirm(
-      "Proceed with deletion? This will permanently remove the route and all associated stops."
+      "Proceed with deletion? This will permanently remove the route and all associated stops.",
     );
 
     if (!shouldProceed) {
@@ -127,7 +135,7 @@ async function main() {
     if (stopIds.length > 0) {
       const delStopsResult = await pg.query(
         `DELETE FROM "RouteRunStop" WHERE id = ANY($1::text[]) RETURNING id`,
-        [stopIds]
+        [stopIds],
       );
       ok(`Deleted ${delStopsResult.rowCount} RouteRunStop records`);
     }
@@ -136,21 +144,19 @@ async function main() {
     if (runIds.length > 0) {
       const delRunsResult = await pg.query(
         `DELETE FROM "RouteRun" WHERE id = ANY($1::text[]) RETURNING id`,
-        [runIds]
+        [runIds],
       );
       ok(`Deleted ${delRunsResult.rowCount} RouteRun records`);
     }
 
     // Delete the Route record
-    const delRouteResult = await pg.query(
-      `DELETE FROM "Route" WHERE id = $1 RETURNING id`,
-      [route.id]
-    );
+    const delRouteResult = await pg.query(`DELETE FROM "Route" WHERE id = $1 RETURNING id`, [
+      route.id,
+    ]);
     ok(`Deleted ${delRouteResult.rowCount} Route record`);
 
     step("Success!");
     ok("W32-BUG5-TEST run and all associated records removed from ux-audit tenant");
-
   } catch (err) {
     step("Error!");
     err(err.message);

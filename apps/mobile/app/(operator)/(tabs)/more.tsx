@@ -31,9 +31,7 @@ export default function OperatorMoreScreen() {
           </View>
           <View>
             <Text style={styles.name}>{user?.username ?? "Operator"}</Text>
-            <Text style={styles.sub}>
-              Operator{tenantName ? ` · ${tenantName}` : ""}
-            </Text>
+            <Text style={styles.sub}>Operator{tenantName ? ` · ${tenantName}` : ""}</Text>
           </View>
         </View>
 

@@ -32,76 +32,91 @@ Critical audit identified 6 high-priority issues:
 ## Findings Summary
 
 ### W4-001: Stop completion without run status guard
+
 - File: API routes.service.ts:975
 - Issue: completeStop accepts SCHEDULED runs
 - Fix: Check run.status === IN_PROGRESS before accepting completion
 
-### W4-002: Double-submit race condition  
+### W4-002: Double-submit race condition
+
 - File: API routes.service.ts:980
 - Issue: Check before transaction allows concurrent races
 - Fix: Add optimistic locking or pessimistic lock during validation
 
 ### W4-003: Silent offline queue discards on 404/409
+
 - File: useNetworkSync.ts:30-35
 - Issue: Failed syncs silently dropped without user notification
 - Fix: Show toast alerts and persist to failed inbox
 
 ### W4-004: Payment amount $0 validation missing
+
 - File: payment.tsx:170-177
 - Issue: No validation that payment > 0 (except ON_ACCOUNT)
 - Fix: API validate amount >= 0 and enforce > 0 for CASH/CARD
 
 ### W4-005: POD (photo/signature) not enforced
-- File: payment.tsx:103-114  
+
+- File: payment.tsx:103-114
 - Issue: Can complete without photo OR signature
 - Fix: Config flag; reject if required and missing
 
 ### W4-006: Payment overpayment race on concurrent submits
+
 - File: invoices.service.ts:1031-1041
 - Issue: Concurrent payments bypass remaining balance check
 - Fix: Re-verify within transaction after reading alreadyPaid
 
 ### W4-007: Offline queue unbounded growth
+
 - File: offlineQueue.ts + useNetworkSync.ts
 - Issue: Queue grows indefinitely, no user awareness
 - Fix: Max 100 items, add UI badge, add 24h TTL
 
 ### W4-008: Photo file size/format not validated
+
 - File: PhotoCapture.tsx:37-57
 - Issue: HEIC files (8MB) uploaded without validation
 - Fix: Client size check; API max 5MB; server convert to JPEG
 
 ### W4-009: EXIF GPS not stripped from photos
+
 - File: Photo upload flow
 - Issue: GPS coordinates embedded in photos
 - Fix: Server-side EXIF strip before storage
 
 ### W4-010: Location not enforced at payment
+
 - File: payment.tsx:36-46
 - Issue: Location perm only requested when opening Maps
 - Fix: Optional tenant config to enforce at payment time
 
 ### W4-011: Signature lost on app crash
+
 - File: podStore.ts (in-memory)
 - Issue: No AsyncStorage persistence
 - Fix: Add persistence middleware to Zustand
 
 ### W4-012: No atomicity for completeStop + payment
+
 - File: payment.tsx:90-168
 - Issue: Separate API calls; second can fail after first
 - Fix: Unify to single endpoint or queue both
 
 ### W4-013: Offline queue no order guarantee
+
 - File: useNetworkSync.ts:17-37
 - Issue: Replay order not guaranteed for dependent stops
 - Fix: Document independence; add sequenceNumber if needed
 
 ### W4-014: Reopen doesn't check credit memos
+
 - File: routes.service.ts:1225-1237
 - Issue: Credit memos checked but not blocking reopen
 - Fix: Check all adjustments; require ops approval
 
 ### W4-015: On-account $0 confuses reporting
+
 - File: payment.tsx:123-124
 - Issue: ON_ACCOUNT method with amount=0 excluded from reports
 - Fix: Change method name; update report filters

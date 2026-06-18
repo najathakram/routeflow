@@ -1,9 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type CreditNoteStatus = 'DRAFT' | 'ISSUED' | 'APPLIED' | 'VOID';
+export type CreditNoteStatus = "DRAFT" | "ISSUED" | "APPLIED" | "VOID";
 
 export interface CreditNote {
   id: string;
@@ -36,14 +36,14 @@ export function useCreditNotes(params?: {
   limit?: number;
 }) {
   return useQuery<PaginatedResponse<CreditNote>>({
-    queryKey: ['credit-notes', params],
-    queryFn: () => apiClient.get('/credit-notes', { params }).then((r) => r.data),
+    queryKey: ["credit-notes", params],
+    queryFn: () => apiClient.get("/credit-notes", { params }).then((r) => r.data),
   });
 }
 
 export function useCreditNote(id: string) {
   return useQuery<CreditNote>({
-    queryKey: ['credit-notes', id],
+    queryKey: ["credit-notes", id],
     queryFn: () => apiClient.get(`/credit-notes/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -63,8 +63,8 @@ export interface CreateCreditNoteDto {
 export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteDto>({
-    mutationFn: (dto) => apiClient.post('/credit-notes', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['credit-notes'] }),
+    mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
   });
 }
 
@@ -73,8 +73,8 @@ export function useIssueCreditNote() {
   return useMutation<CreditNote, Error, string>({
     mutationFn: (id) => apiClient.post(`/credit-notes/${id}/issue`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['credit-notes'] });
-      qc.invalidateQueries({ queryKey: ['credit-notes', id] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
     },
   });
 }
@@ -85,9 +85,9 @@ export function useApplyCreditNote() {
     mutationFn: ({ id, invoiceId }) =>
       apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['credit-notes'] });
-      qc.invalidateQueries({ queryKey: ['credit-notes', id] });
-      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     },
   });
 }
@@ -97,8 +97,8 @@ export function useVoidCreditNote() {
   return useMutation<CreditNote, Error, string>({
     mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['credit-notes'] });
-      qc.invalidateQueries({ queryKey: ['credit-notes', id] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
     },
   });
 }

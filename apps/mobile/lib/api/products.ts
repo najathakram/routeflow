@@ -1,7 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
-export function useProducts(params?: { search?: string; category?: string; isActive?: boolean; limit?: number }) {
+export function useProducts(params?: {
+  search?: string;
+  category?: string;
+  isActive?: boolean;
+  limit?: number;
+}) {
   return useQuery({
     queryKey: ["products", params],
     queryFn: () =>
@@ -48,7 +53,11 @@ export interface CreateProductDto {
 
 export function useUpdateReorderSettings() {
   const qc = useQueryClient();
-  return useMutation<unknown, Error, { productId: string; reorderPoint?: number; reorderQty?: number }>({
+  return useMutation<
+    unknown,
+    Error,
+    { productId: string; reorderPoint?: number; reorderQty?: number }
+  >({
     mutationFn: ({ productId, ...dto }) =>
       apiClient.patch(`/inventory/products/${productId}/reorder-settings`, dto).then((r) => r.data),
     onSuccess: (_, { productId }) => {
@@ -100,8 +109,7 @@ export function useAdjustProductStock() {
     Error,
     { productId: string; quantity: number; notes?: string; reference?: string }
   >({
-    mutationFn: (dto) =>
-      apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
     onSuccess: (_, { productId }) => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["products", productId] });

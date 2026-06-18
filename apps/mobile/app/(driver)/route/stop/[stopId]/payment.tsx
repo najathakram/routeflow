@@ -12,12 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavAction,
-  NavBackButton,
-  NavBar,
-  SegmentedControl,
-} from "@routeflow/ui/mobile/ios";
+import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
   useCompleteStop,
@@ -50,10 +45,7 @@ function totalForStop(stop: RouteRunStop): number {
   return (stop.orders ?? []).reduce(
     (sum, o) =>
       sum +
-      (o.lineItems ?? []).reduce(
-        (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
-        0,
-      ),
+      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
     0,
   );
 }
@@ -66,10 +58,7 @@ export default function PaymentScreen() {
   const { data: activeData } = useActiveRouteRun();
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading } = useRouteRun(runId ?? "");
-  const stop = useMemo(
-    () => run?.stops?.find((s) => s.id === stopId),
-    [run, stopId],
-  );
+  const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
   const invoiceTotal = stop ? totalForStop(stop) : 0;
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
@@ -88,7 +77,8 @@ export default function PaymentScreen() {
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
 
-  const submitting = completeMut.isPending || completeWithPaymentMut.isPending || paymentMut.isPending;
+  const submitting =
+    completeMut.isPending || completeWithPaymentMut.isPending || paymentMut.isPending;
 
   const closeStop = async () => {
     if (!stopId || !runId || !stop) return;
@@ -165,7 +155,11 @@ export default function PaymentScreen() {
         "Continue in Google Maps?",
         `${remaining.length} stop${remaining.length === 1 ? "" : "s"} left. Re-open Maps with the updated route from your current location?`,
         [
-          { text: "Stay in app", style: "cancel", onPress: () => router.replace("/(driver)/route") },
+          {
+            text: "Stay in app",
+            style: "cancel",
+            onPress: () => router.replace("/(driver)/route"),
+          },
           {
             text: "Open Maps",
             onPress: async () => {
@@ -255,11 +249,7 @@ export default function PaymentScreen() {
           ]
             .filter((n) => n > 0)
             .map((n) => (
-              <Pressable
-                key={n}
-                style={styles.quickCell}
-                onPress={() => setReceived(`${n}`)}
-              >
+              <Pressable key={n} style={styles.quickCell} onPress={() => setReceived(`${n}`)}>
                 <Text style={styles.quickText}>${n}</Text>
               </Pressable>
             ))}

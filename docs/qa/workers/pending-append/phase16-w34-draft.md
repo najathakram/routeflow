@@ -196,13 +196,13 @@
 
 ## Phase 16 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-203 | P0 | W34/all-create | SYSTEMIC: all /create pages show spinner only — forms never render |
-| RF-204 | P1 | W34/1.7 | Invoice "Voided" tab sends status=VOIDED but DB uses VOID — always returns 0 results |
-| RF-205 | P1 | W34/1.4 | Route "Optimize stops" button navigates to /drivers instead of optimizing |
-| RF-206 | P2 | W34/1.4 | Route appears twice in Dispatch "All routes" list |
-| RF-207 | P2 | W34/1.5 | Customer detail page missing Orders, Invoices, Returns, Documents, Standing Orders tabs |
-| RF-208 | P2 | W34/1.7 | Invoice list has no "Create Invoice" button |
-| RF-209 | P2 | W34/1.8 | Finance sub-routes return 404 — correct paths omit /finance/ prefix |
-| RF-210 | P3 | W34/1.6 | Product price tiers not displayed in web UI — only base price shown |
+| RF     | Severity | Source         | Title                                                                                   |
+| ------ | -------- | -------------- | --------------------------------------------------------------------------------------- |
+| RF-203 | P0       | W34/all-create | SYSTEMIC: all /create pages show spinner only — forms never render                      |
+| RF-204 | P1       | W34/1.7        | Invoice "Voided" tab sends status=VOIDED but DB uses VOID — always returns 0 results    |
+| RF-205 | P1       | W34/1.4        | Route "Optimize stops" button navigates to /drivers instead of optimizing               |
+| RF-206 | P2       | W34/1.4        | Route appears twice in Dispatch "All routes" list                                       |
+| RF-207 | P2       | W34/1.5        | Customer detail page missing Orders, Invoices, Returns, Documents, Standing Orders tabs |
+| RF-208 | P2       | W34/1.7        | Invoice list has no "Create Invoice" button                                             |
+| RF-209 | P2       | W34/1.8        | Finance sub-routes return 404 — correct paths omit /finance/ prefix                     |
+| RF-210 | P3       | W34/1.6        | Product price tiers not displayed in web UI — only base price shown                     |

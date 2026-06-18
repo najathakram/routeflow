@@ -153,10 +153,7 @@ export function useBuyerProducts(params?: {
 }) {
   return useQuery<Paginated<BuyerProduct>>({
     queryKey: ["buyer", "products", params],
-    queryFn: () =>
-      buyerApiClient
-        .get("/buyer/products", { params })
-        .then((r) => r.data),
+    queryFn: () => buyerApiClient.get("/buyer/products", { params }).then((r) => r.data),
   });
 }
 
@@ -181,8 +178,7 @@ export function useBuyerCategories() {
 export function useBuyerActiveOrder() {
   return useQuery<BuyerOrder | null>({
     queryKey: ["buyer", "activeOrder"],
-    queryFn: () =>
-      buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
+    queryFn: () => buyerApiClient.get("/buyer/orders/active").then((r) => r.data),
   });
 }
 
@@ -199,8 +195,7 @@ export interface BuyerOrderListItem {
 export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
   return useQuery<Paginated<BuyerOrderListItem>>({
     queryKey: ["buyer", "orders", params],
-    queryFn: () =>
-      buyerApiClient.get("/buyer/orders", { params }).then((r) => r.data),
+    queryFn: () => buyerApiClient.get("/buyer/orders", { params }).then((r) => r.data),
   });
 }
 
@@ -216,7 +211,13 @@ export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
-      items: Array<{ productId: string; qty: number; boxes?: number; pieces?: number; notes?: string }>;
+      items: Array<{
+        productId: string;
+        qty: number;
+        boxes?: number;
+        pieces?: number;
+        notes?: string;
+      }>;
       notes?: string;
       urgent?: boolean;
       requestedDeliveryDate?: string;
@@ -234,8 +235,13 @@ export function useBuyerCreateOrder() {
 export function useBuyerUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ orderId, items }: { orderId: string; items: Array<{ productId: string; qty: number }> }) =>
-      buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
+    mutationFn: ({
+      orderId,
+      items,
+    }: {
+      orderId: string;
+      items: Array<{ productId: string; qty: number }>;
+    }) => buyerApiClient.patch(`/buyer/orders/${orderId}/items`, { items }).then((r) => r.data),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
@@ -312,9 +318,7 @@ export function useBuyerDashboard(frequentWindow?: "30d" | "90d" | "all") {
   return useQuery<DashboardData>({
     queryKey: ["buyer", "dashboard", frequentWindow],
     queryFn: () =>
-      buyerApiClient
-        .get("/buyer/dashboard", { params: { frequentWindow } })
-        .then((r) => r.data),
+      buyerApiClient.get("/buyer/dashboard", { params: { frequentWindow } }).then((r) => r.data),
   });
 }
 

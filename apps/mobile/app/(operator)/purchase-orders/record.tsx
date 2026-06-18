@@ -57,8 +57,7 @@ export default function QuickReceiveScreen() {
           showToast("Stock received");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -138,7 +137,11 @@ export default function QuickReceiveScreen() {
         options={products.map((p: any) => ({ id: p.id, label: p.name }))}
         selectedId={productId}
         onClose={() => setProductPickerOpen(false)}
-        onSelect={(opt) => { setProductId(opt.id); setProductName(opt.label); setProductPickerOpen(false); }}
+        onSelect={(opt) => {
+          setProductId(opt.id);
+          setProductName(opt.label);
+          setProductPickerOpen(false);
+        }}
       />
       <OptionPickerSheet
         visible={supplierPickerOpen}
@@ -148,7 +151,11 @@ export default function QuickReceiveScreen() {
         nullable
         nullLabel="None"
         onClose={() => setSupplierPickerOpen(false)}
-        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.id ? opt.label : ""); setSupplierPickerOpen(false); }}
+        onSelect={(opt) => {
+          setSupplierId(opt.id);
+          setSupplierName(opt.id ? opt.label : "");
+          setSupplierPickerOpen(false);
+        }}
       />
     </FormSheet>
   );

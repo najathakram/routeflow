@@ -139,7 +139,7 @@ export default function BuyerInvoicesPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Invoices</h1>
         {activeSeller && (
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
@@ -147,9 +147,7 @@ export default function BuyerInvoicesPage() {
 
       {/* Error */}
       {error && (
-        <div className="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">
-          {error}
-        </div>
+        <div className="mb-4 rounded-lg bg-danger-bg px-4 py-3 text-sm text-danger">{error}</div>
       )}
 
       {/* Loading */}
@@ -161,7 +159,7 @@ export default function BuyerInvoicesPage() {
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <FileText className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No invoices yet</h2>
-          <p className="text-sm text-navy/60">Invoices from this seller will appear here.</p>
+          <p className="text-sm text-navy/70">Invoices from this seller will appear here.</p>
         </div>
       ) : (
         <>
@@ -171,22 +169,22 @@ export default function BuyerInvoicesPage() {
               <table className="w-full min-w-[640px]">
                 <thead>
                   <tr className="border-b border-surface-border bg-surface-raised">
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Invoice #
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Date
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Due Date
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Status
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Amount
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Balance
                     </th>
                   </tr>
@@ -195,7 +193,9 @@ export default function BuyerInvoicesPage() {
                   {invoices.map((invoice) => (
                     <tr
                       key={invoice.id}
-                      onClick={() => router.push(`/buyer/portal/${sellerSlug}/invoices/${invoice.id}`)}
+                      onClick={() =>
+                        router.push(`/buyer/portal/${sellerSlug}/invoices/${invoice.id}`)
+                      }
                       className="hover:bg-surface-raised transition-colors cursor-pointer"
                     >
                       <td className="px-4 py-3 text-sm font-medium text-navy">
@@ -228,7 +228,7 @@ export default function BuyerInvoicesPage() {
           {/* Pagination */}
           {meta && meta.totalPages > 1 && (
             <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-navy/60">
+              <p className="text-sm text-navy/70">
                 Showing {(meta.page - 1) * meta.limit + 1} to{" "}
                 {Math.min(meta.page * meta.limit, meta.total)} of {meta.total}
               </p>
@@ -237,7 +237,7 @@ export default function BuyerInvoicesPage() {
                   type="button"
                   onClick={() => setPage((p) => p - 1)}
                   disabled={page === 1}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -248,7 +248,7 @@ export default function BuyerInvoicesPage() {
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={page === meta.totalPages}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>

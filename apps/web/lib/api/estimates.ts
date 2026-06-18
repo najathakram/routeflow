@@ -1,9 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type EstimateStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'CONVERTED';
+export type EstimateStatus = "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED" | "CONVERTED";
 
 export interface EstimateItem {
   id: string;
@@ -14,7 +14,7 @@ export interface EstimateItem {
   unitPrice: number;
   subtotal?: number;
   total?: number;
-  priceType?: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+  priceType?: "STANDARD" | "SPECIAL" | "DISCOUNTED";
   originalPrice?: number;
   boxes?: number;
   pieces?: number;
@@ -54,14 +54,14 @@ export function useEstimates(params?: {
   limit?: number;
 }) {
   return useQuery<PaginatedResponse<Estimate>>({
-    queryKey: ['estimates', params],
-    queryFn: () => apiClient.get('/estimates', { params }).then((r) => r.data),
+    queryKey: ["estimates", params],
+    queryFn: () => apiClient.get("/estimates", { params }).then((r) => r.data),
   });
 }
 
 export function useEstimate(id: string) {
   return useQuery<Estimate>({
-    queryKey: ['estimates', id],
+    queryKey: ["estimates", id],
     queryFn: () => apiClient.get(`/estimates/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -89,8 +89,8 @@ export interface CreateEstimateDto {
 export function useCreateEstimate() {
   const qc = useQueryClient();
   return useMutation<Estimate, Error, CreateEstimateDto>({
-    mutationFn: (dto) => apiClient.post('/estimates', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['estimates'] }),
+    mutationFn: (dto) => apiClient.post("/estimates", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["estimates"] }),
   });
 }
 
@@ -99,8 +99,8 @@ export function useSendEstimate() {
   return useMutation<Estimate, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['estimates'] });
-      qc.invalidateQueries({ queryKey: ['estimates', id] });
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
     },
   });
 }
@@ -110,8 +110,8 @@ export function useAcceptEstimate() {
   return useMutation<Estimate, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/accept`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['estimates'] });
-      qc.invalidateQueries({ queryKey: ['estimates', id] });
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
     },
   });
 }
@@ -121,8 +121,8 @@ export function useDeclineEstimate() {
   return useMutation<Estimate, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/decline`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['estimates'] });
-      qc.invalidateQueries({ queryKey: ['estimates', id] });
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
     },
   });
 }
@@ -132,8 +132,8 @@ export function useConvertEstimateToInvoice() {
   return useMutation<{ invoiceId: string }, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/convert`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['estimates'] });
-      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     },
   });
 }
@@ -143,8 +143,8 @@ export function useVoidEstimate() {
   return useMutation<Estimate, Error, string>({
     mutationFn: (id) => apiClient.post(`/estimates/${id}/void`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['estimates'] });
-      qc.invalidateQueries({ queryKey: ['estimates', id] });
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
     },
   });
 }

@@ -33,8 +33,7 @@ export interface AddressAutocompleteProps {
   disabled?: boolean;
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -189,7 +188,7 @@ export function AddressAutocomplete({
           aria-invalid={!!error}
           role="combobox"
           className={cn(
-            "h-10 w-full rounded border border-surface-border bg-white px-3 pr-8 text-sm text-navy placeholder:text-navy/40 transition-colors",
+            "h-10 w-full rounded border border-surface-border bg-white px-3 pr-8 text-sm text-navy placeholder:text-navy/70 transition-colors",
             "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent",
             error && "border-danger focus:ring-danger",
             disabled && "cursor-not-allowed opacity-50 bg-surface-raised",
@@ -230,9 +229,7 @@ export function AddressAutocomplete({
               <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-400" />
               <span className="leading-snug">
                 <span className="font-medium">{s.mainText}</span>
-                {s.secondaryText && (
-                  <span className="text-navy/60">{" "}{s.secondaryText}</span>
-                )}
+                {s.secondaryText && <span className="text-navy/70"> {s.secondaryText}</span>}
               </span>
             </li>
           ))}

@@ -24,11 +24,7 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function formatSchedule(days: number[]): string {
   if (!days || days.length === 0) return "No schedule";
   if (days.length === 7) return "Every day";
-  if (
-    days.length === 5 &&
-    [1, 2, 3, 4, 5].every((d) => days.includes(d))
-  )
-    return "Weekdays";
+  if (days.length === 5 && [1, 2, 3, 4, 5].every((d) => days.includes(d))) return "Weekdays";
   return days
     .sort((a, b) => a - b)
     .map((d) => DAY_NAMES[d])
@@ -55,13 +51,9 @@ function TemplateRow({
         {/* Expand toggle */}
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+          className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
         >
-          {expanded ? (
-            <ChevronUp className="h-4 w-4" />
-          ) : (
-            <ChevronDown className="h-4 w-4" />
-          )}
+          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </button>
 
         {/* Icon */}
@@ -78,18 +70,22 @@ function TemplateRow({
             </Badge>
           </div>
           <div className="flex items-center gap-3 mt-0.5">
-            <span className="flex items-center gap-1 text-xs text-navy/50">
+            <span className="flex items-center gap-1 text-xs text-navy/70">
               <Calendar className="h-3 w-3" />
               {formatSchedule(template.daysOfWeek)}
             </span>
-            <span className="flex items-center gap-1 text-xs text-navy/50">
+            <span className="flex items-center gap-1 text-xs text-navy/70">
               <Package className="h-3 w-3" />
               {template.items.length} {template.items.length === 1 ? "item" : "items"}
             </span>
             {template.nextFireDate && (
               <span className="flex items-center gap-1 text-xs font-medium text-buyer-600">
                 <Calendar className="h-3 w-3" />
-                Next: {new Date(template.nextFireDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}
+                Next:{" "}
+                {new Date(template.nextFireDate).toLocaleDateString("en-GB", {
+                  day: "2-digit",
+                  month: "short",
+                })}
               </span>
             )}
           </div>
@@ -111,13 +107,11 @@ function TemplateRow({
       {/* Expanded items */}
       {expanded && (
         <div className="bg-surface-raised/50 px-4 pb-4 pl-[4.75rem]">
-          {template.notes && (
-            <p className="mb-3 text-xs text-navy/60 italic">{template.notes}</p>
-          )}
+          {template.notes && <p className="mb-3 text-xs text-navy/70 italic">{template.notes}</p>}
           <div className="rounded-lg border border-surface-border bg-white overflow-hidden">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-surface-border text-[11px] text-navy/50 uppercase tracking-wider">
+                <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
                   <th className="px-3 py-2 text-left">Product</th>
                   <th className="px-3 py-2 text-left w-20">Unit</th>
                   <th className="px-3 py-2 text-right w-16">Qty</th>
@@ -128,9 +122,9 @@ function TemplateRow({
                 {template.items.map((item) => (
                   <tr key={item.id} className="text-sm">
                     <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
-                    <td className="px-3 py-2 text-navy/60">{item.product.unit}</td>
+                    <td className="px-3 py-2 text-navy/70">{item.product.unit}</td>
                     <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
-                    <td className="px-3 py-2 text-navy/50 text-xs">{item.notes ?? "N/A"}</td>
+                    <td className="px-3 py-2 text-navy/70 text-xs">{item.notes ?? "N/A"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -177,9 +171,7 @@ export default function BuyerTemplatesPage() {
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
     } catch (err: any) {
-      setErrorMsg(
-        err?.response?.data?.message ?? "Failed to create order from template.",
-      );
+      setErrorMsg(err?.response?.data?.message ?? "Failed to create order from template.");
     } finally {
       setReorderingId(null);
     }
@@ -200,7 +192,7 @@ export default function BuyerTemplatesPage() {
       {/* Page header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Standing Orders</h1>
-        <p className="text-sm text-navy/60 mt-1">
+        <p className="text-sm text-navy/70 mt-1">
           Recurring order templates set up by {activeSeller?.tenant.name}. Quickly reorder with one
           click.
         </p>
@@ -232,13 +224,15 @@ export default function BuyerTemplatesPage() {
       {/* Templates list */}
       {isError ? (
         <div className="rounded-xl border border-danger/30 bg-danger-bg p-8 text-center">
-          <p className="text-sm text-danger">Failed to load standing orders. Please try again later.</p>
+          <p className="text-sm text-danger">
+            Failed to load standing orders. Please try again later.
+          </p>
         </div>
       ) : templates.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <Repeat className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No standing orders</h2>
-          <p className="text-sm text-navy/60">
+          <p className="text-sm text-navy/70">
             Your seller hasn&apos;t set up any recurring order templates for you yet.
           </p>
         </div>
@@ -257,14 +251,13 @@ export default function BuyerTemplatesPage() {
 
       {/* Summary footer */}
       {templates.length > 0 && (
-        <div className="mt-4 flex items-center gap-4 text-xs text-navy/50">
+        <div className="mt-4 flex items-center gap-4 text-xs text-navy/70">
           <span>
             {templates.filter((t) => t.isActive).length} active ·{" "}
             {templates.filter((t) => !t.isActive).length} paused
           </span>
           <span>
-            {templates.reduce((sum, t) => sum + t.items.length, 0)} total items across all
-            templates
+            {templates.reduce((sum, t) => sum + t.items.length, 0)} total items across all templates
           </span>
         </div>
       )}

@@ -14,7 +14,15 @@ export interface KpiCardProps {
   highlighted?: boolean;
 }
 
-export function KpiCard({ icon, iconBg, value, label, delta, deltaTone = "neutral", highlighted }: KpiCardProps) {
+export function KpiCard({
+  icon,
+  iconBg,
+  value,
+  label,
+  delta,
+  deltaTone = "neutral",
+  highlighted,
+}: KpiCardProps) {
   return (
     <View style={[styles.card, highlighted && styles.cardHighlighted]}>
       {icon !== undefined ? (

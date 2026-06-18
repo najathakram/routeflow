@@ -46,7 +46,7 @@ type SignupFormValues = z.infer<typeof signupSchema>;
 type AvailStatus = "idle" | "checking" | "available" | "taken";
 
 function AvailIndicator({ status }: { status: AvailStatus }) {
-  if (status === "checking") return <Loader2 className="h-4 w-4 animate-spin text-navy/40" />;
+  if (status === "checking") return <Loader2 className="h-4 w-4 animate-spin text-navy/70" />;
   if (status === "available") return <CheckCircle2 className="h-4 w-4 text-success" />;
   if (status === "taken") return <XCircle className="h-4 w-4 text-danger" />;
   return null;
@@ -133,34 +133,58 @@ function SignupInner() {
 
   // Debounced slug availability check
   React.useEffect(() => {
-    if (!slugValue || slugValue.length < 3) { setSlugStatus("idle"); return; }
+    if (!slugValue || slugValue.length < 3) {
+      setSlugStatus("idle");
+      return;
+    }
     setSlugStatus("checking");
     if (slugDebounce.current) clearTimeout(slugDebounce.current);
     slugDebounce.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${apiUrl}/public/tenants/${encodeURIComponent(slugValue)}/available`);
-        if (!res.ok) { setSlugStatus("idle"); return; }
+        const res = await fetch(
+          `${apiUrl}/public/tenants/${encodeURIComponent(slugValue)}/available`,
+        );
+        if (!res.ok) {
+          setSlugStatus("idle");
+          return;
+        }
         const data: { available: boolean } = await res.json();
         setSlugStatus(data.available ? "available" : "taken");
-      } catch { setSlugStatus("idle"); }
+      } catch {
+        setSlugStatus("idle");
+      }
     }, 400);
-    return () => { if (slugDebounce.current) clearTimeout(slugDebounce.current); };
+    return () => {
+      if (slugDebounce.current) clearTimeout(slugDebounce.current);
+    };
   }, [slugValue, apiUrl]);
 
   // Debounced username availability check
   React.useEffect(() => {
-    if (!usernameValue || usernameValue.length < 3) { setUsernameStatus("idle"); return; }
+    if (!usernameValue || usernameValue.length < 3) {
+      setUsernameStatus("idle");
+      return;
+    }
     setUsernameStatus("checking");
     if (usernameDebounce.current) clearTimeout(usernameDebounce.current);
     usernameDebounce.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${apiUrl}/public/tenants/username-available?username=${encodeURIComponent(usernameValue)}`);
-        if (!res.ok) { setUsernameStatus("idle"); return; }
+        const res = await fetch(
+          `${apiUrl}/public/tenants/username-available?username=${encodeURIComponent(usernameValue)}`,
+        );
+        if (!res.ok) {
+          setUsernameStatus("idle");
+          return;
+        }
         const data: { available: boolean } = await res.json();
         setUsernameStatus(data.available ? "available" : "taken");
-      } catch { setUsernameStatus("idle"); }
+      } catch {
+        setUsernameStatus("idle");
+      }
     }, 400);
-    return () => { if (usernameDebounce.current) clearTimeout(usernameDebounce.current); };
+    return () => {
+      if (usernameDebounce.current) clearTimeout(usernameDebounce.current);
+    };
   }, [usernameValue, apiUrl]);
 
   const onSubmit = async (data: SignupFormValues) => {
@@ -192,7 +216,9 @@ function SignupInner() {
       if (!regRes.ok) {
         const body = await regRes.json().catch(() => ({}));
         const msg = (body as { message?: string | string[] }).message;
-        const text = Array.isArray(msg) ? msg.join(". ") : (msg ?? "Signup failed. Please try again.");
+        const text = Array.isArray(msg)
+          ? msg.join(". ")
+          : (msg ?? "Signup failed. Please try again.");
         setApiError(text);
         setIsLoading(false);
         return;
@@ -212,7 +238,7 @@ function SignupInner() {
         {/* Back */}
         <a
           href="/"
-          className="mb-6 flex items-center gap-1.5 text-sm text-navy/50 hover:text-navy transition-colors"
+          className="mb-6 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Back to Home
         </a>
@@ -226,7 +252,7 @@ function SignupInner() {
               14 Days Free
             </span>
           </div>
-          <p className="text-sm text-navy/60">No credit card required</p>
+          <p className="text-sm text-navy/70">No credit card required</p>
         </div>
 
         {/* Card */}
@@ -256,7 +282,7 @@ function SignupInner() {
                   type="text"
                   placeholder="acme-distribution"
                   autoComplete="off"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 font-mono text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 font-mono text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("slug", { onChange: () => setSlugEdited(true) })}
                 />
                 <span className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -270,7 +296,9 @@ function SignupInner() {
               ) : slugStatus === "available" ? (
                 <p className="text-xs text-success">This workspace ID is available.</p>
               ) : (
-                <p className="text-xs text-navy/40">Used in your login URL. Lowercase letters, numbers, hyphens.</p>
+                <p className="text-xs text-navy/70">
+                  Used in your login URL. Lowercase letters, numbers, hyphens.
+                </p>
               )}
             </div>
 
@@ -295,7 +323,7 @@ function SignupInner() {
                   type="text"
                   placeholder="acme_admin"
                   autoComplete="username"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
                 />
                 <span className="absolute inset-y-0 right-0 flex items-center pr-3">
@@ -305,11 +333,13 @@ function SignupInner() {
               {errors.adminUsername ? (
                 <p className="text-xs text-danger">{errors.adminUsername.message}</p>
               ) : usernameStatus === "taken" ? (
-                <p className="text-xs text-danger">This username is reserved. Please choose a different one.</p>
+                <p className="text-xs text-danger">
+                  This username is reserved. Please choose a different one.
+                </p>
               ) : usernameStatus === "available" ? (
                 <p className="text-xs text-success">This username is available.</p>
               ) : (
-                <p className="text-xs text-navy/40">Letters, numbers, and underscores only.</p>
+                <p className="text-xs text-navy/70">Letters, numbers, and underscores only.</p>
               )}
             </div>
 
@@ -324,13 +354,13 @@ function SignupInner() {
                   type={showPassword ? "text" : "password"}
                   placeholder="At least 8 chars, 1 uppercase, 1 number"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("adminPassword")}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 transition-colors hover:text-navy"
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
                   tabIndex={-1}
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
@@ -353,13 +383,13 @@ function SignupInner() {
                   type={showConfirm ? "text" : "password"}
                   placeholder="Re-enter your password"
                   autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                   {...register("confirmPassword")}
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirm((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 transition-colors hover:text-navy"
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
                   tabIndex={-1}
                   aria-label={showConfirm ? "Hide password" : "Show password"}
                 >
@@ -381,22 +411,27 @@ function SignupInner() {
             </Button>
           </form>
 
-          <p className="mt-4 text-center text-xs text-navy/50">
+          <p className="mt-4 text-center text-xs text-navy/70">
             By signing up you agree to our{" "}
-            <a href="/terms" className="text-brand-600 hover:underline">Terms of Service</a>
+            <a href="/terms" className="text-brand-600 hover:underline">
+              Terms of Service
+            </a>
             {" & "}
-            <a href="/privacy" className="text-brand-600 hover:underline">Privacy Policy</a>.
+            <a href="/privacy" className="text-brand-600 hover:underline">
+              Privacy Policy
+            </a>
+            .
           </p>
         </div>
 
         <div className="mt-6 space-y-2 text-center">
-          <p className="text-xs text-navy/50">
+          <p className="text-xs text-navy/70">
             Already have an account?{" "}
             <a href="/login" className="font-medium text-brand-600 hover:underline">
               Sign in
             </a>
           </p>
-          <p className="text-xs text-navy/50">
+          <p className="text-xs text-navy/70">
             Looking for the buyer portal?{" "}
             <a href="/buyer/register" className="text-brand-600 hover:underline">
               Sign up here

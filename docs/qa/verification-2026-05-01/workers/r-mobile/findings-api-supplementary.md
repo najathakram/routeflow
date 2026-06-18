@@ -2,18 +2,18 @@
 
 Headline: ⛔ BLOCKED — driver happy-path could not be completed due to login throttle, credential mismatch, and concurrent-session collision.
 
-| Step | Status | Notes (≤ 25 words) |
-|------|--------|---------------------|
-| 1. resize+viewport | ✅ | Resized to 375×667 (Chrome rendered ~620×888 with scaling); mobile layout displayed correctly |
-| 2. Navigate + company code | ✅ | Company code screen appeared; `ux-audit-1777265477001` accepted; redirected to login showing "UX Audit Co" |
-| 3. Driver login | ⛔ BLOCKED | `ux_driver_a / UxDriver@123!` returns 401 Invalid Credentials; password does not match seeded value |
-| 3a. Throttle | ⛔ BLOCKED | Auth endpoint throttled: 10 req / 5 min per IP (RF-160); repeated attempts reset the 5-min window |
-| 3b. Admin fallback | ⚠️ | Logged in as `ux_admin` (operator); operator dashboard confirmed functional |
-| 4. Run list (as admin) | ⚠️ | Dispatch shows "UX Route A · ux_driver_a · 5 stops" — brief says 3 stops |
-| 5. Start run | ⛔ BLOCKED | Could not reach driver surface |
-| 6. Mark stop delivered | ⛔ BLOCKED | Could not reach driver surface |
-| 7. Capture signature | ⛔ BLOCKED | Could not reach driver surface |
-| 8. Record CASH payment | ⛔ BLOCKED | Could not reach driver surface |
+| Step                       | Status     | Notes (≤ 25 words)                                                                                         |
+| -------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------- |
+| 1. resize+viewport         | ✅         | Resized to 375×667 (Chrome rendered ~620×888 with scaling); mobile layout displayed correctly              |
+| 2. Navigate + company code | ✅         | Company code screen appeared; `ux-audit-1777265477001` accepted; redirected to login showing "UX Audit Co" |
+| 3. Driver login            | ⛔ BLOCKED | `ux_driver_a / UxDriver@123!` returns 401 Invalid Credentials; password does not match seeded value        |
+| 3a. Throttle               | ⛔ BLOCKED | Auth endpoint throttled: 10 req / 5 min per IP (RF-160); repeated attempts reset the 5-min window          |
+| 3b. Admin fallback         | ⚠️         | Logged in as `ux_admin` (operator); operator dashboard confirmed functional                                |
+| 4. Run list (as admin)     | ⚠️         | Dispatch shows "UX Route A · ux_driver_a · 5 stops" — brief says 3 stops                                   |
+| 5. Start run               | ⛔ BLOCKED | Could not reach driver surface                                                                             |
+| 6. Mark stop delivered     | ⛔ BLOCKED | Could not reach driver surface                                                                             |
+| 7. Capture signature       | ⛔ BLOCKED | Could not reach driver surface                                                                             |
+| 8. Record CASH payment     | ⛔ BLOCKED | Could not reach driver surface                                                                             |
 
 ## Anomalies (NEW findings)
 

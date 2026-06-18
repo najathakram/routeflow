@@ -1,6 +1,12 @@
 // Simple sparkline used inside the finance stat card.
 
-export function Spark({ height = 38, color = "var(--rf-teal)" }: { height?: number; color?: string }) {
+export function Spark({
+  height = 38,
+  color = "var(--rf-teal)",
+}: {
+  height?: number;
+  color?: string;
+}) {
   const pts = [12, 18, 15, 24, 22, 30, 28, 36, 32, 42, 40, 48];
   const max = Math.max(...pts);
   const w = 180;

@@ -72,7 +72,7 @@ export default function BuyerAccountPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy">Account</h1>
         {activeSeller && (
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
@@ -90,14 +90,14 @@ export default function BuyerAccountPage() {
 
           <dl className="divide-y divide-surface-border">
             <div className="flex items-center justify-between py-3">
-              <dt className="flex items-center gap-2 text-sm text-navy/60">
+              <dt className="flex items-center gap-2 text-sm text-navy/70">
                 <User className="h-4 w-4" />
                 Full Name
               </dt>
               <dd className="text-sm font-medium text-navy">{buyer?.name ?? "N/A"}</dd>
             </div>
             <div className="flex items-center justify-between py-3">
-              <dt className="flex items-center gap-2 text-sm text-navy/60">
+              <dt className="flex items-center gap-2 text-sm text-navy/70">
                 <Mail className="h-4 w-4" />
                 Email
               </dt>
@@ -110,7 +110,7 @@ export default function BuyerAccountPage() {
         {activeSeller && (
           <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-raised text-navy/60">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-raised text-navy/70">
                 <Building2 className="h-5 w-5" />
               </div>
               <h2 className="text-base font-semibold text-navy">Seller Connection</h2>
@@ -118,21 +118,23 @@ export default function BuyerAccountPage() {
 
             <dl className="divide-y divide-surface-border">
               <div className="flex items-center justify-between py-3">
-                <dt className="text-sm text-navy/60">Seller</dt>
+                <dt className="text-sm text-navy/70">Seller</dt>
                 <dd className="text-sm font-medium text-navy">{activeSeller.tenant.name}</dd>
               </div>
               <div className="flex items-center justify-between py-3">
-                <dt className="text-sm text-navy/60">Your Business</dt>
-                <dd className="text-sm font-medium text-navy">{activeSeller.customer.businessName}</dd>
+                <dt className="text-sm text-navy/70">Your Business</dt>
+                <dd className="text-sm font-medium text-navy">
+                  {activeSeller.customer.businessName}
+                </dd>
               </div>
               {activeSeller.customer.email && (
                 <div className="flex items-center justify-between py-3">
-                  <dt className="text-sm text-navy/60">Business Email</dt>
+                  <dt className="text-sm text-navy/70">Business Email</dt>
                   <dd className="text-sm font-medium text-navy">{activeSeller.customer.email}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between py-3">
-                <dt className="text-sm text-navy/60">Connection Status</dt>
+                <dt className="text-sm text-navy/70">Connection Status</dt>
                 <dd>
                   <Badge variant={getLinkStatusVariant(activeSeller.linkStatus)}>
                     {formatLinkStatus(activeSeller.linkStatus)}
@@ -153,7 +155,7 @@ export default function BuyerAccountPage() {
         {/* Security card */}
         <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-raised text-navy/60">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-raised text-navy/70">
               <KeyRound className="h-5 w-5" />
             </div>
             <h2 className="text-base font-semibold text-navy">Security</h2>
@@ -162,7 +164,7 @@ export default function BuyerAccountPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-navy">Password</p>
-              <p className="text-xs text-navy/50 mt-0.5">Change your buyer portal password</p>
+              <p className="text-xs text-navy/70 mt-0.5">Change your buyer portal password</p>
             </div>
             <a
               href="/buyer/change-password"

@@ -95,8 +95,7 @@ export function InlineCreateSupplierModal({
       onError: (err: any) => {
         toast({
           title: "Failed to create supplier",
-          description:
-            err?.response?.data?.message ?? "Check the details and try again.",
+          description: err?.response?.data?.message ?? "Check the details and try again.",
           variant: "error",
         });
       },
@@ -112,7 +111,7 @@ export function InlineCreateSupplierModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
           >
             <X size={18} />
           </button>
@@ -138,23 +137,17 @@ export function InlineCreateSupplierModal({
           {/* ── Contact name + phone ── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                Contact name
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">Contact name</label>
               <input
                 type="text"
                 value={form.contactName}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, contactName: e.target.value }))
-                }
+                onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="e.g. Jane Doe"
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                Phone
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">Phone</label>
               <input
                 type="tel"
                 value={form.phone}
@@ -168,9 +161,7 @@ export function InlineCreateSupplierModal({
           {/* ── Email + website ── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                Email
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">Email</label>
               <input
                 type="email"
                 value={form.email}
@@ -180,15 +171,11 @@ export function InlineCreateSupplierModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                Website
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">Website</label>
               <input
                 type="url"
                 value={form.website}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, website: e.target.value }))
-                }
+                onChange={(e) => setForm((f) => ({ ...f, website: e.target.value }))}
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="https://…"
               />
@@ -197,15 +184,11 @@ export function InlineCreateSupplierModal({
 
           {/* ── Address ── */}
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy">
-              Address
-            </label>
+            <label className="mb-1 block text-xs font-medium text-navy">Address</label>
             <input
               type="text"
               value={form.addressLine1}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, addressLine1: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, addressLine1: e.target.value }))}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               placeholder="Street address"
             />
@@ -213,9 +196,7 @@ export function InlineCreateSupplierModal({
 
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                City
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">City</label>
               <input
                 type="text"
                 value={form.city}
@@ -224,9 +205,7 @@ export function InlineCreateSupplierModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                State
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">State</label>
               <input
                 type="text"
                 value={form.state}
@@ -235,9 +214,7 @@ export function InlineCreateSupplierModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy">
-                ZIP
-              </label>
+              <label className="mb-1 block text-xs font-medium text-navy">ZIP</label>
               <input
                 type="text"
                 value={form.zip}

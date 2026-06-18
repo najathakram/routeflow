@@ -45,9 +45,7 @@ export function ConfirmModal() {
                   style={stack ? styles.stackItem : styles.rowItem}
                 >
                   {showDivider ? (
-                    <View
-                      style={stack ? styles.dividerHorizontal : styles.dividerVertical}
-                    />
+                    <View style={stack ? styles.dividerHorizontal : styles.dividerVertical} />
                   ) : null}
                   <Pressable style={styles.btn} onPress={() => handlePress(action)}>
                     <Text

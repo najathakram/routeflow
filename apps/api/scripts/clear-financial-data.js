@@ -12,7 +12,10 @@ productionGuard({ requireFlag: "--i-know-this-deletes-everything" });
  *   node apps/api/scripts/clear-financial-data.js --i-know-this-deletes-everything
  */
 
-const BASE_URL = process.argv.find(a => a.startsWith("http")) || process.env.ROUTEFLOW_URL || "http://localhost:3000/api/v1";
+const BASE_URL =
+  process.argv.find((a) => a.startsWith("http")) ||
+  process.env.ROUTEFLOW_URL ||
+  "http://localhost:3000/api/v1";
 const USERNAME = process.env.ROUTEFLOW_USERNAME || "admin";
 const PASSWORD = process.env.ROUTEFLOW_PASSWORD || "Admin@123";
 

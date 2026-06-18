@@ -1,20 +1,10 @@
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import {
-  useAdminDrivers,
-  useAdminRoute,
-} from "../../../../lib/api/admin";
+import { useAdminDrivers, useAdminRoute } from "../../../../lib/api/admin";
 import { useUpdateRoute } from "../../../../lib/api/routes";
 import { showToast } from "../../../../lib/toast";
 
@@ -35,8 +25,7 @@ export default function AssignDriverScreen() {
           showToast(driverId ? "Driver assigned" : "Driver removed");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -119,7 +108,13 @@ export default function AssignDriverScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center" },
-  empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2, padding: 20, textAlign: "center" },
+  empty: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    padding: 20,
+    textAlign: "center",
+  },
   row: {
     backgroundColor: ios.bgElev,
     borderRadius: 12,

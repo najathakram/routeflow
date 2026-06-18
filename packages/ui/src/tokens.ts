@@ -3,7 +3,7 @@
 
 export const colors = {
   brand: {
-    50:  "#f0faf9",
+    50: "#f0faf9",
     100: "#ccefee",
     200: "#9adedd",
     300: "#67cecc",
@@ -16,8 +16,8 @@ export const colors = {
   },
   canvas: {
     DEFAULT: "#0f1b2d",
-    mid:     "#152238",
-    light:   "#1a2d4a",
+    mid: "#152238",
+    light: "#1a2d4a",
   },
   navy: {
     DEFAULT: "#1B3A5C",

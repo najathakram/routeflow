@@ -72,7 +72,9 @@ export async function startLocationTracking(runId: string): Promise<StartTrackin
   }
 
   try {
-    const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+    const current = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
     await postLocation({
       lat: current.coords.latitude,
       lng: current.coords.longitude,

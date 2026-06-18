@@ -11,23 +11,24 @@
 
 ## Counts
 
-| Bucket | n |
-|---|---|
-| RFs in scope | 13 P0 + 55 P1 + 19 P2 = 87 |
-| P0 VERIFIED | 7 |
-| P0 FAIL | 4 (RF-002, RF-076, RF-157, RF-203) |
-| P0 BLOCKED | 2 (RF-074, RF-197 — both blocked by NEW /customers 500) |
-| P1 VERIFIED | ~12 |
-| P1 FAIL | 13 |
-| P1 PARTIAL | 4 |
-| P1 BLOCKED | 4 (all blocked by /customers 500) |
-| P1 NOT COVERED | 7 (RF-004, 005, 006, 009, 016, 018, 019 — race/cron/notification flows not exercisable in pure-GUI verification) |
-| P2 VERIFIED | 1 (RF-219) |
-| P2 FAIL | 2 (RF-209, RF-222) |
-| P2 BLOCKED | 16 (cascade of P1 infra failures) |
-| **NEW regressions** | **2 P0, 4 P1, 5 P2** |
+| Bucket              | n                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| RFs in scope        | 13 P0 + 55 P1 + 19 P2 = 87                                                                                       |
+| P0 VERIFIED         | 7                                                                                                                |
+| P0 FAIL             | 4 (RF-002, RF-076, RF-157, RF-203)                                                                               |
+| P0 BLOCKED          | 2 (RF-074, RF-197 — both blocked by NEW /customers 500)                                                          |
+| P1 VERIFIED         | ~12                                                                                                              |
+| P1 FAIL             | 13                                                                                                               |
+| P1 PARTIAL          | 4                                                                                                                |
+| P1 BLOCKED          | 4 (all blocked by /customers 500)                                                                                |
+| P1 NOT COVERED      | 7 (RF-004, 005, 006, 009, 016, 018, 019 — race/cron/notification flows not exercisable in pure-GUI verification) |
+| P2 VERIFIED         | 1 (RF-219)                                                                                                       |
+| P2 FAIL             | 2 (RF-209, RF-222)                                                                                               |
+| P2 BLOCKED          | 16 (cascade of P1 infra failures)                                                                                |
+| **NEW regressions** | **2 P0, 4 P1, 5 P2**                                                                                             |
 
 Quality-gate triggers fired (any one ⇒ NO-SHIP):
+
 1. ≥1 P0 FAIL/BLOCKED — six instances (RF-002/074/076/157/197/203).
 2. ≥3 P1 FAIL — 13 instances.
 3. New P0-class regressions — buyer Orders and Invoices 500.
@@ -91,17 +92,17 @@ After the original verdict, three additional workers (M1 driver, M2 auth/blocked
 
 ## Updated counts (after Phase E)
 
-| Bucket | Phase A–D | Phase E delta | After Phase E |
-|---|---|---|---|
-| P0 VERIFIED | 7 | 0 | 7 |
-| P0 FAIL | 4 | 0 | 4 (RF-002, 076, 157, 203) |
-| P0 STILL BLOCKED | 2 | 0 | 2 (RF-074, 197 — now blocked by NEW-m2-1 cross-tab collision instead of /customers 500) |
-| P1 VERIFIED | ~12 | +3 (RF-004, 079, 083) | ~15 |
-| P1 FAIL/PARTIAL | 17 | +2 escalated from NOT COVERED (RF-016, 018) and +1 from PARTIAL (RF-228) | 20 |
-| P1 STILL BLOCKED | 4 | -1 (RF-079 cleared); -1 (RF-083 cleared); +0 | 2 (RF-074-adj, RF-080) |
-| P1 NOT COVERED | 7 | -3 closed (RF-004, 016, 018), -2 newly NOT COVERED (RF-005, 006, 019 — blocked by test-data state in Phase E too) | 4 still uncovered (RF-005, 006, 009, 019) |
-| P2 BLOCKED → resolved | 16 | -10 (M3 turned 7 BLOCKED into FAIL, 1 into VERIFIED, 1 into PARTIAL; M2 cleared 1) | 6 still blocked (mostly buyer-side) |
-| **NEW regressions (cumulative)** | 9 | **+8** (NEW-m1-1/2/3, m2-1/2/3, m3-1/2) | **17** |
+| Bucket                           | Phase A–D | Phase E delta                                                                                                     | After Phase E                                                                           |
+| -------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| P0 VERIFIED                      | 7         | 0                                                                                                                 | 7                                                                                       |
+| P0 FAIL                          | 4         | 0                                                                                                                 | 4 (RF-002, 076, 157, 203)                                                               |
+| P0 STILL BLOCKED                 | 2         | 0                                                                                                                 | 2 (RF-074, 197 — now blocked by NEW-m2-1 cross-tab collision instead of /customers 500) |
+| P1 VERIFIED                      | ~12       | +3 (RF-004, 079, 083)                                                                                             | ~15                                                                                     |
+| P1 FAIL/PARTIAL                  | 17        | +2 escalated from NOT COVERED (RF-016, 018) and +1 from PARTIAL (RF-228)                                          | 20                                                                                      |
+| P1 STILL BLOCKED                 | 4         | -1 (RF-079 cleared); -1 (RF-083 cleared); +0                                                                      | 2 (RF-074-adj, RF-080)                                                                  |
+| P1 NOT COVERED                   | 7         | -3 closed (RF-004, 016, 018), -2 newly NOT COVERED (RF-005, 006, 019 — blocked by test-data state in Phase E too) | 4 still uncovered (RF-005, 006, 009, 019)                                               |
+| P2 BLOCKED → resolved            | 16        | -10 (M3 turned 7 BLOCKED into FAIL, 1 into VERIFIED, 1 into PARTIAL; M2 cleared 1)                                | 6 still blocked (mostly buyer-side)                                                     |
+| **NEW regressions (cumulative)** | 9         | **+8** (NEW-m1-1/2/3, m2-1/2/3, m3-1/2)                                                                           | **17**                                                                                  |
 
 ## New ship-blockers from Phase E (not in original audit)
 
@@ -114,6 +115,7 @@ After the original verdict, three additional workers (M1 driver, M2 auth/blocked
 ## Verdict — unchanged
 
 **🛑 NO-SHIP.** Phase E expanded coverage but tipped the verdict further negative:
+
 - All four P0 FAIL findings hold.
 - The two P0 BLOCKED findings remain unverifiable (root cause shifted from a /customers 500 to NEW-m2-1 cross-tab token collision — both unacceptable).
 - Three formerly NOT COVERED P1s are now confirmed FAIL or PARTIAL.
@@ -134,4 +136,3 @@ Add the following to the original priority list:
 - **A5** Re-seed `ux-audit-1777265477001` with one fresh PENDING stop per driver before the next verification pass so RF-005/006/019 become exercisable through the GUI.
 
 — end Phase E —
-

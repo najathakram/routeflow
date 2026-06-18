@@ -126,23 +126,24 @@ export default function InvoiceDetailScreen() {
           showToast("Invoice sent");
           refetch();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
 
   const handleVoid = () => {
     if (!id) return;
-    confirm("Void invoice?", `${invoice.invoiceNumber} will be marked void.`, () =>
-      voidMut.mutate(id, {
-        onSuccess: () => {
-          showToast("Invoice voided");
-          refetch();
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      }),
+    confirm(
+      "Void invoice?",
+      `${invoice.invoiceNumber} will be marked void.`,
+      () =>
+        voidMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Invoice voided");
+            refetch();
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
       { confirmText: "Void", destructive: true },
     );
   };
@@ -164,8 +165,7 @@ export default function InvoiceDetailScreen() {
             showToast("Invoice deleted");
             router.back();
           },
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         }),
       { confirmText: "Delete", destructive: true },
     );
@@ -181,8 +181,7 @@ export default function InvoiceDetailScreen() {
           showToast("PDF is still generating, try again in a moment.");
         }
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -207,9 +206,7 @@ export default function InvoiceDetailScreen() {
             <Pressable
               style={styles.dueRow}
               onPress={() => {
-                setDueDateInput(
-                  invoice.dueDate ? invoice.dueDate.slice(0, 10) : "",
-                );
+                setDueDateInput(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
                 setDueDateModal(true);
               }}
               hitSlop={4}
@@ -245,12 +242,7 @@ export default function InvoiceDetailScreen() {
               onPress={handlePdf}
             />
             {!isVoid ? (
-              <ActionTile
-                icon="ban-outline"
-                label="Void"
-                tone="danger"
-                onPress={handleVoid}
-              />
+              <ActionTile icon="ban-outline" label="Void" tone="danger" onPress={handleVoid} />
             ) : (
               // Voided invoices can be deleted entirely (server still rejects
               // if payments exist). Mirrors the web's delete affordance.
@@ -332,12 +324,8 @@ export default function InvoiceDetailScreen() {
                     <Text style={styles.payMeta}>
                       {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
                     </Text>
-                    {p.reference ? (
-                      <Text style={styles.payMeta}>Ref: {p.reference}</Text>
-                    ) : null}
-                    {p.notes ? (
-                      <Text style={styles.payMeta}>{p.notes}</Text>
-                    ) : null}
+                    {p.reference ? <Text style={styles.payMeta}>Ref: {p.reference}</Text> : null}
+                    {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
                   </View>
                   <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
                 </View>
@@ -355,10 +343,7 @@ export default function InvoiceDetailScreen() {
         animationType="fade"
         onRequestClose={() => setDueDateModal(false)}
       >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setDueDateModal(false)}
-        >
+        <Pressable style={styles.modalOverlay} onPress={() => setDueDateModal(false)}>
           <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.modalTitle}>Edit due date</Text>
             <Text style={styles.modalLabel}>Format: YYYY-MM-DD</Text>
@@ -428,15 +413,8 @@ function ActionTile({
 }) {
   const isDanger = tone === "danger";
   return (
-    <Pressable
-      style={[styles.tile, isDanger && styles.tileDanger]}
-      onPress={onPress}
-    >
-      <Ionicons
-        name={icon}
-        size={22}
-        color={isDanger ? ios.system.red : ios.brand}
-      />
+    <Pressable style={[styles.tile, isDanger && styles.tileDanger]} onPress={onPress}>
+      <Ionicons name={icon} size={22} color={isDanger ? ios.system.red : ios.brand} />
       <Text style={[styles.tileLabel, isDanger && { color: ios.system.red }]}>{label}</Text>
     </Pressable>
   );
@@ -486,7 +464,12 @@ const styles = StyleSheet.create({
     color: ios.label,
     marginTop: 4,
   },
-  modalBtn: { paddingVertical: 13, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  modalBtn: {
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   modalBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tile: {
@@ -499,11 +482,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tileDanger: { backgroundColor: ios.system.redWash },
-  tileLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label, textAlign: "center" },
+  tileLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    textAlign: "center",
+  },
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  itemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"] },
+  itemTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -513,11 +506,26 @@ const styles = StyleSheet.create({
     borderTopColor: ios.separator,
   },
   totalLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
-  totalValue: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label, fontVariant: ["tabular-nums"] },
+  totalValue: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   totalLabelMain: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label },
-  totalValueMain: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  totalValueMain: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   payRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
   payMethod: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   payMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  payAmount: { fontSize: 14, fontFamily: "Inter_700Bold", color: ios.system.greenInk, fontVariant: ["tabular-nums"] },
+  payAmount: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: ios.system.greenInk,
+    fontVariant: ["tabular-nums"],
+  },
 });

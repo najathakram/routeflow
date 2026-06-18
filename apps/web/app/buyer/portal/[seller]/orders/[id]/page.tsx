@@ -29,7 +29,13 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const STATUS_STEPS = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"];
+const STATUS_STEPS = [
+  "PENDING",
+  "CONFIRMED",
+  "OUT_FOR_DELIVERY",
+  "PARTIALLY_DELIVERED",
+  "DELIVERED",
+];
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
@@ -44,11 +50,18 @@ function fmt(n: number) {
 }
 
 function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function formatStatus(s: string) {
-  return s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  return s
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 // ─── Status Timeline ──────────────────────────────────────────────────────────
@@ -92,7 +105,7 @@ function OrderTimeline({ status }: { status: string }) {
                 <Icon className="h-4 w-4" />
               </div>
               <span
-                className={`text-[10px] font-medium ${isCurrent ? "text-buyer-600" : isComplete ? "text-navy" : "text-navy/40"}`}
+                className={`text-[10px] font-medium ${isCurrent ? "text-buyer-600" : isComplete ? "text-navy" : "text-navy/70"}`}
               >
                 {step.label}
               </span>
@@ -126,7 +139,9 @@ export default function BuyerOrderDetailPage() {
   const updateItems = useBuyerUpdateOrderItems();
 
   const [editMode, setEditMode] = React.useState(false);
-  const [editItems, setEditItems] = React.useState<Array<{ productId: string; qty: number; name: string; unit: string; unitPrice: number }>>([]);
+  const [editItems, setEditItems] = React.useState<
+    Array<{ productId: string; qty: number; name: string; unit: string; unitPrice: number }>
+  >([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [addSearch, setAddSearch] = React.useState("");
@@ -155,7 +170,11 @@ export default function BuyerOrderDetailPage() {
   }, [authLoading, activeSeller, sellerSlug, router]);
 
   const canEdit = order && (order.status === "DRAFT" || order.status === "PENDING");
-  const showDeliveryProgress = order && (order.status === "PARTIALLY_DELIVERED" || order.status === "OUT_FOR_DELIVERY" || order.status === "DELIVERED");
+  const showDeliveryProgress =
+    order &&
+    (order.status === "PARTIALLY_DELIVERED" ||
+      order.status === "OUT_FOR_DELIVERY" ||
+      order.status === "DELIVERED");
   const canCancel = canEdit;
 
   const enterEditMode = () => {
@@ -224,7 +243,7 @@ export default function BuyerOrderDetailPage() {
       {/* Back + header */}
       <button
         onClick={() => router.push(`/buyer/portal/${sellerSlug}/orders`)}
-        className="mb-4 flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="mb-4 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" /> Back to Orders
       </button>
@@ -232,7 +251,7 @@ export default function BuyerOrderDetailPage() {
       <div className="flex items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-navy">{order.orderNumber}</h1>
-          <p className="text-sm text-navy/60 mt-0.5">
+          <p className="text-sm text-navy/70 mt-0.5">
             Placed {formatDate(order.createdAt)}
             {order.requestedDeliveryDate && (
               <> · Delivery requested {formatDate(order.requestedDeliveryDate)}</>
@@ -254,13 +273,16 @@ export default function BuyerOrderDetailPage() {
           { label: "Tax", value: fmt(Number(order.tax)) },
           {
             label: "Discount",
-            value: Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : fmt(0),
+            value:
+              Number(order.discountAmount) > 0 ? `-${fmt(Number(order.discountAmount))}` : fmt(0),
           },
           { label: "Total", value: fmt(Number(order.total)), bold: true },
         ].map((c) => (
           <div key={c.label} className="rounded-xl border border-surface-border bg-white p-4">
-            <p className="text-xs text-navy/50 mb-1">{c.label}</p>
-            <p className={`text-lg ${c.bold ? "font-bold text-navy" : "text-navy/80"}`}>{c.value}</p>
+            <p className="text-xs text-navy/70 mb-1">{c.label}</p>
+            <p className={`text-lg ${c.bold ? "font-bold text-navy" : "text-navy/80"}`}>
+              {c.value}
+            </p>
           </div>
         ))}
       </div>
@@ -273,7 +295,7 @@ export default function BuyerOrderDetailPage() {
 
       {order.notes && (
         <div className="mb-4 rounded-xl border border-surface-border bg-white p-4">
-          <p className="text-xs text-navy/50 mb-1">Order Notes</p>
+          <p className="text-xs text-navy/70 mb-1">Order Notes</p>
           <p className="text-sm text-navy">{order.notes}</p>
         </div>
       )}
@@ -316,9 +338,11 @@ export default function BuyerOrderDetailPage() {
 
         <table className="w-full">
           <thead>
-            <tr className="border-b border-surface-border text-xs text-navy/50 uppercase tracking-wider">
+            <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
               <th className="px-4 py-2.5 text-left">Product</th>
-              <th className="px-4 py-2.5 text-right w-20">{showDeliveryProgress ? "Ordered" : "Qty"}</th>
+              <th className="px-4 py-2.5 text-right w-20">
+                {showDeliveryProgress ? "Ordered" : "Qty"}
+              </th>
               {showDeliveryProgress && (
                 <>
                   <th className="px-4 py-2.5 text-right w-20">Delivered</th>
@@ -337,7 +361,9 @@ export default function BuyerOrderDetailPage() {
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() =>
-                            setEditItems((prev) => prev.filter((i) => i.productId !== item.productId))
+                            setEditItems((prev) =>
+                              prev.filter((i) => i.productId !== item.productId),
+                            )
                           }
                           className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
                           title="Remove item"
@@ -359,7 +385,7 @@ export default function BuyerOrderDetailPage() {
                               ),
                             )
                           }
-                          className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                          className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
                         >
                           <Minus className="h-3.5 w-3.5" />
                         </button>
@@ -385,14 +411,18 @@ export default function BuyerOrderDetailPage() {
                               ),
                             )
                           }
-                          className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                          className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
                         >
                           <Plus className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/70">{item.unitPrice ? fmt(item.unitPrice) : "—"}</td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">{item.unitPrice ? fmt(item.unitPrice * item.qty) : "—"}</td>
+                    <td className="px-4 py-3 text-right text-sm text-navy/70">
+                      {item.unitPrice ? fmt(item.unitPrice) : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                      {item.unitPrice ? fmt(item.unitPrice * item.qty) : "—"}
+                    </td>
                   </tr>
                 ))
               : order.lineItems.map((li) => (
@@ -402,7 +432,7 @@ export default function BuyerOrderDetailPage() {
                   >
                     <td className="px-4 py-3">
                       <p className="text-sm font-medium text-navy">{li.product.name}</p>
-                      <p className="text-xs text-navy/50">
+                      <p className="text-xs text-navy/70">
                         {li.product.unit}
                         {li.priceType !== "STANDARD" && (
                           <span
@@ -420,8 +450,9 @@ export default function BuyerOrderDetailPage() {
                     <td className="px-4 py-3 text-right text-sm text-navy">
                       <span>{Number(li.qty)}</span>
                       {li.boxes != null && li.boxes > 0 && (
-                        <p className="text-[10px] text-navy/40">
-                          {li.boxes} box{li.boxes > 1 ? "es" : ""}{li.pieces ? ` + ${li.pieces} pcs` : ""}
+                        <p className="text-[10px] text-navy/70">
+                          {li.boxes} box{li.boxes > 1 ? "es" : ""}
+                          {li.pieces ? ` + ${li.pieces} pcs` : ""}
                         </p>
                       )}
                     </td>
@@ -445,7 +476,7 @@ export default function BuyerOrderDetailPage() {
                     <td className="px-4 py-3 text-right text-sm text-navy/70">
                       {fmt(Number(li.unitPrice))}
                       {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
-                        <span className="ml-1 text-xs text-navy/40 line-through">
+                        <span className="ml-1 text-xs text-navy/70 line-through">
                           {fmt(Number(li.originalPrice))}
                         </span>
                       )}
@@ -468,7 +499,7 @@ export default function BuyerOrderDetailPage() {
                 value={addSearch}
                 onChange={(e) => setAddSearch(e.target.value)}
                 placeholder="Search products to add (name, SKU, barcode)..."
-                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/40 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
+                className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
               />
             </div>
             {showProductSearch && searchResults?.data && searchResults.data.length > 0 && (
@@ -482,7 +513,13 @@ export default function BuyerOrderDetailPage() {
                       onClick={() => {
                         setEditItems((prev) => [
                           ...prev,
-                          { productId: p.id, qty: 1, name: p.name, unit: p.unit, unitPrice: p.buyerPrice },
+                          {
+                            productId: p.id,
+                            qty: 1,
+                            name: p.name,
+                            unit: p.unit,
+                            unitPrice: p.buyerPrice,
+                          },
                         ]);
                         setAddSearch("");
                       }}
@@ -491,20 +528,26 @@ export default function BuyerOrderDetailPage() {
                       <Plus className="h-4 w-4 text-buyer-500 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-navy truncate">{p.name}</p>
-                        <p className="text-[11px] text-navy/50">
+                        <p className="text-[11px] text-navy/70">
                           {p.sku ? `SKU: ${p.sku} · ` : ""}
-                          {p.unit} · {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(p.buyerPrice)}
+                          {p.unit} ·{" "}
+                          {new Intl.NumberFormat("en-US", {
+                            style: "currency",
+                            currency: "USD",
+                          }).format(p.buyerPrice)}
                         </p>
                       </div>
                     </button>
                   ))}
                 {searchResults.data.every((p) => editItems.some((ei) => ei.productId === p.id)) && (
-                  <p className="px-3 py-2 text-xs text-navy/50 text-center">All results already in order</p>
+                  <p className="px-3 py-2 text-xs text-navy/70 text-center">
+                    All results already in order
+                  </p>
                 )}
               </div>
             )}
             {showProductSearch && searchResults?.data?.length === 0 && (
-              <p className="mt-2 text-xs text-navy/50 text-center py-2">No products found</p>
+              <p className="mt-2 text-xs text-navy/70 text-center py-2">No products found</p>
             )}
           </div>
         )}

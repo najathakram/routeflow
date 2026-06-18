@@ -231,10 +231,7 @@ export function useDeleteProductImage(id: string) {
 }
 
 /** Plain async helper — upload images to a product (use after creation to get the ID first). */
-export async function uploadProductImages(
-  id: string,
-  files: File[],
-): Promise<void> {
+export async function uploadProductImages(id: string, files: File[]): Promise<void> {
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
   // Do NOT set Content-Type manually — Axios auto-sets multipart/form-data

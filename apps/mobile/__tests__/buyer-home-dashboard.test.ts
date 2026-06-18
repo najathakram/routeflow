@@ -11,10 +11,7 @@ import type { DashboardOrder } from "../lib/api/buyer";
 
 /** Mirrors the display logic from apps/mobile/app/(customer)/(tabs)/home.tsx */
 function getItemCount(order: DashboardOrder): number {
-  return (
-    order.itemCount ??
-    (order.lineItems ?? []).reduce((s, i) => s + Number(i.qty), 0)
-  );
+  return order.itemCount ?? (order.lineItems ?? []).reduce((s, i) => s + Number(i.qty), 0);
 }
 
 describe("BuyerHomeScreen — item count guard", () => {

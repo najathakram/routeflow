@@ -3,9 +3,21 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, Building2, Phone, Mail, Globe, MapPin, Clock,
-  Pencil, DollarSign, Receipt, X, CheckCircle2, AlertCircle,
-  FileText, Truck,
+  ArrowLeft,
+  Building2,
+  Phone,
+  Mail,
+  Globe,
+  MapPin,
+  Clock,
+  Pencil,
+  DollarSign,
+  Receipt,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  FileText,
+  Truck,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -22,7 +34,11 @@ function fmt(n?: number | null) {
 
 function fmtDate(s?: string | null) {
   if (!s) return "—";
-  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(s).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 const STATUS_LABELS: Record<VendorBillStatus, string> = {
@@ -44,7 +60,10 @@ const STATUS_VARIANTS: Record<VendorBillStatus, "neutral" | "warning" | "success
 // ─── Edit modal (reuses the form from the list page inline) ───────────────────
 
 function EditModal({
-  supplier, onClose, onSave, isSaving,
+  supplier,
+  onClose,
+  onSave,
+  isSaving,
 }: {
   supplier: Supplier;
   onClose: () => void;
@@ -68,14 +87,17 @@ function EditModal({
     country: supplier.country ?? "",
   });
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
-  const inputCls = "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
+  const inputCls =
+    "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-lg rounded-xl border border-surface-border bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Edit Supplier</h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy transition-colors"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="text-navy/70 hover:text-navy transition-colors">
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <form
           onSubmit={async (e) => {
@@ -101,53 +123,138 @@ function EditModal({
         >
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Company name *</label>
-              <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Company name *
+              </label>
+              <input
+                required
+                value={form.name}
+                onChange={(e) => set("name", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Contact person</label>
-              <input value={form.contactName} onChange={(e) => set("contactName", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Contact person
+              </label>
+              <input
+                value={form.contactName}
+                onChange={(e) => set("contactName", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Lead time (days)</label>
-              <input type="number" min="0" value={form.leadTimeDays} onChange={(e) => set("leadTimeDays", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Lead time (days)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={form.leadTimeDays}
+                onChange={(e) => set("leadTimeDays", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Phone</label>
-              <input type="tel" value={form.phone} onChange={(e) => set("phone", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Phone
+              </label>
+              <input
+                type="tel"
+                value={form.phone}
+                onChange={(e) => set("phone", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Mobile</label>
-              <input type="tel" value={form.mobile} onChange={(e) => set("mobile", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Mobile
+              </label>
+              <input
+                type="tel"
+                value={form.mobile}
+                onChange={(e) => set("mobile", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Email</label>
-              <input type="email" value={form.email} onChange={(e) => set("email", e.target.value)} className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Email
+              </label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => set("email", e.target.value)}
+                className={inputCls}
+              />
             </div>
             <div className="col-span-2">
-              <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Website</label>
-              <input value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className={inputCls} />
+              <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                Website
+              </label>
+              <input
+                value={form.website}
+                onChange={(e) => set("website", e.target.value)}
+                placeholder="https://"
+                className={inputCls}
+              />
             </div>
           </div>
           <div>
-            <p className="mb-2 text-xs font-medium text-navy/60 uppercase tracking-wide">Address</p>
+            <p className="mb-2 text-xs font-medium text-navy/70 uppercase tracking-wide">Address</p>
             <div className="space-y-2">
-              <input placeholder="Street address" value={form.addressLine1} onChange={(e) => set("addressLine1", e.target.value)} className={inputCls} />
+              <input
+                placeholder="Street address"
+                value={form.addressLine1}
+                onChange={(e) => set("addressLine1", e.target.value)}
+                className={inputCls}
+              />
               <div className="grid grid-cols-3 gap-2">
-                <input placeholder="City" value={form.city} onChange={(e) => set("city", e.target.value)} className={inputCls} />
-                <input placeholder="State" value={form.state} onChange={(e) => set("state", e.target.value)} className={inputCls} />
-                <input placeholder="ZIP" value={form.zip} onChange={(e) => set("zip", e.target.value)} className={inputCls} />
+                <input
+                  placeholder="City"
+                  value={form.city}
+                  onChange={(e) => set("city", e.target.value)}
+                  className={inputCls}
+                />
+                <input
+                  placeholder="State"
+                  value={form.state}
+                  onChange={(e) => set("state", e.target.value)}
+                  className={inputCls}
+                />
+                <input
+                  placeholder="ZIP"
+                  value={form.zip}
+                  onChange={(e) => set("zip", e.target.value)}
+                  className={inputCls}
+                />
               </div>
-              <input placeholder="Country" value={form.country} onChange={(e) => set("country", e.target.value)} className={inputCls} />
+              <input
+                placeholder="Country"
+                value={form.country}
+                onChange={(e) => set("country", e.target.value)}
+                className={inputCls}
+              />
             </div>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-navy/60 uppercase tracking-wide">Notes</label>
-            <textarea rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} className={inputCls} />
+            <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+              Notes
+            </label>
+            <textarea
+              rows={3}
+              value={form.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              className={inputCls}
+            />
           </div>
           <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Button>
-            <Button type="submit" loading={isSaving}>Save changes</Button>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={isSaving}>
+              Save changes
+            </Button>
           </div>
         </form>
       </div>
@@ -169,11 +276,16 @@ function BillRow({ bill }: { bill: VendorBill }) {
         <Badge variant={STATUS_VARIANTS[bill.status]} label={STATUS_LABELS[bill.status]} />
       </td>
       <td className="px-5 py-3 text-right text-sm text-navy">{fmt(bill.totalOwed)}</td>
-      <td className="px-5 py-3 text-right text-sm text-navy/60">{fmt(bill.totalPaid)}</td>
-      <td className={cn("px-5 py-3 text-right text-sm font-medium", outstanding > 0 ? "text-warning" : "text-navy/40")}>
+      <td className="px-5 py-3 text-right text-sm text-navy/70">{fmt(bill.totalPaid)}</td>
+      <td
+        className={cn(
+          "px-5 py-3 text-right text-sm font-medium",
+          outstanding > 0 ? "text-warning" : "text-navy/70",
+        )}
+      >
         {outstanding > 0 ? fmt(outstanding) : "—"}
       </td>
-      <td className="px-5 py-3 text-xs text-navy/50 max-w-xs truncate">{bill.notes ?? "—"}</td>
+      <td className="px-5 py-3 text-xs text-navy/70 max-w-xs truncate">{bill.notes ?? "—"}</td>
     </tr>
   );
 }
@@ -220,8 +332,12 @@ export default function SupplierDetailPage() {
   }
 
   const bills: VendorBill[] = billsResult?.data ?? [];
-  const totalOwed = bills.filter((b) => b.status !== "VOID").reduce((s, b) => s + Number(b.totalOwed), 0);
-  const totalPaid = bills.filter((b) => b.status !== "VOID").reduce((s, b) => s + Number(b.totalPaid), 0);
+  const totalOwed = bills
+    .filter((b) => b.status !== "VOID")
+    .reduce((s, b) => s + Number(b.totalOwed), 0);
+  const totalPaid = bills
+    .filter((b) => b.status !== "VOID")
+    .reduce((s, b) => s + Number(b.totalPaid), 0);
   const outstanding = Math.max(0, totalOwed - totalPaid);
   const openBills = bills.filter((b) => b.status !== "PAID" && b.status !== "VOID");
 
@@ -251,7 +367,7 @@ export default function SupplierDetailPage() {
       <div className="flex items-start gap-4">
         <button
           onClick={() => router.back()}
-          className="mt-0.5 rounded-lg border border-surface-border bg-white p-2 text-navy/40 hover:text-navy transition-colors shadow-card"
+          className="mt-0.5 rounded-lg border border-surface-border bg-white p-2 text-navy/70 hover:text-navy transition-colors shadow-card"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -264,7 +380,7 @@ export default function SupplierDetailPage() {
               <h1 className="text-xl font-bold text-navy">{supplier.name}</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 {supplier.contactName && (
-                  <span className="text-sm text-navy/50">{supplier.contactName}</span>
+                  <span className="text-sm text-navy/70">{supplier.contactName}</span>
                 )}
                 <Badge
                   variant={supplier.isActive ? "success" : "neutral"}
@@ -273,7 +389,11 @@ export default function SupplierDetailPage() {
               </div>
             </div>
           </div>
-          <Button variant="secondary" leftIcon={<Pencil className="h-4 w-4" />} onClick={() => setShowEdit(true)}>
+          <Button
+            variant="secondary"
+            leftIcon={<Pencil className="h-4 w-4" />}
+            onClick={() => setShowEdit(true)}
+          >
             Edit
           </Button>
         </div>
@@ -282,19 +402,27 @@ export default function SupplierDetailPage() {
       {/* Summary cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {/* Outstanding */}
-        <div className={cn(
-          "rounded-xl border bg-white p-5 shadow-card",
-          outstanding > 0 ? "border-warning/40" : "border-surface-border",
-        )}>
+        <div
+          className={cn(
+            "rounded-xl border bg-white p-5 shadow-card",
+            outstanding > 0 ? "border-warning/40" : "border-surface-border",
+          )}
+        >
           <div className="flex items-center gap-2 mb-2">
-            <DollarSign className={cn("h-4 w-4", outstanding > 0 ? "text-warning" : "text-navy/30")} />
-            <span className="text-xs font-medium text-navy/50 uppercase tracking-wide">Outstanding</span>
+            <DollarSign
+              className={cn("h-4 w-4", outstanding > 0 ? "text-warning" : "text-navy/30")}
+            />
+            <span className="text-xs font-medium text-navy/70 uppercase tracking-wide">
+              Outstanding
+            </span>
           </div>
-          <p className={cn("text-2xl font-bold", outstanding > 0 ? "text-warning" : "text-navy/30")}>
+          <p
+            className={cn("text-2xl font-bold", outstanding > 0 ? "text-warning" : "text-navy/30")}
+          >
             {outstanding > 0 ? fmt(outstanding) : "—"}
           </p>
           {outstanding > 0 && (
-            <p className="mt-1 text-xs text-navy/50">
+            <p className="mt-1 text-xs text-navy/70">
               {openBills.length} open bill{openBills.length !== 1 ? "s" : ""}
             </p>
           )}
@@ -304,20 +432,26 @@ export default function SupplierDetailPage() {
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-card">
           <div className="flex items-center gap-2 mb-2">
             <Receipt className="h-4 w-4 text-navy/30" />
-            <span className="text-xs font-medium text-navy/50 uppercase tracking-wide">Total Billed</span>
+            <span className="text-xs font-medium text-navy/70 uppercase tracking-wide">
+              Total Billed
+            </span>
           </div>
           <p className="text-2xl font-bold text-navy">{totalOwed > 0 ? fmt(totalOwed) : "—"}</p>
-          <p className="mt-1 text-xs text-navy/50">{bills.filter((b) => b.status !== "VOID").length} bills</p>
+          <p className="mt-1 text-xs text-navy/70">
+            {bills.filter((b) => b.status !== "VOID").length} bills
+          </p>
         </div>
 
         {/* Total paid */}
         <div className="rounded-xl border border-surface-border bg-white p-5 shadow-card">
           <div className="flex items-center gap-2 mb-2">
             <CheckCircle2 className="h-4 w-4 text-navy/30" />
-            <span className="text-xs font-medium text-navy/50 uppercase tracking-wide">Total Paid</span>
+            <span className="text-xs font-medium text-navy/70 uppercase tracking-wide">
+              Total Paid
+            </span>
           </div>
           <p className="text-2xl font-bold text-navy">{totalPaid > 0 ? fmt(totalPaid) : "—"}</p>
-          <p className="mt-1 text-xs text-navy/50">
+          <p className="mt-1 text-xs text-navy/70">
             {bills.filter((b) => b.status === "PAID").length} paid bills
           </p>
         </div>
@@ -344,7 +478,10 @@ export default function SupplierDetailPage() {
               {supplier.email && (
                 <div className="flex items-center gap-2.5">
                   <Mail className="h-4 w-4 shrink-0 text-navy/30" />
-                  <a href={`mailto:${supplier.email}`} className="text-sm text-brand-600 hover:underline break-all">
+                  <a
+                    href={`mailto:${supplier.email}`}
+                    className="text-sm text-brand-600 hover:underline break-all"
+                  >
                     {supplier.email}
                   </a>
                 </div>
@@ -353,7 +490,11 @@ export default function SupplierDetailPage() {
                 <div className="flex items-center gap-2.5">
                   <Globe className="h-4 w-4 shrink-0 text-navy/30" />
                   <a
-                    href={supplier.website.startsWith("http") ? supplier.website : `https://${supplier.website}`}
+                    href={
+                      supplier.website.startsWith("http")
+                        ? supplier.website
+                        : `https://${supplier.website}`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm text-brand-600 hover:underline break-all"
@@ -368,7 +509,9 @@ export default function SupplierDetailPage() {
                   <div className="text-sm text-navy/70">
                     <p>{supplier.addressLine1}</p>
                     {supplier.addressLine2 && <p>{supplier.addressLine2}</p>}
-                    <p>{[supplier.city, supplier.state, supplier.zip].filter(Boolean).join(", ")}</p>
+                    <p>
+                      {[supplier.city, supplier.state, supplier.zip].filter(Boolean).join(", ")}
+                    </p>
                     {supplier.country && <p>{supplier.country}</p>}
                   </div>
                 </div>
@@ -381,13 +524,21 @@ export default function SupplierDetailPage() {
               )}
               {supplier.notes && (
                 <div className="mt-3 rounded-lg bg-surface-raised p-3">
-                  <p className="text-xs font-medium text-navy/50 mb-1">Notes</p>
+                  <p className="text-xs font-medium text-navy/70 mb-1">Notes</p>
                   <p className="text-sm text-navy/70 whitespace-pre-line">{supplier.notes}</p>
                 </div>
               )}
-              {!supplier.phone && !supplier.mobile && !supplier.email && !supplier.website && !supplier.addressLine1 && !supplier.leadTimeDays && !supplier.notes && (
-                <p className="text-sm text-navy/40 text-center py-4">No contact details recorded.</p>
-              )}
+              {!supplier.phone &&
+                !supplier.mobile &&
+                !supplier.email &&
+                !supplier.website &&
+                !supplier.addressLine1 &&
+                !supplier.leadTimeDays &&
+                !supplier.notes && (
+                  <p className="text-sm text-navy/70 text-center py-4">
+                    No contact details recorded.
+                  </p>
+                )}
             </div>
           </div>
         </div>
@@ -397,10 +548,10 @@ export default function SupplierDetailPage() {
           <div className="rounded-xl border border-surface-border bg-white shadow-card overflow-hidden">
             <div className="flex items-center justify-between border-b border-surface-border px-5 py-4">
               <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-navy/40" />
+                <FileText className="h-4 w-4 text-navy/70" />
                 <h2 className="text-sm font-semibold text-navy">Purchase Bills</h2>
                 {bills.length > 0 && (
-                  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy/60">
+                  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy/70">
                     {bills.length}
                   </span>
                 )}
@@ -410,29 +561,48 @@ export default function SupplierDetailPage() {
             {bills.length === 0 ? (
               <div className="py-12 text-center">
                 <Receipt className="mx-auto mb-3 h-8 w-8 text-navy/15" />
-                <p className="text-sm text-navy/40">No bills recorded for this supplier.</p>
+                <p className="text-sm text-navy/70">No bills recorded for this supplier.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-surface-border bg-surface-raised/60">
-                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Bill #</th>
-                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Date</th>
-                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Status</th>
-                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/50 uppercase tracking-wide">Billed</th>
-                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/50 uppercase tracking-wide">Paid</th>
-                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/50 uppercase tracking-wide">Due</th>
-                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/50 uppercase tracking-wide">Notes</th>
+                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Bill #
+                      </th>
+                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Date
+                      </th>
+                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Status
+                      </th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Billed
+                      </th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Paid
+                      </th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Due
+                      </th>
+                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                        Notes
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {bills.map((b) => <BillRow key={b.id} bill={b} />)}
+                    {bills.map((b) => (
+                      <BillRow key={b.id} bill={b} />
+                    ))}
                   </tbody>
                   {outstanding > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-surface-border bg-surface-raised/40">
-                        <td colSpan={5} className="px-5 py-3 text-sm font-semibold text-navy text-right">
+                        <td
+                          colSpan={5}
+                          className="px-5 py-3 text-sm font-semibold text-navy text-right"
+                        >
                           Total outstanding
                         </td>
                         <td className="px-5 py-3 text-right text-sm font-bold text-warning">

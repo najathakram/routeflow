@@ -28,9 +28,7 @@ import { StockCountReviewModal } from "./StockCountReviewModal";
 function readTenantSlug(): string | null {
   if (typeof document === "undefined") return null;
   const impersonation =
-    typeof window !== "undefined"
-      ? window.localStorage.getItem("impersonationTenantSlug")
-      : null;
+    typeof window !== "undefined" ? window.localStorage.getItem("impersonationTenantSlug") : null;
   if (impersonation) return impersonation;
   const match = document.cookie.match(/(?:^|;\s*)tenant-slug=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -104,14 +102,15 @@ export function StockCountTab() {
   // the dropdown off-screen.
   const suggestions = React.useMemo(() => {
     const q = scanInput.trim().toLowerCase();
-    if (!q) return [] as Array<{
-      id: string;
-      name: string;
-      sku?: string | null;
-      unit: string;
-      currentStock: number;
-      category?: string | null;
-    }>;
+    if (!q)
+      return [] as Array<{
+        id: string;
+        name: string;
+        sku?: string | null;
+        unit: string;
+        currentStock: number;
+        category?: string | null;
+      }>;
     const items = (stockOverview ?? []) as Array<{
       id: string;
       name: string;
@@ -156,13 +155,16 @@ export function StockCountTab() {
 
   // ─── Mutators ──────────────────────────────────────────────────────────────
   const addOrIncrementProduct = React.useCallback(
-    (product: {
-      id: string;
-      name: string;
-      sku?: string | null;
-      unit: string;
-      currentStock?: number | string | null;
-    }, increment: number) => {
+    (
+      product: {
+        id: string;
+        name: string;
+        sku?: string | null;
+        unit: string;
+        currentStock?: number | string | null;
+      },
+      increment: number,
+    ) => {
       setSession((prev) => {
         const existing = prev.rows.find((r) => r.productId === product.id);
         if (existing) {
@@ -175,9 +177,7 @@ export function StockCountTab() {
           return {
             ...prev,
             rows: prev.rows.map((r) =>
-              r.rowId === existing.rowId
-                ? { ...r, scannedQty: r.scannedQty + increment }
-                : r,
+              r.rowId === existing.rowId ? { ...r, scannedQty: r.scannedQty + increment } : r,
             ),
           };
         }
@@ -267,21 +267,25 @@ export function StockCountTab() {
     });
   }, []);
 
-  const onApplyModeToSelection = React.useCallback((mode: StockCountMode) => {
-    setSession((prev) => ({
-      ...prev,
-      rows: prev.rows.map((r) => (selected.has(r.rowId) ? { ...r, mode } : r)),
-    }));
-  }, [selected]);
+  const onApplyModeToSelection = React.useCallback(
+    (mode: StockCountMode) => {
+      setSession((prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) => (selected.has(r.rowId) ? { ...r, mode } : r)),
+      }));
+    },
+    [selected],
+  );
 
-  const onApplyQtyToSelection = React.useCallback((qty: number) => {
-    setSession((prev) => ({
-      ...prev,
-      rows: prev.rows.map((r) =>
-        selected.has(r.rowId) ? { ...r, scannedQty: qty } : r,
-      ),
-    }));
-  }, [selected]);
+  const onApplyQtyToSelection = React.useCallback(
+    (qty: number) => {
+      setSession((prev) => ({
+        ...prev,
+        rows: prev.rows.map((r) => (selected.has(r.rowId) ? { ...r, scannedQty: qty } : r)),
+      }));
+    },
+    [selected],
+  );
 
   const onRemoveSelected = React.useCallback(() => {
     setSession((prev) => ({
@@ -293,8 +297,7 @@ export function StockCountTab() {
 
   const onDiscardSession = React.useCallback(() => {
     if (!session.rows.length) return;
-    if (!window.confirm("Discard the current scan session? This can't be undone."))
-      return;
+    if (!window.confirm("Discard the current scan session? This can't be undone.")) return;
     clearSession(tenantSlug);
     setSession(newSession());
     setSelected(new Set());
@@ -321,10 +324,7 @@ export function StockCountTab() {
       setReviewOpen(false);
       toast({
         title: `Committed ${result.applied} change${result.applied === 1 ? "" : "s"}`,
-        description:
-          result.skipped > 0
-            ? `${result.skipped} no-op rows were skipped.`
-            : undefined,
+        description: result.skipped > 0 ? `${result.skipped} no-op rows were skipped.` : undefined,
         variant: "success",
       });
     } catch (err: any) {
@@ -382,9 +382,7 @@ export function StockCountTab() {
                   if (e.key === "ArrowDown") {
                     e.preventDefault();
                     setSuggestOpen(true);
-                    setSuggestIndex((i) =>
-                      Math.min(i + 1, Math.max(0, suggestions.length - 1)),
-                    );
+                    setSuggestIndex((i) => Math.min(i + 1, Math.max(0, suggestions.length - 1)));
                   } else if (e.key === "ArrowUp") {
                     e.preventDefault();
                     setSuggestIndex((i) => Math.max(0, i - 1));
@@ -412,9 +410,7 @@ export function StockCountTab() {
               />
               <BarcodeScannerButton inputRef={scanInputRef} onScan={handleScan} />
             </div>
-            {resolving && (
-              <p className="mt-1 text-xs text-navy/50">Looking up product…</p>
-            )}
+            {resolving && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
 
             {/* Typeahead dropdown */}
             {suggestOpen && suggestions.length > 0 && (
@@ -442,7 +438,7 @@ export function StockCountTab() {
                     )}
                   >
                     <div className="font-medium text-navy">{p.name}</div>
-                    <div className="flex items-center gap-2 text-xs text-navy/50">
+                    <div className="flex items-center gap-2 text-xs text-navy/70">
                       {p.sku && <span>SKU {p.sku}</span>}
                       <span>·</span>
                       <span>
@@ -508,9 +504,9 @@ export function StockCountTab() {
           </Button>
         </div>
 
-        <p className="text-[11px] text-navy/40">
-          Your draft is auto-saved on this device. Close the tab and it&apos;s still here
-          next time you open the Stock Count tab. The draft clears after a successful commit.
+        <p className="text-[11px] text-navy/70">
+          Your draft is auto-saved on this device. Close the tab and it&apos;s still here next time
+          you open the Stock Count tab. The draft clears after a successful commit.
         </p>
       </Card>
 
@@ -528,16 +524,16 @@ export function StockCountTab() {
         <Card className="flex flex-col items-center justify-center gap-2 py-12 text-center">
           <Camera className="h-8 w-8 text-navy/30" />
           <p className="text-sm font-medium text-navy">No items scanned yet</p>
-          <p className="max-w-md text-xs text-navy/50">
-            Scan a barcode, type a SKU, or use a USB scanner. Unknown codes will prompt
-            you to add a new product.
+          <p className="max-w-md text-xs text-navy/70">
+            Scan a barcode, type a SKU, or use a USB scanner. Unknown codes will prompt you to add a
+            new product.
           </p>
         </Card>
       ) : (
         <Card className="overflow-hidden p-0">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-surface-border bg-surface-raised text-left text-xs uppercase tracking-wide text-navy/50">
+              <tr className="border-b border-surface-border bg-surface-raised text-left text-xs uppercase tracking-wide text-navy/70">
                 <th className="px-3 py-2 w-10"></th>
                 <th className="px-3 py-2">Product</th>
                 <th className="px-3 py-2 text-right">Current</th>
@@ -568,9 +564,9 @@ export function StockCountTab() {
       {/* Footer summary + Review */}
       {session.rows.length > 0 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/60">
-            {session.rows.length} item{session.rows.length === 1 ? "" : "s"} ·{" "}
-            {summary.changes} change{summary.changes === 1 ? "" : "s"} · ΣΔ ={" "}
+          <p className="text-sm text-navy/70">
+            {session.rows.length} item{session.rows.length === 1 ? "" : "s"} · {summary.changes}{" "}
+            change{summary.changes === 1 ? "" : "s"} · ΣΔ ={" "}
             <span
               className={cn(
                 "font-medium",
@@ -611,10 +607,7 @@ export function StockCountTab() {
         onClose={() => setUnknownCode(null)}
         onCreated={(product) => {
           setUnknownCode(null);
-          addOrIncrementProduct(
-            { ...product, currentStock: 0 },
-            session.qtyPerScan,
-          );
+          addOrIncrementProduct({ ...product, currentStock: 0 }, session.qtyPerScan);
         }}
       />
     </div>

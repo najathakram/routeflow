@@ -24,11 +24,7 @@ export default function SuppliersScreen() {
         largeTitle="Suppliers"
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
         trailing={
-          <NavAction
-            label="Add"
-            bold
-            onPress={() => router.push("/(operator)/suppliers/new")}
-          />
+          <NavAction label="Add" bold onPress={() => router.push("/(operator)/suppliers/new")} />
         }
       />
 
@@ -70,15 +66,9 @@ function SupplierRow({ supplier, onPress }: { supplier: Supplier; onPress: () =>
     <Pressable style={styles.card} onPress={onPress}>
       <View style={{ flex: 1 }}>
         <Text style={styles.name}>{supplier.name}</Text>
-        {supplier.contactName ? (
-          <Text style={styles.meta}>{supplier.contactName}</Text>
-        ) : null}
-        {supplier.email ? (
-          <Text style={styles.meta}>{supplier.email}</Text>
-        ) : null}
-        {supplier.phone ? (
-          <Text style={styles.meta}>{supplier.phone}</Text>
-        ) : null}
+        {supplier.contactName ? <Text style={styles.meta}>{supplier.contactName}</Text> : null}
+        {supplier.email ? <Text style={styles.meta}>{supplier.email}</Text> : null}
+        {supplier.phone ? <Text style={styles.meta}>{supplier.phone}</Text> : null}
       </View>
       <Ionicons name="chevron-forward" size={16} color={ios.label3} />
     </Pressable>
@@ -89,7 +79,12 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 48, alignItems: "center", gap: 8 },
   emptyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
-  emptyBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, textAlign: "center" },
+  emptyBody: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   card: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,

@@ -168,9 +168,19 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   submitBtnBusy: { opacity: 0.7 },
-  submitLabel: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#ffffff", letterSpacing: -0.2 },
+  submitLabel: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: "#ffffff",
+    letterSpacing: -0.2,
+  },
   successBox: { alignItems: "center", paddingTop: 24, gap: 16 },
-  successTitle: { fontSize: 22, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.5 },
+  successTitle: {
+    fontSize: 22,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.5,
+  },
   successBody: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",

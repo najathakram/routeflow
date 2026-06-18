@@ -11,13 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavAction,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
   useOpenPurchaseOrders,
   usePurchaseOrders,
@@ -61,9 +55,7 @@ export default function PurchaseOrdersListScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const allQuery = usePurchaseOrders(
-    filter === "RECEIVED" ? "RECEIVED" : undefined,
-  );
+  const allQuery = usePurchaseOrders(filter === "RECEIVED" ? "RECEIVED" : undefined);
   const openQuery = useOpenPurchaseOrders();
 
   const activeQuery = filter === "OPEN" ? openQuery : allQuery;
@@ -87,18 +79,13 @@ export default function PurchaseOrdersListScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
         }
       />
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={isFetching && !isLoading}
-            onRefresh={refetch}
-          />
+          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
         }
       >
         {isLoading ? (
@@ -115,9 +102,7 @@ export default function PurchaseOrdersListScreen() {
               <PORow
                 key={po.id}
                 po={po}
-                onPress={() =>
-                  router.push(`/(operator)/purchase-orders/${po.id}`)
-                }
+                onPress={() => router.push(`/(operator)/purchase-orders/${po.id}`)}
               />
             ))}
           </View>
@@ -127,13 +112,7 @@ export default function PurchaseOrdersListScreen() {
   );
 }
 
-function PORow({
-  po,
-  onPress,
-}: {
-  po: PurchaseOrder;
-  onPress: () => void;
-}) {
+function PORow({ po, onPress }: { po: PurchaseOrder; onPress: () => void }) {
   const s = statusPill(po.status);
   const expectedLabel = po.expectedDate
     ? `Expected ${new Date(po.expectedDate).toLocaleDateString()}`

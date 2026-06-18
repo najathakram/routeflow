@@ -58,9 +58,7 @@ export function InlineCreateProductModal({
   // standalone product as a parent — including ones they archived earlier
   // but want to revive as a variant root.
   const { data: allProductsData } = useProducts({ limit: 0 });
-  const parentCandidates = (allProductsData?.data ?? []).filter(
-    (p: any) => !p.parentProductId,
-  );
+  const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
 
   // Derived: the selected parent product object (for name preview)
   const selectedParent = parentCandidates.find((p: any) => p.id === form.parentProductId) as any;
@@ -83,7 +81,9 @@ export function InlineCreateProductModal({
   const handleVariantOfScan = async (code: string) => {
     setVariantOfScanLoading(true);
     try {
-      const found = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      const found = await apiClient
+        .get(`/products/barcode/${encodeURIComponent(code)}`)
+        .then((r) => r.data);
       // If the scanned product is a variant, use its parentProductId; otherwise use its own id
       const parentId: string = found.parentProductId || found.id;
       setForm((f) => ({ ...f, parentProductId: parentId }));
@@ -130,13 +130,30 @@ export function InlineCreateProductModal({
       },
       {
         onSuccess: (product: CreatedProduct) => {
-          toast({ title: "Product created", description: `${product.name} has been added.`, variant: "success" });
+          toast({
+            title: "Product created",
+            description: `${product.name} has been added.`,
+            variant: "success",
+          });
           onCreated(product);
           onClose();
-          setForm({ name: "", sku: "", unit: "", pricePerUnit: "", category: "", unitsPerBox: "", parentProductId: "", variantName: "" });
+          setForm({
+            name: "",
+            sku: "",
+            unit: "",
+            pricePerUnit: "",
+            category: "",
+            unitsPerBox: "",
+            parentProductId: "",
+            variantName: "",
+          });
         },
         onError: () => {
-          toast({ title: "Failed to create product", description: "Check the details and try again.", variant: "error" });
+          toast({
+            title: "Failed to create product",
+            description: "Check the details and try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -153,7 +170,7 @@ export function InlineCreateProductModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
           >
             <X size={18} />
           </button>
@@ -164,14 +181,12 @@ export function InlineCreateProductModal({
           {parentCandidates.length > 0 && (
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">
-                Variant of <span className="font-normal text-navy/40">(optional)</span>
+                Variant of <span className="font-normal text-navy/70">(optional)</span>
               </label>
               <div className="flex items-stretch gap-2">
                 <SearchableProductPicker
                   value={form.parentProductId}
-                  onChange={(id) =>
-                    setForm((f) => ({ ...f, parentProductId: id }))
-                  }
+                  onChange={(id) => setForm((f) => ({ ...f, parentProductId: id }))}
                   products={parentCandidates}
                   placeholder="Standalone product (type to search)…"
                   className="flex-1"
@@ -182,7 +197,7 @@ export function InlineCreateProductModal({
                 />
               </div>
               {variantOfScanLoading && (
-                <p className="mt-1 text-xs text-navy/50">Looking up product…</p>
+                <p className="mt-1 text-xs text-navy/70">Looking up product…</p>
               )}
             </div>
           )}
@@ -205,15 +220,11 @@ export function InlineCreateProductModal({
               {/* Display preview — variant rows show their flavor; parent context
                   comes from the relationship, not from being baked into the name. */}
               {selectedParent && (
-                <p className="mt-1.5 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/60">
+                <p className="mt-1.5 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/70">
                   Will appear as:{" "}
-                  <span className="font-medium text-navy">
-                    {selectedParent.name}
-                  </span>
-                  <span className="text-navy/40"> · </span>
-                  <span className="font-medium text-navy">
-                    {form.variantName.trim() || "…"}
-                  </span>
+                  <span className="font-medium text-navy">{selectedParent.name}</span>
+                  <span className="text-navy/70"> · </span>
+                  <span className="font-medium text-navy">{form.variantName.trim() || "…"}</span>
                 </p>
               )}
             </div>

@@ -13,14 +13,10 @@ export interface StatCardProps extends React.HTMLAttributes<HTMLDivElement> {
 export const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
   ({ className, label, value, icon, trend, trendLabel, ...props }, ref) => {
     const isPositive = trend !== undefined && trend > 0;
-    const isNeutral  = trend === 0;
+    const isNeutral = trend === 0;
 
     return (
-      <div
-        ref={ref}
-        className={cn("rounded-lg bg-white p-6 shadow-card", className)}
-        {...props}
-      >
+      <div ref={ref} className={cn("rounded-lg bg-white p-6 shadow-card", className)} {...props}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-navy/60 truncate">{label}</p>

@@ -1,17 +1,17 @@
 // screens-operator.js — operator (warehouse) screens
 
-function operatorTabs(active = 'dash') {
+function operatorTabs(active = "dash") {
   const t = (id, label, svg) => `
-    <div class="tab ${active === id ? 'active' : ''}">
+    <div class="tab ${active === id ? "active" : ""}">
       <div class="tab-icon">${svg}</div>
       <div class="tab-label">${label}</div>
     </div>`;
   return `<div class="tabbar">
-    ${t('dash', 'Home', '<svg viewBox="0 0 24 24" fill="none"><path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6h-6v6H4a1 1 0 01-1-1v-9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')}
-    ${t('dispatch', 'Dispatch', '<svg viewBox="0 0 24 24" fill="none"><path d="M3 17h2l1-4h12l1 4h2M5 13l1.5-5a2 2 0 012-1.5h7a2 2 0 012 1.5L19 13M7 17v2M17 17v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
-    ${t('fleet', 'Fleet', '<svg viewBox="0 0 24 24" fill="none"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 4v16M15 6v16" stroke="currentColor" stroke-width="1.8"/></svg>')}
-    ${t('warehouse', 'Warehouse', '<svg viewBox="0 0 24 24" fill="none"><path d="M3 21V9l9-5 9 5v12M9 21v-6h6v6" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')}
-    ${t('more', 'More', '<svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>')}
+    ${t("dash", "Home", '<svg viewBox="0 0 24 24" fill="none"><path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6h-6v6H4a1 1 0 01-1-1v-9z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')}
+    ${t("dispatch", "Dispatch", '<svg viewBox="0 0 24 24" fill="none"><path d="M3 17h2l1-4h12l1 4h2M5 13l1.5-5a2 2 0 012-1.5h7a2 2 0 012 1.5L19 13M7 17v2M17 17v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
+    ${t("fleet", "Fleet", '<svg viewBox="0 0 24 24" fill="none"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 4v16M15 6v16" stroke="currentColor" stroke-width="1.8"/></svg>')}
+    ${t("warehouse", "Warehouse", '<svg viewBox="0 0 24 24" fill="none"><path d="M3 21V9l9-5 9 5v12M9 21v-6h6v6" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>')}
+    ${t("more", "More", '<svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>')}
   </div>`;
 }
 
@@ -95,31 +95,70 @@ const op_dash = `
     <div class="section-inline"><span class="section-inline-title" style="font-size:17px">Routes today</span><span class="section-inline-link">All</span></div>
     <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
       ${[
-        {n:'Route 07', who:'Marcus R.', stops:'12 stops · 148 km', pct:100, status:'Rolled', color:'var(--green)'},
-        {n:'Route 03', who:'Ana P.', stops:'9 stops · 92 km', pct:100, status:'Rolled', color:'var(--green)'},
-        {n:'Route 11', who:'Dmitri K.', stops:'14 stops · 176 km', pct:74, status:'Loading', color:'var(--brand)'},
-        {n:'Route 05', who:'Samira H.', stops:'11 stops · 112 km', pct:42, status:'Picking', color:'var(--orange)'},
-        {n:'Route 02', who:'— unassigned', stops:'8 stops · 86 km', pct:0, status:'No driver', color:'var(--red)'},
-      ].map(r=>`
+        {
+          n: "Route 07",
+          who: "Marcus R.",
+          stops: "12 stops · 148 km",
+          pct: 100,
+          status: "Rolled",
+          color: "var(--green)",
+        },
+        {
+          n: "Route 03",
+          who: "Ana P.",
+          stops: "9 stops · 92 km",
+          pct: 100,
+          status: "Rolled",
+          color: "var(--green)",
+        },
+        {
+          n: "Route 11",
+          who: "Dmitri K.",
+          stops: "14 stops · 176 km",
+          pct: 74,
+          status: "Loading",
+          color: "var(--brand)",
+        },
+        {
+          n: "Route 05",
+          who: "Samira H.",
+          stops: "11 stops · 112 km",
+          pct: 42,
+          status: "Picking",
+          color: "var(--orange)",
+        },
+        {
+          n: "Route 02",
+          who: "— unassigned",
+          stops: "8 stops · 86 km",
+          pct: 0,
+          status: "No driver",
+          color: "var(--red)",
+        },
+      ]
+        .map(
+          (r) => `
         <div style="background:var(--bg-elev);border-radius:14px;padding:12px 14px">
           <div style="display:flex;align-items:center;gap:10px">
-            <div style="width:34px;height:34px;border-radius:10px;background:${r.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${r.n.split(' ')[1]}</div>
+            <div style="width:34px;height:34px;border-radius:10px;background:${r.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${r.n.split(" ")[1]}</div>
             <div style="flex:1;min-width:0">
               <div style="font-size:15px;font-weight:600;color:var(--label);letter-spacing:-0.2px">${r.n} · ${r.who}</div>
               <div style="font-size:12px;color:var(--label2);margin-top:1px">${r.stops}</div>
             </div>
-            <span class="pill pill-${r.status==='Rolled'?'green':r.status==='No driver'?'red':r.status==='Loading'?'brand':'orange'}"><span class="pill-dot"></span>${r.status}</span>
+            <span class="pill pill-${r.status === "Rolled" ? "green" : r.status === "No driver" ? "red" : r.status === "Loading" ? "brand" : "orange"}"><span class="pill-dot"></span>${r.status}</span>
           </div>
           <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
             <div class="progress-track" style="flex:1"><div class="progress-fill" style="width:${r.pct}%;background:${r.color}"></div></div>
             <div style="font-size:12px;color:var(--label2);min-width:34px;text-align:right;font-variant-numeric:tabular-nums">${r.pct}%</div>
           </div>
-        </div>`).join('')}
+        </div>`,
+        )
+        .join("")}
     </div>
     <div style="height:20px"></div>
   </div></div>
 
-  ${operatorTabs('dash')}
+  ${operatorTabs("dash")}
 </div>`;
 
 /* ══════ OP 2 — DISPATCH (assign routes) ══════ */
@@ -155,20 +194,38 @@ const op_dispatch = `
     <div style="padding:0 16px 0">
       <div style="background:var(--bg-elev);border-radius:16px;overflow:hidden">
         ${[
-          {name:'Jordan M.', status:'Available · checked in 06:32', badge:'Recommended', tag:'brand', dist:'Home zone: East'},
-          {name:'Priya S.', status:'Available · checked in 06:40', tag:'gray', dist:'Home zone: Central'},
-          {name:'Leo K.', status:'On break · ETA 20 min', tag:'gray', dist:'Home zone: East'},
-          {name:'Rita A.', status:'Not checked in', tag:'red', dist:'Was on Route 02'},
-        ].map((d,i)=>`
-          <div style="padding:12px 14px;display:flex;align-items:center;gap:12px;${i>0?'border-top:0.5px solid var(--separator)':''}">
-            <div style="width:44px;height:44px;border-radius:999px;background:linear-gradient(135deg,#${['6A9BD8','E6A55C','8BB974','D28CB5'][i]},#${['3D6FA8','B07636','598347','A15A84'][i]});color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">${d.name.split(' ').map(n=>n[0]).join('')}</div>
+          {
+            name: "Jordan M.",
+            status: "Available · checked in 06:32",
+            badge: "Recommended",
+            tag: "brand",
+            dist: "Home zone: East",
+          },
+          {
+            name: "Priya S.",
+            status: "Available · checked in 06:40",
+            tag: "gray",
+            dist: "Home zone: Central",
+          },
+          { name: "Leo K.", status: "On break · ETA 20 min", tag: "gray", dist: "Home zone: East" },
+          { name: "Rita A.", status: "Not checked in", tag: "red", dist: "Was on Route 02" },
+        ]
+          .map(
+            (d, i) => `
+          <div style="padding:12px 14px;display:flex;align-items:center;gap:12px;${i > 0 ? "border-top:0.5px solid var(--separator)" : ""}">
+            <div style="width:44px;height:44px;border-radius:999px;background:linear-gradient(135deg,#${["6A9BD8", "E6A55C", "8BB974", "D28CB5"][i]},#${["3D6FA8", "B07636", "598347", "A15A84"][i]});color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">${d.name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-size:16px;font-weight:600;color:var(--label);display:flex;align-items:center;gap:6px">${d.name} ${d.badge?`<span class="pill pill-brand" style="font-size:10px;padding:1px 6px">${d.badge}</span>`:''}</div>
+              <div style="font-size:16px;font-weight:600;color:var(--label);display:flex;align-items:center;gap:6px">${d.name} ${d.badge ? `<span class="pill pill-brand" style="font-size:10px;padding:1px 6px">${d.badge}</span>` : ""}</div>
               <div style="font-size:13px;color:var(--label2);margin-top:1px">${d.status}</div>
               <div style="font-size:12px;color:var(--label2);margin-top:1px">${d.dist}</div>
             </div>
-            ${d.tag==='red'?'<span class="pill pill-red">Unavailable</span>':`<div style="background:var(--${d.tag==='brand'?'brand':'fill2'});color:${d.tag==='brand'?'#fff':'var(--brand)'};padding:8px 14px;border-radius:10px;font-size:14px;font-weight:600">Assign</div>`}
-          </div>`).join('')}
+            ${d.tag === "red" ? '<span class="pill pill-red">Unavailable</span>' : `<div style="background:var(--${d.tag === "brand" ? "brand" : "fill2"});color:${d.tag === "brand" ? "#fff" : "var(--brand)"};padding:8px 14px;border-radius:10px;font-size:14px;font-weight:600">Assign</div>`}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
 
@@ -204,7 +261,7 @@ const op_dispatch = `
     <div style="height:20px"></div>
   </div></div>
 
-  ${operatorTabs('dispatch')}
+  ${operatorTabs("dispatch")}
 </div>`;
 
 /* ══════ OP 3 — PICK & LOAD VERIFICATION ══════ */
@@ -262,30 +319,53 @@ const op_pick = `
     <!-- Pick rows -->
     <div style="padding:14px 16px 0;display:flex;flex-direction:column;gap:8px">
       ${[
-        {name:'Sourdough Loaf', bin:'A1·07', need:24, got:24, status:'done'},
-        {name:'Raw milk (2L)', bin:'C2·03 · chilled', need:18, got:18, status:'done'},
-        {name:'Butter (500g)', bin:'B3·14', need:12, got:7, status:'active'},
-        {name:'Croissants (6pk)', bin:'A2·11', need:18, got:0, status:'pending'},
-        {name:'Pain au chocolat', bin:'A2·12', need:6, got:0, status:'short', note:'Only 4 in stock'},
-      ].map(p=>{
-        const statusColor = p.status==='done'?'var(--green)':p.status==='active'?'var(--brand)':p.status==='short'?'var(--orange)':'var(--gray4)';
-        const bg = p.status==='done'?'var(--green-wash)':p.status==='active'?'var(--brand-wash)':p.status==='short'?'var(--orange-wash)':'var(--fill3)';
-        return `<div style="background:var(--bg-elev);border:1px solid ${p.status==='active'?'var(--brand)':'var(--separator)'};border-radius:14px;padding:12px 14px">
+        { name: "Sourdough Loaf", bin: "A1·07", need: 24, got: 24, status: "done" },
+        { name: "Raw milk (2L)", bin: "C2·03 · chilled", need: 18, got: 18, status: "done" },
+        { name: "Butter (500g)", bin: "B3·14", need: 12, got: 7, status: "active" },
+        { name: "Croissants (6pk)", bin: "A2·11", need: 18, got: 0, status: "pending" },
+        {
+          name: "Pain au chocolat",
+          bin: "A2·12",
+          need: 6,
+          got: 0,
+          status: "short",
+          note: "Only 4 in stock",
+        },
+      ]
+        .map((p) => {
+          const statusColor =
+            p.status === "done"
+              ? "var(--green)"
+              : p.status === "active"
+                ? "var(--brand)"
+                : p.status === "short"
+                  ? "var(--orange)"
+                  : "var(--gray4)";
+          const bg =
+            p.status === "done"
+              ? "var(--green-wash)"
+              : p.status === "active"
+                ? "var(--brand-wash)"
+                : p.status === "short"
+                  ? "var(--orange-wash)"
+                  : "var(--fill3)";
+          return `<div style="background:var(--bg-elev);border:1px solid ${p.status === "active" ? "var(--brand)" : "var(--separator)"};border-radius:14px;padding:12px 14px">
           <div style="display:flex;align-items:center;gap:12px">
             <div style="width:32px;height:32px;border-radius:10px;background:${bg};color:${statusColor};display:flex;align-items:center;justify-content:center">
-              ${p.status==='done'?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>':p.status==='short'?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 8v4M12 16v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/></svg>':'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/></svg>'}
+              ${p.status === "done" ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>' : p.status === "short" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 8v4M12 16v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.8"/></svg>'}
             </div>
             <div style="flex:1;min-width:0">
               <div style="font-size:15px;font-weight:600;color:var(--label);letter-spacing:-0.2px">${p.name}</div>
-              <div style="font-size:12px;color:var(--label2);margin-top:1px">${p.bin}${p.note?' · '+p.note:''}</div>
+              <div style="font-size:12px;color:var(--label2);margin-top:1px">${p.bin}${p.note ? " · " + p.note : ""}</div>
             </div>
             <div style="text-align:right">
               <div style="font-size:16px;font-weight:700;color:var(--label);font-variant-numeric:tabular-nums">${p.got}<span style="color:var(--label2);font-weight:500"> / ${p.need}</span></div>
-              <div style="font-size:11px;color:${statusColor};font-weight:600;margin-top:1px">${p.status==='done'?'Loaded':p.status==='active'?'Scanning':p.status==='short'?'Short 2':'Pending'}</div>
+              <div style="font-size:11px;color:${statusColor};font-weight:600;margin-top:1px">${p.status === "done" ? "Loaded" : p.status === "active" ? "Scanning" : p.status === "short" ? "Short 2" : "Pending"}</div>
             </div>
           </div>
         </div>`;
-      }).join('')}
+        })
+        .join("")}
     </div>
     <div style="height:16px"></div>
   </div></div>
@@ -320,17 +400,21 @@ const op_fleet = `
     </svg>
     <!-- van pins -->
     ${[
-      {x:210, y:460, label:'R07', color:'#0B6E6B', state:'on time'},
-      {x:195, y:620, label:'R11', color:'#5856D6', state:'on time'},
-      {x:330, y:560, label:'R05', color:'#FF9500', state:'late'},
-      {x:130, y:280, label:'R03', color:'#34C759', state:'home'},
-    ].map(v=>`
+      { x: 210, y: 460, label: "R07", color: "#0B6E6B", state: "on time" },
+      { x: 195, y: 620, label: "R11", color: "#5856D6", state: "on time" },
+      { x: 330, y: 560, label: "R05", color: "#FF9500", state: "late" },
+      { x: 130, y: 280, label: "R03", color: "#34C759", state: "home" },
+    ]
+      .map(
+        (v) => `
       <div style="position:absolute;left:${v.x}px;top:${v.y}px;transform:translate(-50%,-50%)">
         <div style="background:${v.color};color:#fff;padding:6px 10px;border-radius:10px;font-size:12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,0.25);display:flex;align-items:center;gap:5px">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 17h2l1-4h12l1 4h2" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
           ${v.label}
         </div>
-      </div>`).join('')}
+      </div>`,
+      )
+      .join("")}
     <!-- depot -->
     <div style="position:absolute;left:56px;top:160px">
       <div style="width:36px;height:36px;background:#000;color:#fff;border-radius:999px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 4px 14px rgba(0,0,0,0.3)">
@@ -366,11 +450,31 @@ const op_fleet = `
         <div style="font-size:13px;color:var(--brand);font-weight:500">Message all</div>
       </div>
       ${[
-        {name:'Marcus R.', route:'R07', progress:'5 / 12 stops · on time', color:'#0B6E6B', init:'MR'},
-        {name:'Samira H.', route:'R05', progress:'3 / 11 stops · +18m late', color:'#FF9500', init:'SH'},
-        {name:'Dmitri K.', route:'R11', progress:'2 / 14 stops · on time', color:'#5856D6', init:'DK'},
-      ].map((d,i)=>`
-        <div style="padding:10px 16px;display:flex;align-items:center;gap:12px;${i>0?'border-top:0.5px solid rgba(60,60,67,0.12)':''}">
+        {
+          name: "Marcus R.",
+          route: "R07",
+          progress: "5 / 12 stops · on time",
+          color: "#0B6E6B",
+          init: "MR",
+        },
+        {
+          name: "Samira H.",
+          route: "R05",
+          progress: "3 / 11 stops · +18m late",
+          color: "#FF9500",
+          init: "SH",
+        },
+        {
+          name: "Dmitri K.",
+          route: "R11",
+          progress: "2 / 14 stops · on time",
+          color: "#5856D6",
+          init: "DK",
+        },
+      ]
+        .map(
+          (d, i) => `
+        <div style="padding:10px 16px;display:flex;align-items:center;gap:12px;${i > 0 ? "border-top:0.5px solid rgba(60,60,67,0.12)" : ""}">
           <div style="width:38px;height:38px;border-radius:999px;background:${d.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">${d.init}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:15px;font-weight:600;color:#000">${d.name} <span style="color:#636366;font-weight:500;font-size:13px">· ${d.route}</span></div>
@@ -379,11 +483,13 @@ const op_fleet = `
           <div style="width:34px;height:34px;background:rgba(11,110,107,0.12);color:#0B6E6B;border-radius:10px;display:flex;align-items:center;justify-content:center">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="1.8"/></svg>
           </div>
-        </div>`).join('')}
+        </div>`,
+        )
+        .join("")}
     </div>
   </div>
 
-  ${operatorTabs('fleet')}
+  ${operatorTabs("fleet")}
 </div>`;
 
 /* ══════ OP 5 — DRIVER DETAIL / MESSAGING ══════ */
@@ -408,10 +514,24 @@ const op_driver_detail = `
       <div style="font-size:14px;color:var(--label2);margin-top:2px">Van 07 · On route · 3.8h driven today</div>
       <div style="display:flex;gap:8px;margin-top:14px;justify-content:center">
         ${[
-          ['<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2A19 19 0 013 4.2 2 2 0 015 2h3a2 2 0 012 1.7 13 13 0 00.7 2.9 2 2 0 01-.5 2.1L9 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5 13 13 0 002.9.7 2 2 0 011.7 2z" stroke="currentColor" stroke-width="1.6"/></svg>','Call'],
-          ['<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="1.6"/></svg>','Message'],
-          ['<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 2l3 7h7l-5.5 4 2 7-6.5-4-6.5 4 2-7L2 9h7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>','Reassign'],
-        ].map(([svg,label])=>`<div style="padding:9px 16px;background:var(--fill3);border-radius:12px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--label)">${svg}${label}</div>`).join('')}
+          [
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 16.9v3a2 2 0 01-2.2 2A19 19 0 013 4.2 2 2 0 015 2h3a2 2 0 012 1.7 13 13 0 00.7 2.9 2 2 0 01-.5 2.1L9 10a16 16 0 006 6l1.3-1.3a2 2 0 012.1-.5 13 13 0 002.9.7 2 2 0 011.7 2z" stroke="currentColor" stroke-width="1.6"/></svg>',
+            "Call",
+          ],
+          [
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="1.6"/></svg>',
+            "Message",
+          ],
+          [
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 2l3 7h7l-5.5 4 2 7-6.5-4-6.5 4 2-7L2 9h7z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+            "Reassign",
+          ],
+        ]
+          .map(
+            ([svg, label]) =>
+              `<div style="padding:9px 16px;background:var(--fill3);border-radius:12px;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--label)">${svg}${label}</div>`,
+          )
+          .join("")}
       </div>
     </div>
 
@@ -438,11 +558,28 @@ const op_driver_detail = `
     <div class="grouped-section">
       <div class="list-group">
         ${[
-          {t:'09:42', title:'Delivered — Luna Roastery', sub:'$312 cash · signed', c:'var(--green)'},
-          {t:'09:08', title:'Delivered — Green Market', sub:'Left at door · photo', c:'var(--green)'},
-          {t:'08:45', title:'Arrived — Atlas Catering', sub:'0.3 mi ahead of ETA', c:'var(--brand)'},
-          {t:'07:50', title:'Left depot', sub:'Van 07 · 84 items loaded', c:'var(--gray)'},
-        ].map(e=>`
+          {
+            t: "09:42",
+            title: "Delivered — Luna Roastery",
+            sub: "$312 cash · signed",
+            c: "var(--green)",
+          },
+          {
+            t: "09:08",
+            title: "Delivered — Green Market",
+            sub: "Left at door · photo",
+            c: "var(--green)",
+          },
+          {
+            t: "08:45",
+            title: "Arrived — Atlas Catering",
+            sub: "0.3 mi ahead of ETA",
+            c: "var(--brand)",
+          },
+          { t: "07:50", title: "Left depot", sub: "Van 07 · 84 items loaded", c: "var(--gray)" },
+        ]
+          .map(
+            (e) => `
           <div class="list-row">
             <div style="width:56px;font-size:13px;color:var(--label2);font-variant-numeric:tabular-nums">${e.t}</div>
             <div style="width:8px;height:8px;background:${e.c};border-radius:999px;flex-shrink:0;margin:0 4px"></div>
@@ -450,7 +587,9 @@ const op_driver_detail = `
               <div style="font-size:15px;color:var(--label);font-weight:500">${e.title}</div>
               <div style="font-size:12px;color:var(--label2);margin-top:1px">${e.sub}</div>
             </div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
     <div style="height:20px"></div>
@@ -482,15 +621,50 @@ const op_exceptions = `
 
     <div style="padding:12px 16px 0;display:flex;flex-direction:column;gap:10px">
       ${[
-        {sev:'red', title:'R05 · Samira H. — 18 min late', sub:'Traffic on Highway 1 · 3 stops affected', time:'now', actions:['Reroute','Notify customers']},
-        {sev:'red', title:'R07 · Harbor Café refused delivery', sub:'Item damaged · driver needs credit authorization', time:'4m ago', actions:['Authorize $22','Dispatch']},
-        {sev:'orange', title:'R11 · Short pick not resolved', sub:'3 × Pain au chocolat for Central Kitchen', time:'8m ago', actions:['Substitute']},
-        {sev:'orange', title:'Van 03 · Low fuel', sub:'14% · nearest station 2.1 km', time:'12m ago', actions:['Notify Ana']},
-        {sev:'yellow', title:'Standing order paused', sub:'Luna Roastery · weekly · customer request', time:'1h ago', actions:['Review']},
-      ].map(e=>{
-        const colors={red:['var(--red-wash)','var(--red)','var(--red-ink)'],orange:['var(--orange-wash)','var(--orange)','var(--orange-ink)'],yellow:['var(--yellow-wash)','var(--yellow)','var(--yellow-ink)']};
-        const [bg,c,ink]=colors[e.sev];
-        return `<div style="background:var(--bg-elev);border-radius:14px;overflow:hidden;border-left:3px solid ${c}">
+        {
+          sev: "red",
+          title: "R05 · Samira H. — 18 min late",
+          sub: "Traffic on Highway 1 · 3 stops affected",
+          time: "now",
+          actions: ["Reroute", "Notify customers"],
+        },
+        {
+          sev: "red",
+          title: "R07 · Harbor Café refused delivery",
+          sub: "Item damaged · driver needs credit authorization",
+          time: "4m ago",
+          actions: ["Authorize $22", "Dispatch"],
+        },
+        {
+          sev: "orange",
+          title: "R11 · Short pick not resolved",
+          sub: "3 × Pain au chocolat for Central Kitchen",
+          time: "8m ago",
+          actions: ["Substitute"],
+        },
+        {
+          sev: "orange",
+          title: "Van 03 · Low fuel",
+          sub: "14% · nearest station 2.1 km",
+          time: "12m ago",
+          actions: ["Notify Ana"],
+        },
+        {
+          sev: "yellow",
+          title: "Standing order paused",
+          sub: "Luna Roastery · weekly · customer request",
+          time: "1h ago",
+          actions: ["Review"],
+        },
+      ]
+        .map((e) => {
+          const colors = {
+            red: ["var(--red-wash)", "var(--red)", "var(--red-ink)"],
+            orange: ["var(--orange-wash)", "var(--orange)", "var(--orange-ink)"],
+            yellow: ["var(--yellow-wash)", "var(--yellow)", "var(--yellow-ink)"],
+          };
+          const [bg, c, ink] = colors[e.sev];
+          return `<div style="background:var(--bg-elev);border-radius:14px;overflow:hidden;border-left:3px solid ${c}">
           <div style="padding:12px 14px">
             <div style="display:flex;align-items:flex-start;gap:10px">
               <div style="width:30px;height:30px;border-radius:8px;background:${bg};color:${ink};display:flex;align-items:center;justify-content:center;flex-shrink:0">
@@ -503,16 +677,17 @@ const op_exceptions = `
               <div style="font-size:11px;color:var(--label2);font-variant-numeric:tabular-nums">${e.time}</div>
             </div>
             <div style="display:flex;gap:6px;margin-top:10px;padding-left:40px">
-              ${e.actions.map((a,i)=>`<div style="padding:6px 12px;background:${i===0?'var(--brand)':'var(--fill3)'};color:${i===0?'#fff':'var(--label)'};border-radius:8px;font-size:13px;font-weight:600">${a}</div>`).join('')}
+              ${e.actions.map((a, i) => `<div style="padding:6px 12px;background:${i === 0 ? "var(--brand)" : "var(--fill3)"};color:${i === 0 ? "#fff" : "var(--label)"};border-radius:8px;font-size:13px;font-weight:600">${a}</div>`).join("")}
             </div>
           </div>
         </div>`;
-      }).join('')}
+        })
+        .join("")}
     </div>
     <div style="height:20px"></div>
   </div></div>
 
-  ${operatorTabs('dash')}
+  ${operatorTabs("dash")}
 </div>`;
 
 /* ══════ OP 7 — WAREHOUSE STOCK ══════ */
@@ -570,11 +745,13 @@ const op_warehouse = `
     <div class="grouped-section">
       <div class="list-group">
         ${[
-          {name:'Butter (500g)', sku:'1108', bin:'B3·14', have:24, min:48, pct:50},
-          {name:'Croissants (6pk)', sku:'3302', bin:'A2·11', have:8, min:40, pct:20},
-          {name:'Pain au chocolat', sku:'3308', bin:'A2·12', have:4, min:30, pct:13},
-          {name:'Raw milk 2L', sku:'2201', bin:'C2·03', have:18, min:36, pct:50},
-        ].map(p=>`
+          { name: "Butter (500g)", sku: "1108", bin: "B3·14", have: 24, min: 48, pct: 50 },
+          { name: "Croissants (6pk)", sku: "3302", bin: "A2·11", have: 8, min: 40, pct: 20 },
+          { name: "Pain au chocolat", sku: "3308", bin: "A2·12", have: 4, min: 30, pct: 13 },
+          { name: "Raw milk 2L", sku: "2201", bin: "C2·03", have: 18, min: 36, pct: 50 },
+        ]
+          .map(
+            (p) => `
           <div class="list-row" style="padding:12px 16px">
             <div style="flex:1">
               <div style="display:flex;justify-content:space-between;align-items:baseline">
@@ -582,25 +759,27 @@ const op_warehouse = `
                 <div style="font-size:13px;color:var(--label);font-weight:600;font-variant-numeric:tabular-nums">${p.have} <span style="color:var(--label2);font-weight:400">/ ${p.min}</span></div>
               </div>
               <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
-                <div class="progress-track" style="flex:1;height:3px"><div class="progress-fill ${p.pct<=25?'orange':'brand'}" style="width:${p.pct}%"></div></div>
+                <div class="progress-track" style="flex:1;height:3px"><div class="progress-fill ${p.pct <= 25 ? "orange" : "brand"}" style="width:${p.pct}%"></div></div>
                 <div style="font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums">${p.bin}</div>
               </div>
             </div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
     <div style="height:20px"></div>
   </div></div>
 
-  ${operatorTabs('warehouse')}
+  ${operatorTabs("warehouse")}
 </div>`;
 
 window.operatorPhones = [
-  ['01 Morning dashboard', 'Readiness · KPIs · routes', op_dash],
-  ['02 Dispatch assignment', 'Suggest · assign driver', op_dispatch],
-  ['03 Pick & load', 'Scan · verify · short flags', op_pick],
-  ['04 Live fleet', 'Map · trails · drivers', op_fleet],
-  ['05 Driver detail', 'Live · thread · timeline', op_driver_detail],
-  ['06 Exceptions queue', 'Sev-colored · quick actions', op_exceptions],
-  ['07 Warehouse stock', 'Low stock · bins · reorder', op_warehouse],
+  ["01 Morning dashboard", "Readiness · KPIs · routes", op_dash],
+  ["02 Dispatch assignment", "Suggest · assign driver", op_dispatch],
+  ["03 Pick & load", "Scan · verify · short flags", op_pick],
+  ["04 Live fleet", "Map · trails · drivers", op_fleet],
+  ["05 Driver detail", "Live · thread · timeline", op_driver_detail],
+  ["06 Exceptions queue", "Sev-colored · quick actions", op_exceptions],
+  ["07 Warehouse stock", "Low stock · bins · reorder", op_warehouse],
 ];

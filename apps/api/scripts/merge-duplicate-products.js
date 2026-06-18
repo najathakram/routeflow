@@ -17,21 +17,21 @@ const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
 
 // All tables that have a productId FK pointing at Product.
 const FK_TABLES = [
-  { table: "OrderItem",           col: "productId" },
-  { table: "OrderTemplateItem",   col: "productId" },
-  { table: "InvoiceItem",         col: "productId" },
-  { table: "RecurringInvoiceItem",col: "productId" },
-  { table: "EstimateItem",        col: "productId" },
-  { table: "PurchaseOrderItem",   col: "productId" },
-  { table: "VendorBillItem",      col: "productId" },
-  { table: "ReturnItem",          col: "productId" },
-  { table: "DeliveryMutation",    col: "productId" },
-  { table: "StockLot",            col: "productId" },
-  { table: "StockMovement",       col: "productId" },
-  { table: "CustomerPrice",       col: "productId" },
-  { table: "BuyerFavorite",       col: "productId" },
-  { table: "ExpenseLineItem",     col: "productId" },
-  { table: "ProductMapping",      col: "productId" },
+  { table: "OrderItem", col: "productId" },
+  { table: "OrderTemplateItem", col: "productId" },
+  { table: "InvoiceItem", col: "productId" },
+  { table: "RecurringInvoiceItem", col: "productId" },
+  { table: "EstimateItem", col: "productId" },
+  { table: "PurchaseOrderItem", col: "productId" },
+  { table: "VendorBillItem", col: "productId" },
+  { table: "ReturnItem", col: "productId" },
+  { table: "DeliveryMutation", col: "productId" },
+  { table: "StockLot", col: "productId" },
+  { table: "StockMovement", col: "productId" },
+  { table: "CustomerPrice", col: "productId" },
+  { table: "BuyerFavorite", col: "productId" },
+  { table: "ExpenseLineItem", col: "productId" },
+  { table: "ProductMapping", col: "productId" },
 ];
 
 async function main() {
@@ -68,7 +68,7 @@ async function main() {
 
     console.log(
       `Tenant ${tenantId}: keeping "${keeper.name}" (${keeper.id}), ` +
-      `merging ${dupeIds.length} duplicate(s): [${dupeIds.join(", ")}]`
+        `merging ${dupeIds.length} duplicate(s): [${dupeIds.join(", ")}]`,
     );
 
     await prisma.$transaction(async (tx) => {
@@ -106,7 +106,9 @@ async function main() {
     console.log(`  ✓ Merged.\n`);
   }
 
-  console.log(`\n✅  Done. Merged ${totalMerged} duplicate product(s) across ${dupeGroups.length} group(s).`);
+  console.log(
+    `\n✅  Done. Merged ${totalMerged} duplicate product(s) across ${dupeGroups.length} group(s).`,
+  );
 }
 
 main()

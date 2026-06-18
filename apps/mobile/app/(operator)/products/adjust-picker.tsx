@@ -1,12 +1,5 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -31,8 +24,7 @@ export default function AdjustPickerScreen() {
   });
   const products = data?.data ?? [];
 
-  const goToAdjust = (id: string) =>
-    router.push(`/(operator)/products/${id}/adjust-stock`);
+  const goToAdjust = (id: string) => router.push(`/(operator)/products/${id}/adjust-stock`);
 
   const onScanned = async (code: string) => {
     setScanOpen(false);
@@ -75,9 +67,7 @@ export default function AdjustPickerScreen() {
           </View>
         ) : products.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.empty}>
-              {search ? "No matches." : "No products yet."}
-            </Text>
+            <Text style={styles.empty}>{search ? "No matches." : "No products yet."}</Text>
           </View>
         ) : (
           <View style={styles.list}>
@@ -98,13 +88,7 @@ export default function AdjustPickerScreen() {
   );
 }
 
-function ProductRow({
-  product,
-  onPress,
-}: {
-  product: AdminProduct;
-  onPress: () => void;
-}) {
+function ProductRow({ product, onPress }: { product: AdminProduct; onPress: () => void }) {
   const stock =
     typeof product.currentStock === "string"
       ? Number(product.currentStock) || 0

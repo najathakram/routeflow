@@ -44,7 +44,9 @@ export default function NewPurchaseOrderScreen() {
 
   const getSelection = useProductPickerStore((s) => s.selections);
   const clearSelection = useProductPickerStore((s) => s.clearSelection);
-  const prevSelectionsRef = useRef<Record<string, { id: string; name: string; standardCost?: number }>>({});
+  const prevSelectionsRef = useRef<
+    Record<string, { id: string; name: string; standardCost?: number }>
+  >({});
 
   // When navigating back from supplier/product pickers, refresh data and
   // apply any pending product selections.
@@ -82,8 +84,7 @@ export default function NewPurchaseOrderScreen() {
             ...item,
             productId: sel.id,
             productName: sel.name,
-            unitCost:
-              sel.standardCost != null ? String(sel.standardCost) : item.unitCost,
+            unitCost: sel.standardCost != null ? String(sel.standardCost) : item.unitCost,
           };
         }
         return item;
@@ -102,15 +103,11 @@ export default function NewPurchaseOrderScreen() {
   };
 
   const updateItem = (index: number, field: keyof LineItem, value: string) => {
-    setItems((prev) =>
-      prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)),
-    );
+    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)));
   };
 
-  const addItem = () =>
-    setItems((prev) => [...prev, EMPTY_ITEM(prev.length)]);
-  const removeItem = (index: number) =>
-    setItems((prev) => prev.filter((_, i) => i !== index));
+  const addItem = () => setItems((prev) => [...prev, EMPTY_ITEM(prev.length)]);
+  const removeItem = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
 
   const submit = () => {
     if (!supplierId) {
@@ -143,8 +140,7 @@ export default function NewPurchaseOrderScreen() {
       onSuccess: (result) => {
         router.replace(`/(operator)/purchase-orders/${result.id}`);
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
@@ -158,9 +154,7 @@ export default function NewPurchaseOrderScreen() {
       <FormSection title="Supplier">
         <FormField label="Supplier">
           <Pressable style={styles.picker} onPress={pickSupplier}>
-            <Text
-              style={[styles.pickerText, !supplierName && styles.pickerPlaceholder]}
-            >
+            <Text style={[styles.pickerText, !supplierName && styles.pickerPlaceholder]}>
               {supplierName || "Select supplier…"}
             </Text>
           </Pressable>
@@ -203,10 +197,7 @@ export default function NewPurchaseOrderScreen() {
               <Pressable style={styles.picker} onPress={() => pickProduct(item)}>
                 <View style={styles.pickerInner}>
                   <Text
-                    style={[
-                      styles.pickerText,
-                      !item.productName && styles.pickerPlaceholder,
-                    ]}
+                    style={[styles.pickerText, !item.productName && styles.pickerPlaceholder]}
                     numberOfLines={1}
                   >
                     {item.productName || "Select product…"}
@@ -251,7 +242,11 @@ export default function NewPurchaseOrderScreen() {
         options={(suppliers ?? []).map((s: any) => ({ id: s.id, label: s.name }))}
         selectedId={supplierId}
         onClose={() => setSupplierPickerOpen(false)}
-        onSelect={(opt) => { setSupplierId(opt.id); setSupplierName(opt.label); setSupplierPickerOpen(false); }}
+        onSelect={(opt) => {
+          setSupplierId(opt.id);
+          setSupplierName(opt.label);
+          setSupplierPickerOpen(false);
+        }}
       />
     </FormSheet>
   );

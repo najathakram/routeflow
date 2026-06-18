@@ -65,14 +65,8 @@ export default function CustomersListScreen() {
     );
   }, [suppliers, search]);
 
-  const isLoading =
-    tab === "Suppliers"
-      ? suppliersQ.isLoading
-      : customersQ.isLoading;
-  const isFetching =
-    tab === "Suppliers"
-      ? suppliersQ.isFetching ?? false
-      : customersQ.isFetching;
+  const isLoading = tab === "Suppliers" ? suppliersQ.isLoading : customersQ.isLoading;
+  const isFetching = tab === "Suppliers" ? (suppliersQ.isFetching ?? false) : customersQ.isFetching;
   const refetch = tab === "Suppliers" ? suppliersQ.refetch : customersQ.refetch;
 
   return (
@@ -91,22 +85,16 @@ export default function CustomersListScreen() {
         leading={
           <NavBackButton
             label="Back"
-            onPress={() => (router.canGoBack() ? router.back() : router.replace("/(operator)" as any))}
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace("/(operator)" as any)
+            }
           />
         }
         trailing={
           tab === "Suppliers" ? (
-            <NavAction
-              label="Add"
-              bold
-              onPress={() => router.push("/(operator)/suppliers/new")}
-            />
+            <NavAction label="Add" bold onPress={() => router.push("/(operator)/suppliers/new")} />
           ) : tab === "Customers" ? (
-            <NavAction
-              label="Add"
-              bold
-              onPress={() => router.push("/(operator)/customers/new")}
-            />
+            <NavAction label="Add" bold onPress={() => router.push("/(operator)/customers/new")} />
           ) : null
         }
       />
@@ -120,9 +108,7 @@ export default function CustomersListScreen() {
       </View>
 
       <SearchBar
-        placeholder={
-          tab === "Suppliers" ? "Search suppliers…" : "Search customers…"
-        }
+        placeholder={tab === "Suppliers" ? "Search suppliers…" : "Search customers…"}
         value={search}
         onChangeText={setSearch}
       />
@@ -157,9 +143,7 @@ export default function CustomersListScreen() {
                 <SupplierRow
                   key={s.id}
                   supplier={s}
-                  onPress={() =>
-                    router.push(`/(operator)/suppliers/${s.id}/edit`)
-                  }
+                  onPress={() => router.push(`/(operator)/suppliers/${s.id}/edit`)}
                 />
               ))}
             </View>
@@ -195,14 +179,10 @@ export default function CustomersListScreen() {
                 <Pressable
                   key={c.id}
                   style={styles.row}
-                  onPress={() =>
-                    router.push(`/(operator)/customers/${c.id}`)
-                  }
+                  onPress={() => router.push(`/(operator)/customers/${c.id}`)}
                 >
                   <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>
-                      {initialsFor(c.businessName)}
-                    </Text>
+                    <Text style={styles.avatarText}>{initialsFor(c.businessName)}</Text>
                   </View>
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.name} numberOfLines={1}>
@@ -223,22 +203,14 @@ export default function CustomersListScreen() {
       ) : (
         <CustomersMap
           customers={customers}
-          onPickCustomer={(id) =>
-            router.push(`/(operator)/customers/${id}`)
-          }
+          onPickCustomer={(id) => router.push(`/(operator)/customers/${id}`)}
         />
       )}
     </SafeAreaView>
   );
 }
 
-function SupplierRow({
-  supplier,
-  onPress,
-}: {
-  supplier: Supplier;
-  onPress: () => void;
-}) {
+function SupplierRow({ supplier, onPress }: { supplier: Supplier; onPress: () => void }) {
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={[styles.avatar, { backgroundColor: ios.system.purpleWash }]}>
@@ -252,9 +224,7 @@ function SupplierRow({
         </Text>
         {supplier.contactName || supplier.phone || supplier.email ? (
           <Text style={styles.sub} numberOfLines={1}>
-            {[supplier.contactName, supplier.phone ?? supplier.email]
-              .filter(Boolean)
-              .join(" · ")}
+            {[supplier.contactName, supplier.phone ?? supplier.email].filter(Boolean).join(" · ")}
           </Text>
         ) : null}
       </View>
@@ -295,11 +265,7 @@ function CustomersMap({
     <View style={{ flex: 1 }}>
       {pins.length === 0 ? (
         <View style={styles.mapHint}>
-          <Ionicons
-            name="information-circle-outline"
-            size={16}
-            color={ios.label2}
-          />
+          <Ionicons name="information-circle-outline" size={16} color={ios.label2} />
           <Text style={styles.mapHintText}>
             Customer addresses with coordinates will appear here.
           </Text>

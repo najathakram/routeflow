@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7,7 +7,7 @@ export interface DeliveryMutation {
   id: string;
   orderItemId: string;
   productId: string;
-  type: 'DELIVERED' | 'PARTIAL' | 'REFUSED' | 'ADD_ON';
+  type: "DELIVERED" | "PARTIAL" | "REFUSED" | "ADD_ON";
   quantityDelivered: number;
   note?: string;
   createdAt: string;
@@ -54,7 +54,7 @@ export interface RouteRunStop {
     lat?: number;
     lng?: number;
   };
-  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
   completedAt?: string;
   arrivedAt?: string;
   driverNote?: string;
@@ -70,7 +70,7 @@ export interface RouteRun {
   id: string;
   route?: { id: string; name: string };
   driver?: { id: string; contactName: string };
-  status: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
   scheduledDate: string;
   startedAt?: string;
   completedAt?: string;
@@ -90,10 +90,10 @@ export interface PackingListItem {
 
 export function useActiveRouteRun() {
   return useQuery<{ data: RouteRun[]; meta: any }>({
-    queryKey: ['route-runs', 'active'],
+    queryKey: ["route-runs", "active"],
     queryFn: () =>
       apiClient
-        .get('/route-runs', { params: { assignedToMe: true, status: 'IN_PROGRESS' } })
+        .get("/route-runs", { params: { assignedToMe: true, status: "IN_PROGRESS" } })
         .then((r) => r.data),
     staleTime: 30_000,
   });
@@ -101,10 +101,10 @@ export function useActiveRouteRun() {
 
 export function useScheduledRouteRuns() {
   return useQuery<{ data: RouteRun[]; meta: any }>({
-    queryKey: ['route-runs', 'scheduled'],
+    queryKey: ["route-runs", "scheduled"],
     queryFn: () =>
       apiClient
-        .get('/route-runs', { params: { assignedToMe: true, status: 'SCHEDULED' } })
+        .get("/route-runs", { params: { assignedToMe: true, status: "SCHEDULED" } })
         .then((r) => r.data),
     staleTime: 60_000,
   });
@@ -112,7 +112,7 @@ export function useScheduledRouteRuns() {
 
 export function useRouteRun(id: string) {
   return useQuery<RouteRun>({
-    queryKey: ['route-runs', id],
+    queryKey: ["route-runs", id],
     queryFn: () => apiClient.get(`/route-runs/${id}`).then((r) => r.data),
     enabled: !!id,
     staleTime: 15_000,
@@ -121,7 +121,7 @@ export function useRouteRun(id: string) {
 
 export function usePackingList(runId: string) {
   return useQuery<PackingListItem[]>({
-    queryKey: ['route-runs', runId, 'packing-list'],
+    queryKey: ["route-runs", runId, "packing-list"],
     queryFn: () =>
       apiClient.get(`/route-runs/${runId}/packing-list`).then((r) => r.data?.packingList ?? r.data),
     enabled: !!runId,
@@ -131,10 +131,10 @@ export function usePackingList(runId: string) {
 
 export function useDriverHistory() {
   return useQuery<{ data: RouteRun[]; meta: any }>({
-    queryKey: ['route-runs', 'history'],
+    queryKey: ["route-runs", "history"],
     queryFn: () =>
       apiClient
-        .get('/route-runs', { params: { assignedToMe: true, limit: 30 } })
+        .get("/route-runs", { params: { assignedToMe: true, limit: 30 } })
         .then((r) => r.data),
     staleTime: 60_000,
   });
@@ -149,10 +149,10 @@ export interface DriverStats {
 
 export function useDriverStats() {
   return useQuery<DriverStats>({
-    queryKey: ['route-runs', 'my-stats'],
+    queryKey: ["route-runs", "my-stats"],
     queryFn: () =>
       apiClient
-        .get('/route-runs/my-stats')
+        .get("/route-runs/my-stats")
         .then((r) => r.data)
         .catch((err) => {
           // Gracefully handle 404 — endpoint may not exist yet
@@ -172,13 +172,13 @@ export function useUpdateRunStatus() {
     mutationFn: ({ id, status }) =>
       apiClient.patch(`/route-runs/${id}/status`, { status }).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs'] });
-      qc.invalidateQueries({ queryKey: ['route-runs', id] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", id] });
     },
   });
 }
 
-export type ItemDeliveryType = 'DELIVERED' | 'PARTIAL' | 'REFUSED' | 'ADD_ON';
+export type ItemDeliveryType = "DELIVERED" | "PARTIAL" | "REFUSED" | "ADD_ON";
 
 export interface CompleteStopItemDto {
   orderItemId?: string; // undefined for ADD_ON items
@@ -201,7 +201,15 @@ export interface CompleteStopDto {
 export function useCompleteStop() {
   const qc = useQueryClient();
   return useMutation<RouteRunStop, Error, CompleteStopDto>({
-    mutationFn: ({ runId, stopId, driverNote, items, podPhotoUrls, signatureUrl, safeDropEnabled }) => {
+    mutationFn: ({
+      runId,
+      stopId,
+      driverNote,
+      items,
+      podPhotoUrls,
+      signatureUrl,
+      safeDropEnabled,
+    }) => {
       const deliveries = items
         .filter((i) => i.orderItemId) // API requires orderItemId; skip ADD_ON items without one
         .map((i) => ({
@@ -211,12 +219,18 @@ export function useCompleteStop() {
           note: i.driverNote,
         }));
       return apiClient
-        .post(`/route-runs/${runId}/stops/${stopId}/complete`, { driverNote, deliveries, podPhotoUrls, signatureUrl, safeDropEnabled })
+        .post(`/route-runs/${runId}/stops/${stopId}/complete`, {
+          driverNote,
+          deliveries,
+          podPhotoUrls,
+          signatureUrl,
+          safeDropEnabled,
+        })
         .then((r) => r.data);
     },
     onSuccess: (_, { runId }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs', runId] });
-      qc.invalidateQueries({ queryKey: ['route-runs', 'active'] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
   });
 }
@@ -258,7 +272,7 @@ export function useCompleteWithPayment() {
       idempotencyKey,
     }) => {
       const headers: Record<string, string> = {};
-      if (idempotencyKey) headers['idempotency-key'] = idempotencyKey;
+      if (idempotencyKey) headers["idempotency-key"] = idempotencyKey;
       return apiClient
         .post(
           `/route-runs/${runId}/stops/${stopId}/complete-with-payment`,
@@ -268,22 +282,24 @@ export function useCompleteWithPayment() {
         .then((r) => r.data);
     },
     onSuccess: (_, { runId }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs', runId] });
-      qc.invalidateQueries({ queryKey: ['route-runs', 'active'] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
   });
 }
 
 export function useUpdateStopStatus() {
   const qc = useQueryClient();
-  return useMutation<RouteRunStop, Error, { runId: string; stopId: string; status: 'IN_PROGRESS' | 'SKIPPED'; driverNote?: string }>({
+  return useMutation<
+    RouteRunStop,
+    Error,
+    { runId: string; stopId: string; status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string }
+  >({
     mutationFn: ({ runId, stopId, ...body }) =>
-      apiClient
-        .patch(`/route-runs/${runId}/stops/${stopId}`, body)
-        .then((r) => r.data),
+      apiClient.patch(`/route-runs/${runId}/stops/${stopId}`, body).then((r) => r.data),
     onSuccess: (_, { runId }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs', runId] });
-      qc.invalidateQueries({ queryKey: ['route-runs', 'active'] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
   });
 }
@@ -291,9 +307,9 @@ export function useUpdateStopStatus() {
 export function useCreateRun() {
   const qc = useQueryClient();
   return useMutation<RouteRun, Error, { routeId: string; scheduledDate: string; notes?: string }>({
-    mutationFn: (dto) => apiClient.post('/route-runs', dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/route-runs", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['route-runs'] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
     },
   });
 }
@@ -303,16 +319,16 @@ export function useUpdateRun() {
   return useMutation<RouteRun, Error, { id: string; scheduledDate?: string; notes?: string }>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/route-runs/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs'] });
-      qc.invalidateQueries({ queryKey: ['route-runs', id] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", id] });
     },
   });
 }
 
 export function useAllRoutes() {
   return useQuery<{ data: { id: string; name: string; isActive: boolean }[]; meta: any }>({
-    queryKey: ['routes'],
-    queryFn: () => apiClient.get('/routes', { params: { limit: 100 } }).then((r) => r.data),
+    queryKey: ["routes"],
+    queryFn: () => apiClient.get("/routes", { params: { limit: 100 } }).then((r) => r.data),
     staleTime: 5 * 60_000,
   });
 }
@@ -328,10 +344,10 @@ export interface CreateRouteDto {
 export function useCreateRoute() {
   const qc = useQueryClient();
   return useMutation<{ id: string }, Error, CreateRouteDto>({
-    mutationFn: (dto) => apiClient.post('/routes', dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/routes", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['routes'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+      qc.invalidateQueries({ queryKey: ["routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
     },
   });
 }
@@ -341,13 +357,19 @@ export function useUpdateRoute() {
   return useMutation<
     { id: string },
     Error,
-    { id: string; name?: string; description?: string; isActive?: boolean; driverId?: string | null }
+    {
+      id: string;
+      name?: string;
+      description?: string;
+      isActive?: boolean;
+      driverId?: string | null;
+    }
   >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/routes/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['routes'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'routes', id] });
+      qc.invalidateQueries({ queryKey: ["routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes", id] });
     },
   });
 }
@@ -357,8 +379,8 @@ export function useDeleteRoute() {
   return useMutation<void, Error, string>({
     mutationFn: (id) => apiClient.delete(`/routes/${id}`).then(() => undefined),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['routes'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+      qc.invalidateQueries({ queryKey: ["routes"] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
     },
   });
 }
@@ -373,7 +395,7 @@ export function useAddRouteStop() {
     mutationFn: ({ routeId, ...body }) =>
       apiClient.post(`/routes/${routeId}/stops`, body).then((r) => r.data),
     onSuccess: (_, { routeId }) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes", routeId] });
     },
   });
 }
@@ -384,24 +406,22 @@ export function useRemoveRouteStop() {
     mutationFn: ({ routeId, stopId }) =>
       apiClient.delete(`/routes/${routeId}/stops/${stopId}`).then(() => undefined),
     onSuccess: (_, { routeId }) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes", routeId] });
     },
   });
 }
 
 export function useReorderRouteStops() {
   const qc = useQueryClient();
-  return useMutation<
-    void,
-    Error,
-    { routeId: string; order: { id: string; stopNumber: number }[] }
-  >({
-    mutationFn: ({ routeId, order }) =>
-      apiClient.patch(`/routes/${routeId}/stops/reorder`, { order }).then(() => undefined),
-    onSuccess: (_, { routeId }) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'routes', routeId] });
+  return useMutation<void, Error, { routeId: string; order: { id: string; stopNumber: number }[] }>(
+    {
+      mutationFn: ({ routeId, order }) =>
+        apiClient.patch(`/routes/${routeId}/stops/reorder`, { order }).then(() => undefined),
+      onSuccess: (_, { routeId }) => {
+        qc.invalidateQueries({ queryKey: ["admin", "routes", routeId] });
+      },
     },
-  });
+  );
 }
 
 // ─── Live fleet (operator) ────────────────────────────────────────────────────
@@ -434,10 +454,10 @@ export interface LiveRoute {
 
 export function useRoutesLive() {
   return useQuery<{ routes: LiveRoute[] }>({
-    queryKey: ['routes', 'live'],
+    queryKey: ["routes", "live"],
     queryFn: () =>
       apiClient
-        .get('/routes/live')
+        .get("/routes/live")
         .then((r) => r.data)
         .catch((err) => {
           if (err?.response?.status === 404) return { routes: [] };
@@ -452,9 +472,9 @@ export function useRoutesLive() {
 
 export function useOperatorRouteRuns(params?: { status?: string; date?: string; limit?: number }) {
   return useQuery<{ data: RouteRun[]; meta: any }>({
-    queryKey: ['route-runs', 'operator', params],
+    queryKey: ["route-runs", "operator", params],
     queryFn: () =>
-      apiClient.get('/route-runs', { params: { limit: 50, ...params } }).then((r) => r.data),
+      apiClient.get("/route-runs", { params: { limit: 50, ...params } }).then((r) => r.data),
     staleTime: 30_000,
   });
 }
@@ -473,8 +493,8 @@ export function useOptimizeTemplate() {
   return useMutation<OptimizeResult, Error, string>({
     mutationFn: (id) => apiClient.post(`/routes/${id}/optimize`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'routes', id] });
-      qc.invalidateQueries({ queryKey: ['admin', 'routes'] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "routes"] });
     },
   });
 }
@@ -489,18 +509,17 @@ export function useOptimizeRouteRun() {
   const qc = useQueryClient();
   return useMutation<OptimizeResult, Error, string | OptimizeRunInput>({
     mutationFn: (input) => {
-      const args: OptimizeRunInput =
-        typeof input === 'string' ? { id: input } : input;
+      const args: OptimizeRunInput = typeof input === "string" ? { id: input } : input;
       const body =
-        typeof args.originLat === 'number' && typeof args.originLng === 'number'
+        typeof args.originLat === "number" && typeof args.originLng === "number"
           ? { originLat: args.originLat, originLng: args.originLng }
           : {};
       return apiClient.post(`/route-runs/${args.id}/optimize`, body).then((r) => r.data);
     },
     onSuccess: (_, input) => {
-      const id = typeof input === 'string' ? input : input.id;
-      qc.invalidateQueries({ queryKey: ['route-runs', id] });
-      qc.invalidateQueries({ queryKey: ['route-runs'] });
+      const id = typeof input === "string" ? input : input.id;
+      qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
     },
   });
 }
@@ -522,7 +541,7 @@ export interface StopETA {
 export interface RouteAnalysisResult {
   configured: boolean;
   summary?: string;
-  stops?: Array<{ stopNumber: number; status: 'ok' | 'warning' | 'critical'; message: string }>;
+  stops?: Array<{ stopNumber: number; status: "ok" | "warning" | "critical"; message: string }>;
   suggestions?: string[];
   etas: StopETA[];
 }
@@ -554,10 +573,10 @@ export interface RouteSettings {
 
 export function useRouteSettings() {
   return useQuery<RouteSettings>({
-    queryKey: ['route-settings'],
+    queryKey: ["route-settings"],
     queryFn: () =>
       apiClient
-        .get('/settings/route')
+        .get("/settings/route")
         .then((r) => r.data)
         .catch((err) => {
           if (err?.response?.status === 404) return null;
@@ -570,13 +589,17 @@ export function useRouteSettings() {
 
 export function useReopenStop() {
   const qc = useQueryClient();
-  return useMutation<{ success: boolean; message: string }, Error, { runId: string; stopId: string }>({
+  return useMutation<
+    { success: boolean; message: string },
+    Error,
+    { runId: string; stopId: string }
+  >({
     mutationFn: ({ runId, stopId }) =>
       apiClient.post(`/route-runs/${runId}/stops/${stopId}/reopen`).then((r) => r.data),
     onSuccess: (_, { runId }) => {
-      qc.invalidateQueries({ queryKey: ['route-runs', runId] });
-      qc.invalidateQueries({ queryKey: ['route-runs', 'active'] });
-      qc.invalidateQueries({ queryKey: ['route-runs', 'history'] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", "history"] });
     },
   });
 }

@@ -21,10 +21,7 @@ export default async function globalSetup(): Promise<void> {
     return;
   }
 
-  const seedScript = path.resolve(
-    __dirname,
-    "../../../../apps/api/scripts/e2e-seed.js"
-  );
+  const seedScript = path.resolve(__dirname, "../../../../apps/api/scripts/e2e-seed.js");
 
   const env = { ...process.env };
 

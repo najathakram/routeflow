@@ -28,7 +28,7 @@ export async function openInMaps(target: MapTarget): Promise<void> {
     ? trimmedLabel
       ? `${trimmedLabel}, ${trimmedAddress}`
       : trimmedAddress
-    : trimmedLabel ?? "";
+    : (trimmedLabel ?? "");
   let url: string;
 
   if (Platform.OS === "ios") {
@@ -70,9 +70,7 @@ function stopToWaypoint(stop: RouteRunStop): string | null {
   const businessName = stop.customer?.businessName?.trim();
 
   if (a) {
-    const addressParts = [a.line1, a.city, a.state, a.zip]
-      .map((p) => p?.trim())
-      .filter(Boolean);
+    const addressParts = [a.line1, a.city, a.state, a.zip].map((p) => p?.trim()).filter(Boolean);
     if (addressParts.length > 0) {
       const fullParts = businessName ? [businessName, ...addressParts] : addressParts;
       return encodeURIComponent(fullParts.join(", "));
@@ -98,20 +96,14 @@ export interface RouteMapOptions {
  * distances. Pass `origin*` (driver's live GPS) so the route starts from the
  * driver's current position; otherwise the first stop is used as the origin.
  */
-export function openRouteInMaps(
-  stops: RouteRunStop[],
-  options: RouteMapOptions = {},
-): void {
+export function openRouteInMaps(stops: RouteRunStop[], options: RouteMapOptions = {}): void {
   const sorted = [...stops].sort((a, b) => a.stopNumber - b.stopNumber);
   const waypoints = sorted.map(stopToWaypoint).filter(Boolean) as string[];
 
   if (waypoints.length === 0) return;
 
-  const hasOrigin =
-    typeof options.originLat === "number" && typeof options.originLng === "number";
-  const originStr = hasOrigin
-    ? `${options.originLat},${options.originLng}`
-    : waypoints[0]!;
+  const hasOrigin = typeof options.originLat === "number" && typeof options.originLng === "number";
+  const originStr = hasOrigin ? `${options.originLat},${options.originLng}` : waypoints[0]!;
 
   const stopList = hasOrigin ? waypoints : waypoints.slice(1);
   if (stopList.length === 0) return;

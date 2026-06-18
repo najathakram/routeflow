@@ -119,7 +119,15 @@ export function MarketingFooter() {
       </div>
 
       {/* Tail mark */}
-      <div style={{ marginTop: 24, padding: "0 32px", maxWidth: 1240, marginLeft: "auto", marginRight: "auto" }}>
+      <div
+        style={{
+          marginTop: 24,
+          padding: "0 32px",
+          maxWidth: 1240,
+          marginLeft: "auto",
+          marginRight: "auto",
+        }}
+      >
         <div
           className="display footer-tail-mark"
           style={{

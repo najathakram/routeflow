@@ -88,11 +88,11 @@ Run waves strictly serially (B1 → B2 → B3). Within a wave, dispatch all list
 
 ### Model + effort allocation (cheat sheet)
 
-| Tier | Use for | Model | Effort cue in prompt |
-|------|---------|-------|---------------------|
-| **L** Low | Pure config, route registration, copy fixes, one-file polish | `haiku` | "Apply the smallest correct change. No refactor." |
-| **M** Medium | Single-domain bug fix touching 1–3 files, with test | `sonnet` | "Reason briefly about the fix; ship the minimal correct change with one test." |
-| **H** High | Cross-cutting / concurrency / multi-app wiring / financial correctness | `sonnet` | "Think carefully end-to-end about race conditions, ALS context, and rollback before changing code. Sketch the plan in 5 bullets, then implement." |
+| Tier         | Use for                                                                | Model    | Effort cue in prompt                                                                                                                              |
+| ------------ | ---------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **L** Low    | Pure config, route registration, copy fixes, one-file polish           | `haiku`  | "Apply the smallest correct change. No refactor."                                                                                                 |
+| **M** Medium | Single-domain bug fix touching 1–3 files, with test                    | `sonnet` | "Reason briefly about the fix; ship the minimal correct change with one test."                                                                    |
+| **H** High   | Cross-cutting / concurrency / multi-app wiring / financial correctness | `sonnet` | "Think carefully end-to-end about race conditions, ALS context, and rollback before changing code. Sketch the plan in 5 bullets, then implement." |
 
 (The Agent tool's `model` param controls model. "Effort" is conveyed by prompt phrasing; do not pass an unsupported parameter.)
 
@@ -107,7 +107,7 @@ Each must be unblocked before any user-facing wave is meaningful.
   - `GET /customers` (NEW-rweb-1, NEW-v1-2)
   - `GET /buyer/orders` (NEW-rweb-2)
   - `GET /buyer/invoices` (NEW-rweb-3, RF-094/180 standing-orders likely same root cause)  
-  Investigate Railway logs first; the most likely root cause is an ALS-context regression making `forTenant()` throw under buyer JWT context. Add a fallback try/catch at the controller and a unit test asserting each endpoint returns 200 for an authenticated buyer/operator. Files: `apps/api/src/customers/*`, `apps/api/src/buyer/*`, possibly `apps/api/src/common/tenant-context.ts`.
+    Investigate Railway logs first; the most likely root cause is an ALS-context regression making `forTenant()` throw under buyer JWT context. Add a fallback try/catch at the controller and a unit test asserting each endpoint returns 200 for an authenticated buyer/operator. Files: `apps/api/src/customers/*`, `apps/api/src/buyer/*`, possibly `apps/api/src/common/tenant-context.ts`.
 
 - **F2-XSS** · `sonnet` · M  
   RF-076, RF-157, RF-078 — block SVG/script-bearing uploads, add `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff` on all `/uploads/*` responses, allowlist `image/jpeg,image/png,image/webp` on product-image and customer tax-document endpoints. Then write a one-shot cleanup script that purges the three known live SVG XSS payloads in the `ux-audit` test tenant. Test: upload `<script>alert(1)</script>.svg` → expect 400. File: `apps/api/src/uploads/*`, `apps/api/src/files.controller.ts` (or equivalent).
@@ -120,7 +120,7 @@ Each must be unblocked before any user-facing wave is meaningful.
   1. Wire `socket.io-client` at the Expo router root layout in `apps/customer-app/app/_layout.tsx` and `apps/driver-app/app/_layout.tsx`. Connect when `accessToken` becomes available, join the appropriate tenant room (`tenant:{id}:operators` or `tenant:{id}:customer:{userId}`), call `queryClient.invalidateQueries(...)` on incoming events.
   2. RF-015: in `apps/api/src/routes/routes.service.ts::createRun()`, emit `route.dispatched` to the driver's room and trigger Expo push.
   3. RF-008: wrap `generateDailyOrders()` and recurring-invoice cron in a per-tenant ALS context — iterate active tenants, set `tenantContext.run({ tenantId }, fn)` per tenant.  
-  This is the most cross-cutting Wave-1 task — reason carefully about cache invalidation impact and reconnect logic. Add an E2E test that: (a) operator dispatches a run, (b) driver client receives the event within 2 s.
+     This is the most cross-cutting Wave-1 task — reason carefully about cache invalidation impact and reconnect logic. Add an E2E test that: (a) operator dispatches a run, (b) driver client receives the event within 2 s.
 
 ---
 
@@ -152,7 +152,7 @@ After Wave B1 lands, the env is stable enough to verify these.
   - **NEW-v2-1** — Vendor-bill receive should add `bill.quantity`, not 1. Likely a typo in `vendor-bills.service.ts::receive()`.
   - **RF-010** — Re-confirm credit-note over-credit guard (audit verified once).
   - **RF-079** — `isTaxExempt: true` on a customer must zero out tax in invoice creation paths.
-  
+
   Reason carefully about every concurrency case and supply integration tests for RF-011, RF-014, RF-017, RF-172.
 
 - **F8-OPERATOR-UI** · `sonnet` · H  
@@ -166,10 +166,10 @@ After Wave B1 lands, the env is stable enough to verify these.
   - **RF-205** — `/routes/:id` "Optimize stops" must `POST /routes/:id/optimize`, not navigate.
   - **NEW-rweb-5** — `/orders/:id` deep link should open detail, not redirect to `/home`.
   - **NEW-rweb-7** — Route `scheduledDate` shows yesterday — convert to tenant timezone before display.
-  
+
   This is breadth-heavy. Plan first; then implement file-by-file.
 
-- **F9-DRIVER-FLOW** · `sonnet` · H  
+- **F9-DRIVER-FLOW** · `sonnet` · H
   - **RF-016** — Server-side trigger: when last stop of a run reaches `DELIVERED`, transition `RouteRun.status` to `COMPLETED`. Add inside `completeStop()`.
   - **NEW-m1-1** — React #185 (max update depth) on tapping any item checkbox of an already-DELIVERED stop. Likely an effect re-running off a memoized list whose identity changes per render. Audit `apps/driver-app/app/(driver)/stop/[id].tsx` and stabilize the deps.
   - **NEW-rmob-1** — "No refresh token" on web payment submit. Driver app uses `expo-secure-store` which silently no-ops on web. Add a web fallback: persist refresh token to `localStorage` under a per-role key (coordinate with F5).
@@ -178,7 +178,7 @@ After Wave B1 lands, the env is stable enough to verify these.
   - **RF-019** — Idempotency key on `completeStop` — accept `Idempotency-Key` header, store hash, reject duplicates within 24 h.
   - **RF-167** — Re-confirm after F4 lands.
 
-- **F10-SECURITY** · `sonnet` · M  
+- **F10-SECURITY** · `sonnet` · M
   - **RF-081** — Restrict `GET /returns/:id` to `OPERATOR | TENANT_ADMIN | CUSTOMER`. Add ownership check for `CUSTOMER` role.
   - **RF-093** — Re-confirm `forcePasswordChange` enforcement.
   - **RF-160** — Re-confirm login throttler (also tighten copy: include `Retry-After` header).
@@ -205,7 +205,7 @@ After Wave B1 lands, the env is stable enough to verify these.
   - Frontend: replace the modal with a form; success-state with "Check your email".
   - Test: end-to-end — request → email payload → submit → login with new password.
 
-- **F13-LOOSE-ENDS** · `haiku` · L  
+- **F13-LOOSE-ENDS** · `haiku` · L
   - RF-007 — Add skeleton placeholders during tab navigation; eliminate the 5–7 s blank.
   - RF-202 — Document the same-day grace boundary in the OVERDUE filter; comment-only.
   - RF-209 — Either register routes under `/finance/*` or update the navigation links to the prefix-less paths the API actually serves.

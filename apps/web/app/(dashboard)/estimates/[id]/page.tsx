@@ -84,7 +84,8 @@ function VoidConfirmModal({
       }
     >
       <p className="text-sm text-navy/70">
-        Voiding this estimate will mark it as cancelled. The customer will no longer be able to accept it.
+        Voiding this estimate will mark it as cancelled. The customer will no longer be able to
+        accept it.
       </p>
     </Modal>
   );
@@ -113,7 +114,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -146,7 +147,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
         });
       },
       onError: () => {
-        toast({ title: "Failed to send estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to send estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -161,7 +166,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
         });
       },
       onError: () => {
-        toast({ title: "Failed to accept estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to accept estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -176,7 +185,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
         });
       },
       onError: () => {
-        toast({ title: "Failed to decline estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to decline estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -192,7 +205,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
         router.push(`/invoices/${invoiceId}`);
       },
       onError: () => {
-        toast({ title: "Failed to convert estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to convert estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -208,7 +225,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
         });
       },
       onError: () => {
-        toast({ title: "Failed to void estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to void estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -221,7 +242,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
       {/* Back */}
       <Link
         href="/estimates"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Estimates
@@ -309,7 +330,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
           )}
 
           {isReadOnly && (
-            <span className="text-sm italic text-navy/40">
+            <span className="text-sm italic text-navy/70">
               {status === "DECLINED" ? "This estimate was declined." : "This estimate has expired."}
             </span>
           )}
@@ -327,37 +348,37 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold text-navy">ESTIMATE</p>
-                <p className="mt-1 font-mono text-sm text-navy/60">{estimate.estimateNumber}</p>
+                <p className="mt-1 font-mono text-sm text-navy/70">{estimate.estimateNumber}</p>
               </div>
             </div>
 
             {/* Customer + Dates */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Prepared For
                 </p>
                 <p className="text-sm font-semibold text-navy">
                   {estimate.customer?.businessName ?? "—"}
                 </p>
                 {estimate.customer?.contactName && (
-                  <p className="text-sm text-navy/60">{estimate.customer.contactName}</p>
+                  <p className="text-sm text-navy/70">{estimate.customer.contactName}</p>
                 )}
                 {estimate.customer?.address && (
-                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
+                  <p className="mt-1 text-xs text-navy/70 whitespace-pre-line">
                     {estimate.customer.address}
                   </p>
                 )}
               </div>
               <div className="text-right">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Estimate Details
                 </p>
-                <p className="text-sm text-navy/60">
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
                 </p>
-                <p className="text-sm text-navy/60">
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Valid Until:</span>{" "}
                   {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </p>
@@ -369,16 +390,14 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
+                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
                       Description
                     </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
-                      Qty
-                    </th>
-                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">Qty</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
                       Unit Price
                     </th>
-                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">
+                    <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/70">
                       Amount
                     </th>
                   </tr>
@@ -421,7 +440,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
             {/* Notes */}
             {estimate.notes && (
               <div className="mt-4 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Notes
                 </p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{estimate.notes}</p>
@@ -435,15 +454,17 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
           <Card title="Summary">
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Status</dt>
-                <dd><EstimateStatusBadge status={status} /></dd>
+                <dt className="text-navy/70">Status</dt>
+                <dd>
+                  <EstimateStatusBadge status={status} />
+                </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Subtotal</dt>
+                <dt className="text-navy/70">Subtotal</dt>
                 <dd className="text-navy">{fmt(subtotal)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Tax</dt>
+                <dt className="text-navy/70">Tax</dt>
                 <dd className="text-navy">{fmt(tax)}</dd>
               </div>
               <div className="flex justify-between border-t border-surface-border pt-2 font-bold text-navy">
@@ -493,18 +514,22 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
           <Card title="Dates">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Issue Date</dt>
-                <dd className="text-navy">{fmtDate((estimate as any).issueDate ?? estimate.createdAt)}</dd>
+                <dt className="text-navy/70">Issue Date</dt>
+                <dd className="text-navy">
+                  {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
+                </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Valid Until</dt>
-                <dd className="text-navy">{fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}</dd>
+                <dt className="text-navy/70">Valid Until</dt>
+                <dd className="text-navy">
+                  {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
+                </dd>
               </div>
             </dl>
           </Card>
 
           <Card title="Audit">
-            <dl className="space-y-2 text-xs text-navy/60">
+            <dl className="space-y-2 text-xs text-navy/70">
               <div className="flex justify-between">
                 <dt>Created</dt>
                 <dd>{fmtDate(estimate.createdAt)}</dd>

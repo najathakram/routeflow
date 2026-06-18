@@ -13,7 +13,5 @@ import { NewOrderScreen } from "../../components/NewOrderScreen";
 export default function OperatorNewOrderScreen() {
   const router = useRouter();
   const goToOrders = () => router.replace("/(operator)/(tabs)/orders" as any);
-  return (
-    <NewOrderScreen backLabel="Orders" onBack={goToOrders} onSaved={goToOrders} />
-  );
+  return <NewOrderScreen backLabel="Orders" onBack={goToOrders} onSaved={goToOrders} />;
 }

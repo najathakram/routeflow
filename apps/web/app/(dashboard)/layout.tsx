@@ -50,7 +50,7 @@ import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
-type NavLeaf  = { kind: "leaf";  label: string; href: string; icon: LucideIcon };
+type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
 type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
 type NavEntry = NavLeaf | NavGroup;
 
@@ -58,40 +58,48 @@ type NavEntry = NavLeaf | NavGroup;
 const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
-    kind: "group", label: "Orders", icon: ShoppingCart,
+    kind: "group",
+    label: "Orders",
+    icon: ShoppingCart,
     children: [
-      { kind: "leaf", label: "All Orders", href: "/orders",  icon: ShoppingCart },
-      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
+      { kind: "leaf", label: "All Orders", href: "/orders", icon: ShoppingCart },
+      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
     ],
   },
   {
-    kind: "group", label: "Dispatch", icon: Truck,
+    kind: "group",
+    label: "Dispatch",
+    icon: Truck,
     children: [
       { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
-      { kind: "leaf", label: "Routes",   href: "/routes",   icon: MapPin },
-      { kind: "leaf", label: "Drivers",  href: "/drivers",  icon: Truck },
+      { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
+      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
     ],
   },
   { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
   {
-    kind: "group", label: "Warehouse", icon: Package,
+    kind: "group",
+    label: "Warehouse",
+    icon: Package,
     children: [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
-      { kind: "leaf", label: "Products",  href: "/products",  icon: Package },
+      { kind: "leaf", label: "Products", href: "/products", icon: Package },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
     ],
   },
   {
-    kind: "group", label: "Finance", icon: Wallet,
+    kind: "group",
+    label: "Finance",
+    icon: Wallet,
     children: [
-      { kind: "leaf", label: "Overview",     href: "/finance/dashboard", icon: LayoutDashboard },
-      { kind: "leaf", label: "Invoices",     href: "/invoices",          icon: FileText },
-      { kind: "leaf", label: "Estimates",    href: "/estimates",         icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes", href: "/credit-notes",      icon: Receipt },
-      { kind: "leaf", label: "Payments",     href: "/finance/payments",  icon: CreditCard },
-      { kind: "leaf", label: "Expenses",     href: "/finance/expenses",  icon: ShoppingBag },
-      { kind: "leaf", label: "Reports",      href: "/finance/reports",   icon: BarChart3 },
-      { kind: "leaf", label: "Analytics",    href: "/analytics",         icon: BarChart2 },
+      { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
+      { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
+      { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
+      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
+      { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
+      { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
+      { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
+      { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
     ],
   },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
@@ -101,10 +109,12 @@ const OPERATOR_NAV: NavEntry[] = [
 const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
-    kind: "group", label: "Orders", icon: ShoppingCart,
+    kind: "group",
+    label: "Orders",
+    icon: ShoppingCart,
     children: [
-      { kind: "leaf", label: "My Orders",  href: "/orders",  icon: ShoppingCart },
-      { kind: "leaf", label: "Returns",    href: "/returns", icon: RotateCcw },
+      { kind: "leaf", label: "My Orders", href: "/orders", icon: ShoppingCart },
+      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
     ],
   },
   { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
@@ -114,22 +124,20 @@ const CUSTOMER_NAV: NavEntry[] = [
 /** Driver nav — routes and settings only */
 const DRIVER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { kind: "leaf", label: "My Routes",  href: "/routes",   icon: MapPin },
-  { kind: "leaf", label: "Settings",   href: "/settings", icon: Settings },
+  { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
+  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
 function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
   if (role === "CUSTOMER") return CUSTOMER_NAV;
-  if (role === "DRIVER")   return DRIVER_NAV;
+  if (role === "DRIVER") return DRIVER_NAV;
   // Operators who can also act as drivers get "My Routes" inside the Dispatch
   // group (alongside Overview / Routes / Drivers) instead of as a stand-alone
   // top-level item — keeps the sidebar tidy and groups all dispatch tools.
   if (canActAsDriver) {
     return OPERATOR_NAV.map((entry): NavEntry => {
       if (entry.kind === "group" && entry.label === "Dispatch") {
-        const alreadyHasMyRoutes = entry.children.some(
-          (c) => c.href === "/routes/my-runs",
-        );
+        const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
         if (alreadyHasMyRoutes) return entry;
         return {
           ...entry,
@@ -150,7 +158,7 @@ function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavE
 /** Paths that CUSTOMER users may access (prefix-matched) */
 const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
 /** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[]   = ["/dashboard", "/routes", "/settings"];
+const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
 
 function isPathAllowed(pathname: string, allowed: string[]): boolean {
   return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -159,14 +167,14 @@ function isPathAllowed(pathname: string, allowed: string[]): boolean {
 function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const pathname = usePathname();
-  const router   = useRouter();
+  const router = useRouter();
 
   React.useEffect(() => {
     const role = user?.role;
     if (!role) return;
     let allowed: string[] | null = null;
     if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
-    if (role === "DRIVER")   allowed = DRIVER_ALLOWED;
+    if (role === "DRIVER") allowed = DRIVER_ALLOWED;
     if (allowed && !isPathAllowed(pathname, allowed)) {
       router.replace("/dashboard");
     }
@@ -222,9 +230,7 @@ function NavLink({
       className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
         collapsed && "justify-center",
-        active
-          ? "bg-white text-navy"
-          : "text-white/70 hover:bg-white/10 hover:text-white",
+        active ? "bg-white text-navy" : "text-white/70 hover:bg-white/10 hover:text-white",
       )}
     >
       <Icon className="h-5 w-5 shrink-0" />
@@ -259,11 +265,7 @@ function NavGroupSection({
       <>
         {group.children.map((child) => (
           <li key={child.href}>
-            <NavLink
-              item={child}
-              collapsed={true}
-              active={pathname.startsWith(child.href)}
-            />
+            <NavLink item={child} collapsed={true} active={pathname.startsWith(child.href)} />
           </li>
         ))}
       </>
@@ -277,9 +279,7 @@ function NavGroupSection({
         onClick={() => setOpen((v) => !v)}
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors",
-          isAnyChildActive
-            ? "text-white/90"
-            : "text-white/40 hover:text-white/70",
+          isAnyChildActive ? "text-white/90" : "text-white/40 hover:text-white/70",
         )}
       >
         <Icon className="h-4 w-4 shrink-0" />
@@ -295,11 +295,7 @@ function NavGroupSection({
         <ul className="mt-0.5 flex flex-col gap-0.5 pl-3">
           {group.children.map((child) => (
             <li key={child.href}>
-              <NavLink
-                item={child}
-                collapsed={false}
-                active={pathname.startsWith(child.href)}
-              />
+              <NavLink item={child} collapsed={false} active={pathname.startsWith(child.href)} />
             </li>
           ))}
         </ul>
@@ -362,7 +358,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
       {isSubPage ? (
         <button
           onClick={() => router.back()}
-          className="rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+          className="rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
           aria-label="Go back"
         >
           <ArrowLeft className="h-5 w-5" />
@@ -379,7 +375,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
         {/* Command palette trigger */}
         <button
           onClick={onOpenPalette}
-          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/50 transition-colors hover:border-brand-300 hover:text-navy md:flex"
+          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/70 transition-colors hover:border-brand-300 hover:text-navy md:flex"
           aria-label="Open command palette"
         >
           <Search className="h-3.5 w-3.5" />
@@ -390,17 +386,21 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
         </button>
         <button
           onClick={onOpenPalette}
-          className="flex items-center justify-center rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
+          className="flex items-center justify-center rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy md:hidden"
           aria-label="Open command palette"
         >
           <Search className="h-5 w-5" />
         </button>
 
         {/* Notification bell */}
-        <DropdownMenu.Root onOpenChange={(open) => { if (open) markAllRead(); }}>
+        <DropdownMenu.Root
+          onOpenChange={(open) => {
+            if (open) markAllRead();
+          }}
+        >
           <DropdownMenu.Trigger asChild>
             <button
-              className="relative rounded-lg p-2 text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+              className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
               aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
             >
               <Bell className="h-5 w-5" />
@@ -423,7 +423,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 {notifications.length > 0 && (
                   <button
                     onClick={clear}
-                    className="flex items-center gap-1 text-xs text-navy/40 hover:text-danger transition-colors"
+                    className="flex items-center gap-1 text-xs text-navy/70 hover:text-danger transition-colors"
                     title="Clear all"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -437,7 +437,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 {notifications.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-10 text-center">
                     <Bell className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No notifications yet</p>
+                    <p className="text-sm text-navy/70">No notifications yet</p>
                     <p className="text-xs text-navy/30">
                       Urgent orders, driver updates, and low-stock alerts will appear here
                     </p>
@@ -455,7 +455,9 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                         <NotificationIcon type={n.type} />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-navy">{n.title}</p>
-                          <p className="mt-0.5 text-xs text-navy/60 leading-snug">{n.description}</p>
+                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                            {n.description}
+                          </p>
                           <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
                         </div>
                       </li>
@@ -478,7 +480,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
               <span className="hidden text-sm font-medium text-navy sm:block">
                 {user?.username}
               </span>
-              <ChevronDown className="hidden h-4 w-4 text-navy/40 sm:block" />
+              <ChevronDown className="hidden h-4 w-4 text-navy/70 sm:block" />
             </button>
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -491,7 +493,7 @@ function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                 onSelect={() => router.push("/settings")}
               >
-                <UserIcon className="h-4 w-4 text-navy/40" />
+                <UserIcon className="h-4 w-4 text-navy/70" />
                 Profile &amp; Settings
               </DropdownMenu.Item>
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
@@ -593,25 +595,53 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     const handler = (e: KeyboardEvent) => {
       // Skip if user is typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target as HTMLElement)?.isContentEditable) return;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        (e.target as HTMLElement)?.isContentEditable
+      )
+        return;
       // Skip if modifier keys held (except shift for ?)
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      if (e.key === "?") { setShortcutHelpOpen((v) => !v); return; }
+      if (e.key === "?") {
+        setShortcutHelpOpen((v) => !v);
+        return;
+      }
 
       // Sequence shortcuts (g + letter)
       sequence += e.key.toLowerCase();
       if (seqTimer) clearTimeout(seqTimer);
-      seqTimer = setTimeout(() => { sequence = ""; }, 800);
+      seqTimer = setTimeout(() => {
+        sequence = "";
+      }, 800);
 
-      if (sequence === "go") { shellRouter.push("/orders");    sequence = ""; }
-      else if (sequence === "gr") { shellRouter.push("/routes");    sequence = ""; }
-      else if (sequence === "gd") { shellRouter.push("/drivers");   sequence = ""; }
-      else if (sequence === "gc") { shellRouter.push("/customers"); sequence = ""; }
-      else if (sequence === "gi") { shellRouter.push("/invoices");  sequence = ""; }
-      else if (sequence === "gf") { shellRouter.push("/finance/dashboard"); sequence = ""; }
-      else if (sequence === "gs") { shellRouter.push("/settings");  sequence = ""; }
-      else if (sequence === "gh") { shellRouter.push("/dashboard"); sequence = ""; }
+      if (sequence === "go") {
+        shellRouter.push("/orders");
+        sequence = "";
+      } else if (sequence === "gr") {
+        shellRouter.push("/routes");
+        sequence = "";
+      } else if (sequence === "gd") {
+        shellRouter.push("/drivers");
+        sequence = "";
+      } else if (sequence === "gc") {
+        shellRouter.push("/customers");
+        sequence = "";
+      } else if (sequence === "gi") {
+        shellRouter.push("/invoices");
+        sequence = "";
+      } else if (sequence === "gf") {
+        shellRouter.push("/finance/dashboard");
+        sequence = "";
+      } else if (sequence === "gs") {
+        shellRouter.push("/settings");
+        sequence = "";
+      } else if (sequence === "gh") {
+        shellRouter.push("/dashboard");
+        sequence = "";
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -682,7 +712,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                   collapsed={collapsed}
                   pathname={pathname}
                 />
-              )
+              ),
             )}
           </ul>
         </nav>
@@ -720,7 +750,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             install prompt covers the Save button on Settings →
             Invoicing → Invoice Defaults and on the Business Profile
             tab, making the form look like it has no save action. */}
-        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24">
+        <main
+          id="main-content"
+          className="flex-1 overflow-x-hidden overflow-y-auto bg-surface-raised pb-24"
+        >
           {children}
         </main>
       </div>
@@ -742,7 +775,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               <p className="text-sm font-semibold text-navy">Keyboard Shortcuts</p>
               <button
                 onClick={() => setShortcutHelpOpen(false)}
-                className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                 aria-label="Close"
               >
                 <ChevronRight className="h-4 w-4 rotate-90" />
@@ -754,7 +787,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                   <span className="text-sm text-navy/70">{s.label}</span>
                   <div className="flex items-center gap-1">
                     {s.keys.map((k) => (
-                      <kbd key={k} className="rounded border border-surface-border bg-surface-raised px-1.5 py-0.5 text-xs font-medium text-navy">
+                      <kbd
+                        key={k}
+                        className="rounded border border-surface-border bg-surface-raised px-1.5 py-0.5 text-xs font-medium text-navy"
+                      >
                         {k}
                       </kbd>
                     ))}
@@ -771,11 +807,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
 // ─── Layout export ────────────────────────────────────────────────────────────
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
       <PageTitleProvider>

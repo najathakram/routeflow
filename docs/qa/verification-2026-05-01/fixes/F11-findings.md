@@ -2,15 +2,15 @@
 
 ## RFs addressed
 
-| RF | Sev | Status | Files | Commit | Test added | Migration? |
-|----|-----|--------|-------|--------|------------|-----------|
-| RF-214 | P2 | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx` | `990e219` | No | No |
-| RF-221 | P2 | ✅ DONE | `apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx` | N/A | No | No |
-| RF-223 | P3 | ✅ DONE | `apps/web/app/(dashboard)/finance/expenses/page.tsx` | N/A | No | No |
-| RF-224 | P2 | ✅ DONE | `apps/web/app/(dashboard)/returns/page.tsx` | N/A | No | No |
-| RF-225 | P2 | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx` | `990e219` | No | No |
-| RF-226 | P2 | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx` | `990e219` | No | No |
-| RF-227 | P2 | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx` | N/A | No | No |
+| RF     | Sev | Status  | Files                                                 | Commit    | Test added | Migration? |
+| ------ | --- | ------- | ----------------------------------------------------- | --------- | ---------- | ---------- |
+| RF-214 | P2  | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx`          | `990e219` | No         | No         |
+| RF-221 | P2  | ✅ DONE | `apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx` | N/A       | No         | No         |
+| RF-223 | P3  | ✅ DONE | `apps/web/app/(dashboard)/finance/expenses/page.tsx`  | N/A       | No         | No         |
+| RF-224 | P2  | ✅ DONE | `apps/web/app/(dashboard)/returns/page.tsx`           | N/A       | No         | No         |
+| RF-225 | P2  | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx`          | `990e219` | No         | No         |
+| RF-226 | P2  | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx`          | `990e219` | No         | No         |
+| RF-227 | P2  | ✅ DONE | `apps/web/app/(dashboard)/settings/page.tsx`          | N/A       | No         | No         |
 
 ## Notes / blockers
 

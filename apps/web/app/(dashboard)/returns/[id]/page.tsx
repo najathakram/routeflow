@@ -134,8 +134,8 @@ function ProcessRefundModal({
     >
       <div className="space-y-4">
         <p className="text-sm text-navy/70">
-          This will mark the return as Refunded. Make sure any credit or refund has been issued
-          to the customer outside of RouteFlow.
+          This will mark the return as Refunded. Make sure any credit or refund has been issued to
+          the customer outside of RouteFlow.
         </p>
         <label className="flex cursor-pointer items-center gap-3">
           <input
@@ -198,21 +198,23 @@ function ConfirmActionModal({
 
 // ─── Status timeline ──────────────────────────────────────────────────────────
 
-const STATUS_ORDER: ReturnStatus[] = [
-  "PENDING",
-  "APPROVED",
-  "IN_TRANSIT",
-  "RECEIVED",
-  "REFUNDED",
-];
+const STATUS_ORDER: ReturnStatus[] = ["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED", "REFUNDED"];
 
-function StatusTimeline({ currentStatus, logs }: { currentStatus: ReturnStatus; logs?: Return["logs"] }) {
+function StatusTimeline({
+  currentStatus,
+  logs,
+}: {
+  currentStatus: ReturnStatus;
+  logs?: Return["logs"];
+}) {
   if (currentStatus === "REJECTED" || currentStatus === "CANCELLED") {
     return (
       <div className="flex items-center gap-3 rounded-lg bg-red-50 px-4 py-3">
         <XCircle className="h-5 w-5 shrink-0 text-red-500" />
         <div>
-          <p className="text-sm font-semibold text-red-700">{currentStatus === "CANCELLED" ? "Return Cancelled" : "Return Rejected"}</p>
+          <p className="text-sm font-semibold text-red-700">
+            {currentStatus === "CANCELLED" ? "Return Cancelled" : "Return Rejected"}
+          </p>
           {logs && logs.length > 0 && (
             <p className="text-xs text-red-500">{fmtDateTime(logs[logs.length - 1].createdAt)}</p>
           )}
@@ -241,8 +243,8 @@ function StatusTimeline({ currentStatus, logs }: { currentStatus: ReturnStatus; 
                   done
                     ? "bg-green-100 text-green-600"
                     : active
-                    ? "bg-brand-500 text-white"
-                    : "bg-surface-raised text-navy/30",
+                      ? "bg-brand-500 text-white"
+                      : "bg-surface-raised text-navy/30",
                 )}
               >
                 {done ? (
@@ -266,14 +268,12 @@ function StatusTimeline({ currentStatus, logs }: { currentStatus: ReturnStatus; 
               <p
                 className={cn(
                   "text-sm font-medium",
-                  done ? "text-navy" : active ? "text-brand-600" : "text-navy/40",
+                  done ? "text-navy" : active ? "text-brand-600" : "text-navy/70",
                 )}
               >
                 {STATUS_LABELS[s]}
               </p>
-              {log && (
-                <p className="text-xs text-navy/50">{fmtDateTime(log.createdAt)}</p>
-              )}
+              {log && <p className="text-xs text-navy/70">{fmtDateTime(log.createdAt)}</p>}
             </div>
           </div>
         );
@@ -308,7 +308,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -335,7 +335,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         toast({ title: "Return approved", variant: "success" });
       },
       onError: () => {
-        toast({ title: "Failed to approve return", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to approve return",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -347,7 +351,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         toast({ title: "Return rejected", variant: "info" });
       },
       onError: () => {
-        toast({ title: "Failed to reject return", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to reject return",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -358,7 +366,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         toast({ title: "Return marked in transit", variant: "success" });
       },
       onError: () => {
-        toast({ title: "Failed to update status", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to update status",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -366,10 +378,18 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   const handleMarkReceived = () => {
     markReceived.mutate(ret.id, {
       onSuccess: () => {
-        toast({ title: "Return received", description: "Items have been checked in.", variant: "success" });
+        toast({
+          title: "Return received",
+          description: "Items have been checked in.",
+          variant: "success",
+        });
       },
       onError: () => {
-        toast({ title: "Failed to update status", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to update status",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -389,7 +409,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
       },
       {
         onSuccess: () => {
-          toast({ title: "Credit note created", description: "Review and update the amount before issuing.", variant: "success" });
+          toast({
+            title: "Credit note created",
+            description: "Review and update the amount before issuing.",
+            variant: "success",
+          });
           router.push("/credit-notes");
         },
         onError: () => toast({ title: "Failed to create credit note", variant: "error" }),
@@ -410,7 +434,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           });
         },
         onError: () => {
-          toast({ title: "Failed to process refund", description: "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to process refund",
+            description: "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -421,7 +449,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
       {/* Back */}
       <Link
         href="/returns"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Returns
@@ -501,15 +529,15 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           )}
 
           {(status === "REFUNDED" || status === "PROCESSED") && (
-            <span className="text-sm italic text-navy/40">Return fully processed.</span>
+            <span className="text-sm italic text-navy/70">Return fully processed.</span>
           )}
 
           {status === "REJECTED" && (
-            <span className="text-sm italic text-navy/40">This return was rejected.</span>
+            <span className="text-sm italic text-navy/70">This return was rejected.</span>
           )}
 
           {status === "CANCELLED" && (
-            <span className="text-sm italic text-navy/40">This return was cancelled.</span>
+            <span className="text-sm italic text-navy/70">This return was cancelled.</span>
           )}
         </div>
       </div>
@@ -521,25 +549,25 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           <Card>
             <div className="mb-6 grid grid-cols-2 gap-6">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Customer
                 </p>
                 <p className="text-sm font-semibold text-navy">
                   {ret.customer?.businessName ?? "—"}
                 </p>
                 {ret.customer?.contactName && (
-                  <p className="text-sm text-navy/60">{ret.customer.contactName}</p>
+                  <p className="text-sm text-navy/70">{ret.customer.contactName}</p>
                 )}
               </div>
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Return Details
                 </p>
-                <p className="text-sm text-navy/60">
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Return #:</span> {ret.returnNumber}
                 </p>
                 {ret.order && (
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Order #:</span>{" "}
                     <Link
                       href={`/orders/${ret.orderId}`}
@@ -550,13 +578,11 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                     </Link>
                   </p>
                 )}
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Reason:</span>{" "}
-                  {REASON_LABELS[ret.reason]}
+                <p className="text-sm text-navy/70">
+                  <span className="font-medium text-navy">Reason:</span> {REASON_LABELS[ret.reason]}
                 </p>
-                <p className="text-sm text-navy/60">
-                  <span className="font-medium text-navy">Submitted:</span>{" "}
-                  {fmtDate(ret.createdAt)}
+                <p className="text-sm text-navy/70">
+                  <span className="font-medium text-navy">Submitted:</span> {fmtDate(ret.createdAt)}
                 </p>
               </div>
             </div>
@@ -564,7 +590,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             {/* Notes */}
             {ret.notes && (
               <div className="mb-6 rounded-lg bg-surface-raised p-3">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Notes
                 </p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{ret.notes}</p>
@@ -576,16 +602,16 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
               <table className="w-full text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
+                    <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
                       Product
                     </th>
-                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/60">
+                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
                       Ordered Qty
                     </th>
-                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/60">
+                    <th className="px-4 py-2.5 text-center text-xs font-medium text-navy/70">
                       Return Qty
                     </th>
-                    <th className="px-4 py-2.5 text-left text-xs font-medium text-navy/60">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-navy/70">
                       Condition / Notes
                     </th>
                   </tr>
@@ -596,24 +622,16 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
                       <td className="px-6 py-3 font-medium text-navy">
                         {item.product?.name ?? item.productId}
                       </td>
-                      <td className="px-4 py-3 text-center text-navy/60">
-                        {item.orderedQty}
-                      </td>
-                      <td className="px-4 py-3 text-center font-semibold text-navy">
-                        {item.qty}
-                      </td>
-                      <td className="px-4 py-3 text-navy/60">
+                      <td className="px-4 py-3 text-center text-navy/70">{item.orderedQty}</td>
+                      <td className="px-4 py-3 text-center font-semibold text-navy">{item.qty}</td>
+                      <td className="px-4 py-3 text-navy/70">
                         {item.condition && (
                           <span className="mr-2 inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs font-medium text-navy">
                             {item.condition}
                           </span>
                         )}
-                        {item.notes && (
-                          <span className="text-xs text-navy/50">{item.notes}</span>
-                        )}
-                        {!item.condition && !item.notes && (
-                          <span className="text-navy/30">—</span>
-                        )}
+                        {item.notes && <span className="text-xs text-navy/70">{item.notes}</span>}
+                        {!item.condition && !item.notes && <span className="text-navy/30">—</span>}
                       </td>
                     </tr>
                   ))}
@@ -634,17 +652,17 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Items</dt>
+                <dt className="text-navy/70">Items</dt>
                 <dd className="font-medium text-navy">{ret.items.length}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Total Return Qty</dt>
+                <dt className="text-navy/70">Total Return Qty</dt>
                 <dd className="font-medium text-navy">
                   {ret.items.reduce((sum, i) => sum + Number(i.qty), 0)}
                 </dd>
               </div>
               <div className="flex justify-between border-t border-surface-border pt-2">
-                <dt className="text-navy/60">Reason</dt>
+                <dt className="text-navy/70">Reason</dt>
                 <dd className="font-medium text-navy">{REASON_LABELS[ret.reason]}</dd>
               </div>
             </dl>

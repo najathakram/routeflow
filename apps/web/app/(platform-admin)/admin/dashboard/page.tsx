@@ -6,12 +6,7 @@ import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
 import { AdminBadge } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
-import {
-  Building2,
-  Users,
-  AlertTriangle,
-  Clock,
-} from "lucide-react";
+import { Building2, Users, AlertTriangle, Clock } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -32,9 +27,30 @@ interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
   planBreakdown: Record<string, number>;
-  recentTenants: Array<{ id: string; slug: string; name: string; status: string; plan: string; createdAt: string }>;
-  trialsExpiringSoon: Array<{ id: string; slug: string; name: string; plan: string; trialEndsAt: string; createdAt: string }>;
-  atRiskTenants: Array<{ id: string; slug: string; name: string; status: string; plan: string; trialEndsAt: string | null }>;
+  recentTenants: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    status: string;
+    plan: string;
+    createdAt: string;
+  }>;
+  trialsExpiringSoon: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    plan: string;
+    trialEndsAt: string;
+    createdAt: string;
+  }>;
+  atRiskTenants: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    status: string;
+    plan: string;
+    trialEndsAt: string | null;
+  }>;
 }
 
 interface GrowthPoint {
@@ -65,12 +81,15 @@ export default function AdminDashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="p-6 text-center text-slate-500 py-12">Loading dashboard...</div>;
+  if (loading)
+    return <div className="p-6 text-center text-slate-500 py-12">Loading dashboard...</div>;
 
   if (error) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">{error}</div>
+        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+          {error}
+        </div>
       </div>
     );
   }
@@ -97,10 +116,26 @@ export default function AdminDashboardPage() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <AdminStatCard label="Total Tenants" value={stats.tenants.total} icon={<Building2 className="h-5 w-5" />} />
-        <AdminStatCard label="Active" value={stats.tenants.active} icon={<Building2 className="h-5 w-5" />} />
-        <AdminStatCard label="Trial" value={stats.tenants.trial} icon={<Clock className="h-5 w-5" />} />
-        <AdminStatCard label="Total Users" value={stats.totalUsers} icon={<Users className="h-5 w-5" />} />
+        <AdminStatCard
+          label="Total Tenants"
+          value={stats.tenants.total}
+          icon={<Building2 className="h-5 w-5" />}
+        />
+        <AdminStatCard
+          label="Active"
+          value={stats.tenants.active}
+          icon={<Building2 className="h-5 w-5" />}
+        />
+        <AdminStatCard
+          label="Trial"
+          value={stats.tenants.trial}
+          icon={<Clock className="h-5 w-5" />}
+        />
+        <AdminStatCard
+          label="Total Users"
+          value={stats.totalUsers}
+          icon={<Users className="h-5 w-5" />}
+        />
       </div>
 
       {/* Charts Row */}
@@ -123,13 +158,28 @@ export default function AdminDashboardPage() {
                   tickFormatter={(v: string) => v.slice(5)}
                   stroke="#475569"
                 />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} stroke="#475569" allowDecimals={false} />
+                <YAxis
+                  tick={{ fill: "#94a3b8", fontSize: 11 }}
+                  stroke="#475569"
+                  allowDecimals={false}
+                />
                 <Tooltip
-                  contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: 8 }}
+                  contentStyle={{
+                    backgroundColor: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 8,
+                  }}
                   labelStyle={{ color: "#e2e8f0" }}
                   itemStyle={{ color: "#818cf8" }}
                 />
-                <Area type="monotone" dataKey="count" stroke="#6366f1" fill="url(#growthGrad)" strokeWidth={2} name="New Tenants" />
+                <Area
+                  type="monotone"
+                  dataKey="count"
+                  stroke="#6366f1"
+                  fill="url(#growthGrad)"
+                  strokeWidth={2}
+                  name="New Tenants"
+                />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -150,13 +200,21 @@ export default function AdminDashboardPage() {
                   outerRadius={80}
                   paddingAngle={3}
                   dataKey="value"
-                  label={({ name, value }: { name?: string; value?: number }) => `${name ?? ""}: ${value ?? 0}`}
+                  label={({ name, value }: { name?: string; value?: number }) =>
+                    `${name ?? ""}: ${value ?? 0}`
+                  }
                 >
                   {planData.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#1e293b",
+                    border: "1px solid #334155",
+                    borderRadius: 8,
+                  }}
+                />
                 <Legend
                   wrapperStyle={{ fontSize: 12 }}
                   formatter={(value: string) => <span className="text-slate-300">{value}</span>}
@@ -196,18 +254,27 @@ export default function AdminDashboardPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-700/50">
                   {stats.trialsExpiringSoon.map((t) => {
-                    const days = Math.ceil((new Date(t.trialEndsAt!).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    const days = Math.ceil(
+                      (new Date(t.trialEndsAt!).getTime() - Date.now()) / (1000 * 60 * 60 * 24),
+                    );
                     return (
                       <tr key={t.id} className="hover:bg-slate-700/20">
                         <td className="px-4 py-2 text-white">{t.name ?? t.slug}</td>
-                        <td className="px-4 py-2"><AdminBadge variant="plan">{t.plan}</AdminBadge></td>
+                        <td className="px-4 py-2">
+                          <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                        </td>
                         <td className="px-4 py-2">
                           <span className={days <= 2 ? "text-red-400" : "text-yellow-400"}>
                             {days}d left
                           </span>
                         </td>
                         <td className="px-4 py-2">
-                          <Link href={`/admin/tenants/${t.id}`} className="text-xs text-indigo-400 hover:text-indigo-300">View</Link>
+                          <Link
+                            href={`/admin/tenants/${t.id}`}
+                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                          >
+                            View
+                          </Link>
                         </td>
                       </tr>
                     );
@@ -245,10 +312,19 @@ export default function AdminDashboardPage() {
                   {stats.atRiskTenants.map((t) => (
                     <tr key={t.id} className="hover:bg-slate-700/20">
                       <td className="px-4 py-2 text-white">{t.name ?? t.slug}</td>
-                      <td className="px-4 py-2"><AdminBadge>{t.status}</AdminBadge></td>
-                      <td className="px-4 py-2"><AdminBadge variant="plan">{t.plan}</AdminBadge></td>
                       <td className="px-4 py-2">
-                        <Link href={`/admin/tenants/${t.id}`} className="text-xs text-indigo-400 hover:text-indigo-300">View</Link>
+                        <AdminBadge>{t.status}</AdminBadge>
+                      </td>
+                      <td className="px-4 py-2">
+                        <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                      </td>
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/admin/tenants/${t.id}`}
+                          className="text-xs text-indigo-400 hover:text-indigo-300"
+                        >
+                          View
+                        </Link>
                       </td>
                     </tr>
                   ))}
@@ -262,7 +338,11 @@ export default function AdminDashboardPage() {
       {/* Recent Tenants */}
       <AdminCard
         title="Recent Tenants"
-        actions={<Link href="/admin/tenants" className="text-xs text-indigo-400 hover:text-indigo-300">View all</Link>}
+        actions={
+          <Link href="/admin/tenants" className="text-xs text-indigo-400 hover:text-indigo-300">
+            View all
+          </Link>
+        }
         noPadding
       >
         <div className="overflow-x-auto">
@@ -280,16 +360,31 @@ export default function AdminDashboardPage() {
               {stats.recentTenants.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-700/30 transition-colors">
                   <td className="px-5 py-3">
-                    <Link href={`/admin/tenants/${t.id}`} className="font-mono text-indigo-400 hover:text-indigo-300">{t.slug}</Link>
+                    <Link
+                      href={`/admin/tenants/${t.id}`}
+                      className="font-mono text-indigo-400 hover:text-indigo-300"
+                    >
+                      {t.slug}
+                    </Link>
                   </td>
                   <td className="px-5 py-3 text-white">{t.name}</td>
-                  <td className="px-5 py-3"><AdminBadge>{t.status}</AdminBadge></td>
-                  <td className="px-5 py-3"><AdminBadge variant="plan">{t.plan}</AdminBadge></td>
-                  <td className="px-5 py-3 text-slate-500">{new Date(t.createdAt).toLocaleDateString()}</td>
+                  <td className="px-5 py-3">
+                    <AdminBadge>{t.status}</AdminBadge>
+                  </td>
+                  <td className="px-5 py-3">
+                    <AdminBadge variant="plan">{t.plan}</AdminBadge>
+                  </td>
+                  <td className="px-5 py-3 text-slate-500">
+                    {new Date(t.createdAt).toLocaleDateString()}
+                  </td>
                 </tr>
               ))}
               {stats.recentTenants.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">No tenants yet</td></tr>
+                <tr>
+                  <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                    No tenants yet
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>

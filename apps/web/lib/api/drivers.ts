@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface Driver {
   id: string;
@@ -9,7 +9,7 @@ export interface Driver {
   vehicleModel?: string;
   vehicleColour?: string;
   vehiclePlate?: string;
-  status: 'ACTIVE' | 'INACTIVE';
+  status: "ACTIVE" | "INACTIVE";
   user: {
     id: string;
     username: string;
@@ -34,16 +34,15 @@ interface PaginatedResponse<T> {
 
 export function useDrivers(params?: ListParams, options?: { refetchInterval?: number }) {
   return useQuery<PaginatedResponse<Driver>>({
-    queryKey: ['drivers', params],
-    queryFn: () =>
-      apiClient.get('/drivers', { params }).then((r) => r.data),
+    queryKey: ["drivers", params],
+    queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
     ...options,
   });
 }
 
 export function useDriver(id: string) {
   return useQuery<Driver>({
-    queryKey: ['drivers', id],
+    queryKey: ["drivers", id],
     queryFn: () => apiClient.get(`/drivers/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -51,39 +50,42 @@ export function useDriver(id: string) {
 
 export function useCreateDriver() {
   const qc = useQueryClient();
-  return useMutation<{ driver: Driver; tempPassword: string }, Error, {
-    contactName: string;
-    email: string;
-    username: string;
-    phone?: string;
-    vehicleMake?: string;
-    vehicleModel?: string;
-    vehicleColour?: string;
-    vehiclePlate?: string;
-  }>({
-    mutationFn: (dto) => apiClient.post('/drivers', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+  return useMutation<
+    { driver: Driver; tempPassword: string },
+    Error,
+    {
+      contactName: string;
+      email: string;
+      username: string;
+      phone?: string;
+      vehicleMake?: string;
+      vehicleModel?: string;
+      vehicleColour?: string;
+      vehiclePlate?: string;
+    }
+  >({
+    mutationFn: (dto) => apiClient.post("/drivers", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drivers"] }),
   });
 }
 
 export function useUpdateDriver() {
   const qc = useQueryClient();
   return useMutation<Driver, Error, { id: string; data: Partial<Driver> }>({
-    mutationFn: ({ id, data }) =>
-      apiClient.patch(`/drivers/${id}`, data).then((r) => r.data),
+    mutationFn: ({ id, data }) => apiClient.patch(`/drivers/${id}`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['drivers'] });
-      qc.invalidateQueries({ queryKey: ['drivers', id] });
+      qc.invalidateQueries({ queryKey: ["drivers"] });
+      qc.invalidateQueries({ queryKey: ["drivers", id] });
     },
   });
 }
 
 export function useChangeDriverStatus() {
   const qc = useQueryClient();
-  return useMutation<void, Error, { id: string; status: 'ACTIVE' | 'INACTIVE' }>({
+  return useMutation<void, Error, { id: string; status: "ACTIVE" | "INACTIVE" }>({
     mutationFn: ({ id, status }) =>
       apiClient.patch(`/drivers/${id}/status`, { status }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drivers"] }),
   });
 }
 
@@ -91,13 +93,13 @@ export function useDeleteDriver() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
     mutationFn: (id) => apiClient.delete(`/drivers/${id}`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['drivers'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["drivers"] }),
   });
 }
 
 export function useDriverHistory(id: string) {
   return useQuery({
-    queryKey: ['drivers', id, 'history'],
+    queryKey: ["drivers", id, "history"],
     queryFn: () => apiClient.get(`/drivers/${id}/history`).then((r) => r.data),
     enabled: !!id,
   });
@@ -105,7 +107,7 @@ export function useDriverHistory(id: string) {
 
 export function useDriverMetrics(id: string) {
   return useQuery({
-    queryKey: ['drivers', id, 'metrics'],
+    queryKey: ["drivers", id, "metrics"],
     queryFn: () => apiClient.get(`/drivers/${id}/metrics`).then((r) => r.data),
     enabled: !!id,
   });

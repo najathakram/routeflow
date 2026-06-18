@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,7 +9,7 @@ export interface Driver {
   vehicleModel?: string;
   vehiclePlate?: string;
   licenseNumber?: string;
-  status: 'ACTIVE' | 'INACTIVE' | 'ON_LEAVE';
+  status: "ACTIVE" | "INACTIVE" | "ON_LEAVE";
   user?: {
     id: string;
     firstName?: string;
@@ -38,22 +38,27 @@ export interface UpdateDriverDto {
   vehicleModel?: string;
   vehicleColour?: string;
   vehiclePlate?: string;
-  status?: Driver['status'];
+  status?: Driver["status"];
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useDrivers(params?: { status?: string; search?: string; page?: number; limit?: number }) {
+export function useDrivers(params?: {
+  status?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}) {
   return useQuery<{ data: Driver[]; meta: any }>({
-    queryKey: ['drivers', params],
-    queryFn: () => apiClient.get('/drivers', { params }).then((r) => r.data),
+    queryKey: ["drivers", params],
+    queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
     staleTime: 60_000,
   });
 }
 
 export function useDriver(id: string | null | undefined) {
   return useQuery<Driver>({
-    queryKey: ['drivers', id],
+    queryKey: ["drivers", id],
     queryFn: () => apiClient.get(`/drivers/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -70,7 +75,7 @@ export interface DriverMetrics {
 
 export function useDriverMetrics(id: string | null | undefined) {
   return useQuery<DriverMetrics>({
-    queryKey: ['drivers', id, 'metrics'],
+    queryKey: ["drivers", id, "metrics"],
     queryFn: () =>
       apiClient
         .get(`/drivers/${id}/metrics`)
@@ -95,10 +100,10 @@ export interface CreateDriverResponse {
 export function useCreateDriver() {
   const qc = useQueryClient();
   return useMutation<CreateDriverResponse, Error, CreateDriverDto>({
-    mutationFn: (dto) => apiClient.post('/drivers', dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/drivers", dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['drivers'] });
-      qc.invalidateQueries({ queryKey: ['admin', 'drivers'] });
+      qc.invalidateQueries({ queryKey: ["drivers"] });
+      qc.invalidateQueries({ queryKey: ["admin", "drivers"] });
     },
   });
 }
@@ -108,9 +113,9 @@ export function useUpdateDriver() {
   return useMutation<Driver, Error, { id: string } & UpdateDriverDto>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/drivers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['drivers'] });
-      qc.invalidateQueries({ queryKey: ['drivers', id] });
-      qc.invalidateQueries({ queryKey: ['admin', 'drivers'] });
+      qc.invalidateQueries({ queryKey: ["drivers"] });
+      qc.invalidateQueries({ queryKey: ["drivers", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "drivers"] });
     },
   });
 }
@@ -129,7 +134,7 @@ export interface DriverLocationPoint {
 
 export function usePostDriverLocation() {
   return useMutation<void, Error, DriverLocationPoint>({
-    mutationFn: (body) => apiClient.post('/drivers/me/location', body).then(() => undefined),
+    mutationFn: (body) => apiClient.post("/drivers/me/location", body).then(() => undefined),
     // Keep silent on success/failure — this is background telemetry.
     retry: 1,
   });

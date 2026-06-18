@@ -71,12 +71,12 @@ function ChangeDriverModal({
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-navy">Change Driver</h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy">
+          <button onClick={onClose} className="text-navy/70 hover:text-navy">
             <X className="h-5 w-5" />
           </button>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-navy/60">Assign Driver</label>
+          <label className="mb-1 block text-xs font-medium text-navy/70">Assign Driver</label>
           <select
             value={driverId}
             onChange={(e) => setDriverId(e.target.value)}
@@ -141,7 +141,7 @@ function CancelRunModal({
       <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-navy">Cancel Route Run?</h2>
-          <button onClick={onClose} className="text-navy/40 hover:text-navy">
+          <button onClick={onClose} className="text-navy/70 hover:text-navy">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -200,7 +200,7 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
             {stop.customer?.businessName ?? "Unknown customer"}
           </p>
           {stop.customerAddress && (
-            <p className="mt-0.5 text-xs text-navy/50">
+            <p className="mt-0.5 text-xs text-navy/70">
               {stop.customerAddress.line1}, {stop.customerAddress.city},{" "}
               {stop.customerAddress.state}
             </p>
@@ -210,7 +210,7 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
               <CheckCircle2 className="h-3 w-3" />
               {stop.orders.length} order{stop.orders.length !== 1 ? "s" : ""}
             </span>
-            <span className="text-xs text-navy/50">
+            <span className="text-xs text-navy/70">
               {totalItems % 1 === 0 ? totalItems : totalItems.toFixed(2)} items to deliver
             </span>
             {stop.customer?.deliveryWindowStart && stop.customer?.deliveryWindowEnd && (
@@ -231,17 +231,20 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
         <div className="border-t border-brand-200 px-4 pb-4 pt-3 space-y-3">
           {stop.orders.map((order) => (
             <div key={order.id}>
-              <p className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-navy/60">
+              <p className="mb-1.5 flex items-center gap-1 text-xs font-semibold text-navy/70">
                 <Package2 className="h-3.5 w-3.5" />
                 {order.orderNumber ? `Order #${order.orderNumber}` : "Order"}{" "}
-                <span className="rounded bg-surface-raised px-1 py-0.5 text-[10px] font-medium text-navy/50">
+                <span className="rounded bg-surface-raised px-1 py-0.5 text-[10px] font-medium text-navy/70">
                   {order.status}
                 </span>
               </p>
               <ul className="space-y-0.5 pl-4">
                 {order.lineItems.length > 0 ? (
                   order.lineItems.map((li) => (
-                    <li key={li.id} className="flex items-center justify-between text-xs text-navy/80">
+                    <li
+                      key={li.id}
+                      className="flex items-center justify-between text-xs text-navy/80"
+                    >
                       <span>{li.product?.name ?? "Product"}</span>
                       <span className="font-medium text-navy">
                         ×{Number(li.qty) % 1 === 0 ? Number(li.qty) : Number(li.qty).toFixed(2)}
@@ -249,7 +252,7 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
                     </li>
                   ))
                 ) : (
-                  <li className="text-xs italic text-navy/40">No line items</li>
+                  <li className="text-xs italic text-navy/70">No line items</li>
                 )}
               </ul>
             </div>
@@ -270,17 +273,17 @@ function OptionalStopCard({ stop }: { stop: RunPackingStop }) {
           {stop.stopNumber}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-navy/60">
+          <p className="font-medium text-navy/70">
             {stop.customer?.businessName ?? "Unknown customer"}
           </p>
           {stop.customerAddress && (
-            <p className="mt-0.5 text-xs text-navy/40">
+            <p className="mt-0.5 text-xs text-navy/70">
               {stop.customerAddress.line1}, {stop.customerAddress.city},{" "}
               {stop.customerAddress.state}
             </p>
           )}
         </div>
-        <span className="mt-0.5 shrink-0 text-xs italic text-navy/40">No orders</span>
+        <span className="mt-0.5 shrink-0 text-xs italic text-navy/70">No orders</span>
       </div>
     </div>
   );
@@ -315,8 +318,10 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
           ORS_NOT_CONFIGURED:
             "Route intelligence is not configured. Set ORS_API_KEY to enable true optimization.",
           ORS_RATE_LIMITED: "Route intelligence rate limit hit — try again in a minute.",
-          ORS_HTTP_ERROR: "Couldn't reach route intelligence (server error). Used estimated distance instead.",
-          ORS_NETWORK_ERROR: "Couldn't reach route intelligence (network error). Used estimated distance instead.",
+          ORS_HTTP_ERROR:
+            "Couldn't reach route intelligence (server error). Used estimated distance instead.",
+          ORS_NETWORK_ERROR:
+            "Couldn't reach route intelligence (network error). Used estimated distance instead.",
         };
         const hint =
           (result.fallbackReason && fallbackHints[result.fallbackReason]) ??
@@ -400,7 +405,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
           <div className="flex flex-wrap items-center gap-4">
             <Link
               href={`/routes/${params.id}`}
-              className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+              className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />
               Route Detail
@@ -413,15 +418,15 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                   run.status === "IN_PROGRESS"
                     ? "IN_PROGRESS"
                     : run.status === "COMPLETED"
-                    ? "COMPLETED"
-                    : run.status === "CANCELLED"
-                    ? "CANCELLED"
-                    : "SCHEDULED"
+                      ? "COMPLETED"
+                      : run.status === "CANCELLED"
+                        ? "CANCELLED"
+                        : "SCHEDULED"
                 }
               />
-              <span className="text-sm text-navy/60">{scheduledDate}</span>
-              <span className="text-sm text-navy/40">·</span>
-              <span className="flex items-center gap-1 text-sm text-navy/60">
+              <span className="text-sm text-navy/70">{scheduledDate}</span>
+              <span className="text-sm text-navy/70">·</span>
+              <span className="flex items-center gap-1 text-sm text-navy/70">
                 <UserCheck className="h-3.5 w-3.5" />
                 {driverName}
               </span>
@@ -430,7 +435,12 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
             {/* Operator controls */}
             {isOperator && run.status !== "CANCELLED" && run.status !== "COMPLETED" && (
               <div className="flex shrink-0 items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={handleOptimize} disabled={isOptimizing}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleOptimize}
+                  disabled={isOptimizing}
+                >
                   {isOptimizing ? (
                     <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                   ) : (
@@ -474,7 +484,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                 </div>
                 <h2 className="text-sm font-bold uppercase tracking-wider text-navy">
                   Must Stop
-                  <span className="ml-1.5 font-normal normal-case text-navy/50">
+                  <span className="ml-1.5 font-normal normal-case text-navy/70">
                     ({requiredStops.length} — customers with orders)
                   </span>
                 </h2>
@@ -482,7 +492,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
 
               {requiredStops.length === 0 ? (
                 <div className="rounded-lg border border-surface-border bg-surface-raised p-4 text-center">
-                  <p className="text-sm italic text-navy/40">
+                  <p className="text-sm italic text-navy/70">
                     No customers have active orders for this run.
                   </p>
                 </div>
@@ -504,12 +514,12 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                   </div>
                   <h2 className="text-sm font-bold uppercase tracking-wider text-navy">
                     Optional Stops
-                    <span className="ml-1.5 font-normal normal-case text-navy/50">
+                    <span className="ml-1.5 font-normal normal-case text-navy/70">
                       ({optionalStops.length} — no current orders)
                     </span>
                   </h2>
                 </div>
-                <p className="mb-2 text-xs text-navy/40">
+                <p className="mb-2 text-xs text-navy/70">
                   These stops are on the route but have no orders today. Stop at your discretion.
                 </p>
                 <div className="space-y-2">
@@ -526,10 +536,10 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
             <div className="print-section">
               <div className="mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Package2 className="h-5 w-5 text-navy/50" />
+                  <Package2 className="h-5 w-5 text-navy/70" />
                   <h2 className="text-sm font-bold uppercase tracking-wider text-navy">
                     Loading Manifest
-                    <span className="ml-1.5 font-normal normal-case text-navy/50">
+                    <span className="ml-1.5 font-normal normal-case text-navy/70">
                       — what to load before departure
                     </span>
                   </h2>
@@ -537,7 +547,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                 {packingList.length > 0 && (
                   <button
                     onClick={() => window.print()}
-                    className="no-print flex items-center gap-1.5 rounded border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-navy/60 hover:border-navy/30 hover:text-navy transition-colors"
+                    className="no-print flex items-center gap-1.5 rounded border border-surface-border bg-white px-2.5 py-1.5 text-xs font-medium text-navy/70 hover:border-navy/30 hover:text-navy transition-colors"
                   >
                     <Printer className="h-3.5 w-3.5" />
                     Print
@@ -548,8 +558,8 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
               {packingList.length === 0 ? (
                 <div className="rounded-lg border border-surface-border bg-white p-8 text-center">
                   <Package2 className="mx-auto mb-3 h-8 w-8 text-navy/20" />
-                  <p className="text-sm font-medium text-navy/60">Nothing to pack</p>
-                  <p className="mt-1 text-xs text-navy/40">
+                  <p className="text-sm font-medium text-navy/70">Nothing to pack</p>
+                  <p className="mt-1 text-xs text-navy/70">
                     No active orders are assigned to this run&apos;s stops.
                   </p>
                 </div>
@@ -558,25 +568,28 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-surface-border bg-surface-raised text-left">
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
                           Product
                         </th>
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
                           SKU
                         </th>
-                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                           Total Qty
                         </th>
-                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
                           Customers
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-surface-border">
                       {packingList.map((item) => (
-                        <tr key={item.productId} className="hover:bg-surface-raised/50 transition-colors">
+                        <tr
+                          key={item.productId}
+                          className="hover:bg-surface-raised/50 transition-colors"
+                        >
                           <td className="px-4 py-3 font-medium text-navy">{item.productName}</td>
-                          <td className="px-4 py-3 text-navy/50">{item.sku ?? "—"}</td>
+                          <td className="px-4 py-3 text-navy/70">{item.sku ?? "—"}</td>
                           <td className="px-4 py-3 text-right font-bold text-navy">
                             {item.totalQty % 1 === 0 ? item.totalQty : item.totalQty.toFixed(2)}
                           </td>
@@ -602,7 +615,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                       <tr className="border-t border-surface-border bg-surface-raised">
                         <td
                           colSpan={2}
-                          className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/50"
+                          className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy/70"
                         >
                           Total
                         </td>
@@ -612,7 +625,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
                             return t % 1 === 0 ? t : t.toFixed(2);
                           })()}
                         </td>
-                        <td className="px-4 py-3 text-xs text-navy/40">
+                        <td className="px-4 py-3 text-xs text-navy/70">
                           {packingList.length} product{packingList.length !== 1 ? "s" : ""}
                         </td>
                       </tr>

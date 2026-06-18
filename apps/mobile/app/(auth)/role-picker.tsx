@@ -52,14 +52,10 @@ export default function RolePickerScreen() {
           </LinearGradient>
           <View>
             <Text style={styles.name}>{user?.username ?? "RouteFlow user"}</Text>
-            <Text style={styles.sub}>
-              {tenantName ?? "Tenant"} · multi-role
-            </Text>
+            <Text style={styles.sub}>{tenantName ?? "Tenant"} · multi-role</Text>
           </View>
         </View>
-        <Text style={styles.prompt}>
-          How are you{"\n"}working today?
-        </Text>
+        <Text style={styles.prompt}>How are you{"\n"}working today?</Text>
         <Text style={styles.promptSub}>You can switch anytime from the side menu.</Text>
       </View>
 
@@ -77,9 +73,7 @@ export default function RolePickerScreen() {
                 <Ionicons name="car-outline" size={26} color="#fff" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrowOn}>
-                  {nextRun ? "Recommended" : "Driver"}
-                </Text>
+                <Text style={styles.eyebrowOn}>{nextRun ? "Recommended" : "Driver"}</Text>
                 <Text style={styles.roleTitleOn}>Driver</Text>
                 <Text style={styles.roleDescOn}>{driverDesc}</Text>
               </View>
@@ -91,10 +85,10 @@ export default function RolePickerScreen() {
                 {nextRun.scheduledDate ? (
                   <HeroStat
                     label="Date"
-                    value={new Date(nextRun.scheduledDate).toLocaleDateString(
-                      undefined,
-                      { month: "short", day: "numeric" },
-                    )}
+                    value={new Date(nextRun.scheduledDate).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                    })}
                   />
                 ) : null}
               </View>

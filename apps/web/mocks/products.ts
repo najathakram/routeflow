@@ -17,7 +17,9 @@ export interface Product {
   zohoSyncPaused: boolean;
 }
 
-export function getStockStatus(product: Pick<Product, "stockLevel" | "lowStockThreshold">): StockStatus {
+export function getStockStatus(
+  product: Pick<Product, "stockLevel" | "lowStockThreshold">,
+): StockStatus {
   if (product.stockLevel === 0) return "OUT_OF_STOCK";
   if (product.stockLevel <= product.lowStockThreshold) return "LOW";
   return "IN_STOCK";
@@ -32,7 +34,8 @@ export const products: Product[] = [
     name: "Big Red Soda",
     sku: "BEV-001",
     category: "Beverages",
-    description: "Classic Big Red cherry-cream soda in 24-can cases. A Texas staple for restaurants and concession stands.",
+    description:
+      "Classic Big Red cherry-cream soda in 24-can cases. A Texas staple for restaurants and concession stands.",
     unitOfMeasure: "Case / 24",
     price: 18.99,
     stockLevel: 42,
@@ -71,7 +74,8 @@ export const products: Product[] = [
     name: "Sweet Tea Gallon Jug",
     sku: "BEV-004",
     category: "Beverages",
-    description: "Freshly brewed Southern sweet tea in 1-gallon jugs. Refrigerated; 7-day shelf life.",
+    description:
+      "Freshly brewed Southern sweet tea in 1-gallon jugs. Refrigerated; 7-day shelf life.",
     unitOfMeasure: "Gallon",
     price: 4.99,
     stockLevel: 0,
@@ -164,7 +168,8 @@ export const products: Product[] = [
     name: "Commercial Degreaser",
     sku: "CLN-001",
     category: "Cleaning Supplies",
-    description: "Heavy-duty citrus-based degreaser. Safe for stainless steel and commercial kitchen use. 1-gallon jug.",
+    description:
+      "Heavy-duty citrus-based degreaser. Safe for stainless steel and commercial kitchen use. 1-gallon jug.",
     unitOfMeasure: "1-gal Jug",
     price: 22.99,
     stockLevel: 14,
@@ -190,7 +195,8 @@ export const products: Product[] = [
     name: "Sanitizer Concentrate",
     sku: "CLN-003",
     category: "Cleaning Supplies",
-    description: "Food-safe quaternary ammonium sanitizer concentrate. Mix 1 oz per gallon. 2.5-gallon container.",
+    description:
+      "Food-safe quaternary ammonium sanitizer concentrate. Mix 1 oz per gallon. 2.5-gallon container.",
     unitOfMeasure: "2.5-gal",
     price: 31.99,
     stockLevel: 3,
@@ -203,7 +209,8 @@ export const products: Product[] = [
     name: "Mop Bucket with Wringer",
     sku: "CLN-004",
     category: "Cleaning Supplies",
-    description: "Heavy-duty 35-quart plastic mop bucket with side-press wringer and caster wheels.",
+    description:
+      "Heavy-duty 35-quart plastic mop bucket with side-press wringer and caster wheels.",
     unitOfMeasure: "Each",
     price: 54.99,
     stockLevel: 6,

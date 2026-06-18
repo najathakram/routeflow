@@ -3,11 +3,7 @@
 import * as React from "react";
 import { X, GitBranch, AlertCircle, ArrowRight } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import {
-  useProducts,
-  useBulkAssignParent,
-  type BulkAssignParentResult,
-} from "@/lib/api/products";
+import { useProducts, useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 
 interface ProductLite {
@@ -85,9 +81,7 @@ export function GroupAsVariantsModal({
   // parent (can't be a parent), and the products we're about to move.
   const standaloneCandidates = allProducts.filter((p) => !p.parentProductId);
 
-  const alreadyVariantCount = selectedProducts.filter(
-    (p) => !!p.parentProductId,
-  ).length;
+  const alreadyVariantCount = selectedProducts.filter((p) => !!p.parentProductId).length;
 
   if (!isOpen) return null;
 
@@ -107,9 +101,7 @@ export function GroupAsVariantsModal({
     const assignments = selectedProducts.map((p) => ({
       id: p.id,
       variantName:
-        overrides[p.id]?.trim() ||
-        suggestVariantName(p.name, parent?.name ?? "") ||
-        p.name,
+        overrides[p.id]?.trim() || suggestVariantName(p.name, parent?.name ?? "") || p.name,
     }));
     const result = await bulkAssign.mutateAsync({
       parentProductId: parentId,
@@ -150,17 +142,16 @@ export function GroupAsVariantsModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy"
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
           >
             <X size={18} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          <p className="mb-4 text-sm text-navy/60">
-            Pick the standalone product these should become variants of. Each
-            selected product gets a flavor / variety name (auto-derived from
-            its current name; you can override below).
+          <p className="mb-4 text-sm text-navy/70">
+            Pick the standalone product these should become variants of. Each selected product gets
+            a flavor / variety name (auto-derived from its current name; you can override below).
           </p>
 
           {/* Parent picker */}
@@ -188,14 +179,14 @@ export function GroupAsVariantsModal({
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                {alreadyVariantCount} of the selected products are already
-                variants of another parent. Saving will re-parent them.
+                {alreadyVariantCount} of the selected products are already variants of another
+                parent. Saving will re-parent them.
               </span>
             </div>
           )}
 
           {/* Per-row preview + override */}
-          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-navy/50">
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-navy/70">
             Variant names
           </div>
           <div className="overflow-hidden rounded-lg border border-surface-border">
@@ -214,7 +205,7 @@ export function GroupAsVariantsModal({
               <tbody className="divide-y divide-surface-border">
                 {selectedProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-3 py-3 text-xs text-navy/50">
+                    <td colSpan={3} className="px-3 py-3 text-xs text-navy/70">
                       No products selected.
                     </td>
                   </tr>
@@ -228,11 +219,7 @@ export function GroupAsVariantsModal({
                           <div className="text-sm text-navy" title={p.name}>
                             {p.name}
                           </div>
-                          {p.sku && (
-                            <div className="text-[11px] text-navy/40">
-                              SKU: {p.sku}
-                            </div>
-                          )}
+                          {p.sku && <div className="text-[11px] text-navy/70">SKU: {p.sku}</div>}
                         </td>
                         <td className="px-2 py-2 text-center text-navy/30">
                           <ArrowRight className="inline h-3 w-3" />
@@ -259,13 +246,12 @@ export function GroupAsVariantsModal({
             </table>
           </div>
 
-          <p className="mt-3 text-xs text-navy/50">
+          <p className="mt-3 text-xs text-navy/70">
             The product name itself isn&apos;t renamed — only the
             <span className="mx-1 font-mono text-navy">parentProductId</span>
             and
             <span className="mx-1 font-mono text-navy">variantName</span>
-            fields are set. You can revert any of these from the product detail
-            page later.
+            fields are set. You can revert any of these from the product detail page later.
           </p>
         </div>
 

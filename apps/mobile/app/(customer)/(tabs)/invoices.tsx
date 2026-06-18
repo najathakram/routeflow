@@ -26,12 +26,18 @@ type FilterId = (typeof FILTERS)[number]["id"];
 
 function invoicePill(status: string) {
   switch (status) {
-    case "PAID": return { variant: "green" as const, label: "Paid" };
-    case "PARTIAL": return { variant: "orange" as const, label: "Partial" };
-    case "SENT": return { variant: "orange" as const, label: "Unpaid" };
-    case "OVERDUE": return { variant: "red" as const, label: "Overdue" };
-    case "VOID": return { variant: "gray" as const, label: "Void" };
-    default: return { variant: "gray" as const, label: status };
+    case "PAID":
+      return { variant: "green" as const, label: "Paid" };
+    case "PARTIAL":
+      return { variant: "orange" as const, label: "Partial" };
+    case "SENT":
+      return { variant: "orange" as const, label: "Unpaid" };
+    case "OVERDUE":
+      return { variant: "red" as const, label: "Overdue" };
+    case "VOID":
+      return { variant: "gray" as const, label: "Void" };
+    default:
+      return { variant: "gray" as const, label: status };
   }
 }
 
@@ -56,9 +62,7 @@ export default function CustomerInvoicesScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
         }
       />
 
@@ -96,7 +100,9 @@ function InvoiceRow({ invoice, onPress }: { invoice: BuyerInvoice; onPress: () =
   const p = invoicePill(invoice.status);
   const dateLabel = invoice.issueDate
     ? new Date(invoice.issueDate).toLocaleDateString(undefined, {
-        month: "short", day: "numeric", year: "numeric",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
       })
     : "";
   const amountDue = Number(invoice.amountDue ?? invoice.total) || 0;
@@ -108,7 +114,9 @@ function InvoiceRow({ invoice, onPress }: { invoice: BuyerInvoice; onPress: () =
           <Text style={styles.cardNumber}>#{invoice.invoiceNumber}</Text>
           <Text style={styles.cardMeta}>{dateLabel}</Text>
         </View>
-        <Pill variant={p.variant} dot>{p.label}</Pill>
+        <Pill variant={p.variant} dot>
+          {p.label}
+        </Pill>
       </View>
       <View style={styles.cardFoot}>
         <View>
@@ -130,9 +138,24 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 16, gap: 8, paddingBottom: 32 },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  cardNumber: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  cardNumber: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  cardFoot: { marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  cardTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  cardFoot: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  cardTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   cardDue: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.system.redInk, marginTop: 2 },
 });

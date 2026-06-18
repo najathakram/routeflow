@@ -70,7 +70,7 @@ test.describe("Buyer Portal", () => {
     await page.waitForURL("**/buyer/portal", { timeout: 35_000 });
     // The actual text on the page is "No sellers linked yet"
     await expect(
-      page.getByText(/no sellers|no supplier|haven't been connected/i).first()
+      page.getByText(/no sellers|no supplier|haven't been connected/i).first(),
     ).toBeVisible({ timeout: 15_000 });
   });
 
@@ -83,7 +83,9 @@ test.describe("Buyer Portal", () => {
     // Navigate first so localStorage is in scope, then clear tokens
     await page.goto("/buyer/login");
     await page.evaluate(() => {
-      try { ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k)); } catch {}
+      try {
+        ["buyerAccessToken", "buyerRefreshToken"].forEach((k) => localStorage.removeItem(k));
+      } catch {}
     });
     await context.clearCookies();
     await page.goto("/buyer/portal");
@@ -98,14 +100,18 @@ test.describe("Buyer Portal", () => {
     context,
   }) => {
     // First get an invite token by calling the API (via operator login)
-    const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+    const baseURL =
+      process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
 
     // Navigate to customers, find harbor_cafe, trigger invite
     await page.goto("/customers");
     // Search for harbor_cafe
-    const search = page.getByPlaceholder(/search/i).or(page.getByRole("searchbox")).first();
+    const search = page
+      .getByPlaceholder(/search/i)
+      .or(page.getByRole("searchbox"))
+      .first();
     await search.fill("harbor");
     await page.waitForTimeout(600);
     await page.locator("table tbody tr, [class*='customer']").first().click();

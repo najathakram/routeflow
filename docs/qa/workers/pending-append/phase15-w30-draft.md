@@ -8,26 +8,26 @@
 
 ### 9.A — Money Correctness Results
 
-| Test | Result | Notes |
-|------|--------|-------|
-| Penny rounding 3-way split ($10.00) | PASS | 3.33 + 3.33 + 3.34 = 10.00, no rounding error |
-| Penny rounding 7-way split ($10.00) | PASS | 6×$1.43 + 1×$1.42 = 10.00, no rounding error |
-| Credit note applied to invoice | PASS | PARTIAL status, balanceDue = $0.50, payment record created |
-| $0 invoice creation | PASS | Accepted without error (product decision) |
-| Tax-exempt customer $0 tax | PASS | isTaxExempt stored and honoured (0% tenant rate, no differential observable) |
-| AR aging 30-day-old invoice overdue | PASS | isOverdue=true |
-| AR aging invoice due today | BOUNDARY | isOverdue=true for dueDate=today (rule: dueDate ≤ today) — potential same-day grace issue |
-| Overpayment blocked | PASS | 400 "Payment exceeds remaining balance of 100.00" |
+| Test                                | Result   | Notes                                                                                     |
+| ----------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| Penny rounding 3-way split ($10.00) | PASS     | 3.33 + 3.33 + 3.34 = 10.00, no rounding error                                             |
+| Penny rounding 7-way split ($10.00) | PASS     | 6×$1.43 + 1×$1.42 = 10.00, no rounding error                                              |
+| Credit note applied to invoice      | PASS     | PARTIAL status, balanceDue = $0.50, payment record created                                |
+| $0 invoice creation                 | PASS     | Accepted without error (product decision)                                                 |
+| Tax-exempt customer $0 tax          | PASS     | isTaxExempt stored and honoured (0% tenant rate, no differential observable)              |
+| AR aging 30-day-old invoice overdue | PASS     | isOverdue=true                                                                            |
+| AR aging invoice due today          | BOUNDARY | isOverdue=true for dueDate=today (rule: dueDate ≤ today) — potential same-day grace issue |
+| Overpayment blocked                 | PASS     | 400 "Payment exceeds remaining balance of 100.00"                                         |
 
 ### 9.B — Inventory Edge Results
 
-| Test | Result | Notes |
-|------|--------|-------|
-| Oversell race (stock=1, two concurrent orders) | FAIL (P1) | Both return 201 — extends RF-017 |
-| OOS ordering (stock=0) | FAIL (P1) | POST /buyer/orders succeeds at stock=0 — extends RF-017 |
-| Buyer catalog OOS field | FAIL (P1) | GET /buyer/products returns no stock/inStock/available field — NEW |
-| Stock adjustment audit log | PASS | Movements logged with performer, timestamp, type, reference |
-| Adjustment reason persisted | FAIL (P3) | UI reason selector not transmitted to API — movement notes always null |
+| Test                                           | Result    | Notes                                                                  |
+| ---------------------------------------------- | --------- | ---------------------------------------------------------------------- |
+| Oversell race (stock=1, two concurrent orders) | FAIL (P1) | Both return 201 — extends RF-017                                       |
+| OOS ordering (stock=0)                         | FAIL (P1) | POST /buyer/orders succeeds at stock=0 — extends RF-017                |
+| Buyer catalog OOS field                        | FAIL (P1) | GET /buyer/products returns no stock/inStock/available field — NEW     |
+| Stock adjustment audit log                     | PASS      | Movements logged with performer, timestamp, type, reference            |
+| Adjustment reason persisted                    | FAIL (P3) | UI reason selector not transmitted to API — movement notes always null |
 
 ---
 
@@ -90,8 +90,8 @@
 
 ## Phase 15 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-200 | P1 | W30/9.B.2 | GET /buyer/products returns no stock field — buyer UI cannot show OOS status |
-| RF-201 | P3 | W30/9.B.3 | Inventory adjustment reason not transmitted to API — movement notes always null |
-| RF-202 | P3 | W30/9.A.5 | isOverdue=true for invoice due today — same-day grace boundary undocumented |
+| RF     | Severity | Source    | Title                                                                           |
+| ------ | -------- | --------- | ------------------------------------------------------------------------------- |
+| RF-200 | P1       | W30/9.B.2 | GET /buyer/products returns no stock field — buyer UI cannot show OOS status    |
+| RF-201 | P3       | W30/9.B.3 | Inventory adjustment reason not transmitted to API — movement notes always null |
+| RF-202 | P3       | W30/9.A.5 | isOverdue=true for invoice due today — same-day grace boundary undocumented     |

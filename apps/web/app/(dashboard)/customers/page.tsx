@@ -3,12 +3,48 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Pencil, ToggleLeft, ToggleRight, Eye, CheckSquare, X, Trash2, Download, Upload, ArrowUpDown, Merge, AlertCircle, UserCheck, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, Modal, cn, type BadgeStatus } from "@routeflow/ui/web";
+import {
+  Pencil,
+  ToggleLeft,
+  ToggleRight,
+  Eye,
+  CheckSquare,
+  X,
+  Trash2,
+  Download,
+  Upload,
+  ArrowUpDown,
+  Merge,
+  AlertCircle,
+  UserCheck,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+} from "lucide-react";
+import {
+  PageHeader,
+  Table,
+  Badge,
+  Button,
+  Select,
+  Modal,
+  cn,
+  type BadgeStatus,
+} from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
-import { useCustomers, useUpdateCustomerStatus, useDeleteCustomer, useBatchDeleteCustomers, useCustomerTags, useExportCustomers, useMergeCustomers, usePendingPortalApprovals, useApprovePortalFromList } from "@/lib/api/customers";
+import {
+  useCustomers,
+  useUpdateCustomerStatus,
+  useDeleteCustomer,
+  useBatchDeleteCustomers,
+  useCustomerTags,
+  useExportCustomers,
+  useMergeCustomers,
+  usePendingPortalApprovals,
+  useApprovePortalFromList,
+} from "@/lib/api/customers";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
@@ -36,13 +72,21 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
   const { toast } = useToast();
   const [file, setFile] = React.useState<File | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<{ created: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const [result, setResult] = React.useState<{
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: string[];
+  } | null>(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const f = e.dataTransfer.files?.[0];
-    if (f && f.name.endsWith(".csv")) { setFile(f); setResult(null); }
+    if (f && f.name.endsWith(".csv")) {
+      setFile(f);
+      setResult(null);
+    }
   };
 
   const handleImport = async () => {
@@ -79,18 +123,21 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Import Customers</h2>
-          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:text-navy transition-colors">
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <div className="space-y-4 px-6 py-5">
           {/* How-to hint */}
-          <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-xs text-navy/60">
-            <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/40" />
+          <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2.5 text-xs text-navy/70">
+            <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
             <span>
-              <strong className="text-navy/70">How to export from Zoho:</strong>{" "}
-              Zoho Invoices → Contacts → ⋮ → Export Contacts (CSV)
+              <strong className="text-navy/70">How to export from Zoho:</strong> Zoho Invoices →
+              Contacts → ⋮ → Export Contacts (CSV)
             </span>
           </div>
 
@@ -106,17 +153,33 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
                 : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
             )}
           >
-            <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setResult(null); } }} />
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) {
+                  setFile(f);
+                  setResult(null);
+                }
+              }}
+            />
             <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
             {file ? (
               <div className="text-center">
                 <p className="text-sm font-medium text-brand-600">{file.name}</p>
-                <p className="text-xs text-navy/40">{(file.size / 1024).toFixed(1)} KB · Click to change</p>
+                <p className="text-xs text-navy/70">
+                  {(file.size / 1024).toFixed(1)} KB · Click to change
+                </p>
               </div>
             ) : (
               <div className="text-center">
-                <p className="text-sm text-navy/60">Drop CSV file here or <span className="text-brand-500">browse</span></p>
-                <p className="text-xs text-navy/40 mt-0.5">Zoho Contacts CSV format</p>
+                <p className="text-sm text-navy/70">
+                  Drop CSV file here or <span className="text-brand-500">browse</span>
+                </p>
+                <p className="text-xs text-navy/70 mt-0.5">Zoho Contacts CSV format</p>
               </div>
             )}
           </div>
@@ -125,9 +188,10 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
           {result && (
             <div className="rounded-lg border border-success/30 bg-success-bg/50 px-3 py-2.5 text-sm">
               <p className="font-medium text-success">Import complete</p>
-              <p className="text-xs text-navy/60 mt-0.5">
+              <p className="text-xs text-navy/70 mt-0.5">
                 {result.created} created · {result.updated} updated · {result.skipped} skipped
-                {result.errors.length > 0 && ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
+                {result.errors.length > 0 &&
+                  ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
               </p>
             </div>
           )}
@@ -135,7 +199,10 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
 
         {/* Footer */}
         <div className="flex justify-end gap-2 border-t border-surface-border px-6 py-4">
-          <button onClick={onClose} className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
+          >
             {result ? "Close" : "Cancel"}
           </button>
           <button
@@ -148,7 +215,9 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
                 <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 Importing…
               </span>
-            ) : "Import Customers"}
+            ) : (
+              "Import Customers"
+            )}
           </button>
         </div>
       </div>
@@ -163,13 +232,13 @@ export default function CustomersPage() {
   const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
 
-  React.useEffect(() => { setTitle("Customers"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Customers");
+  }, [setTitle]);
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>(
-    searchParams.get("status") ?? "",
-  );
+  const [statusFilter, setStatusFilter] = React.useState<string>(searchParams.get("status") ?? "");
   const [typeFilter, setTypeFilter] = React.useState("");
   const [tagFilter, setTagFilter] = React.useState("");
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
@@ -179,7 +248,10 @@ export default function CustomersPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
-  const [deactivatingCustomer, setDeactivatingCustomer] = React.useState<{ id: string; name: string } | null>(null);
+  const [deactivatingCustomer, setDeactivatingCustomer] = React.useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("");
@@ -199,10 +271,17 @@ export default function CustomersPage() {
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset page when filters change
-  React.useEffect(() => { setPage(1); }, [debouncedSearch, statusFilter, typeFilter, tagFilter]);
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, typeFilter, tagFilter]);
 
   // ── API data ─────────────────────────────────────────────────────────────
-  const { data: result, isLoading, isError, refetch } = useCustomers({
+  const {
+    data: result,
+    isLoading,
+    isError,
+    refetch,
+  } = useCustomers({
     search: debouncedSearch || undefined,
     status: statusFilter || undefined,
     page,
@@ -236,9 +315,16 @@ export default function CustomersPage() {
   }, [customers, assignments, unassignedOnly]);
 
   const toggleSelect = (id: string) =>
-    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
 
   const handleBulkDelete = async () => {
     if (isDeleting || selected.size === 0) return;
@@ -246,9 +332,15 @@ export default function CustomersPage() {
     try {
       const res = await batchDelete.mutateAsync(Array.from(selected));
       if (res.failed.length === 0) {
-        toast({ title: `${res.deleted} customer${res.deleted !== 1 ? "s" : ""} deleted`, variant: "success" });
+        toast({
+          title: `${res.deleted} customer${res.deleted !== 1 ? "s" : ""} deleted`,
+          variant: "success",
+        });
       } else {
-        toast({ title: `Deleted ${res.deleted}, failed ${res.failed.length}`, variant: res.deleted > 0 ? "success" : "error" });
+        toast({
+          title: `Deleted ${res.deleted}, failed ${res.failed.length}`,
+          variant: res.deleted > 0 ? "success" : "error",
+        });
       }
       exitSelectMode();
     } catch {
@@ -283,20 +375,28 @@ export default function CustomersPage() {
   const SortHeader = ({ col, children }: { col: string; children: React.ReactNode }) => (
     <button onClick={() => handleSort(col)} className="flex items-center gap-1 group">
       {children}
-      <ArrowUpDown className={cn("h-3 w-3 transition-colors", sortBy === col ? "text-white" : "text-white/40 group-hover:text-white/70")} />
+      <ArrowUpDown
+        className={cn(
+          "h-3 w-3 transition-colors",
+          sortBy === col ? "text-white" : "text-white/40 group-hover:text-white/70",
+        )}
+      />
     </button>
   );
 
   // ── Status toggle ────────────────────────────────────────────────────────
-  const toggleStatus = React.useCallback((id: string, currentStatus: string, businessName: string) => {
-    if (currentStatus === "ACTIVE") {
-      // Deactivating requires confirmation
-      setDeactivatingCustomer({ id, name: businessName });
-    } else {
-      // Reactivating is safe — no confirmation needed
-      updateStatus.mutate({ id, status: "ACTIVE" });
-    }
-  }, [updateStatus]);
+  const toggleStatus = React.useCallback(
+    (id: string, currentStatus: string, businessName: string) => {
+      if (currentStatus === "ACTIVE") {
+        // Deactivating requires confirmation
+        setDeactivatingCustomer({ id, name: businessName });
+      } else {
+        // Reactivating is safe — no confirmation needed
+        updateStatus.mutate({ id, status: "ACTIVE" });
+      }
+    },
+    [updateStatus],
+  );
 
   // ── Column definitions ───────────────────────────────────────────────────
   const allVisible = visibleCustomers;
@@ -306,32 +406,38 @@ export default function CustomersPage() {
 
   const columns = React.useMemo<ColumnDef<Customer, unknown>[]>(
     () => [
-      ...(selectMode ? [{
-        id: "select",
-        header: () => (
-          <input
-            type="checkbox"
-            checked={allChecked}
-            ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
-            onChange={() => {
-              if (allChecked) setSelected(new Set());
-              else setSelected(new Set(allVisibleIds));
-            }}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-        ),
-        cell: ({ row }: { row: { original: Customer } }) => (
-          <input
-            type="checkbox"
-            checked={selected.has(row.original.id)}
-            onChange={() => toggleSelect(row.original.id)}
-            onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-        ),
-        enableSorting: false,
-        size: 40,
-      } as ColumnDef<Customer, unknown>] : []),
+      ...(selectMode
+        ? [
+            {
+              id: "select",
+              header: () => (
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someChecked && !allChecked;
+                  }}
+                  onChange={() => {
+                    if (allChecked) setSelected(new Set());
+                    else setSelected(new Set(allVisibleIds));
+                  }}
+                  className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                />
+              ),
+              cell: ({ row }: { row: { original: Customer } }) => (
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.original.id)}
+                  onChange={() => toggleSelect(row.original.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                />
+              ),
+              enableSorting: false,
+              size: 40,
+            } as ColumnDef<Customer, unknown>,
+          ]
+        : []),
       {
         accessorKey: "contactName",
         header: () => <SortHeader col="contactName">Name</SortHeader>,
@@ -342,9 +448,7 @@ export default function CustomersPage() {
       {
         accessorKey: "businessName",
         header: () => <SortHeader col="businessName">Business Name</SortHeader>,
-        cell: ({ row }) => (
-          <span className="text-navy/80">{row.original.businessName}</span>
-        ),
+        cell: ({ row }) => <span className="text-navy/80">{row.original.businessName}</span>,
       },
       {
         accessorKey: "email",
@@ -363,9 +467,7 @@ export default function CustomersPage() {
         accessorKey: "phone",
         header: "Phone",
         enableSorting: false,
-        cell: ({ row }) => (
-          <span className="text-navy/70">{row.original.phone ?? "—"}</span>
-        ),
+        cell: ({ row }) => <span className="text-navy/70">{row.original.phone ?? "—"}</span>,
       },
       {
         id: "receivables",
@@ -373,7 +475,9 @@ export default function CustomersPage() {
         cell: ({ row }) => {
           const val = row.original.receivables ?? 0;
           return (
-            <span className={cn("text-right font-medium", val > 0 ? "text-danger" : "text-navy/40")}>
+            <span
+              className={cn("text-right font-medium", val > 0 ? "text-danger" : "text-navy/70")}
+            >
               {val > 0 ? fmt(val) : "—"}
             </span>
           );
@@ -386,7 +490,9 @@ export default function CustomersPage() {
         cell: ({ row }) => {
           const val = row.original.unusedCredits ?? 0;
           return (
-            <span className={cn("text-right font-medium", val > 0 ? "text-success" : "text-navy/40")}>
+            <span
+              className={cn("text-right font-medium", val > 0 ? "text-success" : "text-navy/70")}
+            >
               {val > 0 ? fmt(val) : "—"}
             </span>
           );
@@ -410,7 +516,9 @@ export default function CustomersPage() {
                   {ta.tag.name}
                 </span>
               ))}
-              {tagList.length > 2 && <span className="text-xs text-navy/40">+{tagList.length - 2}</span>}
+              {tagList.length > 2 && (
+                <span className="text-xs text-navy/70">+{tagList.length - 2}</span>
+              )}
             </div>
           );
         },
@@ -430,14 +538,11 @@ export default function CustomersPage() {
         cell: ({ row }) => {
           const status = row.original.user?.status ?? "ACTIVE";
           return (
-            <div
-              className="flex items-center gap-1"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <button
                 title="Edit customer"
                 onClick={() => setEditingCustomer(row.original)}
-                className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               >
                 <Pencil className="h-4 w-4" />
               </button>
@@ -460,7 +565,7 @@ export default function CustomersPage() {
               <button
                 title="View customer"
                 onClick={() => router.push(`/customers/${row.original.id}`)}
-                className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
               >
                 <Eye className="h-4 w-4" />
               </button>
@@ -470,7 +575,17 @@ export default function CustomersPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [router, toggleStatus, assignments, selectMode, selected, allChecked, someChecked, sortBy, sortDir],
+    [
+      router,
+      toggleStatus,
+      assignments,
+      selectMode,
+      selected,
+      allChecked,
+      someChecked,
+      sortBy,
+      sortDir,
+    ],
   );
 
   return (
@@ -496,7 +611,9 @@ export default function CustomersPage() {
             </Button>
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              leftIcon={
+                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             >
               {selectMode ? "Cancel" : "Select"}
@@ -513,15 +630,28 @@ export default function CustomersPage() {
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
               Deselect all
             </button>
             {selected.size === 2 && (
-              <Button variant="secondary" leftIcon={<Merge className="h-4 w-4" />} onClick={handleMerge} loading={mergeCustomers.isPending}>
+              <Button
+                variant="secondary"
+                leftIcon={<Merge className="h-4 w-4" />}
+                onClick={handleMerge}
+                loading={mergeCustomers.isPending}
+              >
                 Merge
               </Button>
             )}
-            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isDeleting} onClick={handleBulkDelete}>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              loading={isDeleting}
+              onClick={handleBulkDelete}
+            >
               Delete {selected.size}
             </Button>
           </div>
@@ -558,25 +688,28 @@ export default function CustomersPage() {
           {approvalsExpanded && (
             <div className="border-t border-amber-200 divide-y divide-amber-100">
               {pendingApprovals.map((item) => (
-                <div key={item.id} className="flex items-center justify-between gap-4 px-4 py-3 bg-white/60">
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-4 px-4 py-3 bg-white/60"
+                >
                   <div className="flex items-center gap-3 min-w-0">
                     <UserCheck className="h-4 w-4 text-amber-500 shrink-0" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-navy truncate">
                         {item.customer.contactName || item.customer.businessName}
                         {item.customer.contactName && item.customer.businessName && (
-                          <span className="ml-1.5 text-navy/50 font-normal text-xs">
+                          <span className="ml-1.5 text-navy/70 font-normal text-xs">
                             · {item.customer.businessName}
                           </span>
                         )}
                       </p>
-                      <p className="text-xs text-navy/60 truncate">
+                      <p className="text-xs text-navy/70 truncate">
                         Buyer account:{" "}
                         <span className="font-medium text-navy/80">
                           {item.buyerAccount?.email ?? item.customer.email ?? "—"}
                         </span>
                         {item.buyerAccount?.name && (
-                          <span className="ml-1 text-navy/40">({item.buyerAccount.name})</span>
+                          <span className="ml-1 text-navy/70">({item.buyerAccount.name})</span>
                         )}
                       </p>
                     </div>
@@ -585,7 +718,7 @@ export default function CustomersPage() {
                     <button
                       onClick={() => router.push(`/customers/${item.customer.id}`)}
                       title="View customer"
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <ExternalLink className="h-4 w-4" />
                     </button>
@@ -612,7 +745,7 @@ export default function CustomersPage() {
           placeholder="Search by name, business, or phone…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-36">
           <Select
@@ -657,13 +790,15 @@ export default function CustomersPage() {
             "flex h-10 items-center gap-1.5 rounded border px-3 text-sm font-medium transition-colors",
             unassignedOnly
               ? "border-brand-500 bg-brand-50 text-brand-600"
-              : "border-surface-border bg-white text-navy/60 hover:border-brand-300 hover:text-navy",
+              : "border-surface-border bg-white text-navy/70 hover:border-brand-300 hover:text-navy",
           )}
         >
-          <span className={cn(
-            "inline-flex h-4 w-4 items-center justify-center rounded-full border text-xs",
-            unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
-          )}>
+          <span
+            className={cn(
+              "inline-flex h-4 w-4 items-center justify-center rounded-full border text-xs",
+              unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+            )}
+          >
             {unassignedOnly && "✓"}
           </span>
           Unassigned only
@@ -679,7 +814,9 @@ export default function CustomersPage() {
         </div>
       ) : isError ? (
         <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
-          <span className="text-sm text-danger">Failed to load customers. Please try refreshing the page.</span>
+          <span className="text-sm text-danger">
+            Failed to load customers. Please try refreshing the page.
+          </span>
         </div>
       ) : (
         /* Table */
@@ -708,7 +845,12 @@ export default function CustomersPage() {
                     No customers match your search.{" "}
                     <button
                       className="text-brand-500 hover:underline"
-                      onClick={() => { setSearch(""); setStatusFilter(""); setTypeFilter(""); setTagFilter(""); }}
+                      onClick={() => {
+                        setSearch("");
+                        setStatusFilter("");
+                        setTypeFilter("");
+                        setTagFilter("");
+                      }}
                     >
                       Clear filters
                     </button>
@@ -721,19 +863,26 @@ export default function CustomersPage() {
           {meta && (
             <div className="flex items-center justify-between gap-4 flex-wrap mt-4">
               <div className="flex items-center gap-3">
-                <p className="text-sm text-navy/50">
+                <p className="text-sm text-navy/70">
                   {meta.total > 0
                     ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} customers`
                     : "No customers found"}
                 </p>
                 <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-navy/40">Per page:</span>
+                  <span className="text-xs text-navy/70">Per page:</span>
                   <select
                     value={limit}
-                    onChange={(e) => { setLimit(Number(e.target.value)); setPage(1); }}
+                    onChange={(e) => {
+                      setLimit(Number(e.target.value));
+                      setPage(1);
+                    }}
                     className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   >
-                    {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+                    {[10, 20, 50, 100].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -787,7 +936,11 @@ export default function CustomersPage() {
         description={`Deactivate ${deactivatingCustomer?.name ?? "this customer"}?`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setDeactivatingCustomer(null)} disabled={updateStatus.isPending}>
+            <Button
+              variant="secondary"
+              onClick={() => setDeactivatingCustomer(null)}
+              disabled={updateStatus.isPending}
+            >
               Cancel
             </Button>
             <Button
@@ -807,7 +960,8 @@ export default function CustomersPage() {
         }
       >
         <p className="text-sm text-navy/70">
-          Deactivating <strong>{deactivatingCustomer?.name}</strong> will hide them from route assignment and they will no longer be able to log in.
+          Deactivating <strong>{deactivatingCustomer?.name}</strong> will hide them from route
+          assignment and they will no longer be able to log in.
         </p>
       </Modal>
 
@@ -815,16 +969,15 @@ export default function CustomersPage() {
       {isImportOpen && (
         <ImportCustomersModal
           onClose={() => setIsImportOpen(false)}
-          onDone={() => { setIsImportOpen(false); refetch?.(); }}
+          onDone={() => {
+            setIsImportOpen(false);
+            refetch?.();
+          }}
         />
       )}
 
       {/* Add modal */}
-      <CustomerFormModal
-        isOpen={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
-        mode="add"
-      />
+      <CustomerFormModal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} mode="add" />
 
       {/* Edit modal */}
       <CustomerFormModal
@@ -833,7 +986,6 @@ export default function CustomersPage() {
         mode="edit"
         initialData={editingCustomer ?? undefined}
       />
-
     </div>
   );
 }

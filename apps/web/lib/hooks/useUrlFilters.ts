@@ -15,7 +15,9 @@ type FilterState = Record<string, FilterValue>;
  *   setFilter("status", "PENDING");   // ?status=PENDING
  *   setFilter("urgent", true);        // ?urgent=1
  */
-export function useUrlFilters<T extends FilterState>(defaults: T): [T, (key: keyof T, value: FilterValue) => void, () => void] {
+export function useUrlFilters<T extends FilterState>(
+  defaults: T,
+): [T, (key: keyof T, value: FilterValue) => void, () => void] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -36,20 +38,23 @@ export function useUrlFilters<T extends FilterState>(defaults: T): [T, (key: key
     return result;
   }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const setFilter = React.useCallback((key: keyof T, value: FilterValue) => {
-    const params = new URLSearchParams(searchParams.toString());
-    // Remove keys that are empty / false / undefined
-    if (value === undefined || value === "" || value === false) {
-      params.delete(key as string);
-    } else if (typeof value === "boolean") {
-      params.set(key as string, "1");
-    } else {
-      params.set(key as string, value);
-    }
-    // Always reset to page 1 when filter changes
-    params.delete("page");
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [router, pathname, searchParams]);
+  const setFilter = React.useCallback(
+    (key: keyof T, value: FilterValue) => {
+      const params = new URLSearchParams(searchParams.toString());
+      // Remove keys that are empty / false / undefined
+      if (value === undefined || value === "" || value === false) {
+        params.delete(key as string);
+      } else if (typeof value === "boolean") {
+        params.set(key as string, "1");
+      } else {
+        params.set(key as string, value);
+      }
+      // Always reset to page 1 when filter changes
+      params.delete("page");
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
 
   const clearAll = React.useCallback(() => {
     // Remove all known filter keys, keep unrelated params (e.g. action)

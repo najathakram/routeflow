@@ -14,7 +14,8 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 
 ## Findings
 
-### W13-013 — GET /uploads/* has no authentication guard — all uploaded files are public (P0)
+### W13-013 — GET /uploads/\* has no authentication guard — all uploaded files are public (P0)
+
 - **Severity:** P0
 - **File:** `apps/api/src/uploads/uploads.controller.ts:16`
 - **Issue:** `UploadsController` has no `@UseGuards(JwtAuthGuard)` decorator at the class or method level. Any unauthenticated HTTP client can fetch any file by its storage key path (e.g. `GET /uploads/products/some-uuid.jpg`, `GET /uploads/tenants/logo.svg`, `GET /uploads/customers/id/tax-documents/cert.pdf`). This is the local-storage fallback path (when R2 is not configured), which is the path used in development and likely in early Railway deploys.
@@ -31,6 +32,7 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 ---
 
 ### W13-001 — vendor-bills.service.ts receive() has no idempotency guard — double-receive doubles stock (P1)
+
 - **Severity:** P1
 - **File:** `apps/api/src/vendor-bills/vendor-bills.service.ts:141-283`
 - **Issue:** `receive(id)` checks the bill exists but does NOT verify that `bill.status !== 'RECEIVED'` before proceeding. If called twice (e.g., double-click, network retry), the second call re-runs the entire inventory increment loop on the same items — doubling the stock increment for each product line.
@@ -45,6 +47,7 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 ---
 
 ### W13-002 — voidBill() does not reverse stock movements from receive() (P1)
+
 - **Severity:** P1
 - **File:** `apps/api/src/vendor-bills/vendor-bills.service.ts:286-290`
 - **Issue:** `voidBill()` is a single-line Prisma update that sets `status = VOID` with no stock reversal. When a received vendor bill is voided, the stock increments from `receive()` are never reversed. Inventory remains inflated even though the bill was voided.
@@ -59,6 +62,7 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 ---
 
 ### W13-008 — messages.controller.ts has JwtAuthGuard only — no ownership check on message reads (P2)
+
 - **Severity:** P2
 - **File:** `apps/api/src/messages/messages.controller.ts`
 - **Issue:** The messages endpoint allows any authenticated user to read any message thread by ID, regardless of whether they are a participant. There is no `RolesGuard` to limit to OPERATOR, and no check that the requesting user's tenantId or userId matches the thread participants.
@@ -69,6 +73,7 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 ---
 
 ### W13-009 — messages.controller.ts allows any user to post messages to any thread (P2)
+
 - **Severity:** P2
 - **File:** `apps/api/src/messages/messages.controller.ts`
 - **Issue:** `POST /messages` and `POST /messages/:id/reply` accept messages from any authenticated user without verifying thread membership. A customer or driver could inject messages into an operator-only communication thread.
@@ -78,10 +83,10 @@ Four findings identified: one P0 (uploads endpoint has no auth guard — all fil
 
 ## Summary Table
 
-| ID | Severity | Title |
-|----|----------|-------|
-| W13-013 | P0 | GET /uploads/* — no auth guard, all files publicly accessible |
-| W13-001 | P1 | vendor-bills receive() has no idempotency guard — double-receive doubles stock |
-| W13-002 | P1 | voidBill() does not reverse stock movements |
-| W13-008 | P2 | messages.controller.ts — no ownership check on message reads |
-| W13-009 | P2 | messages.controller.ts — any user can post to any thread |
+| ID      | Severity | Title                                                                          |
+| ------- | -------- | ------------------------------------------------------------------------------ |
+| W13-013 | P0       | GET /uploads/\* — no auth guard, all files publicly accessible                 |
+| W13-001 | P1       | vendor-bills receive() has no idempotency guard — double-receive doubles stock |
+| W13-002 | P1       | voidBill() does not reverse stock movements                                    |
+| W13-008 | P2       | messages.controller.ts — no ownership check on message reads                   |
+| W13-009 | P2       | messages.controller.ts — any user can post to any thread                       |

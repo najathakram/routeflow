@@ -12,13 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavAction,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useExpenses, type Expense, type ExpenseStatus } from "../../../lib/api/expenses";
 
 const FILTERS = [
@@ -32,10 +26,14 @@ type FilterId = (typeof FILTERS)[number]["id"];
 
 function statusPill(status: ExpenseStatus) {
   switch (status) {
-    case "PENDING": return { variant: "orange" as const, label: "Pending" };
-    case "RECEIVED": return { variant: "orange" as const, label: "Received" };
-    case "PAID": return { variant: "green" as const, label: "Paid" };
-    case "VOID": return { variant: "gray" as const, label: "Void" };
+    case "PENDING":
+      return { variant: "orange" as const, label: "Pending" };
+    case "RECEIVED":
+      return { variant: "orange" as const, label: "Received" };
+    case "PAID":
+      return { variant: "green" as const, label: "Paid" };
+    case "VOID":
+      return { variant: "gray" as const, label: "Void" };
   }
 }
 
@@ -48,8 +46,7 @@ export default function ExpensesScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const statusParam =
-    filter === "ALL" ? undefined : (filter as ExpenseStatus | undefined);
+  const statusParam = filter === "ALL" ? undefined : (filter as ExpenseStatus | undefined);
 
   const { data, isLoading, isFetching, refetch } = useExpenses({
     status: statusParam,
@@ -63,11 +60,7 @@ export default function ExpensesScreen() {
         inlineTitle="Expenses"
         leading={<NavBackButton label="Finance" onPress={() => router.back()} />}
         trailing={
-          <NavAction
-            label="New"
-            bold
-            onPress={() => router.push("/(operator)/expenses/new")}
-          />
+          <NavAction label="New" bold onPress={() => router.push("/(operator)/expenses/new")} />
         }
       />
 
@@ -75,9 +68,7 @@ export default function ExpensesScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
         }
       />
 
@@ -121,7 +112,9 @@ export default function ExpensesScreen() {
 function ExpenseRow({ expense, onPress }: { expense: Expense; onPress: () => void }) {
   const p = statusPill(expense.status);
   const dateLabel = new Date(expense.date).toLocaleDateString(undefined, {
-    month: "short", day: "numeric", year: "numeric",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 
   return (
@@ -137,7 +130,9 @@ function ExpenseRow({ expense, onPress }: { expense: Expense; onPress: () => voi
             {expense.category?.name ? ` · ${expense.category.name}` : ""}
           </Text>
         </View>
-        <Pill variant={p.variant} dot>{p.label}</Pill>
+        <Pill variant={p.variant} dot>
+          {p.label}
+        </Pill>
       </View>
       <View style={styles.rowFoot}>
         <Text style={styles.rowTotal}>{formatCurrency(expense.amount)}</Text>
@@ -163,8 +158,23 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   row: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   rowHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  rowTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  rowTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   rowSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  rowFoot: { marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rowTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  rowFoot: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  rowTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
 });

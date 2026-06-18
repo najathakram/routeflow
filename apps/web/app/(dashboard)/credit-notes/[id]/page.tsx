@@ -81,7 +81,8 @@ function IssueConfirmModal({
       }
     >
       <p className="text-sm text-navy/70">
-        Once issued, this credit note can be applied to an open invoice or voided. It can no longer be edited.
+        Once issued, this credit note can be applied to an open invoice or voided. It can no longer
+        be edited.
       </p>
     </Modal>
   );
@@ -150,7 +151,10 @@ function ApplyToInvoiceModal({
     return all.filter(
       (inv) =>
         inv.customerId === customerId &&
-        (inv.status === "SENT" || inv.status === "VIEWED" || inv.status === "PARTIAL" || inv.status === "OVERDUE"),
+        (inv.status === "SENT" ||
+          inv.status === "VIEWED" ||
+          inv.status === "PARTIAL" ||
+          inv.status === "OVERDUE"),
     );
   }, [invoicesData, customerId]);
 
@@ -163,7 +167,10 @@ function ApplyToInvoiceModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedInvoiceId) { setError("Select an invoice to apply this credit note to."); return; }
+    if (!selectedInvoiceId) {
+      setError("Select an invoice to apply this credit note to.");
+      return;
+    }
     setError("");
     onApply(selectedInvoiceId);
   }
@@ -189,7 +196,7 @@ function ApplyToInvoiceModal({
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Invoice</label>
           {invoices.length === 0 ? (
-            <p className="text-sm text-navy/50">No open invoices found for this customer.</p>
+            <p className="text-sm text-navy/70">No open invoices found for this customer.</p>
           ) : (
             <select
               value={selectedInvoiceId}
@@ -237,7 +244,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -268,7 +275,11 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
         });
       },
       onError: () => {
-        toast({ title: "Failed to issue credit note", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to issue credit note",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -284,7 +295,11 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
         });
       },
       onError: () => {
-        toast({ title: "Failed to void credit note", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to void credit note",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -302,7 +317,11 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
           });
         },
         onError: () => {
-          toast({ title: "Failed to apply credit note", description: "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to apply credit note",
+            description: "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -313,7 +332,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
       {/* Back */}
       <Link
         href="/credit-notes"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Credit Notes
@@ -370,8 +389,10 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
           )}
 
           {(status === "APPLIED" || status === "VOID") && (
-            <span className="text-sm italic text-navy/40">
-              {status === "APPLIED" ? "This credit note has been applied." : "This credit note is void."}
+            <span className="text-sm italic text-navy/70">
+              {status === "APPLIED"
+                ? "This credit note has been applied."
+                : "This credit note is void."}
             </span>
           )}
         </div>
@@ -388,38 +409,38 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               </div>
               <div className="text-right">
                 <p className="text-xl font-bold text-navy">CREDIT NOTE</p>
-                <p className="mt-1 font-mono text-sm text-navy/60">{cn.creditNoteNumber}</p>
+                <p className="mt-1 font-mono text-sm text-navy/70">{cn.creditNoteNumber}</p>
               </div>
             </div>
 
             {/* Customer + Dates */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Credit To
                 </p>
                 <p className="text-sm font-semibold text-navy">
                   {cn.customer?.businessName ?? "—"}
                 </p>
                 {cn.customer?.contactName && (
-                  <p className="text-sm text-navy/60">{cn.customer.contactName}</p>
+                  <p className="text-sm text-navy/70">{cn.customer.contactName}</p>
                 )}
                 {cn.customer?.address && (
-                  <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
+                  <p className="mt-1 text-xs text-navy/70 whitespace-pre-line">
                     {cn.customer.address}
                   </p>
                 )}
               </div>
               <div className="text-right">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Details
                 </p>
-                <p className="text-sm text-navy/60">
+                <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtDate((cn as any).issueDate ?? cn.createdAt)}
                 </p>
                 {cn.invoiceId && (
-                  <p className="mt-1 text-sm text-navy/60">
+                  <p className="mt-1 text-sm text-navy/70">
                     <span className="font-medium text-navy">Applied to Invoice:</span>{" "}
                     <Link
                       href={`/invoices/${cn.invoiceId}`}
@@ -437,7 +458,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
             <div className="rounded-lg border border-surface-border bg-surface-raised px-6 py-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Credit Amount
                   </p>
                   <p className="mt-1 text-3xl font-bold text-navy">{fmt(Number(cn.amount))}</p>
@@ -450,7 +471,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
 
             {/* Reason */}
             <div className="mt-6 border-t border-surface-border pt-4">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                 Reason
               </p>
               <p className="text-sm text-navy/80 whitespace-pre-line">{cn.reason}</p>
@@ -459,7 +480,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
             {/* Notes */}
             {cn.notes && (
               <div className="mt-4 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Notes
                 </p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{cn.notes}</p>
@@ -473,20 +494,22 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
           <Card title="Summary">
             <dl className="space-y-3 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Status</dt>
-                <dd><CreditNoteStatusBadge status={status} /></dd>
+                <dt className="text-navy/70">Status</dt>
+                <dd>
+                  <CreditNoteStatusBadge status={status} />
+                </dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Amount</dt>
+                <dt className="text-navy/70">Amount</dt>
                 <dd className="font-bold text-navy">{fmt(Number(cn.amount))}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-navy/60">Issue Date</dt>
+                <dt className="text-navy/70">Issue Date</dt>
                 <dd className="text-navy">{fmtDate((cn as any).issueDate ?? cn.createdAt)}</dd>
               </div>
               {cn.invoiceId && (
                 <div className="flex justify-between">
-                  <dt className="text-navy/60">Invoice</dt>
+                  <dt className="text-navy/70">Invoice</dt>
                   <dd>
                     <Link
                       href={`/invoices/${cn.invoiceId}`}
@@ -529,7 +552,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
           </Card>
 
           <Card title="Audit">
-            <dl className="space-y-2 text-xs text-navy/60">
+            <dl className="space-y-2 text-xs text-navy/70">
               <div className="flex justify-between">
                 <dt>Created</dt>
                 <dd>{fmtDate(cn.createdAt)}</dd>

@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,10 +41,10 @@ export interface UpdateStandingOrderDto {
 
 export function useMyStandingOrders(customerId?: string) {
   return useQuery<{ data: StandingOrder[]; meta: any }>({
-    queryKey: ['order-templates', 'mine', customerId ?? 'all'],
+    queryKey: ["order-templates", "mine", customerId ?? "all"],
     queryFn: () =>
       apiClient
-        .get('/order-templates', { params: customerId ? { customerId } : undefined })
+        .get("/order-templates", { params: customerId ? { customerId } : undefined })
         .then((r) => r.data),
     staleTime: 60_000,
   });
@@ -52,7 +52,7 @@ export function useMyStandingOrders(customerId?: string) {
 
 export function useMyStandingOrder(id: string) {
   return useQuery<StandingOrder>({
-    queryKey: ['order-templates', id],
+    queryKey: ["order-templates", id],
     queryFn: () => apiClient.get(`/order-templates/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -62,10 +62,10 @@ export function useMyStandingOrder(id: string) {
 export function useTodayStandingOrders(customerId?: string) {
   const today = new Date().getDay(); // 0-6
   return useQuery<{ data: StandingOrder[]; meta: any }>({
-    queryKey: ['order-templates', 'today', customerId ?? 'all'],
+    queryKey: ["order-templates", "today", customerId ?? "all"],
     queryFn: async () => {
       const res = await apiClient
-        .get('/order-templates', { params: customerId ? { customerId } : undefined })
+        .get("/order-templates", { params: customerId ? { customerId } : undefined })
         .then((r) => r.data);
       const todayTemplates = (res.data as StandingOrder[]).filter(
         (t) => t.isActive && t.daysOfWeek.includes(today),
@@ -83,25 +83,23 @@ export function useToggleStandingOrder() {
   return useMutation<StandingOrder, Error, { id: string; isActive: boolean }>({
     mutationFn: ({ id, isActive }) =>
       apiClient.patch(`/order-templates/${id}`, { isActive }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['order-templates'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
   });
 }
 
 export function useCreateStandingOrder() {
   const qc = useQueryClient();
   return useMutation<StandingOrder, Error, CreateStandingOrderDto>({
-    mutationFn: (dto) =>
-      apiClient.post('/order-templates', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['order-templates'] }),
+    mutationFn: (dto) => apiClient.post("/order-templates", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
   });
 }
 
 export function useUpdateStandingOrder() {
   const qc = useQueryClient();
   return useMutation<StandingOrder, Error, { id: string; dto: UpdateStandingOrderDto }>({
-    mutationFn: ({ id, dto }) =>
-      apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['order-templates'] }),
+    mutationFn: ({ id, dto }) => apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
   });
 }
 
@@ -116,7 +114,7 @@ export function useAddTemplateItem() {
       apiClient
         .post(`/order-templates/${templateId}/items`, { productId, qty, notes })
         .then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['order-templates'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
   });
 }
 
@@ -125,7 +123,7 @@ export function useRemoveTemplateItem() {
   return useMutation<{ success: boolean }, Error, { templateId: string; itemId: string }>({
     mutationFn: ({ templateId, itemId }) =>
       apiClient.delete(`/order-templates/${templateId}/items/${itemId}`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['order-templates'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
   });
 }
 
@@ -135,8 +133,8 @@ export function useGenerateOrder() {
     mutationFn: (templateId) =>
       apiClient.post(`/order-templates/${templateId}/generate`).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['orders'] });
-      qc.invalidateQueries({ queryKey: ['order-templates'] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["order-templates"] });
     },
   });
 }

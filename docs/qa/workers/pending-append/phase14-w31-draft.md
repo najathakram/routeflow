@@ -1,4 +1,5 @@
 # PENDING APPEND — Phase 14 (W31 Findings)
+
 # Assign after Phase 12 (W32) and Phase 13 (W33) are appended to the report
 
 ---
@@ -9,11 +10,11 @@
 
 ### 9.C — Cascading Deletes
 
-| Test | Action | Result | Notes |
-|------|--------|--------|-------|
-| Delete customer with open PENDING order | DELETE /customers/{id} | **P0 FAIL** — 200, both customer AND order deleted | Data loss: open orders silently destroyed |
-| Delete product with active order item | DELETE /products/{id} | PASS — 400 "Cannot delete product with active order items" | Snapshot preserved |
-| Delete driver with active IN_PROGRESS run | DELETE /drivers/{id} | PASS — 400 "Cannot delete driver with scheduled or in-progress runs. Deactivate instead." | Good UX — deactivate suggestion |
+| Test                                      | Action                 | Result                                                                                    | Notes                                     |
+| ----------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Delete customer with open PENDING order   | DELETE /customers/{id} | **P0 FAIL** — 200, both customer AND order deleted                                        | Data loss: open orders silently destroyed |
+| Delete product with active order item     | DELETE /products/{id}  | PASS — 400 "Cannot delete product with active order items"                                | Snapshot preserved                        |
+| Delete driver with active IN_PROGRESS run | DELETE /drivers/{id}   | PASS — 400 "Cannot delete driver with scheduled or in-progress runs. Deactivate instead." | Good UX — deactivate suggestion           |
 
 ### 13.10 — Price Change at Checkout Race
 
@@ -86,8 +87,8 @@
 
 ## Phase 14 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-197 | P0 | W31/9.C.1 | DELETE /customers silently cascades to delete all linked orders — P0 data loss |
-| RF-198 | P2 | W31/13.10 | Price-change-at-checkout race — buyer silently receives new price with no warning |
-| RF-199 | P2 | W31/13.13 | Home "Low Stock" tile shows data.length (1) instead of meta.total (3) |
+| RF     | Severity | Source    | Title                                                                             |
+| ------ | -------- | --------- | --------------------------------------------------------------------------------- |
+| RF-197 | P0       | W31/9.C.1 | DELETE /customers silently cascades to delete all linked orders — P0 data loss    |
+| RF-198 | P2       | W31/13.10 | Price-change-at-checkout race — buyer silently receives new price with no warning |
+| RF-199 | P2       | W31/13.13 | Home "Low Stock" tile shows data.length (1) instead of meta.total (3)             |

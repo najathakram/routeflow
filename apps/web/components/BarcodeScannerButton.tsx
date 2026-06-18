@@ -130,7 +130,7 @@ export function BarcodeScannerButton({
         onClick={startWebcam}
         title={title}
         className={cn(
-          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/60 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
+          "inline-flex items-center justify-center rounded border border-surface-border bg-white p-1.5 text-navy/70 transition hover:bg-surface-raised hover:text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",
           className,
         )}
       >
@@ -140,20 +140,12 @@ export function BarcodeScannerButton({
       {scannerOpen && (
         <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black/90">
           <div className="relative w-full max-w-sm">
-            <video
-              ref={videoRef}
-              className="w-full rounded-lg"
-              autoPlay
-              muted
-              playsInline
-            />
+            <video ref={videoRef} className="w-full rounded-lg" autoPlay muted playsInline />
             {/* Scan guide overlay */}
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-32 w-64 rounded border-2 border-brand-400 opacity-80" />
             </div>
-            <p className="mt-3 text-center text-sm text-white/70">
-              Align barcode within the box
-            </p>
+            <p className="mt-3 text-center text-sm text-white/70">Align barcode within the box</p>
           </div>
           <button
             type="button"

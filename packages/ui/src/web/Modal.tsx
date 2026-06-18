@@ -15,7 +15,15 @@ export interface ModalProps {
   className?: string;
 }
 
-export const Modal = ({ open, onClose, title, description, children, footer, className }: ModalProps) => (
+export const Modal = ({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  className,
+}: ModalProps) => (
   <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
@@ -34,9 +42,7 @@ export const Modal = ({ open, onClose, title, description, children, footer, cla
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
             {title ? (
-              <Dialog.Title className="text-lg font-semibold text-navy">
-                {title}
-              </Dialog.Title>
+              <Dialog.Title className="text-lg font-semibold text-navy">{title}</Dialog.Title>
             ) : (
               <Dialog.Title className="sr-only">Dialog</Dialog.Title>
             )}

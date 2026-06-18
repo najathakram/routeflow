@@ -2,13 +2,7 @@
 
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ShoppingCart,
-  Loader2,
-  AlertTriangle,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, ShoppingCart, Loader2, AlertTriangle } from "lucide-react";
 import { Badge } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerOrders } from "@/lib/api/buyer";
@@ -68,7 +62,12 @@ export default function BuyerOrdersPage() {
 
   const [page, setPage] = React.useState(1);
   const [statusFilter, setStatusFilter] = React.useState("");
-  const { data: result, isLoading, isError, error } = useBuyerOrders({ page, limit: 20, status: statusFilter || undefined });
+  const {
+    data: result,
+    isLoading,
+    isError,
+    error,
+  } = useBuyerOrders({ page, limit: 20, status: statusFilter || undefined });
 
   // Validate slug matches active seller
   React.useEffect(() => {
@@ -101,7 +100,7 @@ export default function BuyerOrdersPage() {
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-navy">Orders</h1>
         {activeSeller && (
-          <p className="text-sm text-navy/60 mt-1">
+          <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
@@ -119,11 +118,14 @@ export default function BuyerOrdersPage() {
         ].map((tab) => (
           <button
             key={tab.value}
-            onClick={() => { setStatusFilter(tab.value); setPage(1); }}
+            onClick={() => {
+              setStatusFilter(tab.value);
+              setPage(1);
+            }}
             className={`flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
               statusFilter === tab.value
                 ? "border-buyer-500 bg-buyer-500 text-white"
-                : "border-surface-border bg-white text-navy/60 hover:border-buyer-300 hover:text-buyer-600"
+                : "border-surface-border bg-white text-navy/70 hover:border-buyer-300 hover:text-buyer-600"
             }`}
           >
             {tab.label}
@@ -148,7 +150,7 @@ export default function BuyerOrdersPage() {
         <div className="rounded-xl border border-dashed border-surface-border bg-white p-12 text-center">
           <ShoppingCart className="mx-auto mb-4 h-12 w-12 text-navy/20" />
           <h2 className="text-lg font-semibold text-navy mb-2">No orders yet</h2>
-          <p className="text-sm text-navy/60">Orders from this seller will appear here.</p>
+          <p className="text-sm text-navy/70">Orders from this seller will appear here.</p>
         </div>
       ) : orders.length > 0 ? (
         <>
@@ -157,19 +159,19 @@ export default function BuyerOrdersPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-surface-border bg-surface-raised">
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Order #
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Date
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Items
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Total
                   </th>
                 </tr>
@@ -187,8 +189,10 @@ export default function BuyerOrdersPage() {
                     <td className="px-4 py-3 text-sm text-navy/70">
                       {formatDate(order.createdAt)}
                     </td>
-                    <td className="px-4 py-3 text-sm text-navy/50">
-                      {order.itemCount != null ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}` : "—"}
+                    <td className="px-4 py-3 text-sm text-navy/70">
+                      {order.itemCount != null
+                        ? `${order.itemCount} item${order.itemCount !== 1 ? "s" : ""}`
+                        : "—"}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={getStatusVariant(order.status)}>
@@ -207,7 +211,7 @@ export default function BuyerOrdersPage() {
           {/* Pagination */}
           {meta && meta.totalPages > 1 && (
             <div className="mt-4 flex items-center justify-between">
-              <p className="text-sm text-navy/60">
+              <p className="text-sm text-navy/70">
                 Showing {(meta.page - 1) * meta.limit + 1} to{" "}
                 {Math.min(meta.page * meta.limit, meta.total)} of {meta.total}
               </p>
@@ -216,7 +220,7 @@ export default function BuyerOrdersPage() {
                   type="button"
                   onClick={() => setPage((p) => p - 1)}
                   disabled={page === 1}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
@@ -227,7 +231,7 @@ export default function BuyerOrdersPage() {
                   type="button"
                   onClick={() => setPage((p) => p + 1)}
                   disabled={page === meta.totalPages}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/60 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-surface-border bg-white text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>

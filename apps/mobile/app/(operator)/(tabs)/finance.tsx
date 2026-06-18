@@ -12,7 +12,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { KpiCard, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useVendorBills, type VendorBill, type VendorBillStatus } from "../../../lib/api/vendor-bills";
+import {
+  useVendorBills,
+  type VendorBill,
+  type VendorBillStatus,
+} from "../../../lib/api/vendor-bills";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -39,16 +43,17 @@ export default function FinanceScreen() {
   const { data, isLoading, isFetching, refetch } = useVendorBills({ limit: 10 });
   const bills = data?.data ?? [];
 
-  const unpaidCount = bills.filter(
-    (b) => b.status === "RECEIVED" || b.status === "PARTIAL",
-  ).length;
+  const unpaidCount = bills.filter((b) => b.status === "RECEIVED" || b.status === "PARTIAL").length;
   const unpaidTotal = bills
     .filter((b) => b.status === "RECEIVED" || b.status === "PARTIAL")
     .reduce((sum, b) => sum + Number(b.totalOwed ?? 0), 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Finance" leading={<Text style={styles.eyebrow}>VENDOR BILLS & EXPENSES</Text>} />
+      <NavBar
+        largeTitle="Finance"
+        leading={<Text style={styles.eyebrow}>VENDOR BILLS & EXPENSES</Text>}
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -66,7 +71,14 @@ export default function FinanceScreen() {
             <Text style={styles.ctaBtnText}>Scan Invoice</Text>
           </Pressable>
           <Pressable
-            style={[styles.ctaBtn, { backgroundColor: ios.bgElev, borderWidth: StyleSheet.hairlineWidth, borderColor: ios.separator }]}
+            style={[
+              styles.ctaBtn,
+              {
+                backgroundColor: ios.bgElev,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: ios.separator,
+              },
+            ]}
             onPress={() => router.push("/(operator)/vendor-bills/new")}
           >
             <Ionicons name="add" size={20} color={ios.label} />
@@ -153,8 +165,7 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
     <Pressable style={styles.billRow} onPress={onPress}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.billTitle} numberOfLines={1}>
-          {bill.supplier?.name ?? "Supplier"}{" "}
-          {bill.billNumber ? `· ${bill.billNumber}` : ""}
+          {bill.supplier?.name ?? "Supplier"} {bill.billNumber ? `· ${bill.billNumber}` : ""}
         </Text>
         <Text style={styles.billSub} numberOfLines={1}>
           {bill.billDate
@@ -168,7 +179,9 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
       </View>
       <View style={{ alignItems: "flex-end", gap: 4 }}>
         <Text style={styles.billTotal}>{formatCurrency(bill.totalOwed)}</Text>
-        <Pill variant={p.variant} small>{p.label}</Pill>
+        <Pill variant={p.variant} small>
+          {p.label}
+        </Pill>
       </View>
     </Pressable>
   );
@@ -230,7 +243,12 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     paddingBottom: 8,
   },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
   seeAll: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
   billRow: {
     backgroundColor: ios.bgElev,
@@ -240,7 +258,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  billTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  billTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   billSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  billTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  billTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
 });

@@ -97,9 +97,7 @@ function parseOptionalNumber(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function buildProductPayload(
-  form: ProductFormValues,
-): ProductSubmitPayload | { error: string } {
+function buildProductPayload(form: ProductFormValues): ProductSubmitPayload | { error: string } {
   const name = form.name.trim();
   if (!name) return { error: "Name is required." };
   const price = parseOptionalNumber(form.pricePerUnit);

@@ -1,18 +1,8 @@
 import React, { useState } from "react";
-import {
-  StyleSheet,
-  Text,
-  TextInput,
-  type TextInputProps,
-  View,
-} from "react-native";
+import { StyleSheet, Text, TextInput, type TextInputProps, View } from "react-native";
 import { colors, borderRadius } from "../tokens";
 
-export type KeyboardTypeOption =
-  | "default"
-  | "numeric"
-  | "email-address"
-  | "phone-pad";
+export type KeyboardTypeOption = "default" | "numeric" | "email-address" | "phone-pad";
 
 export interface MobileInputProps extends Omit<TextInputProps, "keyboardType"> {
   label?: string;
@@ -40,12 +30,7 @@ export function MobileInput({
           props.onBlur?.(e);
         }}
         placeholderTextColor={colors.surface.border}
-        style={[
-          styles.input,
-          focused && styles.inputFocused,
-          !!error && styles.inputError,
-          style,
-        ]}
+        style={[styles.input, focused && styles.inputFocused, !!error && styles.inputError, style]}
         {...props}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}

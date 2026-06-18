@@ -36,10 +36,17 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   const { user, isLoading, activeRole, initialize } = useAuthStore();
   const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
-  const { buyer, activeSeller, isLoading: buyerLoading, initialize: initBuyer } = useBuyerSessionStore();
+  const {
+    buyer,
+    activeSeller,
+    isLoading: buyerLoading,
+    initialize: initBuyer,
+  } = useBuyerSessionStore();
   const router = useRouter();
   const segments: string[] = useSegments();
-  const notificationListener = useRef<ReturnType<typeof Notifications.addNotificationReceivedListener> | null>(null);
+  const notificationListener = useRef<ReturnType<
+    typeof Notifications.addNotificationReceivedListener
+  > | null>(null);
 
   useEffect(() => {
     initTenant();
@@ -163,7 +170,17 @@ function RootLayoutNav() {
       }
       return;
     }
-  }, [user, isLoading, tenantSlug, tenantLoading, activeRole, buyer, activeSeller, buyerLoading, segments]);
+  }, [
+    user,
+    isLoading,
+    tenantSlug,
+    tenantLoading,
+    activeRole,
+    buyer,
+    activeSeller,
+    buyerLoading,
+    segments,
+  ]);
 
   // While auth/tenant/buyer state is being rehydrated from storage, render a
   // spinner instead of <Slot/>. Without this, on a hard URL refresh the child

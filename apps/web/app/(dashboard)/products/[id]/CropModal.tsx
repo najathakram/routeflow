@@ -11,9 +11,9 @@ import { CENTER_FOCAL } from "@/lib/image-focal";
 type HandleId = "nw" | "ne" | "sw" | "se" | "body";
 
 interface CropBox {
-  x: number;      // left in display px
-  y: number;      // top in display px
-  width: number;  // in display px
+  x: number; // left in display px
+  y: number; // top in display px
+  width: number; // in display px
   height: number; // in display px (always = width * 5/4 — portrait 4:5)
 }
 
@@ -109,26 +109,32 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
   };
 
   // Keep the box inside image bounds and above min size, maintaining 4:5.
-  const clamp = React.useCallback((b: CropBox): CropBox => {
-    let width = Math.max(MIN_WIDTH_PX, Math.min(b.width, dispW, dispH * ASPECT_W_OVER_H));
-    let height = width / ASPECT_W_OVER_H;
-    if (height > dispH) {
-      height = dispH;
-      width = height * ASPECT_W_OVER_H;
-    }
-    return {
-      width,
-      height,
-      x: Math.max(0, Math.min(b.x, dispW - width)),
-      y: Math.max(0, Math.min(b.y, dispH - height)),
-    };
-  }, [dispW, dispH]);
+  const clamp = React.useCallback(
+    (b: CropBox): CropBox => {
+      let width = Math.max(MIN_WIDTH_PX, Math.min(b.width, dispW, dispH * ASPECT_W_OVER_H));
+      let height = width / ASPECT_W_OVER_H;
+      if (height > dispH) {
+        height = dispH;
+        width = height * ASPECT_W_OVER_H;
+      }
+      return {
+        width,
+        height,
+        x: Math.max(0, Math.min(b.x, dispW - width)),
+        y: Math.max(0, Math.min(b.y, dispH - height)),
+      };
+    },
+    [dispW, dispH],
+  );
 
-  const startDrag = React.useCallback((e: React.MouseEvent, handleId: HandleId) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDrag({ handleId, startMouseX: e.clientX, startMouseY: e.clientY, startBox: { ...box } });
-  }, [box]);
+  const startDrag = React.useCallback(
+    (e: React.MouseEvent, handleId: HandleId) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDrag({ handleId, startMouseX: e.clientX, startMouseY: e.clientY, startBox: { ...box } });
+    },
+    [box],
+  );
 
   // Global mouse-move / mouse-up listeners while dragging the crop box
   React.useEffect(() => {
@@ -147,11 +153,19 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
         // other axis from the 4:5 aspect ratio so the crop never warps.
         let dWidth: number;
         switch (drag.handleId) {
-          case "se": dWidth = Math.max(dx, dy * ASPECT_W_OVER_H); break;
-          case "sw": dWidth = Math.max(-dx, dy * ASPECT_W_OVER_H); break;
-          case "ne": dWidth = Math.max(dx, -dy * ASPECT_W_OVER_H); break;
+          case "se":
+            dWidth = Math.max(dx, dy * ASPECT_W_OVER_H);
+            break;
+          case "sw":
+            dWidth = Math.max(-dx, dy * ASPECT_W_OVER_H);
+            break;
+          case "ne":
+            dWidth = Math.max(dx, -dy * ASPECT_W_OVER_H);
+            break;
           case "nw":
-          default:   dWidth = Math.max(-dx, -dy * ASPECT_W_OVER_H); break;
+          default:
+            dWidth = Math.max(-dx, -dy * ASPECT_W_OVER_H);
+            break;
         }
         const newWidth = sb.width + dWidth;
         const newHeight = newWidth / ASPECT_W_OVER_H;
@@ -261,12 +275,12 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
               {phase === "crop" ? "Crop Image (4:5 portrait)" : "Set Focal Point"}
             </h2>
             {fileTotal > 1 && (
-              <p className="mt-0.5 text-xs text-navy/50">
+              <p className="mt-0.5 text-xs text-navy/70">
                 Image {fileIndex + 1} of {fileTotal}
               </p>
             )}
           </div>
-          <button onClick={onCancel} className="text-navy/40 hover:text-navy transition-colors">
+          <button onClick={onCancel} className="text-navy/70 hover:text-navy transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -293,16 +307,29 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                 {dispW > 0 && (
                   <>
                     {/* Dark vignette — 4 panels surrounding the crop window */}
-                    <DarkPane top={0}                  left={0}                       width={dispW}                                                  height={box.y} />
-                    <DarkPane top={box.y + box.height} left={0}                       width={dispW}                                                  height={Math.max(0, dispH - box.y - box.height)} />
-                    <DarkPane top={box.y}              left={0}                       width={box.x}                                                  height={box.height} />
-                    <DarkPane top={box.y}              left={box.x + box.width}       width={Math.max(0, dispW - box.x - box.width)}                 height={box.height} />
+                    <DarkPane top={0} left={0} width={dispW} height={box.y} />
+                    <DarkPane
+                      top={box.y + box.height}
+                      left={0}
+                      width={dispW}
+                      height={Math.max(0, dispH - box.y - box.height)}
+                    />
+                    <DarkPane top={box.y} left={0} width={box.x} height={box.height} />
+                    <DarkPane
+                      top={box.y}
+                      left={box.x + box.width}
+                      width={Math.max(0, dispW - box.x - box.width)}
+                      height={box.height}
+                    />
 
                     {/* The active crop box */}
                     <div
                       style={{
                         position: "absolute",
-                        top: box.y, left: box.x, width: box.width, height: box.height,
+                        top: box.y,
+                        left: box.x,
+                        width: box.width,
+                        height: box.height,
                         border: "2px solid #fff",
                         boxSizing: "border-box",
                         cursor: drag?.handleId === "body" ? "grabbing" : "grab",
@@ -311,10 +338,22 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                     >
                       {/* Rule-of-thirds guide lines */}
                       <div className="pointer-events-none absolute inset-0">
-                        <div className="absolute inset-y-0 border-r border-white/25" style={{ left: "33.33%" }} />
-                        <div className="absolute inset-y-0 border-r border-white/25" style={{ left: "66.66%" }} />
-                        <div className="absolute inset-x-0 border-b border-white/25" style={{ top: "33.33%" }} />
-                        <div className="absolute inset-x-0 border-b border-white/25" style={{ top: "66.66%" }} />
+                        <div
+                          className="absolute inset-y-0 border-r border-white/25"
+                          style={{ left: "33.33%" }}
+                        />
+                        <div
+                          className="absolute inset-y-0 border-r border-white/25"
+                          style={{ left: "66.66%" }}
+                        />
+                        <div
+                          className="absolute inset-x-0 border-b border-white/25"
+                          style={{ top: "33.33%" }}
+                        />
+                        <div
+                          className="absolute inset-x-0 border-b border-white/25"
+                          style={{ top: "66.66%" }}
+                        />
                       </div>
 
                       {/* Corner resize handles */}
@@ -324,12 +363,13 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
                           onMouseDown={(e) => startDrag(e, h)}
                           style={{
                             position: "absolute",
-                            width: 14, height: 14,
+                            width: 14,
+                            height: 14,
                             background: "#fff",
                             border: "2px solid rgba(0,0,0,0.35)",
                             borderRadius: 3,
                             boxSizing: "border-box",
-                            cursor: (h === "nw" || h === "se") ? "nwse-resize" : "nesw-resize",
+                            cursor: h === "nw" || h === "se" ? "nwse-resize" : "nesw-resize",
                             ...(h.includes("n") ? { top: -7 } : { bottom: -7 }),
                             ...(h.includes("w") ? { left: -7 } : { right: -7 }),
                           }}
@@ -396,7 +436,7 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
 
         {/* ── Footer ── */}
         <div className="flex shrink-0 items-center justify-between border-t border-surface-border px-5 py-3.5">
-          <p className="text-xs text-navy/50">
+          <p className="text-xs text-navy/70">
             {phase === "crop"
               ? "Drag to move · drag corners to resize (4:5 portrait)"
               : "The focal point keeps that part of the image visible everywhere"}
@@ -436,9 +476,15 @@ export function CropModal({ file, fileIndex, fileTotal, onConfirm, onCancel }: C
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 function DarkPane({
-  top, left, width, height,
+  top,
+  left,
+  width,
+  height,
 }: {
-  top: number; left: number; width: number; height: number;
+  top: number;
+  left: number;
+  width: number;
+  height: number;
 }) {
   if (width <= 0 || height <= 0) return null;
   return (

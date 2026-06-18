@@ -11,7 +11,11 @@ import { confirm } from "../../lib/confirm";
 const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function formatDaysOfWeek(days: number[] | undefined): string {
   if (!days?.length) return "";
-  return [...days].sort((a, b) => a - b).map((d) => DAY_ABBR[d] ?? "").filter(Boolean).join(" · ");
+  return [...days]
+    .sort((a, b) => a - b)
+    .map((d) => DAY_ABBR[d] ?? "")
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function formatNextFireDate(dateStr: string | undefined | null): string | null {
@@ -34,15 +38,17 @@ export default function StandingOrdersScreen() {
   const updateMut = useBuyerUpdateTemplate();
 
   const onReorder = (id: string, name: string) =>
-    confirm(`Reorder from "${name}"?`, "A new order will be created.", () =>
-      reorderMut.mutate(id, {
-        onSuccess: (order) => {
-          showToast("Order created");
-          router.push(`/(customer)/orders/${order.id}`);
-        },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? "Try again."),
-      }),
+    confirm(
+      `Reorder from "${name}"?`,
+      "A new order will be created.",
+      () =>
+        reorderMut.mutate(id, {
+          onSuccess: (order) => {
+            showToast("Order created");
+            router.push(`/(customer)/orders/${order.id}`);
+          },
+          onError: (e: any) => showToast(e?.response?.data?.message ?? "Try again."),
+        }),
       { confirmText: "Reorder" },
     );
 
@@ -51,15 +57,18 @@ export default function StandingOrdersScreen() {
     const message = isActive
       ? "No new orders will be auto-generated until you resume."
       : "Auto-orders will resume on the next scheduled day.";
-    confirm(`${action} "${name}"?`, message, () =>
-      updateMut.mutate(
-        { id, isActive: !isActive },
-        {
-          onSuccess: () => showToast(isActive ? "Standing order paused" : "Standing order resumed"),
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? "Try again."),
-        },
-      ),
+    confirm(
+      `${action} "${name}"?`,
+      message,
+      () =>
+        updateMut.mutate(
+          { id, isActive: !isActive },
+          {
+            onSuccess: () =>
+              showToast(isActive ? "Standing order paused" : "Standing order resumed"),
+            onError: (e: any) => showToast(e?.response?.data?.message ?? "Try again."),
+          },
+        ),
       { confirmText: action },
     );
   };
@@ -72,7 +81,9 @@ export default function StandingOrdersScreen() {
       />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
-          <View style={styles.center}><ActivityIndicator color={ios.brand} /></View>
+          <View style={styles.center}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
         ) : !templates || templates.length === 0 ? (
           <View style={styles.center}>
             <Text style={styles.empty}>No standing orders.</Text>
@@ -89,12 +100,20 @@ export default function StandingOrdersScreen() {
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardName}>{t.name ?? "Standing order"}</Text>
                     <Text style={styles.cardMeta}>
-                      {formatDaysOfWeek(t.daysOfWeek) || t.frequencyLabel || t.frequency || "No schedule"} · {t.items?.length ?? 0} items
+                      {formatDaysOfWeek(t.daysOfWeek) ||
+                        t.frequencyLabel ||
+                        t.frequency ||
+                        "No schedule"}{" "}
+                      · {t.items?.length ?? 0} items
                     </Text>
                     {/* First 2 product names inline */}
                     {t.items && t.items.length > 0 && (
                       <Text style={styles.cardItems} numberOfLines={1}>
-                        {t.items.slice(0, 2).map((i: any) => i.product?.name ?? i.name ?? "").filter(Boolean).join(", ")}
+                        {t.items
+                          .slice(0, 2)
+                          .map((i: any) => i.product?.name ?? i.name ?? "")
+                          .filter(Boolean)
+                          .join(", ")}
                         {t.items.length > 2 ? ` +${t.items.length - 2} more` : ""}
                       </Text>
                     )}
@@ -122,7 +141,9 @@ export default function StandingOrdersScreen() {
                   </Pressable>
                   <Pressable
                     style={[styles.actionBtn, styles.pauseBtn]}
-                    onPress={() => onTogglePause(t.id, t.name ?? "Standing order", t.isActive !== false)}
+                    onPress={() =>
+                      onTogglePause(t.id, t.name ?? "Standing order", t.isActive !== false)
+                    }
                     disabled={updateMut.isPending}
                   >
                     <Ionicons

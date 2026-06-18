@@ -55,8 +55,7 @@ export function useSupplier(id: string) {
 export function useCreateSupplier() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Partial<Supplier>) =>
-      apiClient.post("/suppliers", data).then((r) => r.data),
+    mutationFn: (data: Partial<Supplier>) => apiClient.post("/suppliers", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 }
@@ -76,8 +75,7 @@ export function useUpdateSupplier() {
 export function useDeactivateSupplier() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.patch(`/suppliers/${id}/deactivate`).then((r) => r.data),
+    mutationFn: (id: string) => apiClient.patch(`/suppliers/${id}/deactivate`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 }
@@ -85,8 +83,7 @@ export function useDeactivateSupplier() {
 export function useDeleteSupplier() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.delete(`/suppliers/${id}`).then((r) => r.data),
+    mutationFn: (id: string) => apiClient.delete(`/suppliers/${id}`).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 }

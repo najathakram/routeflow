@@ -27,9 +27,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const BASE =
-  process.env.API_URL ||
-  "https://routeflowapi-production-d504.up.railway.app/api/v1";
+const BASE = process.env.API_URL || "https://routeflowapi-production-d504.up.railway.app/api/v1";
 const SA_USERNAME = process.env.SUPER_ADMIN_USERNAME || "najathakram";
 const SA_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "Najath123!";
 const KEEP = process.argv.includes("--keep");
@@ -58,9 +56,9 @@ const state = {
   productId: null,
   productBarcode: `QA${Date.now().toString().slice(-8)}`,
   supplierId: null,
-  pendingOrderId: null,     // for CUSTOMER cancel test
-  deliveredOrderId: null,   // for CUSTOMER return/invoice test
-  driverOrderId: null,      // for DRIVER delivery flow
+  pendingOrderId: null, // for CUSTOMER cancel test
+  deliveredOrderId: null, // for CUSTOMER return/invoice test
+  driverOrderId: null, // for DRIVER delivery flow
   invoiceId: null,
   routeId: null,
   routeRunId: null,
@@ -82,7 +80,7 @@ const state = {
   untieredProductId: null,
   tier3CustomerId: null,
   tier3CustomerToken: null,
-  tier1CustomerNoPriceId: null,  // tier-1 customer with NO CustomerPrice override
+  tier1CustomerNoPriceId: null, // tier-1 customer with NO CustomerPrice override
   customerPriceId: null,
   tieredOrderId: null,
   tieredEstimateId: null,
@@ -141,7 +139,11 @@ async function superApi(method, path, body, token) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = text; }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
   if (!res.ok) {
     const msg = data?.message || data?.error || text || res.statusText;
     const err = new Error(`HTTP ${res.status}: ${Array.isArray(msg) ? msg.join("; ") : msg}`);
@@ -165,7 +167,11 @@ async function api(method, path, body, token) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = text; }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
   if (!res.ok) {
     const msg = data?.message || data?.error || text || res.statusText;
     const err = new Error(`HTTP ${res.status}: ${Array.isArray(msg) ? msg.join("; ") : msg}`);
@@ -190,7 +196,11 @@ async function apiWith(slug, method, path, body, token) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = text; }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
   const err = !res.ok;
   if (err) {
     const msg = data?.message || data?.error || text || res.statusText;
@@ -214,7 +224,11 @@ async function probe(method, path, body, token, slug) {
   });
   const text = await res.text();
   let data;
-  try { data = JSON.parse(text); } catch { data = text; }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
   return { status: res.status, data };
 }
 
@@ -301,11 +315,20 @@ async function setup() {
 
   // Login as operator, change password
   await sleep(3000);
-  const opLogin1 = await retry(() => api("POST", "/auth/login", { username: "qa_operator", password: opTempPass }));
-  await api("POST", "/auth/change-password", { currentPassword: opTempPass, newPassword: "QaOperator1!" }, opLogin1.accessToken);
+  const opLogin1 = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_operator", password: opTempPass }),
+  );
+  await api(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: opTempPass, newPassword: "QaOperator1!" },
+    opLogin1.accessToken,
+  );
 
   await sleep(5000);
-  const opLogin = await retry(() => api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }));
+  const opLogin = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }),
+  );
   assert(opLogin.accessToken, "No accessToken in OPERATOR login");
   state.operatorToken = opLogin.accessToken;
   state.tenantAdminToken = tenantAdminToken;
@@ -315,7 +338,12 @@ async function setup() {
   const supplier = await api(
     "POST",
     "/inventory/suppliers",
-    { name: "QA Supplier", contactName: "QA Contact", email: "supplier@qa.test", phone: "555-0001" },
+    {
+      name: "QA Supplier",
+      contactName: "QA Contact",
+      email: "supplier@qa.test",
+      phone: "555-0001",
+    },
     state.operatorToken,
   );
   state.supplierId = supplier.id;
@@ -345,7 +373,16 @@ async function setup() {
       email: "customer@qa.test",
       phone: "555-0002",
       username: "qa_customer",
-      addresses: [{ line1: "1 QA St", label: "Delivery", city: "Testville", state: "VIC", zip: "3000", isDefault: true }],
+      addresses: [
+        {
+          line1: "1 QA St",
+          label: "Delivery",
+          city: "Testville",
+          state: "VIC",
+          zip: "3000",
+          isDefault: true,
+        },
+      ],
     },
     state.operatorToken,
   );
@@ -355,8 +392,15 @@ async function setup() {
 
   // Set customer password to known value
   await sleep(5000); // avoid auth rate limit
-  const custTok = await retry(() => api("POST", "/auth/login", { username: "qa_customer", password: custTempPass }));
-  await api("POST", "/auth/change-password", { currentPassword: custTempPass, newPassword: "Customer1!" }, custTok.accessToken);
+  const custTok = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_customer", password: custTempPass }),
+  );
+  await api(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: custTempPass, newPassword: "Customer1!" },
+    custTok.accessToken,
+  );
 
   // 7. Seed: driver
   const driverRes = await api(
@@ -379,8 +423,15 @@ async function setup() {
 
   // Set driver password
   await sleep(5000); // avoid auth rate limit
-  const driverTok1 = await retry(() => api("POST", "/auth/login", { username: "qa_driver", password: driverTempPass }));
-  await api("POST", "/auth/change-password", { currentPassword: driverTempPass, newPassword: "Driver1!" }, driverTok1.accessToken);
+  const driverTok1 = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_driver", password: driverTempPass }),
+  );
+  await api(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: driverTempPass, newPassword: "Driver1!" },
+    driverTok1.accessToken,
+  );
 
   // 8. Seed: PENDING order (for customer cancel test)
   const pendingOrder = await api(
@@ -400,14 +451,26 @@ async function setup() {
   );
   state.deliveredOrderId = deliveredOrder.id;
   // Mark it delivered directly
-  await api("PATCH", `/orders/${state.deliveredOrderId}/status`, { status: "CONFIRMED" }, state.operatorToken);
-  await api("PATCH", `/orders/${state.deliveredOrderId}/status`, { status: "DELIVERED" }, state.operatorToken);
+  await api(
+    "PATCH",
+    `/orders/${state.deliveredOrderId}/status`,
+    { status: "CONFIRMED" },
+    state.operatorToken,
+  );
+  await api(
+    "PATCH",
+    `/orders/${state.deliveredOrderId}/status`,
+    { status: "DELIVERED" },
+    state.operatorToken,
+  );
 
   // Get auto-created invoice
   const invoices = await api("GET", "/invoices", null, state.operatorToken);
   const invList = invoices.data || invoices;
   const matchingInv = Array.isArray(invList)
-    ? invList.find((i) => i.order?.id === state.deliveredOrderId || i.orderId === state.deliveredOrderId)
+    ? invList.find(
+        (i) => i.order?.id === state.deliveredOrderId || i.orderId === state.deliveredOrderId,
+      )
     : null;
   if (matchingInv) state.invoiceId = matchingInv.id;
 
@@ -463,15 +526,24 @@ async function setup() {
     state.operatorToken,
   );
   state.driverOrderId = driverOrder.id;
-  await api("PATCH", `/orders/${state.driverOrderId}/status`, { status: "CONFIRMED" }, state.operatorToken);
+  await api(
+    "PATCH",
+    `/orders/${state.driverOrderId}/status`,
+    { status: "CONFIRMED" },
+    state.operatorToken,
+  );
 
   // 12. Log in driver + customer for later sections
   await sleep(5000);
-  const driverLogin = await retry(() => api("POST", "/auth/login", { username: "qa_driver", password: "Driver1!" }));
+  const driverLogin = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_driver", password: "Driver1!" }),
+  );
   state.driverToken = driverLogin.accessToken;
 
   await sleep(5000);
-  const customerLogin = await retry(() => api("POST", "/auth/login", { username: "qa_customer", password: "Customer1!" }));
+  const customerLogin = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_customer", password: "Customer1!" }),
+  );
   state.customerToken = customerLogin.accessToken;
 
   // ── TIERED PRICING SEED DATA ──
@@ -521,7 +593,16 @@ async function setup() {
       phone: "555-0033",
       username: "qa_tier3_cust",
       pricingTier: 3,
-      addresses: [{ line1: "33 Tier St", label: "Delivery", city: "Testville", state: "VIC", zip: "3003", isDefault: true }],
+      addresses: [
+        {
+          line1: "33 Tier St",
+          label: "Delivery",
+          city: "Testville",
+          state: "VIC",
+          zip: "3003",
+          isDefault: true,
+        },
+      ],
     },
     state.operatorToken,
   );
@@ -530,10 +611,19 @@ async function setup() {
 
   // Set tier3 customer password and login
   await sleep(5000);
-  const tier3Tok1 = await retry(() => api("POST", "/auth/login", { username: "qa_tier3_cust", password: tier3TempPass }));
-  await api("POST", "/auth/change-password", { currentPassword: tier3TempPass, newPassword: "Customer1!" }, tier3Tok1.accessToken);
+  const tier3Tok1 = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_tier3_cust", password: tier3TempPass }),
+  );
+  await api(
+    "POST",
+    "/auth/change-password",
+    { currentPassword: tier3TempPass, newPassword: "Customer1!" },
+    tier3Tok1.accessToken,
+  );
   await sleep(5000);
-  const tier3Login = await retry(() => api("POST", "/auth/login", { username: "qa_tier3_cust", password: "Customer1!" }));
+  const tier3Login = await retry(() =>
+    api("POST", "/auth/login", { username: "qa_tier3_cust", password: "Customer1!" }),
+  );
   state.tier3CustomerToken = tier3Login.accessToken;
 
   // 16. Seed: tier-1 customer with no CustomerPrice override (for clean tier resolution test)
@@ -546,7 +636,16 @@ async function setup() {
       email: "tier1np@qa.test",
       phone: "555-0011",
       username: `qa_tier1np_${Date.now()}`,
-      addresses: [{ line1: "11 Tier1 St", label: "Delivery", city: "Testville", state: "VIC", zip: "3001", isDefault: true }],
+      addresses: [
+        {
+          line1: "11 Tier1 St",
+          label: "Delivery",
+          city: "Testville",
+          state: "VIC",
+          zip: "3001",
+          isDefault: true,
+        },
+      ],
     },
     state.operatorToken,
   );
@@ -572,14 +671,19 @@ async function section1() {
 
   await test(1, "SUPER_ADMIN login returns role=SUPER_ADMIN, no tenantId", async () => {
     await sleep(5000);
-    const r = await retry(() => superApi("POST", "/auth/login", { username: SA_USERNAME, password: SA_PASSWORD }));
+    const r = await retry(() =>
+      superApi("POST", "/auth/login", { username: SA_USERNAME, password: SA_PASSWORD }),
+    );
     assert(r.user?.role === "SUPER_ADMIN", `role=${r.user?.role}`);
     assert(!r.user?.tenantId, `tenantId should be null, got ${r.user?.tenantId}`);
   });
 
   await test(2, "Wrong password returns 401", async () => {
     await sleep(5000);
-    const { status } = await probe("POST", "/auth/login", { username: SA_USERNAME, password: "wrongpass" });
+    const { status } = await probe("POST", "/auth/login", {
+      username: SA_USERNAME,
+      password: "wrongpass",
+    });
     assert(status === 401 || status === 429, `Expected 401, got ${status}`);
   });
 
@@ -606,7 +710,12 @@ async function section1() {
   });
 
   await test(7, "GET /platform-admin/tenants/:id returns tenant details", async () => {
-    const r = await superApi("GET", `/platform-admin/tenants/${state.qaTenantId}`, null, state.superAdminToken);
+    const r = await superApi(
+      "GET",
+      `/platform-admin/tenants/${state.qaTenantId}`,
+      null,
+      state.superAdminToken,
+    );
     assert(r.slug === state.qaSlug, `slug mismatch: ${r.slug}`);
   });
 
@@ -617,7 +726,10 @@ async function section1() {
       { status: "SUSPENDED" },
       state.superAdminToken,
     );
-    assert(r.status === "SUSPENDED" || r.tenant?.status === "SUSPENDED", `status=${JSON.stringify(r)}`);
+    assert(
+      r.status === "SUSPENDED" || r.tenant?.status === "SUSPENDED",
+      `status=${JSON.stringify(r)}`,
+    );
   });
 
   await test(9, "Suspended tenant JWT returns 403 on API calls", async () => {
@@ -648,17 +760,21 @@ async function section1() {
     assert(r, "No response from extend-trial");
   });
 
-  await test(12, "POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy", async () => {
-    const r = await superApi(
-      "POST",
-      `/platform-admin/tenants/${state.qaTenantId}/impersonate`,
-      {},
-      state.superAdminToken,
-    );
-    const tok = r.accessToken || r.token;
-    assert(tok, "No token returned from impersonate");
-    state.impersonationToken = tok;
-  });
+  await test(
+    12,
+    "POST /platform-admin/tenants/:id/impersonate → JWT with impersonatedBy",
+    async () => {
+      const r = await superApi(
+        "POST",
+        `/platform-admin/tenants/${state.qaTenantId}/impersonate`,
+        {},
+        state.superAdminToken,
+      );
+      const tok = r.accessToken || r.token;
+      assert(tok, "No token returned from impersonate");
+      state.impersonationToken = tok;
+    },
+  );
 
   await test(13, "Impersonation JWT: GET /orders succeeds (read allowed)", async () => {
     const r = await apiWith(state.qaSlug, "GET", "/orders", null, state.impersonationToken);
@@ -678,7 +794,10 @@ async function section1() {
 
   await test(15, "GET /platform-admin/stats returns stats with tenants object", async () => {
     const r = await superApi("GET", "/platform-admin/stats", null, state.superAdminToken);
-    assert(r.tenants && typeof r.tenants.total === "number", `Unexpected stats shape: ${Object.keys(r).join(", ")}`);
+    assert(
+      r.tenants && typeof r.tenants.total === "number",
+      `Unexpected stats shape: ${Object.keys(r).join(", ")}`,
+    );
   });
 
   await test(16, "GET /platform-admin/audit-logs returns list", async () => {
@@ -715,15 +834,20 @@ async function section1() {
     state.qa2TenantId = t2.id || t2.tenant?.id;
     // Login as tenant B admin
     await sleep(8000);
-    const t2Login = await retry(() => apiWith(state.qa2Slug, "POST", "/auth/login", {
-      username: "qa2_admin",
-      password: "QaAdmin2!",
-    }));
+    const t2Login = await retry(() =>
+      apiWith(state.qa2Slug, "POST", "/auth/login", {
+        username: "qa2_admin",
+        password: "QaAdmin2!",
+      }),
+    );
     state.qa2OperatorToken = t2Login.accessToken;
     // Tenant B's GET /orders should return empty (no QA tenant A orders visible)
     const r = await apiWith(state.qa2Slug, "GET", "/orders", null, state.qa2OperatorToken);
     const list = r.data || r;
-    assert(Array.isArray(list) && list.length === 0, `Tenant B sees ${list.length} orders from tenant A!`);
+    assert(
+      Array.isArray(list) && list.length === 0,
+      `Tenant B sees ${list.length} orders from tenant A!`,
+    );
   });
 
   await test(19, "Tenant A order ID not accessible from tenant B JWT", async () => {
@@ -748,7 +872,9 @@ async function section2() {
 
   await test(20, "OPERATOR login returns role=OPERATOR with tenantId", async () => {
     await sleep(8000);
-    const r = await retry(() => api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }));
+    const r = await retry(() =>
+      api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }),
+    );
     assert(r.user?.role === "OPERATOR", `role=${r.user?.role}`);
     assert(r.user?.tenantId, "No tenantId in OPERATOR JWT");
     state.operatorToken = r.accessToken; // refresh token
@@ -756,15 +882,26 @@ async function section2() {
 
   await test(21, "Wrong password returns 401", async () => {
     await sleep(5000);
-    const { status } = await probe("POST", "/auth/login", { username: "qa_operator", password: "wrong" }, null, state.qaSlug);
+    const { status } = await probe(
+      "POST",
+      "/auth/login",
+      { username: "qa_operator", password: "wrong" },
+      null,
+      state.qaSlug,
+    );
     assert(status === 401 || status === 429, `Expected 401, got ${status}`);
   });
 
   await test(22, "POST /auth/refresh with valid refresh token → new access token", async () => {
     await sleep(5000);
-    const r = await retry(() => api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }));
+    const r = await retry(() =>
+      api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" }),
+    );
     const refreshToken = r.refreshToken;
-    if (!refreshToken) { skip(22, "POST /auth/refresh", "No refresh token returned"); return; }
+    if (!refreshToken) {
+      skip(22, "POST /auth/refresh", "No refresh token returned");
+      return;
+    }
     const refreshed = await api("POST", "/auth/refresh", { refreshToken });
     assert(refreshed.accessToken, "No new access token from refresh");
   });
@@ -791,7 +928,16 @@ async function section2() {
         email: "c2@qa.test",
         phone: "555-9999",
         username: `qa_cust2_${Date.now()}`,
-        addresses: [{ line1: "2 QA St", label: "Delivery", city: "Testville", state: "VIC", zip: "3000", isDefault: true }],
+        addresses: [
+          {
+            line1: "2 QA St",
+            label: "Delivery",
+            city: "Testville",
+            state: "VIC",
+            zip: "3000",
+            isDefault: true,
+          },
+        ],
       },
       state.operatorToken,
     );
@@ -805,7 +951,12 @@ async function section2() {
   });
 
   await test(27, "PATCH /customers/:id updates customer", async () => {
-    const r = await api("PATCH", `/customers/${state.customerId}`, { phone: "555-1111" }, state.operatorToken);
+    const r = await api(
+      "PATCH",
+      `/customers/${state.customerId}`,
+      { phone: "555-1111" },
+      state.operatorToken,
+    );
     assert(r.id || r.customer?.id, "No customer in response");
   });
 
@@ -842,7 +993,16 @@ async function section2() {
     const r = await api(
       "POST",
       "/products",
-      { name: "QA Product 2", sku: `QA2-${Date.now()}`, pricePerUnit: "5.00", priceTier2: "4.50", priceTier3: "4.00", priceTier4: "3.50", priceTier5: "3.00", unit: "kg" },
+      {
+        name: "QA Product 2",
+        sku: `QA2-${Date.now()}`,
+        pricePerUnit: "5.00",
+        priceTier2: "4.50",
+        priceTier3: "4.00",
+        priceTier4: "3.50",
+        priceTier5: "3.00",
+        unit: "kg",
+      },
       state.operatorToken,
     );
     assert(r.id, "No product ID returned");
@@ -851,13 +1011,31 @@ async function section2() {
   });
 
   await test(32, "PATCH /products/:id updates single tier price", async () => {
-    const r = await api("PATCH", `/products/${state.tieredProductId}`, { priceTier3: "7.50" }, state.operatorToken);
+    const r = await api(
+      "PATCH",
+      `/products/${state.tieredProductId}`,
+      { priceTier3: "7.50" },
+      state.operatorToken,
+    );
     assert(r.id || r.product?.id, "No product in response");
-    const updated = await api("GET", `/products/${state.tieredProductId}`, null, state.operatorToken);
+    const updated = await api(
+      "GET",
+      `/products/${state.tieredProductId}`,
+      null,
+      state.operatorToken,
+    );
     assert(Number(updated.priceTier3) === 7.5, `priceTier3=${updated.priceTier3}, expected 7.50`);
-    assert(Number(updated.priceTier2) === 9.0, `priceTier2 changed unexpectedly: ${updated.priceTier2}`);
+    assert(
+      Number(updated.priceTier2) === 9.0,
+      `priceTier2 changed unexpectedly: ${updated.priceTier2}`,
+    );
     // Restore tier 3 to 8.00 for later tests
-    await api("PATCH", `/products/${state.tieredProductId}`, { priceTier3: "8.00" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/products/${state.tieredProductId}`,
+      { priceTier3: "8.00" },
+      state.operatorToken,
+    );
   });
 
   // Suppliers
@@ -908,7 +1086,12 @@ async function section2() {
       { customerId: state.customerId, items: [{ productId: state.productId, qty: 1 }] },
       state.operatorToken,
     );
-    const r = await api("PATCH", `/orders/${newOrder.id}/status`, { status: "CONFIRMED" }, state.operatorToken);
+    const r = await api(
+      "PATCH",
+      `/orders/${newOrder.id}/status`,
+      { status: "CONFIRMED" },
+      state.operatorToken,
+    );
     assert(r.status === "CONFIRMED", `status=${r.status}`);
   });
 
@@ -919,8 +1102,18 @@ async function section2() {
       { customerId: state.customerId, items: [{ productId: state.productId, qty: 1 }] },
       state.operatorToken,
     );
-    await api("PATCH", `/orders/${newOrder.id}/status`, { status: "CONFIRMED" }, state.operatorToken);
-    const r = await api("PATCH", `/orders/${newOrder.id}/status`, { status: "DELIVERED" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/orders/${newOrder.id}/status`,
+      { status: "CONFIRMED" },
+      state.operatorToken,
+    );
+    const r = await api(
+      "PATCH",
+      `/orders/${newOrder.id}/status`,
+      { status: "DELIVERED" },
+      state.operatorToken,
+    );
     assert(r.status === "DELIVERED", `status=${r.status}`);
   });
 
@@ -941,7 +1134,12 @@ async function section2() {
     }
     if (!found) {
       // Manually trigger invoice creation as fallback
-      const inv = await api("POST", `/invoices/from-order/${state.deliveredOrderId}`, {}, state.operatorToken);
+      const inv = await api(
+        "POST",
+        `/invoices/from-order/${state.deliveredOrderId}`,
+        {},
+        state.operatorToken,
+      );
       state.invoiceId = inv.id;
       found = !!inv.id;
     }
@@ -956,7 +1154,12 @@ async function section2() {
   });
 
   await test(42, "POST /routes creates route with stops", async () => {
-    const r = await api("POST", "/routes", { name: "QA Route 2", driverId: state.driverId }, state.operatorToken);
+    const r = await api(
+      "POST",
+      "/routes",
+      { name: "QA Route 2", driverId: state.driverId },
+      state.operatorToken,
+    );
     assert(r.id, "No route ID");
   });
 
@@ -966,7 +1169,11 @@ async function section2() {
     const r = await api(
       "POST",
       "/route-runs",
-      { routeId: route2.id, driverId: state.driverId, scheduledDate: new Date().toISOString().split("T")[0] },
+      {
+        routeId: route2.id,
+        driverId: state.driverId,
+        scheduledDate: new Date().toISOString().split("T")[0],
+      },
       state.operatorToken,
     );
     assert(r.id, "No run ID");
@@ -982,11 +1189,24 @@ async function section2() {
   });
 
   await test(45, "PATCH /route-runs/:id/status IN_PROGRESS → 200", async () => {
-    if (!state.testRunId2) { skip(45, "PATCH run status", "No test run from test 43"); return; }
-    const r = await api("PATCH", `/route-runs/${state.testRunId2}/status`, { status: "IN_PROGRESS" }, state.operatorToken);
+    if (!state.testRunId2) {
+      skip(45, "PATCH run status", "No test run from test 43");
+      return;
+    }
+    const r = await api(
+      "PATCH",
+      `/route-runs/${state.testRunId2}/status`,
+      { status: "IN_PROGRESS" },
+      state.operatorToken,
+    );
     assert(r.status === "IN_PROGRESS", `status=${r.status}`);
     // Complete it so it doesn't block future runs
-    await api("PATCH", `/route-runs/${state.testRunId2}/status`, { status: "COMPLETED" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/route-runs/${state.testRunId2}/status`,
+      { status: "COMPLETED" },
+      state.operatorToken,
+    );
   });
 
   // Invoices
@@ -1024,7 +1244,10 @@ async function section2() {
       state.operatorToken,
       state.qaSlug,
     );
-    assert(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data?.message || data)}`);
+    assert(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data?.message || data)}`,
+    );
   });
 
   await test(50, "POST /invoices/:id/send sends email (queued)", async () => {
@@ -1037,7 +1260,13 @@ async function section2() {
       },
       state.operatorToken,
     );
-    const { status } = await probe("POST", `/invoices/${inv.id}/send`, {}, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "POST",
+      `/invoices/${inv.id}/send`,
+      {},
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200 || status === 201, `Expected 200/201, got ${status}`);
   });
 
@@ -1046,7 +1275,7 @@ async function section2() {
     const r = await api(
       "POST",
       "/credit-notes",
-      { customerId: state.customerId, amount: 5.00, reason: "QA test credit" },
+      { customerId: state.customerId, amount: 5.0, reason: "QA test credit" },
       state.operatorToken,
     );
     assert(r.id, "No credit note ID");
@@ -1060,7 +1289,12 @@ async function section2() {
   });
 
   await test(53, "POST /credit-notes/:id/issue → status ISSUED", async () => {
-    const r = await api("POST", `/credit-notes/${state.creditNoteId}/issue`, {}, state.operatorToken);
+    const r = await api(
+      "POST",
+      `/credit-notes/${state.creditNoteId}/issue`,
+      {},
+      state.operatorToken,
+    );
     assert(r.status === "ISSUED", `status=${r.status}`);
   });
 
@@ -1110,27 +1344,31 @@ async function section2() {
   });
 
   // Estimates
-  await test(57, "POST /estimates creates estimate with tier-resolved product pricing", async () => {
-    const r = await api(
-      "POST",
-      "/estimates",
-      {
-        customerId: state.tier3CustomerId,
-        items: [{ productId: state.tieredProductId, qty: 2 }],
-        expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-      },
-      state.operatorToken,
-    );
-    assert(r.id, "No estimate ID");
-    assert(r.estimateNumber, "No estimateNumber");
-    state.estimateId = r.id;
-    // Verify tier-3 pricing applied
-    const item = r.items?.[0];
-    if (item) {
-      assert(Number(item.unitPrice) === 8.0, `Expected tier-3 price 8.00, got ${item.unitPrice}`);
-      assert(item.priceType === "SPECIAL", `Expected priceType SPECIAL, got ${item.priceType}`);
-    }
-  });
+  await test(
+    57,
+    "POST /estimates creates estimate with tier-resolved product pricing",
+    async () => {
+      const r = await api(
+        "POST",
+        "/estimates",
+        {
+          customerId: state.tier3CustomerId,
+          items: [{ productId: state.tieredProductId, qty: 2 }],
+          expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        },
+        state.operatorToken,
+      );
+      assert(r.id, "No estimate ID");
+      assert(r.estimateNumber, "No estimateNumber");
+      state.estimateId = r.id;
+      // Verify tier-3 pricing applied
+      const item = r.items?.[0];
+      if (item) {
+        assert(Number(item.unitPrice) === 8.0, `Expected tier-3 price 8.00, got ${item.unitPrice}`);
+        assert(item.priceType === "SPECIAL", `Expected priceType SPECIAL, got ${item.priceType}`);
+      }
+    },
+  );
 
   await test(58, "POST /estimates/:id/send → status SENT", async () => {
     const r = await api("POST", `/estimates/${state.estimateId}/send`, {}, state.operatorToken);
@@ -1168,7 +1406,12 @@ async function section2() {
   });
 
   await test(62, "POST /recurring-invoices/:id/run → invoice generated immediately", async () => {
-    const r = await api("POST", `/recurring-invoices/${state.recurringInvoiceId}/run`, {}, state.operatorToken);
+    const r = await api(
+      "POST",
+      `/recurring-invoices/${state.recurringInvoiceId}/run`,
+      {},
+      state.operatorToken,
+    );
     assert(r.id, "No invoice generated");
   });
 
@@ -1196,7 +1439,12 @@ async function section2() {
   });
 
   await test(65, "POST /order-templates/:id/generate → order created", async () => {
-    const r = await api("POST", `/order-templates/${state.templateId}/generate`, {}, state.operatorToken);
+    const r = await api(
+      "POST",
+      `/order-templates/${state.templateId}/generate`,
+      {},
+      state.operatorToken,
+    );
     assert(r.id, "No order generated");
   });
 
@@ -1213,17 +1461,18 @@ async function section2() {
   });
 
   await test(68, "PATCH /settings updates business name", async () => {
-    const r = await api(
-      "PATCH",
-      "/settings",
-      { businessName: "QA Test Co" },
-      state.operatorToken,
-    );
+    const r = await api("PATCH", "/settings", { businessName: "QA Test Co" }, state.operatorToken);
     assert(r, "No response from PATCH /settings");
   });
 
   await test(69, "GET /analytics/revenue returns revenue data", async () => {
-    const { status } = await probe("GET", "/analytics/revenue", null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      "/analytics/revenue",
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 }
@@ -1235,7 +1484,9 @@ async function section3() {
 
   await test(70, "DRIVER login returns role=DRIVER", async () => {
     await sleep(1500);
-    const r = await retry(() => api("POST", "/auth/login", { username: "qa_driver", password: "Driver1!" }));
+    const r = await retry(() =>
+      api("POST", "/auth/login", { username: "qa_driver", password: "Driver1!" }),
+    );
     assert(r.user?.role === "DRIVER", `role=${r.user?.role}`);
     state.driverToken = r.accessToken;
   });
@@ -1270,7 +1521,16 @@ async function section3() {
     const dr2 = await api(
       "POST",
       "/drivers",
-      { username: `qa_drv2_${Date.now()}`, email: `drv2_${Date.now()}@qa.test`, contactName: "Driver 2", phone: "555-9002", vehicleMake: "VW", vehicleModel: "Crafter", vehicleColour: "Blue", vehiclePlate: "QA-002" },
+      {
+        username: `qa_drv2_${Date.now()}`,
+        email: `drv2_${Date.now()}@qa.test`,
+        contactName: "Driver 2",
+        phone: "555-9002",
+        vehicleMake: "VW",
+        vehicleModel: "Crafter",
+        vehicleColour: "Blue",
+        vehiclePlate: "QA-002",
+      },
       state.operatorToken,
     );
     const dr2Id = dr2.driver?.id || dr2.id;
@@ -1284,15 +1544,30 @@ async function section3() {
     const dr2Run = await api(
       "POST",
       "/route-runs",
-      { routeId: dr2Route.id, driverId: dr2Id, scheduledDate: new Date().toISOString().split("T")[0] },
+      {
+        routeId: dr2Route.id,
+        driverId: dr2Id,
+        scheduledDate: new Date().toISOString().split("T")[0],
+      },
       state.operatorToken,
     );
-    const { status } = await probe("GET", `/route-runs/${dr2Run.id}`, null, state.driverToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      `/route-runs/${dr2Run.id}`,
+      null,
+      state.driverToken,
+      state.qaSlug,
+    );
     assert(status === 403 || status === 404, `Expected 403/404, got ${status}`);
   });
 
   await test(75, "Driver starts run → status IN_PROGRESS", async () => {
-    const r = await api("PATCH", `/route-runs/${state.routeRunId}/status`, { status: "IN_PROGRESS" }, state.driverToken);
+    const r = await api(
+      "PATCH",
+      `/route-runs/${state.routeRunId}/status`,
+      { status: "IN_PROGRESS" },
+      state.driverToken,
+    );
     assert(r.status === "IN_PROGRESS", `status=${r.status}`);
   });
 
@@ -1356,10 +1631,19 @@ async function section3() {
     const newRun = await api(
       "POST",
       "/route-runs",
-      { routeId: partRoute.id, driverId: state.driverId, scheduledDate: new Date().toISOString().split("T")[0] },
+      {
+        routeId: partRoute.id,
+        driverId: state.driverId,
+        scheduledDate: new Date().toISOString().split("T")[0],
+      },
       state.operatorToken,
     );
-    await api("PATCH", `/route-runs/${newRun.id}/status`, { status: "IN_PROGRESS" }, state.driverToken);
+    await api(
+      "PATCH",
+      `/route-runs/${newRun.id}/status`,
+      { status: "IN_PROGRESS" },
+      state.driverToken,
+    );
     const runDetail = await api("GET", `/route-runs/${newRun.id}`, null, state.driverToken);
     if (!runDetail.stops || runDetail.stops.length === 0) {
       skip(79, "Partial delivery test", "New run has no stops (route stop not linked to run)");
@@ -1383,26 +1667,56 @@ async function section3() {
   });
 
   await test(80, "POST complete stop marking item DAMAGED → damage recorded", async () => {
-    skip(80, "DAMAGED delivery flag", "Covered by partial delivery test — damage status is a delivery item status variant");
+    skip(
+      80,
+      "DAMAGED delivery flag",
+      "Covered by partial delivery test — damage status is a delivery item status variant",
+    );
   });
 
   await test(81, "POST /route-runs/:id/status COMPLETED after all stops done", async () => {
-    const r = await api("PATCH", `/route-runs/${state.routeRunId}/status`, { status: "COMPLETED" }, state.driverToken);
+    const r = await api(
+      "PATCH",
+      `/route-runs/${state.routeRunId}/status`,
+      { status: "COMPLETED" },
+      state.driverToken,
+    );
     assert(r.status === "COMPLETED", `status=${r.status}`);
   });
 
-  await test(82, "GET /products/barcode/:barcode with valid barcode → 200 product details", async () => {
-    const r = await api("GET", `/products/barcode/${state.productBarcode}`, null, state.driverToken);
-    assert(r.id === state.productId, `Product ID mismatch: ${r.id}`);
-  });
+  await test(
+    82,
+    "GET /products/barcode/:barcode with valid barcode → 200 product details",
+    async () => {
+      const r = await api(
+        "GET",
+        `/products/barcode/${state.productBarcode}`,
+        null,
+        state.driverToken,
+      );
+      assert(r.id === state.productId, `Product ID mismatch: ${r.id}`);
+    },
+  );
 
   await test(83, "GET /products/barcode/:barcode with unknown barcode → 404", async () => {
-    const { status } = await probe("GET", "/products/barcode/UNKNOWN_9999999", null, state.driverToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      "/products/barcode/UNKNOWN_9999999",
+      null,
+      state.driverToken,
+      state.qaSlug,
+    );
     assert(status === 404, `Expected 404, got ${status}`);
   });
 
   await test(84, "GET /route-runs/my-stats returns stats for this driver", async () => {
-    const { status } = await probe("GET", "/route-runs/my-stats", null, state.driverToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      "/route-runs/my-stats",
+      null,
+      state.driverToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 
@@ -1419,13 +1733,21 @@ async function section3() {
 
   await test(86, "Login with old password after change → 401", async () => {
     await sleep(1500);
-    const { status } = await probe("POST", "/auth/login", { username: "qa_driver", password: "Driver1!" }, null, state.qaSlug);
+    const { status } = await probe(
+      "POST",
+      "/auth/login",
+      { username: "qa_driver", password: "Driver1!" },
+      null,
+      state.qaSlug,
+    );
     assert(status === 401 || status === 429, `Expected 401, got ${status}`);
   });
 
   await test(87, "Login with new password → 200", async () => {
     await sleep(1500);
-    const r = await retry(() => api("POST", "/auth/login", { username: "qa_driver", password: "Driver2!" }));
+    const r = await retry(() =>
+      api("POST", "/auth/login", { username: "qa_driver", password: "Driver2!" }),
+    );
     assert(r.accessToken, "No accessToken with new password");
     state.driverToken = r.accessToken;
   });
@@ -1438,7 +1760,9 @@ async function section4() {
 
   await test(88, "CUSTOMER login returns role=CUSTOMER", async () => {
     await sleep(1500);
-    const r = await retry(() => api("POST", "/auth/login", { username: "qa_customer", password: "Customer1!" }));
+    const r = await retry(() =>
+      api("POST", "/auth/login", { username: "qa_customer", password: "Customer1!" }),
+    );
     assert(r.user?.role === "CUSTOMER", `role=${r.user?.role}`);
     state.customerToken = r.accessToken;
   });
@@ -1483,7 +1807,16 @@ async function section4() {
         email: "other@qa.test",
         phone: "555-8888",
         username: `qa_other_${Date.now()}`,
-        addresses: [{ line1: "3 Other St", label: "Delivery", city: "Otherville", state: "VIC", zip: "3002", isDefault: true }],
+        addresses: [
+          {
+            line1: "3 Other St",
+            label: "Delivery",
+            city: "Otherville",
+            state: "VIC",
+            zip: "3002",
+            isDefault: true,
+          },
+        ],
       },
       state.operatorToken,
     );
@@ -1495,12 +1828,23 @@ async function section4() {
       state.operatorToken,
     );
     // Try to access c2Order as qa_customer
-    const { status } = await probe("GET", `/orders/${c2Order.id}`, null, state.customerToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      `/orders/${c2Order.id}`,
+      null,
+      state.customerToken,
+      state.qaSlug,
+    );
     assert(status === 404 || status === 403, `Expected 404/403, got ${status}`);
   });
 
   await test(95, "CUSTOMER can cancel own PENDING order → 200", async () => {
-    const r = await api("PATCH", `/orders/${state.pendingOrderId}/status`, { status: "CANCELLED" }, state.customerToken);
+    const r = await api(
+      "PATCH",
+      `/orders/${state.pendingOrderId}/status`,
+      { status: "CANCELLED" },
+      state.customerToken,
+    );
     assert(r.status === "CANCELLED", `status=${r.status}`);
   });
 
@@ -1524,7 +1868,10 @@ async function section4() {
   });
 
   await test(98, "CUSTOMER GET another customer's invoice → 404", async () => {
-    if (!state.manualInvoiceId) { skip(98, "Other customer invoice 404", "No manual invoice ID in state"); return; }
+    if (!state.manualInvoiceId) {
+      skip(98, "Other customer invoice 404", "No manual invoice ID in state");
+      return;
+    }
     // The manual invoice was created for state.customerId so it should be accessible
     // Create an invoice for a different customer to test isolation
     const cust3 = await api(
@@ -1536,7 +1883,16 @@ async function section4() {
         email: "three@qa.test",
         phone: "555-3333",
         username: `qa_cust3_${Date.now()}`,
-        addresses: [{ line1: "4 Three St", label: "Delivery", city: "Three", state: "VIC", zip: "3003", isDefault: true }],
+        addresses: [
+          {
+            line1: "4 Three St",
+            label: "Delivery",
+            city: "Three",
+            state: "VIC",
+            zip: "3003",
+            isDefault: true,
+          },
+        ],
       },
       state.operatorToken,
     );
@@ -1544,10 +1900,19 @@ async function section4() {
     const c3Inv = await api(
       "POST",
       "/invoices",
-      { customerId: c3Id, items: [{ description: "C3 svc", qty: 1, unitPrice: 20, discount: 0, taxRate: 0 }] },
+      {
+        customerId: c3Id,
+        items: [{ description: "C3 svc", qty: 1, unitPrice: 20, discount: 0, taxRate: 0 }],
+      },
       state.operatorToken,
     );
-    const { status } = await probe("GET", `/invoices/${c3Inv.id}`, null, state.customerToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      `/invoices/${c3Inv.id}`,
+      null,
+      state.customerToken,
+      state.qaSlug,
+    );
     assert(status === 404 || status === 403, `Expected 404/403, got ${status}`);
   });
 
@@ -1579,7 +1944,16 @@ async function section4() {
         email: "four@qa.test",
         phone: "555-4444",
         username: `qa_cust4_${Date.now()}`,
-        addresses: [{ line1: "5 Four St", label: "Delivery", city: "Four", state: "VIC", zip: "3004", isDefault: true }],
+        addresses: [
+          {
+            line1: "5 Four St",
+            label: "Delivery",
+            city: "Four",
+            state: "VIC",
+            zip: "3004",
+            isDefault: true,
+          },
+        ],
       },
       state.operatorToken,
     );
@@ -1591,13 +1965,27 @@ async function section4() {
       state.operatorToken,
     );
     // Mark it delivered
-    await api("PATCH", `/orders/${c4Order.id}/status`, { status: "CONFIRMED" }, state.operatorToken);
-    await api("PATCH", `/orders/${c4Order.id}/status`, { status: "DELIVERED" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/orders/${c4Order.id}/status`,
+      { status: "CONFIRMED" },
+      state.operatorToken,
+    );
+    await api(
+      "PATCH",
+      `/orders/${c4Order.id}/status`,
+      { status: "DELIVERED" },
+      state.operatorToken,
+    );
     // Try to return it as qa_customer (different customer)
     const { status } = await probe(
       "POST",
       "/returns",
-      { orderId: c4Order.id, reason: "DAMAGED", items: [{ productId: state.productId, qty: 1, reason: "DAMAGED" }] },
+      {
+        orderId: c4Order.id,
+        reason: "DAMAGED",
+        items: [{ productId: state.productId, qty: 1, reason: "DAMAGED" }],
+      },
       state.customerToken,
       state.qaSlug,
     );
@@ -1615,7 +2003,11 @@ async function section4() {
     const { status } = await probe(
       "POST",
       "/returns",
-      { orderId: newPending.id, reason: "DAMAGED", items: [{ productId: state.productId, qty: 1, reason: "DAMAGED" }] },
+      {
+        orderId: newPending.id,
+        reason: "DAMAGED",
+        items: [{ productId: state.productId, qty: 1, reason: "DAMAGED" }],
+      },
       state.customerToken,
       state.qaSlug,
     );
@@ -1641,7 +2033,11 @@ async function section4() {
     const r = await api(
       "POST",
       "/order-templates",
-      { name: "My Standing Order", daysOfWeek: [2, 4], items: [{ productId: state.productId, qty: 1 }] },
+      {
+        name: "My Standing Order",
+        daysOfWeek: [2, 4],
+        items: [{ productId: state.productId, qty: 1 }],
+      },
       state.customerToken,
     );
     assert(r.id, "No template ID");
@@ -1666,12 +2062,23 @@ async function section4() {
 
   // Profile
   await test(106, "CUSTOMER PATCH /customers/me updates own profile → 200", async () => {
-    const { status } = await probe("PATCH", "/customers/me", { phone: "0400000000" }, state.customerToken, state.qaSlug);
+    const { status } = await probe(
+      "PATCH",
+      "/customers/me",
+      { phone: "0400000000" },
+      state.customerToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 
   await test(107, "POST /auth/change-password for customer → 200", async () => {
-    const r = await api("POST", "/auth/change-password", { currentPassword: "Customer1!", newPassword: "Customer2!" }, state.customerToken);
+    const r = await api(
+      "POST",
+      "/auth/change-password",
+      { currentPassword: "Customer1!", newPassword: "Customer2!" },
+      state.customerToken,
+    );
     assert(r, "No response");
   });
 
@@ -1691,14 +2098,29 @@ async function section5() {
 
   await test(109, "Tenant A operator cannot see tenant B customers", async () => {
     // Create a customer in tenant B
-    await apiWith(state.qa2Slug, "POST", "/customers", {
-      businessName: "Tenant B Customer",
-      contactName: "B Contact",
-      email: "b@qa.test",
-      phone: "555-2222",
-      username: `qa2_cust_${Date.now()}`,
-      addresses: [{ line1: "1 B St", label: "Delivery", city: "B Town", state: "NSW", zip: "2000", isDefault: true }],
-    }, state.qa2OperatorToken);
+    await apiWith(
+      state.qa2Slug,
+      "POST",
+      "/customers",
+      {
+        businessName: "Tenant B Customer",
+        contactName: "B Contact",
+        email: "b@qa.test",
+        phone: "555-2222",
+        username: `qa2_cust_${Date.now()}`,
+        addresses: [
+          {
+            line1: "1 B St",
+            label: "Delivery",
+            city: "B Town",
+            state: "NSW",
+            zip: "2000",
+            isDefault: true,
+          },
+        ],
+      },
+      state.qa2OperatorToken,
+    );
     // Tenant A operator fetches customers — should NOT see tenant B's customer
     const r = await api("GET", "/customers", null, state.operatorToken);
     const list = r.data || r;
@@ -1717,7 +2139,10 @@ async function section5() {
     // NOTE: Without a slug header, the API falls back to the JWT's tenantId.
     // This is a known gap — ideally should reject with 400.
     const { status } = await probe("GET", "/orders", null, state.operatorToken);
-    assert(status === 200 || status === 400 || status === 401, `Expected 200/400/401, got ${status}`);
+    assert(
+      status === 200 || status === 400 || status === 401,
+      `Expected 200/400/401, got ${status}`,
+    );
   });
 
   await test(112, "Suspended tenant JWT returns 403 (TenantStatusGuard)", async () => {
@@ -1801,13 +2226,23 @@ async function section6() {
   });
 
   await test(117, "Update single tier price, others unchanged", async () => {
-    await api("PATCH", `/products/${state.tieredProductId}`, { priceTier3: "7.50" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/products/${state.tieredProductId}`,
+      { priceTier3: "7.50" },
+      state.operatorToken,
+    );
     const r = await api("GET", `/products/${state.tieredProductId}`, null, state.operatorToken);
     assert(Number(r.priceTier3) === 7.5, `priceTier3=${r.priceTier3}`);
     assert(Number(r.priceTier2) === 9, `priceTier2 changed: ${r.priceTier2}`);
     assert(Number(r.priceTier4) === 7, `priceTier4 changed: ${r.priceTier4}`);
     // Restore
-    await api("PATCH", `/products/${state.tieredProductId}`, { priceTier3: "8.00" }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/products/${state.tieredProductId}`,
+      { priceTier3: "8.00" },
+      state.operatorToken,
+    );
   });
 
   await test(118, "Create product WITHOUT tier prices (defaults)", async () => {
@@ -1845,13 +2280,23 @@ async function section6() {
   });
 
   await test(122, "Update pricingTier 3→5", async () => {
-    const r = await api("PATCH", `/customers/${state.tier3CustomerId}`, { pricingTier: 5 }, state.operatorToken);
+    const r = await api(
+      "PATCH",
+      `/customers/${state.tier3CustomerId}`,
+      { pricingTier: 5 },
+      state.operatorToken,
+    );
     const cust = await api("GET", `/customers/${state.tier3CustomerId}`, null, state.operatorToken);
     assert(cust.pricingTier === 5, `pricingTier=${cust.pricingTier}`);
   });
 
   await test(123, "Update pricingTier 5→3 (restore)", async () => {
-    await api("PATCH", `/customers/${state.tier3CustomerId}`, { pricingTier: 3 }, state.operatorToken);
+    await api(
+      "PATCH",
+      `/customers/${state.tier3CustomerId}`,
+      { pricingTier: 3 },
+      state.operatorToken,
+    );
     const cust = await api("GET", `/customers/${state.tier3CustomerId}`, null, state.operatorToken);
     assert(cust.pricingTier === 3, `pricingTier=${cust.pricingTier}`);
   });
@@ -1862,12 +2307,24 @@ async function section6() {
   });
 
   await test(125, "Reject pricingTier=0 → 400", async () => {
-    const { status } = await probe("PATCH", `/customers/${state.tier3CustomerId}`, { pricingTier: 0 }, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "PATCH",
+      `/customers/${state.tier3CustomerId}`,
+      { pricingTier: 0 },
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 400, `Expected 400, got ${status}`);
   });
 
   await test(126, "Reject pricingTier=6 → 400", async () => {
-    const { status } = await probe("PATCH", `/customers/${state.tier3CustomerId}`, { pricingTier: 6 }, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "PATCH",
+      `/customers/${state.tier3CustomerId}`,
+      { pricingTier: 6 },
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 400, `Expected 400, got ${status}`);
   });
 
@@ -1909,18 +2366,33 @@ async function section6() {
   });
 
   await test(131, "Delete CustomerPrice", async () => {
-    const list = await api("GET", `/customers/${state.customerId}/prices`, null, state.operatorToken);
+    const list = await api(
+      "GET",
+      `/customers/${state.customerId}/prices`,
+      null,
+      state.operatorToken,
+    );
     const prices = list.data || list;
-    const cp = Array.isArray(prices) ? prices.find((p) => p.productId === state.tieredProductId) : null;
+    const cp = Array.isArray(prices)
+      ? prices.find((p) => p.productId === state.tieredProductId)
+      : null;
     assert(cp, "No CustomerPrice to delete");
-    const { status } = await probe("DELETE", `/customers/${state.customerId}/prices/${cp.id}`, null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "DELETE",
+      `/customers/${state.customerId}/prices/${cp.id}`,
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200 || status === 204, `Expected 200/204, got ${status}`);
   });
 
   await test(132, "GET after delete — CustomerPrice gone", async () => {
     const r = await api("GET", `/customers/${state.customerId}/prices`, null, state.operatorToken);
     const prices = r.data || r;
-    const found = Array.isArray(prices) ? prices.find((p) => p.productId === state.tieredProductId) : null;
+    const found = Array.isArray(prices)
+      ? prices.find((p) => p.productId === state.tieredProductId)
+      : null;
     assert(!found, "CustomerPrice still exists after delete");
   });
 
@@ -1963,13 +2435,19 @@ async function section6() {
     const r = await api(
       "POST",
       "/orders",
-      { customerId: state.tier1CustomerNoPriceId, items: [{ productId: state.tieredProductId, qty: 1 }] },
+      {
+        customerId: state.tier1CustomerNoPriceId,
+        items: [{ productId: state.tieredProductId, qty: 1 }],
+      },
       state.operatorToken,
     );
     assert(r.id, "No order ID");
     const li = r.lineItems?.[0];
     assert(li, "No line items");
-    assert(Number(li.unitPrice) === 10, `unitPrice=${li.unitPrice}, expected 10 (tier 1 = list price)`);
+    assert(
+      Number(li.unitPrice) === 10,
+      `unitPrice=${li.unitPrice}, expected 10 (tier 1 = list price)`,
+    );
     assert(li.priceType === "STANDARD", `priceType=${li.priceType}, expected STANDARD`);
   });
 
@@ -1997,7 +2475,10 @@ async function section6() {
     );
     const li = r.lineItems?.[0];
     assert(li, "No line items");
-    assert(Number(li.unitPrice) === 7, `unitPrice=${li.unitPrice}, expected 7 (tier 4 from override)`);
+    assert(
+      Number(li.unitPrice) === 7,
+      `unitPrice=${li.unitPrice}, expected 7 (tier 4 from override)`,
+    );
     assert(li.priceType === "SPECIAL", `priceType=${li.priceType}, expected SPECIAL`);
     assert(Number(li.originalPrice) === 10, `originalPrice=${li.originalPrice}, expected 10`);
     state.tieredOrderId = r.id;
@@ -2007,7 +2488,10 @@ async function section6() {
     const r = await api(
       "POST",
       "/orders",
-      { customerId: state.tier1CustomerNoPriceId, items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 5.00 }] },
+      {
+        customerId: state.tier1CustomerNoPriceId,
+        items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 5.0 }],
+      },
       state.operatorToken,
     );
     const li = r.lineItems?.[0];
@@ -2021,13 +2505,19 @@ async function section6() {
     const r = await api(
       "POST",
       "/orders",
-      { customerId: state.tier3CustomerId, items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 12.00 }] },
+      {
+        customerId: state.tier3CustomerId,
+        items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 12.0 }],
+      },
       state.operatorToken,
     );
     const li = r.lineItems?.[0];
     assert(li, "No line items");
     // Override 12 is > list price 10, so it's ignored; tier-3 price (8) should be used
-    assert(Number(li.unitPrice) === 8, `unitPrice=${li.unitPrice}, expected 8 (tier wins over override >= list)`);
+    assert(
+      Number(li.unitPrice) === 8,
+      `unitPrice=${li.unitPrice}, expected 8 (tier wins over override >= list)`,
+    );
     assert(li.priceType === "SPECIAL", `priceType=${li.priceType}, expected SPECIAL`);
   });
 
@@ -2035,7 +2525,10 @@ async function section6() {
     const r = await api(
       "POST",
       "/orders",
-      { customerId: state.tier3CustomerId, items: [{ productId: state.untieredProductId, qty: 1 }] },
+      {
+        customerId: state.tier3CustomerId,
+        items: [{ productId: state.untieredProductId, qty: 1 }],
+      },
       state.operatorToken,
     );
     const li = r.lineItems?.[0];
@@ -2052,8 +2545,8 @@ async function section6() {
       {
         customerId: state.tier3CustomerId,
         items: [
-          { productId: state.tieredProductId, qty: 3 },  // 8.00 x 3 = 24
-          { productId: state.productId, qty: 2 },        // 10.00 x 2 = 20 (tier 3 of non-tiered product)
+          { productId: state.tieredProductId, qty: 3 }, // 8.00 x 3 = 24
+          { productId: state.productId, qty: 2 }, // 10.00 x 2 = 20 (tier 3 of non-tiered product)
         ],
       },
       state.operatorToken,
@@ -2063,21 +2556,25 @@ async function section6() {
     assert(total > 0, `total=${total}, expected > 0`);
   });
 
-  await test(143, "Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15", async () => {
-    const r = await api(
-      "POST",
-      "/orders",
-      {
-        customerId: state.tier3CustomerId,
-        items: [{ productId: state.tieredProductId, boxes: 2, pieces: 3, qty: 15 }],
-      },
-      state.operatorToken,
-    );
-    const li = r.lineItems?.[0];
-    assert(li, "No line items");
-    const qty = Number(li.qty);
-    assert(qty === 15, `qty=${qty}, expected 15`);
-  });
+  await test(
+    143,
+    "Boxes/pieces qty calculation: boxes=2, pieces=3, unitsPerBox=6 → qty=15",
+    async () => {
+      const r = await api(
+        "POST",
+        "/orders",
+        {
+          customerId: state.tier3CustomerId,
+          items: [{ productId: state.tieredProductId, boxes: 2, pieces: 3, qty: 15 }],
+        },
+        state.operatorToken,
+      );
+      const li = r.lineItems?.[0];
+      assert(li, "No line items");
+      const qty = Number(li.qty);
+      assert(qty === 15, `qty=${qty}, expected 15`);
+    },
+  );
 
   // ── 6.5 Estimate Price Resolution ──
 
@@ -2111,7 +2608,10 @@ async function section6() {
     );
     const item = r.items?.[0];
     assert(item, "No estimate items");
-    assert(Number(item.unitPrice) === 7, `unitPrice=${item.unitPrice}, expected 7 (tier 4 override)`);
+    assert(
+      Number(item.unitPrice) === 7,
+      `unitPrice=${item.unitPrice}, expected 7 (tier 4 override)`,
+    );
     assert(item.priceType === "SPECIAL", `priceType=${item.priceType}`);
   });
 
@@ -2121,7 +2621,7 @@ async function section6() {
       "/estimates",
       {
         customerId: state.tier1CustomerNoPriceId,
-        items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 4.00 }],
+        items: [{ productId: state.tieredProductId, qty: 1, unitPrice: 4.0 }],
         expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
       },
       state.operatorToken,
@@ -2166,30 +2666,37 @@ async function section6() {
     assert(qty === 8, `qty=${qty}, expected 8 (1*6+2)`);
   });
 
-  await test(149, "Estimate lifecycle: create → send → accept → convert → invoice prices match", async () => {
-    const est = await api(
-      "POST",
-      "/estimates",
-      {
-        customerId: state.tier3CustomerId,
-        items: [{ productId: state.tieredProductId, qty: 2 }],
-        expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-      },
-      state.operatorToken,
-    );
-    state.tieredEstimateId = est.id;
-    const estPrice = Number(est.items?.[0]?.unitPrice);
+  await test(
+    149,
+    "Estimate lifecycle: create → send → accept → convert → invoice prices match",
+    async () => {
+      const est = await api(
+        "POST",
+        "/estimates",
+        {
+          customerId: state.tier3CustomerId,
+          items: [{ productId: state.tieredProductId, qty: 2 }],
+          expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        },
+        state.operatorToken,
+      );
+      state.tieredEstimateId = est.id;
+      const estPrice = Number(est.items?.[0]?.unitPrice);
 
-    await api("POST", `/estimates/${est.id}/send`, {}, state.operatorToken);
-    await api("POST", `/estimates/${est.id}/accept`, {}, state.operatorToken);
-    const inv = await api("POST", `/estimates/${est.id}/convert`, {}, state.operatorToken);
-    assert(inv.id, "No invoice created from estimate");
+      await api("POST", `/estimates/${est.id}/send`, {}, state.operatorToken);
+      await api("POST", `/estimates/${est.id}/accept`, {}, state.operatorToken);
+      const inv = await api("POST", `/estimates/${est.id}/convert`, {}, state.operatorToken);
+      assert(inv.id, "No invoice created from estimate");
 
-    // Verify invoice preserves prices
-    const invDetail = await api("GET", `/invoices/${inv.id}`, null, state.operatorToken);
-    const invPrice = Number(invDetail.items?.[0]?.unitPrice);
-    assert(invPrice === estPrice, `Invoice unitPrice ${invPrice} != estimate unitPrice ${estPrice}`);
-  });
+      // Verify invoice preserves prices
+      const invDetail = await api("GET", `/invoices/${inv.id}`, null, state.operatorToken);
+      const invPrice = Number(invDetail.items?.[0]?.unitPrice);
+      assert(
+        invPrice === estPrice,
+        `Invoice unitPrice ${invPrice} != estimate unitPrice ${estPrice}`,
+      );
+    },
+  );
 
   // ── 6.6 Price Consistency ──
 
@@ -2206,7 +2713,12 @@ async function section6() {
     await api("PATCH", `/orders/${order.id}/status`, { status: "DELIVERED" }, state.operatorToken);
 
     // Find the auto-created invoice
-    const invs = await api("GET", `/invoices?customerId=${state.tier3CustomerId}`, null, state.operatorToken);
+    const invs = await api(
+      "GET",
+      `/invoices?customerId=${state.tier3CustomerId}`,
+      null,
+      state.operatorToken,
+    );
     const invList = invs.data || invs;
     const inv = Array.isArray(invList) ? invList.find((i) => i.orderId === order.id) : null;
     if (inv) {
@@ -2219,9 +2731,13 @@ async function section6() {
     }
   });
 
-  await test(151, "Invoice-from-estimate preserves tier prices (verified in test 149)", async () => {
-    assert(true, "Covered by test 149");
-  });
+  await test(
+    151,
+    "Invoice-from-estimate preserves tier prices (verified in test 149)",
+    async () => {
+      assert(true, "Covered by test 149");
+    },
+  );
 
   // ── 6.7 Edge Cases ──
 
@@ -2251,10 +2767,24 @@ async function section6() {
     );
     assert(r.pricingTier === 5, `pricingTier=${r.pricingTier}, expected 5 (last write)`);
     // Clean up
-    const prices = await api("GET", `/customers/${state.tier3CustomerId}/prices`, null, state.operatorToken);
+    const prices = await api(
+      "GET",
+      `/customers/${state.tier3CustomerId}/prices`,
+      null,
+      state.operatorToken,
+    );
     const pList = prices.data || prices;
-    const cp = Array.isArray(pList) ? pList.find((p) => p.productId === state.tieredProductId) : null;
-    if (cp) await probe("DELETE", `/customers/${state.tier3CustomerId}/prices/${cp.id}`, null, state.operatorToken, state.qaSlug);
+    const cp = Array.isArray(pList)
+      ? pList.find((p) => p.productId === state.tieredProductId)
+      : null;
+    if (cp)
+      await probe(
+        "DELETE",
+        `/customers/${state.tier3CustomerId}/prices/${cp.id}`,
+        null,
+        state.operatorToken,
+        state.qaSlug,
+      );
   });
 
   await test(154, "Delete customer cascades CustomerPrices", async () => {
@@ -2268,14 +2798,34 @@ async function section6() {
         email: `temp_${Date.now()}@qa.test`,
         phone: "555-0099",
         username: `qa_temp_${Date.now()}`,
-        addresses: [{ line1: "1 Temp St", label: "Delivery", city: "T", state: "VIC", zip: "3000", isDefault: true }],
+        addresses: [
+          {
+            line1: "1 Temp St",
+            label: "Delivery",
+            city: "T",
+            state: "VIC",
+            zip: "3000",
+            isDefault: true,
+          },
+        ],
       },
       state.operatorToken,
     );
     const tcId = tc.customer?.id || tc.id;
-    await api("POST", `/customers/${tcId}/prices`, { productId: state.tieredProductId, pricingTier: 5 }, state.operatorToken);
+    await api(
+      "POST",
+      `/customers/${tcId}/prices`,
+      { productId: state.tieredProductId, pricingTier: 5 },
+      state.operatorToken,
+    );
     // Delete customer
-    const { status } = await probe("DELETE", `/customers/${tcId}`, null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "DELETE",
+      `/customers/${tcId}`,
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200 || status === 204, `Delete returned ${status}`);
   });
 
@@ -2287,8 +2837,19 @@ async function section6() {
       { name: "Temp Cascade Prod", sku: `TMP-${Date.now()}`, pricePerUnit: "1.00", unit: "each" },
       state.operatorToken,
     );
-    await api("POST", `/customers/${state.customerId}/prices`, { productId: tp.id, pricingTier: 3 }, state.operatorToken);
-    const { status } = await probe("DELETE", `/products/${tp.id}`, null, state.operatorToken, state.qaSlug);
+    await api(
+      "POST",
+      `/customers/${state.customerId}/prices`,
+      { productId: tp.id, pricingTier: 3 },
+      state.operatorToken,
+    );
+    const { status } = await probe(
+      "DELETE",
+      `/products/${tp.id}`,
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200 || status === 204, `Delete returned ${status}`);
   });
 }
@@ -2299,7 +2860,10 @@ async function section7() {
   console.log(`\n${B}═══ SECTION 7: COVERAGE GAPS ══════════════════════${X}`);
 
   // Refresh operator token
-  const opLogin = await api("POST", "/auth/login", { username: "qa_operator", password: "QaOperator1!" });
+  const opLogin = await api("POST", "/auth/login", {
+    username: "qa_operator",
+    password: "QaOperator1!",
+  });
   state.operatorToken = opLogin.accessToken;
 
   await test(156, "Invoice payment recording", async () => {
@@ -2309,7 +2873,9 @@ async function section7() {
       "/invoices",
       {
         customerId: state.customerId,
-        items: [{ description: "Payment test svc", qty: 1, unitPrice: 100, discount: 0, taxRate: 0 }],
+        items: [
+          { description: "Payment test svc", qty: 1, unitPrice: 100, discount: 0, taxRate: 0 },
+        ],
       },
       state.operatorToken,
     );
@@ -2322,14 +2888,20 @@ async function section7() {
       state.operatorToken,
       state.qaSlug,
     );
-    assert(status === 200 || status === 201, `Expected 200/201, got ${status}: ${JSON.stringify(data?.message || data)}`);
+    assert(
+      status === 200 || status === 201,
+      `Expected 200/201, got ${status}: ${JSON.stringify(data?.message || data)}`,
+    );
   });
 
   await test(157, "Invoice void", async () => {
     const inv = await api(
       "POST",
       "/invoices",
-      { customerId: state.customerId, items: [{ description: "Void test", qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }] },
+      {
+        customerId: state.customerId,
+        items: [{ description: "Void test", qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+      },
       state.operatorToken,
     );
     const r = await api("POST", `/invoices/${inv.id}/void`, {}, state.operatorToken);
@@ -2337,8 +2909,17 @@ async function section7() {
   });
 
   await test(158, "Invoice duplicate", async () => {
-    if (!state.manualInvoiceId2) { skip(158, "Invoice duplicate", "No invoice ID from test 156"); return; }
-    const { status, data } = await probe("POST", `/invoices/${state.manualInvoiceId2}/duplicate`, {}, state.operatorToken, state.qaSlug);
+    if (!state.manualInvoiceId2) {
+      skip(158, "Invoice duplicate", "No invoice ID from test 156");
+      return;
+    }
+    const { status, data } = await probe(
+      "POST",
+      `/invoices/${state.manualInvoiceId2}/duplicate`,
+      {},
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200 || status === 201, `Expected 200/201, got ${status}`);
     assert(data.id, "No duplicated invoice ID");
   });
@@ -2348,7 +2929,10 @@ async function section7() {
     const inv = await api(
       "POST",
       "/invoices",
-      { customerId: state.customerId, items: [{ description: "Revert test", qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }] },
+      {
+        customerId: state.customerId,
+        items: [{ description: "Revert test", qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+      },
       state.operatorToken,
     );
     await api("POST", `/invoices/${inv.id}/send`, {}, state.operatorToken);
@@ -2388,7 +2972,12 @@ async function section7() {
   });
 
   await test(162, "Customer tags: create", async () => {
-    const r = await api("POST", "/customers/tags", { name: "QA-VIP", color: "#ff0000" }, state.operatorToken);
+    const r = await api(
+      "POST",
+      "/customers/tags",
+      { name: "QA-VIP", color: "#ff0000" },
+      state.operatorToken,
+    );
     assert(r.id, "No tag ID");
     state.tagId = r.id;
   });
@@ -2426,7 +3015,13 @@ async function section7() {
   });
 
   await test(166, "Bookkeeping summary", async () => {
-    const { status } = await probe("GET", "/bookkeeping/summary", null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      "/bookkeeping/summary",
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 
@@ -2450,30 +3045,59 @@ async function section7() {
     const r = await api(
       "POST",
       "/inventory/movements/purchase",
-      { productId: state.productId, quantity: 20, unitCost: 5.00, notes: "QA purchase" },
+      { productId: state.productId, quantity: 20, unitCost: 5.0, notes: "QA purchase" },
       state.operatorToken,
     );
     assert(r.id || r.type === "PURCHASE", "No purchase record");
   });
 
   await test(170, "Customer export CSV", async () => {
-    const { status } = await probe("GET", "/customers/export", null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      "/customers/export",
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 
   await test(171, "Invoice PDF generation", async () => {
-    if (!state.manualInvoiceId2) { skip(171, "Invoice PDF", "No invoice ID"); return; }
-    const { status } = await probe("GET", `/invoices/${state.manualInvoiceId2}/pdf`, null, state.operatorToken, state.qaSlug);
-    assert(status === 200 || status === 201 || status === 202, `Expected 200/201/202, got ${status}`);
+    if (!state.manualInvoiceId2) {
+      skip(171, "Invoice PDF", "No invoice ID");
+      return;
+    }
+    const { status } = await probe(
+      "GET",
+      `/invoices/${state.manualInvoiceId2}/pdf`,
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
+    assert(
+      status === 200 || status === 201 || status === 202,
+      `Expected 200/201/202, got ${status}`,
+    );
   });
 
   await test(172, "Customer statement", async () => {
-    const { status } = await probe("GET", `/customers/${state.customerId}/statement`, null, state.operatorToken, state.qaSlug);
+    const { status } = await probe(
+      "GET",
+      `/customers/${state.customerId}/statement`,
+      null,
+      state.operatorToken,
+      state.qaSlug,
+    );
     assert(status === 200, `Expected 200, got ${status}`);
   });
 
   await test(173, "Product barcode lookup", async () => {
-    const r = await api("GET", `/products/barcode/${state.productBarcode}`, null, state.operatorToken);
+    const r = await api(
+      "GET",
+      `/products/barcode/${state.productBarcode}`,
+      null,
+      state.operatorToken,
+    );
     assert(r.id === state.productId, `Product ID mismatch: ${r.id}`);
   });
 
@@ -2487,8 +3111,16 @@ async function section7() {
     assert(s.id, "No supplier created");
     const list = await api("GET", "/inventory/suppliers", null, state.operatorToken);
     const suppliers = list.data || list;
-    assert(Array.isArray(suppliers) && suppliers.some((sup) => sup.id === s.id), "Supplier not in list");
-    const updated = await api("PATCH", `/inventory/suppliers/${s.id}`, { contactName: "S3 Updated" }, state.operatorToken);
+    assert(
+      Array.isArray(suppliers) && suppliers.some((sup) => sup.id === s.id),
+      "Supplier not in list",
+    );
+    const updated = await api(
+      "PATCH",
+      `/inventory/suppliers/${s.id}`,
+      { contactName: "S3 Updated" },
+      state.operatorToken,
+    );
     assert(updated.contactName === "S3 Updated", `contactName=${updated.contactName}`);
   });
 
@@ -2514,10 +3146,20 @@ async function teardown() {
   console.log(`\n${B}═══ TEARDOWN ════════════════════════════════════════${X}`);
   try {
     if (state.qa2TenantId) {
-      await superApi("DELETE", `/platform-admin/tenants/${state.qa2TenantId}`, null, state.superAdminToken);
+      await superApi(
+        "DELETE",
+        `/platform-admin/tenants/${state.qa2TenantId}`,
+        null,
+        state.superAdminToken,
+      );
       console.log(`  ${G}✓${X} Tenant B deleted: ${state.qa2Slug}`);
     }
-    await superApi("DELETE", `/platform-admin/tenants/${state.qaTenantId}`, null, state.superAdminToken);
+    await superApi(
+      "DELETE",
+      `/platform-admin/tenants/${state.qaTenantId}`,
+      null,
+      state.superAdminToken,
+    );
     console.log(`  ${G}✓${X} Tenant A deleted: ${state.qaSlug}`);
   } catch (e) {
     console.log(`  ${Y}⚠ Teardown warning: ${e.message}${X}`);
@@ -2585,8 +3227,8 @@ async function main() {
   console.log(`\n${"═".repeat(52)}`);
   console.log(
     `${passCount > 0 ? G : ""}✓ ${passCount} passed${X}  ` +
-    `${failCount > 0 ? R : ""}✗ ${failCount} failed${X}  ` +
-    `${skipCount > 0 ? Y : ""}– ${skipCount} skipped${X}`,
+      `${failCount > 0 ? R : ""}✗ ${failCount} failed${X}  ` +
+      `${skipCount > 0 ? Y : ""}– ${skipCount} skipped${X}`,
   );
   console.log(`${"═".repeat(52)}\n`);
 

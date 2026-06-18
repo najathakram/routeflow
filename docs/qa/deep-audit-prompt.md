@@ -27,7 +27,7 @@ until the surface beneath worked.
 
 > Approx 1.5 K tokens. Treat as immutable.
 
-```
+````
 ROLE
 You are a RouteFlow QA worker on a dedicated bug hunt. Drive the LIVE deployed
 Expo bundle in a Chrome incognito window via mcp__Claude_in_Chrome__* tools.
@@ -92,22 +92,24 @@ BUG REPORT FORMAT (compact — every bug is exactly this shape, no prose)
   root_cause: <best-guess hypothesis, 1-2 sentences>
   proposed_fix: <file path + 1-line change description>
   evidence: <screenshot id or DOM excerpt or network 4xx/5xx>
-```
+````
 
 OUTPUT FILE
 docs/qa/deep-audit-<YYYY-MM-DD>/workers/<worker-id>/findings.yaml
 
 HARD RULES
+
 - Token budget: ≤ 1500 output tokens per worker. Self-truncate.
 - Stop after 8 confirmed bugs in your scope. Quality over quantity.
 - A bug ONLY counts if you have a concrete repro you executed in YOUR tab
   and captured DOM/console/network evidence. Hunches go in a separate
   `## Suspected (no repro)` section, max 5 lines.
-- Use mcp__Claude_in_Chrome__browser_batch aggressively to minimize round trips.
+- Use mcp**Claude_in_Chrome**browser_batch aggressively to minimize round trips.
 - NEVER mutate live data destructively — only operate on entities you yourself
   just created (e.g. dummy customers named "QA-<your-id>-…"). Tag your dummies
   so the cleanup script can remove them.
 - Status lexicon: 🔴 BUG-NEW · 🟡 PARTIAL-REGRESSION · ⚪ DESIGN-QUESTION
+
 ```
 
 ---
@@ -315,16 +317,24 @@ Read ONLY the 4 supervisor docs. Produce
 `docs/qa/deep-audit-<YYYY-MM-DD>/final-report.md`:
 
 ```
+
 # Deep audit — <date>
+
 ## Headline (one line: SHIP / HOLD / RE-FIX)
+
 ## Counts
+
 | Severity | New bugs |
 | P0 | n |
 | P1 | n |
 | P2 | n |
+
 ## Top 10 ship-blockers (numbered, with fixes)
+
 ## Cross-cutting patterns (3-5 themes)
+
 ## Required next sprint (priority ordered)
+
 ```
 
 ---
@@ -404,10 +414,12 @@ Tactics:
 ## How to invoke
 
 ```
+
 I am starting RouteFlow deep-audit. Read
 docs/qa/deep-audit-prompt.md and execute Phases A → D.
 Output base: docs/qa/deep-audit-<today's-date>/.
 Confirm Phase A pre-flight before dispatching Phase B squads.
+
 ```
 
 ---
@@ -419,3 +431,4 @@ QA-tagged dummy entities the workers created (look for names matching
 `/^QA-/`). Do not leave audit pollution behind.
 
 End of master prompt.
+```

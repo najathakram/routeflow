@@ -17,13 +17,13 @@
 ## Counts
 
 | Severity | Product bugs | Env artifacts |
-|---|---|---|
-| P0 | 1 | 0 |
-| P1 | 3 | 0 |
-| P2 | 4 | 2 |
-| P3 | 1 | 1 |
+| -------- | ------------ | ------------- |
+| P0       | 1            | 0             |
+| P1       | 3            | 0             |
+| P2       | 4            | 2             |
+| P3       | 1            | 1             |
 
-*Notes: BUG-OPS1-6 and BUG-W-5 are merged as one product P1. BUG-W-2 counts as 1 product P1 (the underlying auth gap). BUG-W-1 and BUG-W-3 are env artifacts. BUG-W-4 is an env artifact.*
+_Notes: BUG-OPS1-6 and BUG-W-5 are merged as one product P1. BUG-W-2 counts as 1 product P1 (the underlying auth gap). BUG-W-1 and BUG-W-3 are env artifacts. BUG-W-4 is an env artifact._
 
 ---
 

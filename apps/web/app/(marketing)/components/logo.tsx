@@ -15,13 +15,7 @@ export function Logo({ size = 28, dark = false }: LogoProps) {
   const origin = dark ? "#FAF6EE" : "#0E1F36";
   const destFill = dark ? "#0E1F36" : "#FAF6EE";
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 64 64"
-      fill="none"
-      aria-hidden="true"
-    >
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
       <path
         d="M 14 14 C 40 10, 56 24, 50 50"
         stroke={arc}

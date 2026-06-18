@@ -1,5 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 export interface Transaction {
   id: string;
@@ -7,7 +7,7 @@ export interface Transaction {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string };
   order?: { id: string; orderNumber: string };
-  status: 'UNPAID' | 'PARTIAL' | 'PAID';
+  status: "UNPAID" | "PARTIAL" | "PAID";
   totalOwed: number;
   totalPaid: number;
   dueDate?: string;
@@ -19,7 +19,7 @@ export interface Transaction {
 export interface Payment {
   id: string;
   amount: number;
-  method: 'CASH' | 'CHECK' | 'ACH' | 'OTHER';
+  method: "CASH" | "CHECK" | "ACH" | "OTHER";
   reference?: string;
   notes?: string;
   createdAt: string;
@@ -39,21 +39,27 @@ interface PaginatedResponse<T> {
 
 export function useBookkeepingSummary() {
   return useQuery<BookkeepingSummary>({
-    queryKey: ['bookkeeping', 'summary'],
-    queryFn: () => apiClient.get('/bookkeeping/summary').then((r) => r.data),
+    queryKey: ["bookkeeping", "summary"],
+    queryFn: () => apiClient.get("/bookkeeping/summary").then((r) => r.data),
   });
 }
 
-export function useTransactions(params?: { status?: string; customerId?: string; dateFrom?: string; dateTo?: string; page?: number }) {
+export function useTransactions(params?: {
+  status?: string;
+  customerId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+}) {
   return useQuery<PaginatedResponse<Transaction>>({
-    queryKey: ['bookkeeping', 'transactions', params],
-    queryFn: () => apiClient.get('/bookkeeping/transactions', { params }).then((r) => r.data),
+    queryKey: ["bookkeeping", "transactions", params],
+    queryFn: () => apiClient.get("/bookkeeping/transactions", { params }).then((r) => r.data),
   });
 }
 
 export function useTransaction(id: string) {
   return useQuery<Transaction>({
-    queryKey: ['bookkeeping', 'transactions', id],
+    queryKey: ["bookkeeping", "transactions", id],
     queryFn: () => apiClient.get(`/bookkeeping/transactions/${id}`).then((r) => r.data),
     enabled: !!id,
   });
@@ -61,11 +67,15 @@ export function useTransaction(id: string) {
 
 export function useRecordPayment() {
   const qc = useQueryClient();
-  return useMutation<Transaction, Error, { id: string; amount: number; method: string; reference?: string; notes?: string }>({
+  return useMutation<
+    Transaction,
+    Error,
+    { id: string; amount: number; method: string; reference?: string; notes?: string }
+  >({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/bookkeeping/transactions/${id}/payments`, data).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['bookkeeping'] });
+      qc.invalidateQueries({ queryKey: ["bookkeeping"] });
     },
   });
 }

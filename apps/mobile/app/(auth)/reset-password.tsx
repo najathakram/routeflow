@@ -203,7 +203,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   submitBtnBusy: { opacity: 0.7 },
-  submitLabel: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#ffffff", letterSpacing: -0.2 },
+  submitLabel: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: "#ffffff",
+    letterSpacing: -0.2,
+  },
   doneContainer: {
     flex: 1,
     alignItems: "center",

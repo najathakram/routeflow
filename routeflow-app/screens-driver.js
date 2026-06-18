@@ -7,7 +7,7 @@
 function phone(label, sublabel, bodyHTML, opts = {}) {
   return `
     <div class="phone-slot">
-      <div class="phone-label"><b>${label}</b>${sublabel ? ' · ' + sublabel : ''}</div>
+      <div class="phone-label"><b>${label}</b>${sublabel ? " · " + sublabel : ""}</div>
       <div class="phone">
         <div class="dynamic-island"></div>
         ${bodyHTML}
@@ -19,24 +19,24 @@ function phone(label, sublabel, bodyHTML, opts = {}) {
 const SB_ICONS = `<svg width="17" height="12" viewBox="0 0 17 12" fill="none"><rect x="0" y="3" width="3" height="9" rx="0.8" fill="currentColor"/><rect x="4.5" y="2" width="3" height="10" rx="0.8" fill="currentColor"/><rect x="9" y="0.5" width="3" height="11.5" rx="0.8" fill="currentColor"/><rect x="13.5" y="0" width="3" height="12" rx="0.8" fill="currentColor" opacity="0.35"/></svg><svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M8 2.5C5.5 2.5 3.3 3.5 1.8 5.2L0 3.4C2 1.3 4.8 0 8 0s6 1.3 8 3.4L14.2 5.2C12.7 3.5 10.5 2.5 8 2.5z" fill="currentColor"/><path d="M8 6c-1.6 0-3 .7-4 1.7L2.4 6.1C3.8 4.8 5.8 4 8 4s4.2.8 5.6 2.1L12 7.7C11 6.7 9.6 6 8 6z" fill="currentColor"/><circle cx="8" cy="10" r="2" fill="currentColor"/></svg><svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3.5" stroke="currentColor" stroke-opacity="0.4"/><rect x="2" y="2" width="16" height="8" rx="2" fill="currentColor"/><path d="M23 4v4a2 2 0 000-4z" fill="currentColor" fill-opacity="0.5"/></svg>`;
 
 const statusbar = (light = false) => `
-  <div class="statusbar" style="${light ? 'color:#fff' : ''}">
-    <span class="sb-time" ${light ? 'style="color:#fff"' : ''}>9:41</span>
-    <div class="sb-icons" ${light ? 'style="color:#fff"' : ''}>${SB_ICONS}</div>
+  <div class="statusbar" style="${light ? "color:#fff" : ""}">
+    <span class="sb-time" ${light ? 'style="color:#fff"' : ""}>9:41</span>
+    <div class="sb-icons" ${light ? 'style="color:#fff"' : ""}>${SB_ICONS}</div>
   </div>`;
 
 /* tab bar for driver */
-function driverTabs(active = 'route') {
+function driverTabs(active = "route") {
   const t = (id, label, svg) => `
-    <div class="tab ${active === id ? 'active' : ''}">
+    <div class="tab ${active === id ? "active" : ""}">
       <div class="tab-icon">${svg}</div>
       <div class="tab-label">${label}</div>
     </div>`;
   return `<div class="tabbar">
-    ${t('route', 'Route', '<svg viewBox="0 0 24 24" fill="none"><path d="M5 6a3 3 0 106 0 3 3 0 00-6 0zM13 18a3 3 0 106 0 3 3 0 00-6 0zM8 9v2a4 4 0 004 4h2a4 4 0 014 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
-    ${t('map', 'Map', '<svg viewBox="0 0 24 24" fill="none"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 4v16M15 6v16" stroke="currentColor" stroke-width="1.8"/></svg>')}
-    ${t('orders', 'Orders', '<svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="16" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v4M16 3v4M4 11h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
-    ${t('cash', 'Cash', '<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="2.5" stroke="currentColor" stroke-width="1.8"/></svg>')}
-    ${t('more', 'More', '<svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>')}
+    ${t("route", "Route", '<svg viewBox="0 0 24 24" fill="none"><path d="M5 6a3 3 0 106 0 3 3 0 00-6 0zM13 18a3 3 0 106 0 3 3 0 00-6 0zM8 9v2a4 4 0 004 4h2a4 4 0 014 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
+    ${t("map", "Map", '<svg viewBox="0 0 24 24" fill="none"><path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 4v16M15 6v16" stroke="currentColor" stroke-width="1.8"/></svg>')}
+    ${t("orders", "Orders", '<svg viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="16" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v4M16 3v4M4 11h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>')}
+    ${t("cash", "Cash", '<svg viewBox="0 0 24 24" fill="none"><rect x="3" y="7" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="13" r="2.5" stroke="currentColor" stroke-width="1.8"/></svg>')}
+    ${t("more", "More", '<svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg>')}
   </div>`;
 }
 
@@ -148,7 +148,7 @@ const drv_sod = `
     <div style="height:16px"></div>
   </div></div>
 
-  ${driverTabs('route')}
+  ${driverTabs("route")}
 </div>`;
 
 /* ═══════════════ SCREEN 2 — TODAY'S ROUTE ═══════════════ */
@@ -212,33 +212,94 @@ const drv_route = `
     <!-- Stop cards -->
     <div style="padding:0 16px;display:flex;flex-direction:column;gap:8px">
       ${[
-        {n:1, name:'North Deli', addr:'18 North Parade · $246 collected', status:'done', pill:'Delivered', color:'var(--green)'},
-        {n:2, name:'Bayside Bistro', addr:'7 Bay Rd · $312 cash', status:'done', pill:'Delivered', color:'var(--green)'},
-        {n:3, name:'Atlas Catering', addr:'92 River St · $198', status:'done', pill:'Delivered', color:'var(--green)'},
-        {n:4, name:'Green Market', addr:'14 Ferry Lane · Left at door', status:'done', pill:'Unattended', color:'var(--green)'},
-        {n:5, name:"Luna Roastery", addr:'6 Grove St · $312', status:'done', pill:'Delivered', color:'var(--green)'},
-        {n:6, name:'Harbor Café', addr:'42 Harbour St · 3 items · $184', status:'next', pill:'Up next', color:'var(--brand)'},
-        {n:7, name:'Westpark Grill', addr:'15 West End Blvd · 5 items', status:'pending', pill:'', color:'var(--gray4)'},
-        {n:8, name:'Central Kitchen', addr:'3 Market Sq · 4 items', status:'pending', pill:'Call ahead', color:'var(--gray4)', callout:true},
-      ].map(s => `
+        {
+          n: 1,
+          name: "North Deli",
+          addr: "18 North Parade · $246 collected",
+          status: "done",
+          pill: "Delivered",
+          color: "var(--green)",
+        },
+        {
+          n: 2,
+          name: "Bayside Bistro",
+          addr: "7 Bay Rd · $312 cash",
+          status: "done",
+          pill: "Delivered",
+          color: "var(--green)",
+        },
+        {
+          n: 3,
+          name: "Atlas Catering",
+          addr: "92 River St · $198",
+          status: "done",
+          pill: "Delivered",
+          color: "var(--green)",
+        },
+        {
+          n: 4,
+          name: "Green Market",
+          addr: "14 Ferry Lane · Left at door",
+          status: "done",
+          pill: "Unattended",
+          color: "var(--green)",
+        },
+        {
+          n: 5,
+          name: "Luna Roastery",
+          addr: "6 Grove St · $312",
+          status: "done",
+          pill: "Delivered",
+          color: "var(--green)",
+        },
+        {
+          n: 6,
+          name: "Harbor Café",
+          addr: "42 Harbour St · 3 items · $184",
+          status: "next",
+          pill: "Up next",
+          color: "var(--brand)",
+        },
+        {
+          n: 7,
+          name: "Westpark Grill",
+          addr: "15 West End Blvd · 5 items",
+          status: "pending",
+          pill: "",
+          color: "var(--gray4)",
+        },
+        {
+          n: 8,
+          name: "Central Kitchen",
+          addr: "3 Market Sq · 4 items",
+          status: "pending",
+          pill: "Call ahead",
+          color: "var(--gray4)",
+          callout: true,
+        },
+      ]
+        .map(
+          (s) => `
         <div style="background:var(--bg-elev);border-radius:14px;overflow:hidden;border-left:3px solid ${s.color}">
           <div style="padding:12px 14px">
             <div style="display:flex;align-items:center;gap:10px">
-              <div style="width:26px;height:26px;border-radius:999px;background:${s.status==='pending'?'var(--fill3)':s.color};color:${s.status==='pending'?'var(--label)':'#fff'};font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">${s.n}</div>
+              <div style="width:26px;height:26px;border-radius:999px;background:${s.status === "pending" ? "var(--fill3)" : s.color};color:${s.status === "pending" ? "var(--label)" : "#fff"};font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center">${s.n}</div>
               <div style="flex:1;min-width:0">
                 <div style="font-size:16px;font-weight:600;color:var(--label);letter-spacing:-0.2px">${s.name}</div>
                 <div style="font-size:13px;color:var(--label2);margin-top:1px">${s.addr}</div>
               </div>
-              ${s.pill ? `<span class="pill pill-${s.status==='done'?'green':s.status==='next'?'brand':'orange'}">${s.pill}</span>` : `<span class="chevron-right">›</span>`}
+              ${s.pill ? `<span class="pill pill-${s.status === "done" ? "green" : s.status === "next" ? "brand" : "orange"}">${s.pill}</span>` : `<span class="chevron-right">›</span>`}
             </div>
           </div>
-        </div>`).join('')}
+        </div>`,
+        )
+        .join("")}
     </div>
 
     <div style="height:16px"></div>
   </div></div>
 
-  ${driverTabs('route')}
+  ${driverTabs("route")}
 </div>`;
 
 /* ═══════════════ SCREEN 3 — LIVE MAP ═══════════════ */
@@ -276,19 +337,21 @@ const drv_map = `
 
     <!-- pins -->
     ${[
-      {x:66, y:232, n:1, done:true},
-      {x:166, y:354, n:2, done:true},
-      {x:268, y:412, n:3, done:true},
-      {x:225, y:556, n:6, active:true},
-      {x:298, y:676, n:8},
-    ].map(p => {
-      const bg = p.active ? '#0B6E6B' : p.done ? '#34C759' : '#fff';
-      const fg = p.active || p.done ? '#fff' : '#0B6E6B';
-      return `<div style="position:absolute;left:${p.x}px;top:${p.y}px;transform:translate(-50%,-100%)">
-        <div style="background:${bg};color:${fg};border:${p.done||p.active?'0':'2px solid #0B6E6B'};font-weight:700;font-size:13px;width:32px;height:32px;border-radius:999px 999px 999px 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.2)"><span style="transform:rotate(45deg)">${p.n}</span></div>
-        ${p.active?`<div style="width:64px;height:64px;border-radius:999px;background:rgba(11,110,107,0.2);position:absolute;top:-16px;left:-16px;z-index:-1;animation:pulse 2s infinite"></div>`:''}
+      { x: 66, y: 232, n: 1, done: true },
+      { x: 166, y: 354, n: 2, done: true },
+      { x: 268, y: 412, n: 3, done: true },
+      { x: 225, y: 556, n: 6, active: true },
+      { x: 298, y: 676, n: 8 },
+    ]
+      .map((p) => {
+        const bg = p.active ? "#0B6E6B" : p.done ? "#34C759" : "#fff";
+        const fg = p.active || p.done ? "#fff" : "#0B6E6B";
+        return `<div style="position:absolute;left:${p.x}px;top:${p.y}px;transform:translate(-50%,-100%)">
+        <div style="background:${bg};color:${fg};border:${p.done || p.active ? "0" : "2px solid #0B6E6B"};font-weight:700;font-size:13px;width:32px;height:32px;border-radius:999px 999px 999px 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(0,0,0,0.2)"><span style="transform:rotate(45deg)">${p.n}</span></div>
+        ${p.active ? `<div style="width:64px;height:64px;border-radius:999px;background:rgba(11,110,107,0.2);position:absolute;top:-16px;left:-16px;z-index:-1;animation:pulse 2s infinite"></div>` : ""}
       </div>`;
-    }).join('')}
+      })
+      .join("")}
 
     <!-- driver (self) -->
     <div style="position:absolute;left:170px;top:420px">
@@ -319,7 +382,12 @@ const drv_map = `
       '<svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M12 2v6M12 16v6M2 12h6M16 12h6" stroke="#0B6E6B" stroke-width="2" stroke-linecap="round"/></svg>',
       '<svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M5 12h14M12 5v14" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg>',
       '<svg viewBox="0 0 24 24" fill="none" width="18" height="18"><path d="M5 12h14" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg>',
-    ].map(s => `<div style="width:44px;height:44px;background:rgba(255,255,255,0.96);border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.12)">${s}</div>`).join('')}
+    ]
+      .map(
+        (s) =>
+          `<div style="width:44px;height:44px;background:rgba(255,255,255,0.96);border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,0.12)">${s}</div>`,
+      )
+      .join("")}
   </div>
 
   <!-- bottom sheet -->
@@ -346,7 +414,7 @@ const drv_map = `
     </div>
   </div>
 
-  ${driverTabs('map')}
+  ${driverTabs("map")}
 </div>
 <style>@keyframes pulse { 0%{transform:scale(0.85);opacity:0.8} 100%{transform:scale(1.6);opacity:0} }</style>
 `;
@@ -402,21 +470,25 @@ const drv_delivery = `
     <div class="grouped-section">
       <div class="list-group">
         ${[
-          {name:'Sourdough Loaf', sku:'SKU 4021', qty:6, done:true},
-          {name:'Butter (500g)', sku:'SKU 1108', qty:4, done:true},
-          {name:'Croissants (6pk)', sku:'SKU 3302', qty:2, short:true},
-        ].map(i => `
+          { name: "Sourdough Loaf", sku: "SKU 4021", qty: 6, done: true },
+          { name: "Butter (500g)", sku: "SKU 1108", qty: 4, done: true },
+          { name: "Croissants (6pk)", sku: "SKU 3302", qty: 2, short: true },
+        ]
+          .map(
+            (i) => `
           <div class="list-row" style="gap:14px">
-            <div style="width:26px;height:26px;border-radius:999px;border:${i.done?'0':'2px solid var(--gray3)'};background:${i.done?'var(--green)':'transparent'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
-              ${i.done?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>':''}
+            <div style="width:26px;height:26px;border-radius:999px;border:${i.done ? "0" : "2px solid var(--gray3)"};background:${i.done ? "var(--green)" : "transparent"};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+              ${i.done ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>' : ""}
             </div>
             <div style="flex:1">
               <div style="font-size:16px;color:var(--label);font-weight:500">${i.name}</div>
               <div style="font-size:12px;color:var(--label2);margin-top:1px">${i.sku}</div>
             </div>
-            ${i.short?'<span class="pill pill-orange" style="font-size:11px;padding:2px 7px">Short</span>':''}
+            ${i.short ? '<span class="pill pill-orange" style="font-size:11px;padding:2px 7px">Short</span>' : ""}
             <div style="background:var(--brand-wash);color:var(--brand);border-radius:8px;padding:4px 10px;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums">×${i.qty}</div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
 
@@ -496,15 +568,23 @@ const drv_payment = `
 
     <!-- Quick amounts -->
     <div style="padding:12px 16px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
-      ${['$50','$100','$164','$200'].map(a=>`
-        <div style="background:var(--fill3);border-radius:12px;padding:12px 0;text-align:center;font-size:15px;font-weight:600;color:var(--label);font-variant-numeric:tabular-nums">${a}</div>`).join('')}
+      ${["$50", "$100", "$164", "$200"]
+        .map(
+          (a) => `
+        <div style="background:var(--fill3);border-radius:12px;padding:12px 0;text-align:center;font-size:15px;font-weight:600;color:var(--label);font-variant-numeric:tabular-nums">${a}</div>`,
+        )
+        .join("")}
     </div>
 
     <!-- Numeric keypad -->
     <div style="padding:14px 16px 0">
       <div style="background:var(--bg);border-radius:14px;overflow:hidden;display:grid;grid-template-columns:repeat(3,1fr);gap:1px">
-        ${['1','2','3','4','5','6','7','8','9','·','0','⌫'].map((k,i)=>`
-          <div style="background:var(--bg-elev);height:56px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;color:var(--label);font-variant-numeric:tabular-nums">${k}</div>`).join('')}
+        ${["1", "2", "3", "4", "5", "6", "7", "8", "9", "·", "0", "⌫"]
+          .map(
+            (k, i) => `
+          <div style="background:var(--bg-elev);height:56px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:500;color:var(--label);font-variant-numeric:tabular-nums">${k}</div>`,
+          )
+          .join("")}
       </div>
     </div>
 
@@ -552,19 +632,23 @@ const drv_cashup = `
     <div class="grouped-section">
       <div class="list-group">
         ${[
-          {d:'$100',n:10,v:'$1,000'},
-          {d:'$50',n:6,v:'$300'},
-          {d:'$20',n:5,v:'$100'},
-          {d:'$10',n:2,v:'$20'},
-          {d:'$5',n:2,v:'$10'},
-          {d:'Coins',n:'—',v:'$0'},
-        ].map(r=>`
+          { d: "$100", n: 10, v: "$1,000" },
+          { d: "$50", n: 6, v: "$300" },
+          { d: "$20", n: 5, v: "$100" },
+          { d: "$10", n: 2, v: "$20" },
+          { d: "$5", n: 2, v: "$10" },
+          { d: "Coins", n: "—", v: "$0" },
+        ]
+          .map(
+            (r) => `
           <div class="list-row" style="gap:14px">
             <div class="list-row-icon" style="background:var(--fill3);color:var(--label);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums">${r.d}</div>
             <span class="row-title">${r.d} notes</span>
             <span style="font-size:15px;color:var(--label2);font-variant-numeric:tabular-nums">× ${r.n}</span>
             <span style="font-size:16px;font-weight:600;color:var(--label);min-width:56px;text-align:right;font-variant-numeric:tabular-nums">${r.v}</span>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
 
@@ -640,28 +724,66 @@ const drv_order = `
     <!-- product rows with quantity steppers -->
     <div style="padding:14px 16px 0;display:flex;flex-direction:column;gap:10px">
       ${[
-        {name:'Sourdough Loaf', sku:'4021', price:'$6.80', qty:6, img:'linear-gradient(135deg,#C9A27A,#8B6A44)'},
-        {name:'Butter (500g)', sku:'1108', price:'$9.20', qty:4, img:'linear-gradient(135deg,#F5E29A,#D8B954)'},
-        {name:'Croissants (6pk)', sku:'3302', price:'$14.00', qty:2, img:'linear-gradient(135deg,#E3BE83,#B1833F)'},
-        {name:'Pain au chocolat', sku:'3308', price:'$3.50', qty:0, img:'linear-gradient(135deg,#8B5A2B,#4A2E17)'},
-        {name:'Raw milk (2L)', sku:'2201', price:'$5.60', qty:0, img:'linear-gradient(135deg,#F4F4F4,#D9D9D9)'},
-      ].map(p=>`
+        {
+          name: "Sourdough Loaf",
+          sku: "4021",
+          price: "$6.80",
+          qty: 6,
+          img: "linear-gradient(135deg,#C9A27A,#8B6A44)",
+        },
+        {
+          name: "Butter (500g)",
+          sku: "1108",
+          price: "$9.20",
+          qty: 4,
+          img: "linear-gradient(135deg,#F5E29A,#D8B954)",
+        },
+        {
+          name: "Croissants (6pk)",
+          sku: "3302",
+          price: "$14.00",
+          qty: 2,
+          img: "linear-gradient(135deg,#E3BE83,#B1833F)",
+        },
+        {
+          name: "Pain au chocolat",
+          sku: "3308",
+          price: "$3.50",
+          qty: 0,
+          img: "linear-gradient(135deg,#8B5A2B,#4A2E17)",
+        },
+        {
+          name: "Raw milk (2L)",
+          sku: "2201",
+          price: "$5.60",
+          qty: 0,
+          img: "linear-gradient(135deg,#F4F4F4,#D9D9D9)",
+        },
+      ]
+        .map(
+          (p) => `
         <div style="background:var(--bg);border-radius:14px;padding:10px;display:flex;align-items:center;gap:12px">
           <div style="width:48px;height:48px;border-radius:10px;background:${p.img};position:relative;overflow:hidden"><div style="position:absolute;inset:0;background:linear-gradient(135deg,transparent 40%,rgba(255,255,255,0.22) 100%)"></div></div>
           <div style="flex:1;min-width:0">
             <div style="font-size:15px;font-weight:600;color:var(--label);letter-spacing:-0.2px">${p.name}</div>
             <div style="font-size:12px;color:var(--label2);margin-top:1px;font-variant-numeric:tabular-nums">SKU ${p.sku} · ${p.price}</div>
           </div>
-          ${p.qty>0?`
+          ${
+            p.qty > 0
+              ? `
             <div style="display:flex;align-items:center;gap:0;background:var(--bg-elev);border:0.5px solid var(--separator);border-radius:10px;padding:3px">
               <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:18px;font-weight:500">−</div>
               <div style="min-width:28px;text-align:center;font-size:16px;font-weight:700;color:var(--label);font-variant-numeric:tabular-nums">${p.qty}</div>
               <div style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:18px;font-weight:500">+</div>
             </div>
-          `:`
+          `
+              : `
             <div style="width:36px;height:36px;background:var(--brand-wash);color:var(--brand);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:300">+</div>
-          `}
-        </div>`).join('')}
+          `
+          }
+        </div>`,
+        )
+        .join("")}
     </div>
 
     <div style="height:16px"></div>
@@ -715,20 +837,59 @@ const drv_standing = `
 
     <div style="padding:12px 16px 0;display:flex;flex-direction:column;gap:10px">
       ${[
-        {name:'Harbor Café', freq:'Mon · Wed · Fri', items:'3 items · $184', next:'Apr 22', color:'#D2691E', init:'HC'},
-        {name:'North Deli', freq:'Every weekday', items:'8 items · $246', next:'Apr 21', color:'#0B6E6B', init:'ND', badge:'Auto-ship'},
-        {name:'Bayside Bistro', freq:'Tuesdays', items:'12 items · $420', next:'Apr 22', color:'#5856D6', init:'BB'},
-        {name:'Central Kitchen', freq:'Daily', items:'6 items · $198', next:'Tomorrow', color:'#34C759', init:'CK'},
-        {name:'Luna Roastery', freq:'Every Thursday', items:'4 items · $88', next:'paused', color:'#8E8E93', init:'LR', paused:true},
-      ].map(s=>`
+        {
+          name: "Harbor Café",
+          freq: "Mon · Wed · Fri",
+          items: "3 items · $184",
+          next: "Apr 22",
+          color: "#D2691E",
+          init: "HC",
+        },
+        {
+          name: "North Deli",
+          freq: "Every weekday",
+          items: "8 items · $246",
+          next: "Apr 21",
+          color: "#0B6E6B",
+          init: "ND",
+          badge: "Auto-ship",
+        },
+        {
+          name: "Bayside Bistro",
+          freq: "Tuesdays",
+          items: "12 items · $420",
+          next: "Apr 22",
+          color: "#5856D6",
+          init: "BB",
+        },
+        {
+          name: "Central Kitchen",
+          freq: "Daily",
+          items: "6 items · $198",
+          next: "Tomorrow",
+          color: "#34C759",
+          init: "CK",
+        },
+        {
+          name: "Luna Roastery",
+          freq: "Every Thursday",
+          items: "4 items · $88",
+          next: "paused",
+          color: "#8E8E93",
+          init: "LR",
+          paused: true,
+        },
+      ]
+        .map(
+          (s) => `
         <div style="background:var(--bg-elev);border-radius:16px;overflow:hidden">
           <div style="padding:14px 16px;display:flex;align-items:center;gap:12px">
             <div style="width:40px;height:40px;border-radius:12px;background:${s.color};color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">${s.init}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-size:16px;font-weight:600;color:var(--label);display:flex;align-items:center;gap:6px">${s.name} ${s.badge?`<span class="pill pill-brand" style="font-size:10px;padding:1px 6px">${s.badge}</span>`:''}</div>
+              <div style="font-size:16px;font-weight:600;color:var(--label);display:flex;align-items:center;gap:6px">${s.name} ${s.badge ? `<span class="pill pill-brand" style="font-size:10px;padding:1px 6px">${s.badge}</span>` : ""}</div>
               <div style="font-size:13px;color:var(--label2);margin-top:1px">${s.freq}</div>
             </div>
-            ${s.paused?'<span class="pill pill-gray">Paused</span>':'<span class="chevron-right">›</span>'}
+            ${s.paused ? '<span class="pill pill-gray">Paused</span>' : '<span class="chevron-right">›</span>'}
           </div>
           <div style="padding:10px 16px;border-top:0.5px solid var(--separator);background:var(--bg);display:flex;align-items:center;gap:10px">
             <div style="flex:1">
@@ -743,12 +904,14 @@ const drv_standing = `
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 12h18M3 6h18M3 18h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
             </div>
           </div>
-        </div>`).join('')}
+        </div>`,
+        )
+        .join("")}
     </div>
     <div style="height:16px"></div>
   </div></div>
 
-  ${driverTabs('orders')}
+  ${driverTabs("orders")}
 </div>`;
 
 /* ═══════════════ SCREEN 9 — RETURNS & CREDIT NOTES ═══════════════ */
@@ -780,9 +943,11 @@ const drv_returns = `
     <div class="grouped-section">
       <div class="list-group">
         ${[
-          {name:'Sourdough Loaf', qty:2, reason:'Damaged in transit', amt:'$13.60'},
-          {name:'Butter (500g)', qty:1, reason:'Wrong SKU', amt:'$9.20'},
-        ].map(r=>`
+          { name: "Sourdough Loaf", qty: 2, reason: "Damaged in transit", amt: "$13.60" },
+          { name: "Butter (500g)", qty: 1, reason: "Wrong SKU", amt: "$9.20" },
+        ]
+          .map(
+            (r) => `
           <div class="list-row" style="align-items:flex-start;padding-top:14px;padding-bottom:14px">
             <div class="list-row-icon" style="background:var(--red-wash);color:var(--red)">
               <svg viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M5 6l1 14a2 2 0 002 2h8a2 2 0 002-2l1-14" stroke="currentColor" stroke-width="1.7"/></svg>
@@ -794,15 +959,21 @@ const drv_returns = `
               </div>
               <div style="font-size:13px;color:var(--label2);margin-top:2px">× ${r.qty} · ${r.reason}</div>
             </div>
-          </div>`).join('')}
+          </div>`,
+          )
+          .join("")}
       </div>
     </div>
 
     <!-- Reason chips -->
     <div class="section-inline" style="padding-top:4px"><span class="section-inline-title" style="font-size:17px">Add reason</span></div>
     <div style="padding:0 16px;display:flex;gap:8px;flex-wrap:wrap">
-      ${['Damaged','Expired','Wrong SKU','Short-dated','Customer refused','Quality'].map(r=>`
-        <div class="filter-chip fc-inactive" style="cursor:pointer">${r}</div>`).join('')}
+      ${["Damaged", "Expired", "Wrong SKU", "Short-dated", "Customer refused", "Quality"]
+        .map(
+          (r) => `
+        <div class="filter-chip fc-inactive" style="cursor:pointer">${r}</div>`,
+        )
+        .join("")}
     </div>
 
     <!-- Credit outcome -->
@@ -823,13 +994,13 @@ const drv_returns = `
 
 /* render all driver screens */
 window.driverPhones = [
-  ['01 Start of day', 'Preflight · alerts · today', drv_sod],
-  ['02 Today\'s route', 'List home · next stop hero', drv_route],
-  ['03 Live map', 'Map tab · floating controls', drv_map],
-  ['04 At‑door delivery', 'Items · PoD · actions', drv_delivery],
-  ['05 Collect payment', 'Cash · change · receipts', drv_payment],
-  ['06 End of day', 'Cash-up · van inventory', drv_cashup],
-  ['07 Order at customer', 'Catalog · cart · steppers', drv_order],
-  ['08 Standing orders', 'Subscriptions · freq', drv_standing],
-  ['09 Returns & credit', 'Reasons · credit note', drv_returns],
+  ["01 Start of day", "Preflight · alerts · today", drv_sod],
+  ["02 Today's route", "List home · next stop hero", drv_route],
+  ["03 Live map", "Map tab · floating controls", drv_map],
+  ["04 At‑door delivery", "Items · PoD · actions", drv_delivery],
+  ["05 Collect payment", "Cash · change · receipts", drv_payment],
+  ["06 End of day", "Cash-up · van inventory", drv_cashup],
+  ["07 Order at customer", "Catalog · cart · steppers", drv_order],
+  ["08 Standing orders", "Subscriptions · freq", drv_standing],
+  ["09 Returns & credit", "Reasons · credit note", drv_returns],
 ];

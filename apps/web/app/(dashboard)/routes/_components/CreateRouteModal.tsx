@@ -75,7 +75,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
       { value: "", label: "No driver assigned" },
       ...(driversData?.data ?? []).map((d) => ({ value: d.id, label: d.contactName })),
     ],
-    [driversData]
+    [driversData],
   );
 
   const filteredCustomers = React.useMemo(() => {
@@ -83,17 +83,20 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
     return (customersData?.data ?? []).slice(0, 8);
   }, [customersData, debouncedSearch]);
 
-
   const addStop = (customer: any) => {
     if (stops.some((s) => s.customerId === customer.id)) return;
-    const addr = (customer.addresses ?? []).find((a: { isDefault?: boolean }) => a.isDefault) ?? customer.addresses?.[0];
+    const addr =
+      (customer.addresses ?? []).find((a: { isDefault?: boolean }) => a.isDefault) ??
+      customer.addresses?.[0];
     setStops((prev) => [
       ...prev,
       {
         id: customer.id + "-" + Date.now(),
         customerId: customer.id,
         customerName: customer.businessName,
-        address: addr ? (addr.line1 ?? addr.street ?? "") + ", " + (addr.city ?? "") + ", " + (addr.state ?? "") : "—",
+        address: addr
+          ? (addr.line1 ?? addr.street ?? "") + ", " + (addr.city ?? "") + ", " + (addr.state ?? "")
+          : "—",
         addressId: addr?.id,
       },
     ]);
@@ -110,7 +113,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
       const route = await new Promise<{ id: string }>((resolve, reject) => {
         createRoute.mutate(
           { name: data.name, driverId: data.defaultDriverId || undefined },
-          { onSuccess: resolve, onError: reject }
+          { onSuccess: resolve, onError: reject },
         );
       });
       for (let i = 0; i < stops.length; i++) {
@@ -121,7 +124,11 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
           stopNumber: i + 1,
         });
       }
-      toast({ title: "Route created", description: data.name + " created with " + stops.length + " stop(s).", variant: "success" });
+      toast({
+        title: "Route created",
+        description: data.name + " created with " + stops.length + " stop(s).",
+        variant: "success",
+      });
       onClose();
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Failed to create route.";
@@ -173,9 +180,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
 
           {/* Stop builder */}
           <section className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-              Stops
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Stops</p>
 
             {/* Customer search */}
             <div className="relative">
@@ -184,34 +189,36 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
                 placeholder="Search customers to add a stop…"
                 value={customerSearch}
                 onChange={(e) => setCustomerSearch(e.target.value)}
-                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               {filteredCustomers.length > 0 && customerSearch && (
                 <ul className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-surface-border bg-white shadow-dropdown">
-                  {filteredCustomers.map((c: { id: string; businessName: string; contactName?: string }) => (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => addStop(c)}
-                        disabled={stops.some((s) => s.customerId === c.id)}
-                        className={cn(
-                          "flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
-                          stops.some((s) => s.customerId === c.id)
-                            ? "cursor-not-allowed text-navy/30"
-                            : "text-navy hover:bg-surface-raised",
-                        )}
-                      >
-                        <Plus className="h-3.5 w-3.5 shrink-0" />
-                        <span>
-                          <span className="font-medium">{c.businessName}</span>
-                          <span className="ml-1.5 text-xs text-navy/50">{c.contactName}</span>
-                        </span>
-                        {stops.some((s) => s.customerId === c.id) && (
-                          <span className="ml-auto text-xs text-navy/30">Added</span>
-                        )}
-                      </button>
-                    </li>
-                  ))}
+                  {filteredCustomers.map(
+                    (c: { id: string; businessName: string; contactName?: string }) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => addStop(c)}
+                          disabled={stops.some((s) => s.customerId === c.id)}
+                          className={cn(
+                            "flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
+                            stops.some((s) => s.customerId === c.id)
+                              ? "cursor-not-allowed text-navy/30"
+                              : "text-navy hover:bg-surface-raised",
+                          )}
+                        >
+                          <Plus className="h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            <span className="font-medium">{c.businessName}</span>
+                            <span className="ml-1.5 text-xs text-navy/70">{c.contactName}</span>
+                          </span>
+                          {stops.some((s) => s.customerId === c.id) && (
+                            <span className="ml-auto text-xs text-navy/30">Added</span>
+                          )}
+                        </button>
+                      </li>
+                    ),
+                  )}
                 </ul>
               )}
             </div>
@@ -226,10 +233,8 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
                       {idx + 1}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-navy">
-                        {stop.customerName}
-                      </p>
-                      <p className="truncate text-xs text-navy/50">{stop.address}</p>
+                      <p className="truncate text-sm font-medium text-navy">{stop.customerName}</p>
+                      <p className="truncate text-xs text-navy/70">{stop.address}</p>
                     </div>
                     <button
                       type="button"
@@ -244,9 +249,7 @@ export function CreateRouteModal({ isOpen, onClose }: CreateRouteModalProps) {
               </ul>
             ) : (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-8 text-center">
-                <p className="text-sm text-navy/40">
-                  Search for customers above to add stops.
-                </p>
+                <p className="text-sm text-navy/70">Search for customers above to add stops.</p>
               </div>
             )}
           </section>

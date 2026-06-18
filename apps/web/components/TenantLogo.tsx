@@ -29,8 +29,7 @@ export function TenantLogo({
 }: TenantLogoProps) {
   const { branding } = useTenant();
 
-  const logoSrc =
-    branding?.logoUrl ?? (fallback === "buyer" ? "/logo-buyer.svg" : "/logo.svg");
+  const logoSrc = branding?.logoUrl ?? (fallback === "buyer" ? "/logo-buyer.svg" : "/logo.svg");
   const displayName = branding?.businessName ?? "RouteFlow";
   const imgAlt = alt ?? displayName;
 

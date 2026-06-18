@@ -13,7 +13,8 @@ function OfflineBanner() {
     <View style={styles.offlineBanner}>
       <Ionicons name="cloud-offline-outline" size={14} color={ios.system.orangeInk} />
       <Text style={styles.offlineText}>
-        Offline{queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
+        Offline
+        {queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
       </Text>
     </View>
   );
@@ -28,7 +29,11 @@ export default function DriverLayout() {
       <OfflineBanner />
       <Tabs
         tabBar={(props) => <IosTabBar {...(props as any)} />}
-        screenOptions={{ headerShown: false, tabBarActiveTintColor: ios.brand, tabBarInactiveTintColor: ios.gray[1] }}
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: ios.brand,
+          tabBarInactiveTintColor: ios.gray[1],
+        }}
       >
         <Tabs.Screen
           name="route"

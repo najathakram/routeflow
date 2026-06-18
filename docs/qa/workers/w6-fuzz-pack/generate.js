@@ -137,9 +137,7 @@ write("f_empty.pdf", Buffer.alloc(0));
 // Expense receipt limit: 10 MB  → should be rejected with 413.
 // Scan-invoice limit:   20 MB  → should be rejected with 413.
 // We use 26 MB to exceed BOTH limits.
-const CHUNK = Buffer.from(
-  "INVOICE LINE ITEM: Widget XYZ  QTY:  1  UNIT: $99.99  TOTAL: $99.99\n",
-);
+const CHUNK = Buffer.from("INVOICE LINE ITEM: Widget XYZ  QTY:  1  UNIT: $99.99  TOTAL: $99.99\n");
 const TARGET_SIZE = 26 * 1024 * 1024; // 26 MB
 const repeatCount = Math.ceil(TARGET_SIZE / CHUNK.length);
 const HUGE_BUF = Buffer.concat(Array(repeatCount).fill(CHUNK)).slice(0, TARGET_SIZE);

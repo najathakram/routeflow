@@ -12,12 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  IosEmptyState,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
+import { IosEmptyState, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminOrders, useAdminReturns } from "../../lib/api/admin";
 import { useOperatorRouteRuns } from "../../lib/api/routes";
 
@@ -40,10 +35,7 @@ export default function ExceptionsScreen() {
   const pendingReturnsQ = useAdminReturns({ status: "PENDING", limit: 20 });
   const activeRunsQ = useOperatorRouteRuns({ status: "IN_PROGRESS", limit: 20 });
 
-  const isLoading =
-    urgentOrdersQ.isLoading ||
-    pendingReturnsQ.isLoading ||
-    activeRunsQ.isLoading;
+  const isLoading = urgentOrdersQ.isLoading || pendingReturnsQ.isLoading || activeRunsQ.isLoading;
 
   const exceptions = useMemo<ExceptionItem[]>(() => {
     const items: ExceptionItem[] = [];
@@ -68,10 +60,9 @@ export default function ExceptionsScreen() {
       const scheduled = new Date(run.scheduledDate);
       scheduled.setHours(0, 0, 0, 0);
       if (scheduled < today) {
-        const stopsLeft =
-          (run.stops ?? []).filter(
-            (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
-          ).length;
+        const stopsLeft = (run.stops ?? []).filter(
+          (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
+        ).length;
         items.push({
           id: `run-${run.id}`,
           type: "late_route",
@@ -108,9 +99,7 @@ export default function ExceptionsScreen() {
     activeRunsQ.refetch();
   };
   const isFetching =
-    urgentOrdersQ.isFetching ||
-    pendingReturnsQ.isFetching ||
-    activeRunsQ.isFetching;
+    urgentOrdersQ.isFetching || pendingReturnsQ.isFetching || activeRunsQ.isFetching;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -125,13 +114,7 @@ export default function ExceptionsScreen() {
         </View>
       ) : exceptions.length === 0 ? (
         <IosEmptyState
-          icon={
-            <Ionicons
-              name="checkmark-circle-outline"
-              size={40}
-              color={ios.system.greenInk}
-            />
-          }
+          icon={<Ionicons name="checkmark-circle-outline" size={40} color={ios.system.greenInk} />}
           title="All clear"
           subtitle="No urgent orders, late routes, or returns pending approval."
         />
@@ -162,13 +145,7 @@ export default function ExceptionsScreen() {
   );
 }
 
-function ExceptionCard({
-  item,
-  onPress,
-}: {
-  item: ExceptionItem;
-  onPress: () => void;
-}) {
+function ExceptionCard({ item, onPress }: { item: ExceptionItem; onPress: () => void }) {
   const iconName =
     item.type === "urgent_order"
       ? "flash-outline"
@@ -191,18 +168,10 @@ function ExceptionCard({
         : ios.brandWash;
 
   const pillVariant: "red" | "orange" | "brand" =
-    item.severity === "urgent"
-      ? "red"
-      : item.severity === "warning"
-        ? "orange"
-        : "brand";
+    item.severity === "urgent" ? "red" : item.severity === "warning" ? "orange" : "brand";
 
   const pillLabel =
-    item.severity === "urgent"
-      ? "Urgent"
-      : item.severity === "warning"
-        ? "Warning"
-        : "Pending";
+    item.severity === "urgent" ? "Urgent" : item.severity === "warning" ? "Warning" : "Pending";
 
   return (
     <Pressable style={styles.card} onPress={onPress}>
@@ -223,9 +192,7 @@ function ExceptionCard({
         </Pill>
       </View>
       <View style={styles.cardFoot}>
-        <Text style={[styles.actionLabel, { color: iconColor }]}>
-          {item.actionLabel}
-        </Text>
+        <Text style={[styles.actionLabel, { color: iconColor }]}>{item.actionLabel}</Text>
         <Ionicons name="chevron-forward" size={14} color={iconColor} />
       </View>
     </Pressable>

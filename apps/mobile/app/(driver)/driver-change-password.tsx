@@ -55,8 +55,7 @@ export default function DriverChangePasswordScreen() {
       // Navigate back after a short delay so the user sees the confirmation
       setTimeout(() => router.back(), 1800);
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.message ?? "Failed to change password.";
+      const msg = err?.response?.data?.message ?? "Failed to change password.";
       setApiError(typeof msg === "string" ? msg : "Failed to change password.");
     }
   };
@@ -79,9 +78,7 @@ export default function DriverChangePasswordScreen() {
               <Text style={styles.successText}>Password updated successfully!</Text>
             </View>
           )}
-          {apiError && (
-            <Text style={styles.apiError}>{apiError}</Text>
-          )}
+          {apiError && <Text style={styles.apiError}>{apiError}</Text>}
           <Controller
             control={control}
             name="currentPassword"

@@ -32,9 +32,7 @@ if (!DATABASE_URL) {
 
 // Safety: refuse to run against obviously-not-prod URLs unless explicitly
 // confirmed via --dev. Most prod URLs contain `railway` or a custom host.
-const isLocalUrl = /^postgres(ql)?:\/\/[^@]*@(localhost|127\.0\.0\.1|::1)/i.test(
-  DATABASE_URL,
-);
+const isLocalUrl = /^postgres(ql)?:\/\/[^@]*@(localhost|127\.0\.0\.1|::1)/i.test(DATABASE_URL);
 if (isLocalUrl && !process.argv.includes("--dev")) {
   console.error("DATABASE_URL points at localhost. Pass --dev if that's intentional.");
   process.exit(1);

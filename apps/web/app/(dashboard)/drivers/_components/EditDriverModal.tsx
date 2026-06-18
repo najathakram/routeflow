@@ -73,7 +73,8 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
       await onSave(data);
       handleClose();
     } catch (err: unknown) {
-      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data
+        ?.message;
       const fallbackMsg = (err as { message?: string })?.message;
       setApiError(apiMsg || fallbackMsg || "Failed to save changes. Please try again.");
     }

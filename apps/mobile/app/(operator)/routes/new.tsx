@@ -1,11 +1,6 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
-import {
-  FormField,
-  FormSection,
-  FormSheet,
-  FormTextInput,
-} from "../../../components/FormSheet";
+import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { useCreateRoute } from "../../../lib/api/routes";
 import { showToast } from "../../../lib/toast";
 
@@ -30,8 +25,7 @@ export default function NewRouteScreen() {
           showToast("Route created");
           router.replace(`/(operator)/routes/${res.id}`);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };

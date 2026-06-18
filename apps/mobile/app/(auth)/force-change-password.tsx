@@ -54,8 +54,8 @@ export default function ForceChangePasswordScreen() {
       }
     } catch (err: unknown) {
       const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? "Failed to change password.";
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Failed to change password.";
       setApiError(typeof msg === "string" ? msg : "Failed to change password.");
     }
   };
@@ -69,9 +69,7 @@ export default function ForceChangePasswordScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Set New Password</Text>
-          <Text style={styles.subtitle}>
-            You must change your password before continuing.
-          </Text>
+          <Text style={styles.subtitle}>You must change your password before continuing.</Text>
         </View>
 
         <View style={styles.form}>

@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FormField,
-  FormSection,
-  FormSheet,
-  FormTextInput,
-} from "../../../../components/FormSheet";
+import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
 import { useDriver, useUpdateDriver } from "../../../../lib/api/drivers";
 import { showToast } from "../../../../lib/toast";
 
@@ -64,8 +59,7 @@ export default function EditDriverScreen() {
           showToast("Saved");
           router.back();
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -94,7 +88,11 @@ export default function EditDriverScreen() {
           <FormTextInput value={vehicleColour} onChangeText={setVehicleColour} />
         </FormField>
         <FormField label="License plate">
-          <FormTextInput value={vehiclePlate} onChangeText={setVehiclePlate} autoCapitalize="characters" />
+          <FormTextInput
+            value={vehiclePlate}
+            onChangeText={setVehiclePlate}
+            autoCapitalize="characters"
+          />
         </FormField>
       </FormSection>
     </FormSheet>

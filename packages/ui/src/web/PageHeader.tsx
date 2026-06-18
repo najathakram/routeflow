@@ -16,9 +16,7 @@ export const PageHeader = React.forwardRef<HTMLDivElement, PageHeaderProps>(
     >
       <div className="shrink">
         <h1 className="text-2xl font-bold text-navy whitespace-nowrap">{title}</h1>
-        {subtitle && (
-          <p className="mt-1 text-sm text-navy/60">{subtitle}</p>
-        )}
+        {subtitle && <p className="mt-1 text-sm text-navy/60">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

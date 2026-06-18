@@ -64,10 +64,9 @@ async function main() {
   await client.connect();
 
   // 1. Resolve the tenant id for the target slug.
-  const tenantRes = await client.query(
-    'SELECT id, slug FROM "Tenant" WHERE slug = $1 LIMIT 1',
-    [TARGET_TENANT_SLUG],
-  );
+  const tenantRes = await client.query('SELECT id, slug FROM "Tenant" WHERE slug = $1 LIMIT 1', [
+    TARGET_TENANT_SLUG,
+  ]);
   if (tenantRes.rows.length === 0) {
     console.log(`[purge-svg-xss] Tenant "${TARGET_TENANT_SLUG}" not found — nothing to do.`);
     await client.end();
@@ -77,10 +76,7 @@ async function main() {
   console.log(`[purge-svg-xss] Target tenant: ${TARGET_TENANT_SLUG} (id=${tenantId})`);
 
   // Safety: double-check we are NOT touching the "affa" tenant.
-  const affaRes = await client.query(
-    'SELECT id FROM "Tenant" WHERE slug = $1 LIMIT 1',
-    ["affa"],
-  );
+  const affaRes = await client.query('SELECT id FROM "Tenant" WHERE slug = $1 LIMIT 1', ["affa"]);
   if (affaRes.rows.length > 0 && affaRes.rows[0].id === tenantId) {
     console.error("[purge-svg-xss] ABORT: resolved tenant is 'affa' — refusing to run.");
     await client.end();
@@ -122,10 +118,7 @@ async function main() {
 
     // Update imageKeys to remove the svg entries.
     const remaining = (row.imageKeys || []).filter((k) => !isSvgKey(k));
-    await client.query(`UPDATE "Product" SET "imageKeys" = $1 WHERE id = $2`, [
-      remaining,
-      row.id,
-    ]);
+    await client.query(`UPDATE "Product" SET "imageKeys" = $1 WHERE id = $2`, [remaining, row.id]);
     console.log(
       `[purge-svg-xss] Product ${row.id}: removed ${svgKeys.length} SVG key(s): ${svgKeys.join(", ")}`,
     );

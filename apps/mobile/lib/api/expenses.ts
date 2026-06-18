@@ -65,8 +65,7 @@ export function useExpense(id: string) {
 export function useExpenseCategories() {
   return useQuery<ExpenseCategory[]>({
     queryKey: ["expense-categories"],
-    queryFn: () =>
-      apiClient.get("/bookkeeping/expense-categories").then((r) => r.data),
+    queryFn: () => apiClient.get("/bookkeeping/expense-categories").then((r) => r.data),
     staleTime: 5 * 60_000,
   });
 }
@@ -76,8 +75,7 @@ export function useExpenseCategories() {
 export function useCreateExpense() {
   const qc = useQueryClient();
   return useMutation<Expense, Error, CreateExpenseDto>({
-    mutationFn: (dto) =>
-      apiClient.post("/bookkeeping/expenses", dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/bookkeeping/expenses", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["expenses"] }),
   });
 }
@@ -97,8 +95,7 @@ export function useUpdateExpense() {
 export function useDeleteExpense() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
-    mutationFn: (id) =>
-      apiClient.post(`/bookkeeping/expenses/${id}/delete`).then(() => undefined),
+    mutationFn: (id) => apiClient.post(`/bookkeeping/expenses/${id}/delete`).then(() => undefined),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["expenses"] }),
   });
 }

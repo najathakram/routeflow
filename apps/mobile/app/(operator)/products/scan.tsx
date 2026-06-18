@@ -28,7 +28,9 @@ export default function ScanProductScreen() {
       }
       router.replace(`/(operator)/products/${result.product.id}`);
     } catch (err: any) {
-      showToast(err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode. Try again.");
+      showToast(
+        err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode. Try again.",
+      );
       setBusy(false);
     }
   };

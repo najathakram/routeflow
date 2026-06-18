@@ -16,7 +16,12 @@ import {
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerDashboard, useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
+import {
+  useBuyerDashboard,
+  useBuyerTemplates,
+  useBuyerReorder,
+  type OrderTemplate,
+} from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
@@ -26,7 +31,11 @@ function fmt(n: number) {
 }
 
 function formatDate(d: string) {
-  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
@@ -37,11 +46,14 @@ function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutra
 }
 
 function formatStatus(s: string) {
-  return s.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+  return s
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const DAY_FULL  = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function nextDeliveryLabel(daysOfWeek: number[]): string {
   if (!daysOfWeek.length) return "No schedule";
@@ -97,7 +109,7 @@ function StandingOrdersPanel({
           </span>
         </div>
         <button
-          onClick={() => window.location.href = `/buyer/portal/${sellerSlug}/templates`}
+          onClick={() => (window.location.href = `/buyer/portal/${sellerSlug}/templates`)}
           className="text-xs text-buyer-500 hover:text-buyer-600 font-medium flex items-center gap-1"
         >
           Manage <ArrowRight className="h-3 w-3" />
@@ -115,18 +127,27 @@ function StandingOrdersPanel({
                 <div className="mt-1 flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     {dayChips.map((d) => (
-                      <span key={d} className="rounded bg-buyer-100 px-1.5 py-0.5 text-[10px] font-medium text-buyer-700">{d}</span>
+                      <span
+                        key={d}
+                        className="rounded bg-buyer-100 px-1.5 py-0.5 text-[10px] font-medium text-buyer-700"
+                      >
+                        {d}
+                      </span>
                     ))}
                   </div>
-                  <span className="text-xs text-navy/50">·</span>
-                  <span className="text-xs text-navy/60">{t.items.length} item{t.items.length !== 1 ? "s" : ""}</span>
+                  <span className="text-xs text-navy/70">·</span>
+                  <span className="text-xs text-navy/70">
+                    {t.items.length} item{t.items.length !== 1 ? "s" : ""}
+                  </span>
                 </div>
               </div>
               <div className="text-right shrink-0">
-                <p className={cn(
-                  "text-xs font-semibold",
-                  nextLabel === "Today" ? "text-buyer-600" : "text-navy/60"
-                )}>
+                <p
+                  className={cn(
+                    "text-xs font-semibold",
+                    nextLabel === "Today" ? "text-buyer-600" : "text-navy/70",
+                  )}
+                >
                   {nextLabel}
                 </p>
                 <button
@@ -193,9 +214,7 @@ export default function BuyerDashboardPage() {
         <h1 className="text-2xl font-bold text-navy">
           Welcome back{activeSeller ? `, ${activeSeller.customer.businessName}` : ""}
         </h1>
-        <p className="text-sm text-navy/60 mt-1">
-          Your dashboard at {activeSeller?.tenant.name}
-        </p>
+        <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>
 
       {/* Stat cards */}
@@ -231,7 +250,7 @@ export default function BuyerDashboardPage() {
               <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${stat.color}`}>
                 <stat.icon className="h-4 w-4" />
               </div>
-              <span className="text-xs text-navy/50">{stat.label}</span>
+              <span className="text-xs text-navy/70">{stat.label}</span>
             </div>
             <p className="text-xl font-bold text-navy">{stat.value}</p>
           </div>
@@ -252,18 +271,18 @@ export default function BuyerDashboardPage() {
             <div className="flex items-center gap-3">
               <h2 className="text-sm font-semibold text-navy">Frequently Ordered</h2>
               <div className="flex items-center rounded-lg border border-surface-border bg-surface-raised p-0.5">
-                {([
+                {[
                   { value: "30d" as const, label: "30 Days" },
                   { value: "90d" as const, label: "90 Days" },
                   { value: "all" as const, label: "All Time" },
-                ]).map((opt) => (
+                ].map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setFrequentWindow(opt.value)}
                     className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
                       frequentWindow === opt.value
                         ? "bg-white text-buyer-600 shadow-sm"
-                        : "text-navy/50 hover:text-navy"
+                        : "text-navy/70 hover:text-navy"
                     }`}
                   >
                     {opt.label}
@@ -286,7 +305,12 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-14 w-14 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
+                    <img
+                      src={p.thumbnailUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                    />
                   ) : (
                     <Package className="h-6 w-6 text-navy/15" />
                   )}
@@ -336,7 +360,7 @@ export default function BuyerDashboardPage() {
                 <div className="flex items-center gap-4">
                   <div>
                     <p className="text-sm font-medium text-navy">{order.orderNumber}</p>
-                    <p className="text-xs text-navy/50">
+                    <p className="text-xs text-navy/70">
                       {formatDate(order.createdAt)} · {order.itemCount} items
                     </p>
                   </div>
@@ -376,7 +400,12 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
+                    <img
+                      src={p.thumbnailUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                    />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
@@ -409,7 +438,9 @@ export default function BuyerDashboardPage() {
           <div className="flex items-center justify-between border-b border-amber-200 px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="text-amber-500 text-base">⭐</span>
-              <h2 className="text-sm font-semibold text-navy">Featured by {activeSeller?.tenant.name}</h2>
+              <h2 className="text-sm font-semibold text-navy">
+                Featured by {activeSeller?.tenant.name}
+              </h2>
             </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
@@ -426,7 +457,12 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
+                    <img
+                      src={p.thumbnailUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                    />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
@@ -459,7 +495,9 @@ export default function BuyerDashboardPage() {
           <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
             <div>
               <h2 className="text-sm font-semibold text-navy">Suggested for You</h2>
-              <p className="text-[11px] text-navy/50 mt-0.5">Products from categories you order from but haven&apos;t tried yet</p>
+              <p className="text-[11px] text-navy/70 mt-0.5">
+                Products from categories you order from but haven&apos;t tried yet
+              </p>
             </div>
             <button
               onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
@@ -476,7 +514,12 @@ export default function BuyerDashboardPage() {
               >
                 <div className="h-16 w-16 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                   {p.thumbnailUrl ? (
-                    <img src={p.thumbnailUrl} alt="" className="h-full w-full object-cover" style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }} />
+                    <img
+                      src={p.thumbnailUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                    />
                   ) : (
                     <Package className="h-7 w-7 text-navy/15" />
                   )}
@@ -518,7 +561,7 @@ export default function BuyerDashboardPage() {
             { label: "All Time", value: dashboard.stats.spendAllTime },
           ].map((s) => (
             <div key={s.label} className="text-center">
-              <p className="text-xs text-navy/50 mb-1">{s.label}</p>
+              <p className="text-xs text-navy/70 mb-1">{s.label}</p>
               <p className="text-lg font-bold text-navy">{fmt(s.value)}</p>
             </div>
           ))}
@@ -530,10 +573,7 @@ export default function BuyerDashboardPage() {
 
       {/* Quick action */}
       <div className="flex items-center justify-center gap-4">
-        <Button
-          variant="secondary"
-          onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}
-        >
+        <Button variant="secondary" onClick={() => router.push(`/buyer/portal/${sellerSlug}/shop`)}>
           <Store className="mr-1.5 h-4 w-4" /> Browse Products
         </Button>
         {cart.itemCount > 0 && (

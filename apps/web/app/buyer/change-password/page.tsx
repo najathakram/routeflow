@@ -89,8 +89,10 @@ export default function BuyerChangePasswordPage() {
         <div className="mb-8 flex flex-col items-center gap-3">
           <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
           <h1 className="text-2xl font-bold text-navy">Change Password</h1>
-          <p className="text-center text-sm text-navy/60">
-            {buyer?.email ? `Updating password for ${buyer.email}` : "Update your buyer portal password"}
+          <p className="text-center text-sm text-navy/70">
+            {buyer?.email
+              ? `Updating password for ${buyer.email}`
+              : "Update your buyer portal password"}
           </p>
         </div>
 
@@ -104,7 +106,7 @@ export default function BuyerChangePasswordPage() {
               </div>
               <div>
                 <p className="font-semibold text-navy">Password changed successfully!</p>
-                <p className="mt-1 text-sm text-navy/60">Redirecting you to the portal…</p>
+                <p className="mt-1 text-sm text-navy/70">Redirecting you to the portal…</p>
               </div>
             </div>
           ) : (
@@ -132,7 +134,7 @@ export default function BuyerChangePasswordPage() {
                 register={register("newPassword")}
                 error={errors.newPassword?.message}
               />
-              <p className="text-xs text-navy/50">
+              <p className="text-xs text-navy/70">
                 At least 8 characters, one uppercase letter, one number.
               </p>
               <PasswordInput
@@ -153,7 +155,7 @@ export default function BuyerChangePasswordPage() {
           <button
             type="button"
             onClick={() => router.back()}
-            className="inline-flex items-center gap-1.5 text-xs text-navy/50 hover:text-navy transition-colors"
+            className="inline-flex items-center gap-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             Go back

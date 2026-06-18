@@ -114,10 +114,7 @@ export function SplitInvoiceScreen({
   onCancel,
   backLabel = "Back",
 }: SplitInvoiceScreenProps) {
-  const billable = useMemo(
-    () => items.filter((it) => it.qty - it.invoicedQty > 0.001),
-    [items],
-  );
+  const billable = useMemo(() => items.filter((it) => it.qty - it.invoicedQty > 0.001), [items]);
 
   const [drafts, setDrafts] = useState<DraftInvoice[]>(() => [makeDraft(defaultTerms)]);
 
@@ -245,9 +242,7 @@ export function SplitInvoiceScreen({
   // ── Submit all ─────────────────────────────────────────────────────────────
 
   const submitAll = async () => {
-    const submitable = drafts.filter(
-      (d) => !createdDraftIds.has(d.id) && draftHasItems(d),
-    );
+    const submitable = drafts.filter((d) => !createdDraftIds.has(d.id) && draftHasItems(d));
     if (submitable.length === 0) {
       alertInfo(
         "Nothing to create",
@@ -293,8 +288,7 @@ export function SplitInvoiceScreen({
       showToast(`Created ${submitable.length} invoice${submitable.length === 1 ? "" : "s"}`);
       if (lastInvoiceId) onCreated(lastInvoiceId);
     } catch (err: any) {
-      const msg =
-        err?.response?.data?.message ?? err?.message ?? "One or more invoices failed.";
+      const msg = err?.response?.data?.message ?? err?.message ?? "One or more invoices failed.";
       alertInfo("Couldn't create all invoices", msg);
     } finally {
       setBulkPending(false);
@@ -303,9 +297,7 @@ export function SplitInvoiceScreen({
 
   // ── Computed ──────────────────────────────────────────────────────────────
 
-  const drafsToCreate = drafts.filter(
-    (d) => !createdDraftIds.has(d.id) && draftHasItems(d),
-  );
+  const drafsToCreate = drafts.filter((d) => !createdDraftIds.has(d.id) && draftHasItems(d));
   const totalToCreate = drafsToCreate.reduce((s, d) => s + subtotalFor(d), 0);
   const unallocated = billable.map((it) => ({
     item: it,
@@ -327,9 +319,7 @@ export function SplitInvoiceScreen({
             <NavAction
               label={bulkPending ? "Saving…" : `Create ${drafsToCreate.length || ""}`}
               bold
-              onPress={
-                bulkPending || drafsToCreate.length === 0 ? undefined : submitAll
-              }
+              onPress={bulkPending || drafsToCreate.length === 0 ? undefined : submitAll}
             />
           )
         }
@@ -340,10 +330,9 @@ export function SplitInvoiceScreen({
           <View style={styles.helperCard}>
             <Ionicons name="information-circle-outline" size={18} color={ios.brand} />
             <Text style={styles.helperText}>
-              Build one or more invoices for order{" "}
-              {orderNumber ?? orderId.slice(0, 8)}. Allocate items to each
-              draft, set its terms and due date, then tap Create to make them
-              all at once.
+              Build one or more invoices for order {orderNumber ?? orderId.slice(0, 8)}. Allocate
+              items to each draft, set its terms and due date, then tap Create to make them all at
+              once.
             </Text>
           </View>
         ) : null}
@@ -354,9 +343,8 @@ export function SplitInvoiceScreen({
               <Ionicons name="checkmark-circle" size={32} color={ios.system.greenInk} />
               <Text style={styles.allDoneTitle}>All items invoiced</Text>
               <Text style={styles.allDoneSub}>
-                Nothing left on this order to bill. To re-split, open one of
-                the existing invoices and tap Void or Delete — that frees the
-                items so you can split again.
+                Nothing left on this order to bill. To re-split, open one of the existing invoices
+                and tap Void or Delete — that frees the items so you can split again.
               </Text>
             </View>
           </View>
@@ -365,19 +353,12 @@ export function SplitInvoiceScreen({
             const created = createdDraftIds.has(draft.id);
             const subtotal = subtotalFor(draft);
             return (
-              <View
-                key={draft.id}
-                style={[styles.card, created && { opacity: 0.5 }]}
-              >
+              <View key={draft.id} style={[styles.card, created && { opacity: 0.5 }]}>
                 <View style={styles.cardHeader}>
                   <Text style={styles.cardTitle}>Invoice {i + 1}</Text>
                   {created ? (
                     <View style={styles.createdBadge}>
-                      <Ionicons
-                        name="checkmark-circle"
-                        size={14}
-                        color={ios.system.greenInk}
-                      />
+                      <Ionicons name="checkmark-circle" size={14} color={ios.system.greenInk} />
                       <Text style={styles.createdBadgeText}>Created</Text>
                     </View>
                   ) : drafts.length > 1 ? (
@@ -392,9 +373,7 @@ export function SplitInvoiceScreen({
                   const value = draft.qtyById[it.id] ?? "";
                   const numValue = Number(value);
                   const lineTotal =
-                    Number.isFinite(numValue) && numValue > 0
-                      ? numValue * it.unitPrice
-                      : 0;
+                    Number.isFinite(numValue) && numValue > 0 ? numValue * it.unitPrice : 0;
                   // Global "left to allocate" (across all drafts in this
                   // session). Updates live as the operator types — that's
                   // what they asked for: "if we have 10 units ... and split
@@ -416,8 +395,7 @@ export function SplitInvoiceScreen({
                           >
                             {globalLeft}
                           </Text>{" "}
-                          of {totalRemaining} {it.unit ?? "ea"} left ·{" "}
-                          ${it.unitPrice.toFixed(2)}/ea
+                          of {totalRemaining} {it.unit ?? "ea"} left · ${it.unitPrice.toFixed(2)}/ea
                         </Text>
                       </View>
                       <TextInput
@@ -494,12 +472,7 @@ export function SplitInvoiceScreen({
                           onPress={() => setTerms(draft.id, t)}
                           disabled={created}
                         >
-                          <Text
-                            style={[
-                              styles.termPillText,
-                              active && styles.termPillTextActive,
-                            ]}
-                          >
+                          <Text style={[styles.termPillText, active && styles.termPillTextActive]}>
                             {t}
                           </Text>
                         </Pressable>
@@ -522,9 +495,7 @@ export function SplitInvoiceScreen({
                     <View style={[styles.checkbox, draft.send && styles.checkboxOn]}>
                       {draft.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
                     </View>
-                    <Text style={styles.sendLabel}>
-                      Send immediately on create
-                    </Text>
+                    <Text style={styles.sendLabel}>Send immediately on create</Text>
                   </Pressable>
                   <View style={styles.subtotalRow}>
                     <Text style={styles.subtotalLabel}>Invoice subtotal</Text>

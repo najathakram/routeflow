@@ -1,9 +1,9 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../api-client';
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type POStatus = 'DRAFT' | 'SENT' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED';
+export type POStatus = "DRAFT" | "SENT" | "PARTIALLY_RECEIVED" | "RECEIVED" | "CLOSED";
 
 export interface POItem {
   id: string;
@@ -36,10 +36,10 @@ export interface ReceivePODto {
 
 export function usePurchaseOrders(status?: POStatus) {
   return useQuery<{ data: PurchaseOrder[]; meta: any }>({
-    queryKey: ['purchase-orders', status ?? 'all'],
+    queryKey: ["purchase-orders", status ?? "all"],
     queryFn: () =>
       apiClient
-        .get('/inventory/purchase-orders', { params: status ? { status } : undefined })
+        .get("/inventory/purchase-orders", { params: status ? { status } : undefined })
         .then((r) => r.data),
     staleTime: 30_000,
   });
@@ -48,18 +48,22 @@ export function usePurchaseOrders(status?: POStatus) {
 export function useOpenPurchaseOrders() {
   // Open = DRAFT or SENT or PARTIALLY_RECEIVED
   return useQuery<{ data: PurchaseOrder[]; meta: any }>({
-    queryKey: ['purchase-orders', 'open'],
+    queryKey: ["purchase-orders", "open"],
     queryFn: async () => {
       const [draft, sent, partial] = await Promise.all([
-        apiClient.get('/inventory/purchase-orders', { params: { status: 'DRAFT' } }).then((r) => r.data),
-        apiClient.get('/inventory/purchase-orders', { params: { status: 'SENT' } }).then((r) => r.data),
-        apiClient.get('/inventory/purchase-orders', { params: { status: 'PARTIALLY_RECEIVED' } }).then((r) => r.data),
+        apiClient
+          .get("/inventory/purchase-orders", { params: { status: "DRAFT" } })
+          .then((r) => r.data),
+        apiClient
+          .get("/inventory/purchase-orders", { params: { status: "SENT" } })
+          .then((r) => r.data),
+        apiClient
+          .get("/inventory/purchase-orders", { params: { status: "PARTIALLY_RECEIVED" } })
+          .then((r) => r.data),
       ]);
-      const data = [
-        ...(draft.data ?? []),
-        ...(sent.data ?? []),
-        ...(partial.data ?? []),
-      ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const data = [...(draft.data ?? []), ...(sent.data ?? []), ...(partial.data ?? [])].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
       return { data, meta: { total: data.length } };
     },
     staleTime: 30_000,
@@ -68,9 +72,8 @@ export function useOpenPurchaseOrders() {
 
 export function usePurchaseOrder(id: string) {
   return useQuery<PurchaseOrder>({
-    queryKey: ['purchase-orders', id],
-    queryFn: () =>
-      apiClient.get(`/inventory/purchase-orders/${id}`).then((r) => r.data),
+    queryKey: ["purchase-orders", id],
+    queryFn: () => apiClient.get(`/inventory/purchase-orders/${id}`).then((r) => r.data),
     enabled: !!id,
   });
 }
@@ -94,9 +97,8 @@ export interface SupplierDto {
 
 export function useSuppliers() {
   return useQuery<Supplier[]>({
-    queryKey: ['suppliers'],
-    queryFn: () =>
-      apiClient.get('/inventory/suppliers').then((r) => r.data),
+    queryKey: ["suppliers"],
+    queryFn: () => apiClient.get("/inventory/suppliers").then((r) => r.data),
     staleTime: 5 * 60_000,
   });
 }
@@ -104,8 +106,8 @@ export function useSuppliers() {
 export function useCreateSupplier() {
   const qc = useQueryClient();
   return useMutation<Supplier, Error, SupplierDto>({
-    mutationFn: (dto) => apiClient.post('/inventory/suppliers', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+    mutationFn: (dto) => apiClient.post("/inventory/suppliers", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 }
 
@@ -114,7 +116,7 @@ export function useUpdateSupplier() {
   return useMutation<Supplier, Error, { id: string } & Partial<SupplierDto>>({
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/inventory/suppliers/${id}`, dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['suppliers'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 }
 
@@ -126,8 +128,8 @@ export function useReceivePO() {
     mutationFn: ({ id, dto }) =>
       apiClient.post(`/inventory/purchase-orders/${id}/receive`, dto).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
-      qc.invalidateQueries({ queryKey: ['inventory'] });
+      qc.invalidateQueries({ queryKey: ["purchase-orders"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -135,20 +137,18 @@ export function useReceivePO() {
 export function useCreatePO() {
   const qc = useQueryClient();
   return useMutation<PurchaseOrder, Error, any>({
-    mutationFn: (dto) =>
-      apiClient.post('/inventory/purchase-orders', dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['purchase-orders'] }),
+    mutationFn: (dto) => apiClient.post("/inventory/purchase-orders", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["purchase-orders"] }),
   });
 }
 
 export function useSendPO() {
   const qc = useQueryClient();
   return useMutation<PurchaseOrder, Error, string>({
-    mutationFn: (id) =>
-      apiClient.post(`/inventory/purchase-orders/${id}/send`).then((r) => r.data),
+    mutationFn: (id) => apiClient.post(`/inventory/purchase-orders/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
-      qc.invalidateQueries({ queryKey: ['purchase-orders', id] });
+      qc.invalidateQueries({ queryKey: ["purchase-orders"] });
+      qc.invalidateQueries({ queryKey: ["purchase-orders", id] });
     },
   });
 }
@@ -159,8 +159,8 @@ export function useClosePO() {
     mutationFn: (id) =>
       apiClient.post(`/inventory/purchase-orders/${id}/close`).then((r) => r.data),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
-      qc.invalidateQueries({ queryKey: ['purchase-orders', id] });
+      qc.invalidateQueries({ queryKey: ["purchase-orders"] });
+      qc.invalidateQueries({ queryKey: ["purchase-orders", id] });
     },
   });
 }

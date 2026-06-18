@@ -54,7 +54,7 @@ function AuthCallbackInner() {
       {error ? (
         <p className="text-sm text-danger">{error}</p>
       ) : (
-        <p className="text-sm text-navy/60">Signing you in...</p>
+        <p className="text-sm text-navy/70">Signing you in...</p>
       )}
     </div>
   );
@@ -68,7 +68,7 @@ export default function AuthCallbackPage() {
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
             RF
           </div>
-          <p className="text-sm text-navy/60">Signing you in...</p>
+          <p className="text-sm text-navy/70">Signing you in...</p>
         </div>
       }
     >

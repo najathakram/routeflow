@@ -1,11 +1,5 @@
 import React from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  type ViewStyle,
-} from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, type ViewStyle } from "react-native";
 import { colors, borderRadius } from "../tokens";
 
 export type ButtonVariant = "primary" | "secondary" | "danger";
@@ -96,14 +90,9 @@ export function MobileButton({
       accessibilityState={{ disabled: isDisabled, busy: loading }}
     >
       {loading ? (
-        <ActivityIndicator
-          size={sizeStyle.spinnerSize}
-          color={variantStyle.spinner}
-        />
+        <ActivityIndicator size={sizeStyle.spinnerSize} color={variantStyle.spinner} />
       ) : (
-        <Text style={[styles.text, variantStyle.text, sizeStyle.text]}>
-          {children}
-        </Text>
+        <Text style={[styles.text, variantStyle.text, sizeStyle.text]}>{children}</Text>
       )}
     </Pressable>
   );

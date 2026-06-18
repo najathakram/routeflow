@@ -15,7 +15,14 @@ type IosTabBarProps = {
     {
       options: {
         title?: string;
-        tabBarLabel?: string | ((props: { focused: boolean; color: string; position?: unknown; children?: string }) => React.ReactNode);
+        tabBarLabel?:
+          | string
+          | ((props: {
+              focused: boolean;
+              color: string;
+              position?: unknown;
+              children?: string;
+            }) => React.ReactNode);
         tabBarIcon?: (props: { focused: boolean; color: string; size: number }) => React.ReactNode;
         // Expo Router sets `tabBarButton: () => null` when a screen has `href: null`.
         // The default @react-navigation tabs filter on that; we replicate here.
@@ -26,14 +33,14 @@ type IosTabBarProps = {
     }
   >;
   navigation: {
-    emit: (e: { type: "tabPress"; target: string; canPreventDefault: boolean }) => { defaultPrevented: boolean };
+    emit: (e: { type: "tabPress"; target: string; canPreventDefault: boolean }) => {
+      defaultPrevented: boolean;
+    };
     navigate: (name: never) => void;
   };
 };
 
-function shouldRenderTab(
-  options: IosTabBarProps["descriptors"][string]["options"],
-): boolean {
+function shouldRenderTab(options: IosTabBarProps["descriptors"][string]["options"]): boolean {
   // Hide screens explicitly marked as non-tab (href: null) — Expo Router
   // translates those to either tabBarButton === null or display: "none".
   if (options.tabBarButton === null) return false;

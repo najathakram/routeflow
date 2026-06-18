@@ -17,9 +17,15 @@
 
 const { Client } = require("pg");
 
-function ok(m)  { console.log(`   ✓ ${m}`); }
-function info(m){ console.log(`   • ${m}`); }
-function step(m){ console.log(`\n${"─".repeat(60)}\n  ${m}`); }
+function ok(m) {
+  console.log(`   ✓ ${m}`);
+}
+function info(m) {
+  console.log(`   • ${m}`);
+}
+function step(m) {
+  console.log(`\n${"─".repeat(60)}\n  ${m}`);
+}
 
 async function main() {
   const pg = new Client({ connectionString: process.env.DATABASE_URL });
@@ -53,14 +59,17 @@ async function main() {
     }
 
     step("Updating RouteRun.status → COMPLETED + setting completedAt = now()…");
-    const upd = await pg.query(`
+    const upd = await pg.query(
+      `
       UPDATE "RouteRun" r
       SET status = 'COMPLETED',
           "completedAt" = COALESCE(r."completedAt", now()),
           "updatedAt" = now()
       WHERE r.id = ANY($1::text[])
       RETURNING r.id, r."completedAt"
-    `, [cand.rows.map((r) => r.id)]);
+    `,
+      [cand.rows.map((r) => r.id)],
+    );
 
     ok(`Updated ${upd.rowCount} RouteRun row(s).`);
     for (const u of upd.rows) {

@@ -1,23 +1,10 @@
 import { useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  FilterChipRow,
-  NavBackButton,
-  NavBar,
-  Pill,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavBackButton, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
   useInventoryMovements,
   type InventoryMovement,
@@ -75,9 +62,7 @@ export default function MovementsScreen() {
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return movements;
-    return movements.filter((m) =>
-      (m.productName ?? "").toLowerCase().includes(term),
-    );
+    return movements.filter((m) => (m.productName ?? "").toLowerCase().includes(term));
   }, [movements, search]);
 
   const onScanned = async (code: string) => {
@@ -115,10 +100,7 @@ export default function MovementsScreen() {
       />
 
       {productFilter ? (
-        <Pressable
-          style={styles.activeFilterBanner}
-          onPress={() => setProductFilter(null)}
-        >
+        <Pressable style={styles.activeFilterBanner} onPress={() => setProductFilter(null)}>
           <Ionicons name="cube-outline" size={14} color={ios.brand} />
           <Text style={styles.activeFilterText} numberOfLines={1}>
             Showing: {productFilter.label}
@@ -131,18 +113,11 @@ export default function MovementsScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as
-              | "ALL"
-              | MovementType) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as "ALL" | MovementType) ?? "ALL")
         }
       />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ flexGrow: 1 }}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
@@ -191,12 +166,7 @@ function MovementRow({ m }: { m: InventoryMovement }) {
           {m.notes ? ` · ${m.notes}` : ""}
         </Text>
       </View>
-      <Text
-        style={[
-          styles.qty,
-          { color: positive ? ios.system.greenInk : ios.system.redInk },
-        ]}
-      >
+      <Text style={[styles.qty, { color: positive ? ios.system.greenInk : ios.system.redInk }]}>
         {positive ? "+" : ""}
         {m.quantity}
       </Text>

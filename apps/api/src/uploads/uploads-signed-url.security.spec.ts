@@ -19,11 +19,7 @@ const request = require("supertest");
 
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
-import {
-  signLocalUrl,
-  verifyLocalUrlSignature,
-  StorageService,
-} from "../storage/storage.service";
+import { signLocalUrl, verifyLocalUrlSignature, StorageService } from "../storage/storage.service";
 
 describe("Local URL signing primitives", () => {
   const SECRET = "test-secret-deadbeef";

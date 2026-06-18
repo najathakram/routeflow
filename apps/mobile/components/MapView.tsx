@@ -152,13 +152,15 @@ function NativeImpl({
             anchor={{ x: 0.5, y: 1 }}
           >
             <View style={mapStyles.markerWrap}>
-              {(stopNum || stopName) ? (
+              {stopNum || stopName ? (
                 <View style={mapStyles.labelBubble}>
                   {stopNum ? (
                     <Text style={[mapStyles.labelNum, { color: pinColor }]}>{stopNum}</Text>
                   ) : null}
                   {stopName ? (
-                    <Text style={mapStyles.labelName} numberOfLines={1}>{stopName}</Text>
+                    <Text style={mapStyles.labelName} numberOfLines={1}>
+                      {stopName}
+                    </Text>
                   ) : null}
                 </View>
               ) : null}
@@ -174,11 +176,16 @@ function NativeImpl({
 
 function pinHex(color?: MapPin["color"]): string {
   switch (color) {
-    case "gray":   return "#8e8e93";
-    case "green":  return "#34c759";
-    case "red":    return "#ff3b30";
-    case "orange": return "#ff9500";
-    default:       return "#0B6E6B";
+    case "gray":
+      return "#8e8e93";
+    case "green":
+      return "#34c759";
+    case "red":
+      return "#ff3b30";
+    case "orange":
+      return "#ff9500";
+    default:
+      return "#0B6E6B";
   }
 }
 

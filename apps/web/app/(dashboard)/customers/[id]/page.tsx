@@ -147,28 +147,20 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     header: "Date",
     enableSorting: false,
     cell: ({ row }) => (
-      <span className="text-navy/60">
-        {new Date(row.original.createdAt).toLocaleDateString()}
-      </span>
+      <span className="text-navy/70">{new Date(row.original.createdAt).toLocaleDateString()}</span>
     ),
   },
 ];
 
 // ── Tab trigger ───────────────────────────────────────────────────────────────
 
-function TabTrigger({
-  value,
-  children,
-}: {
-  value: string;
-  children: React.ReactNode;
-}) {
+function TabTrigger({ value, children }: { value: string; children: React.ReactNode }) {
   return (
     <Tabs.Trigger
       value={value}
       className={cn(
         "-mb-px border-b-2 px-4 py-3 text-sm font-medium transition-colors",
-        "border-transparent text-navy/60 hover:text-navy",
+        "border-transparent text-navy/70 hover:text-navy",
         "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
       )}
     >
@@ -179,32 +171,20 @@ function TabTrigger({
 
 // ── Invoice status badge ──────────────────────────────────────────────────────
 
-function renderInvoiceStatus(
-  status: string,
-  dueDate?: string | null,
-): React.ReactNode {
+function renderInvoiceStatus(status: string, dueDate?: string | null): React.ReactNode {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (status === "PAID")
-    return <span className="text-xs font-semibold text-green-600">Paid</span>;
-  if (status === "VOID")
-    return <span className="text-xs font-semibold text-gray-400">Void</span>;
+  if (status === "PAID") return <span className="text-xs font-semibold text-green-600">Paid</span>;
+  if (status === "VOID") return <span className="text-xs font-semibold text-gray-400">Void</span>;
   if (status === "WRITTEN_OFF")
-    return (
-      <span className="text-xs font-semibold text-stone-500">Written Off</span>
-    );
-  if (status === "DRAFT")
-    return (
-      <span className="text-xs font-semibold text-gray-500">Draft</span>
-    );
+    return <span className="text-xs font-semibold text-stone-500">Written Off</span>;
+  if (status === "DRAFT") return <span className="text-xs font-semibold text-gray-500">Draft</span>;
 
   if (dueDate) {
     const due = new Date(dueDate);
     due.setHours(0, 0, 0, 0);
-    const diffDays = Math.round(
-      (due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
-    );
+    const diffDays = Math.round((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
     if (status === "OVERDUE" || diffDays < 0) {
       const days = Math.abs(diffDays);
@@ -222,22 +202,12 @@ function renderInvoiceStatus(
     }
     if (diffDays === 0) {
       if (status === "PARTIAL")
-        return (
-          <span className="text-xs font-semibold text-yellow-600">
-            Partial · Due Today
-          </span>
-        );
-      return (
-        <span className="text-xs font-semibold text-orange-500">
-          Due Today
-        </span>
-      );
+        return <span className="text-xs font-semibold text-yellow-600">Partial · Due Today</span>;
+      return <span className="text-xs font-semibold text-orange-500">Due Today</span>;
     }
     if (status === "PARTIAL")
       return (
-        <span className="text-xs font-semibold text-yellow-600">
-          Partial · Due in {diffDays}d
-        </span>
+        <span className="text-xs font-semibold text-yellow-600">Partial · Due in {diffDays}d</span>
       );
   }
 
@@ -254,12 +224,7 @@ function renderInvoiceStatus(
     OVERDUE: "Overdue",
   };
   return (
-    <span
-      className={cn(
-        "text-xs font-semibold",
-        colors[status] ?? "text-gray-500",
-      )}
-    >
+    <span className={cn("text-xs font-semibold", colors[status] ?? "text-gray-500")}>
       {labels[status] ?? status}
     </span>
   );
@@ -275,18 +240,33 @@ async function compressImage(file: File, maxPx = 1600, quality = 0.72): Promise<
       URL.revokeObjectURL(url);
       let { width, height } = img;
       if (width > maxPx || height > maxPx) {
-        if (width > height) { height = Math.round((height * maxPx) / width); width = maxPx; }
-        else { width = Math.round((width * maxPx) / height); height = maxPx; }
+        if (width > height) {
+          height = Math.round((height * maxPx) / width);
+          width = maxPx;
+        } else {
+          width = Math.round((width * maxPx) / height);
+          height = maxPx;
+        }
       }
       const canvas = document.createElement("canvas");
-      canvas.width = width; canvas.height = height;
+      canvas.width = width;
+      canvas.height = height;
       canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
       canvas.toBlob(
-        (blob) => resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" }) : file),
-        "image/jpeg", quality,
+        (blob) =>
+          resolve(
+            blob
+              ? new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), { type: "image/jpeg" })
+              : file,
+          ),
+        "image/jpeg",
+        quality,
       );
     };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
     img.src = url;
   });
 }
@@ -304,9 +284,9 @@ function InfoRow({
 }) {
   return (
     <div className="flex items-start gap-3 min-w-0">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
       <div className="min-w-0">
-        <p className="text-xs text-navy/50">{label}</p>
+        <p className="text-xs text-navy/70">{label}</p>
         <p className="mt-0.5 text-sm font-medium text-navy break-words">{value}</p>
       </div>
     </div>
@@ -364,8 +344,7 @@ function AddAddressModal({
   });
 
   const handleChange =
-    (field: keyof AddAddressFormValues) =>
-    (e: React.ChangeEvent<HTMLInputElement>) =>
+    (field: keyof AddAddressFormValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -430,14 +409,8 @@ function AddAddressModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">
-                State
-              </label>
-              <Input
-                placeholder="TX"
-                value={form.state}
-                onChange={handleChange("state")}
-              />
+              <label className="mb-1 block text-sm font-medium text-navy">State</label>
+              <Input placeholder="TX" value={form.state} onChange={handleChange("state")} />
             </div>
           </div>
           <Input
@@ -501,11 +474,7 @@ function AssignRouteModal({
       {
         onSuccess: () => onClose(),
         onError: (err: any) =>
-          setError(
-            err?.response?.data?.message ??
-              err.message ??
-              "Failed to assign route.",
-          ),
+          setError(err?.response?.data?.message ?? err.message ?? "Failed to assign route."),
       },
     );
   };
@@ -523,11 +492,7 @@ function AssignRouteModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            form="assign-route-form"
-            loading={addStop.isPending}
-          >
+          <Button type="submit" form="assign-route-form" loading={addStop.isPending}>
             Assign
           </Button>
         </>
@@ -536,12 +501,10 @@ function AssignRouteModal({
       <form id="assign-route-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-4">
           {routesLoading ? (
-            <p className="text-sm text-navy/40">Loading routes…</p>
+            <p className="text-sm text-navy/70">Loading routes…</p>
           ) : (
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">
-                Route
-              </label>
+              <label className="mb-1 block text-sm font-medium text-navy">Route</label>
               <select
                 value={routeId}
                 onChange={(e) => setRouteId(e.target.value)}
@@ -558,9 +521,7 @@ function AssignRouteModal({
           )}
           {addresses.length > 0 && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">
-                Delivery Address
-              </label>
+              <label className="mb-1 block text-sm font-medium text-navy">Delivery Address</label>
               <select
                 value={addressId}
                 onChange={(e) => setAddressId(e.target.value)}
@@ -577,8 +538,7 @@ function AssignRouteModal({
           )}
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">
-              Stop Notes{" "}
-              <span className="font-normal text-navy/40">(optional)</span>
+              Stop Notes <span className="font-normal text-navy/70">(optional)</span>
             </label>
             <input
               type="text"
@@ -653,10 +613,7 @@ function ContactPersonModal({
   const handleChange =
     (field: keyof ContactFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      const value =
-        field === "isPrimary"
-          ? (e.target as HTMLInputElement).checked
-          : e.target.value;
+      const value = field === "isPrimary" ? (e.target as HTMLInputElement).checked : e.target.value;
       setForm((prev) => ({ ...prev, [field]: value }));
     };
 
@@ -692,12 +649,7 @@ function ContactPersonModal({
       title={editingContact ? "Edit Contact Person" : "Add Contact Person"}
       footer={
         <>
-          <Button
-            variant="secondary"
-            type="button"
-            onClick={onClose}
-            disabled={isSaving}
-          >
+          <Button variant="secondary" type="button" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
           <Button type="submit" form="contact-person-form" loading={isSaving}>
@@ -710,9 +662,7 @@ function ContactPersonModal({
         <div className="space-y-3">
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-navy">
-                Salutation
-              </label>
+              <label className="mb-1 block text-sm font-medium text-navy">Salutation</label>
               <select
                 value={form.salutation}
                 onChange={handleChange("salutation")}
@@ -770,9 +720,7 @@ function ContactPersonModal({
                   onChange={handleChange("isPrimary") as any}
                   className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
                 />
-                <span className="text-sm font-medium text-navy">
-                  Primary Contact
-                </span>
+                <span className="text-sm font-medium text-navy">Primary Contact</span>
               </label>
             </div>
           </div>
@@ -792,11 +740,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const allProducts: any[] = productsData?.data ?? [];
 
   const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [editingPrice, setEditingPrice] =
-    React.useState<CustomerPrice | null>(null);
-  const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(
-    null,
-  );
+  const [editingPrice, setEditingPrice] = React.useState<CustomerPrice | null>(null);
+  const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(null);
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedProductId, setSelectedProductId] = React.useState("");
   const [selectedTier, setSelectedTier] = React.useState(1);
@@ -849,10 +794,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   };
 
   const handleDelete = (priceId: string) => {
-    deletePrice.mutate(
-      { customerId, priceId },
-      { onSuccess: () => setDeletingPriceId(null) },
-    );
+    deletePrice.mutate({ customerId, priceId }, { onSuccess: () => setDeletingPriceId(null) });
   };
 
   const priceList: CustomerPrice[] = prices ?? [];
@@ -862,31 +804,23 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">
-              Product Tier Overrides
-            </h3>
-            <p className="mt-0.5 text-xs text-navy/50">
-              Override the pricing tier for specific products. These override the customer&apos;s default tier.
+            <h3 className="text-base font-semibold text-navy">Product Tier Overrides</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Override the pricing tier for specific products. These override the customer&apos;s
+              default tier.
             </p>
           </div>
-          <Button
-            size="sm"
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={openAdd}
-          >
+          <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
             Add Override
           </Button>
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-navy/40">Loading…</p>
+          <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/40">No tier overrides set.</p>
-            <button
-              className="mt-2 text-sm text-brand-500 hover:underline"
-              onClick={openAdd}
-            >
+            <p className="text-sm text-navy/70">No tier overrides set.</p>
+            <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
           </div>
@@ -895,25 +829,25 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-surface-border bg-gray-50">
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Product
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     SKU
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     List Price
                   </th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Override Tier
                   </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Tier Price
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Notes
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/50">
+                  <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Actions
                   </th>
                 </tr>
@@ -926,10 +860,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       <td className="px-6 py-3 text-sm font-medium text-navy">
                         {cp.product?.name ?? "\u2014"}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-navy/50">
+                      <td className="px-4 py-3 font-mono text-xs text-navy/70">
                         {cp.product?.sku ?? "\u2014"}
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-navy/60">
+                      <td className="px-4 py-3 text-right text-sm text-navy/70">
                         {cp.product?.pricePerUnit != null
                           ? fmt(Number(cp.product.pricePerUnit))
                           : "\u2014"}
@@ -940,21 +874,19 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}
                       </td>
-                      <td className="px-4 py-3 text-sm text-navy/60">
-                        {cp.notes ?? "\u2014"}
-                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">{cp.notes ?? "\u2014"}</td>
                       <td className="px-6 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
                             title="Edit override"
-                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
                             onClick={() => openEdit(cp)}
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             title="Delete override"
-                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
+                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
                             onClick={() => setDeletingPriceId(cp.id)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -996,9 +928,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       >
         <div className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">
-              Product
-            </label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Product</label>
             <div className="relative">
               <input
                 type="text"
@@ -1009,43 +939,33 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   setProductDropdownOpen(true);
                 }}
                 onFocus={() => setProductDropdownOpen(true)}
-                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
-              {productDropdownOpen &&
-                productSearch.length > 0 &&
-                filteredProducts.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
-                    <ul className="max-h-40 overflow-y-auto">
-                      {filteredProducts.slice(0, 20).map((p: any) => (
-                        <li key={p.id}>
-                          <button
-                            className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                            onClick={() => {
-                              setSelectedProductId(p.id);
-                              setProductSearch(p.name);
-                              setProductDropdownOpen(false);
-                            }}
-                          >
-                            <span className="text-sm font-medium text-navy">
-                              {p.name}
-                            </span>
-                            {p.sku && (
-                              <span className="font-mono text-xs text-navy/40">
-                                {p.sku}
-                              </span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+              {productDropdownOpen && productSearch.length > 0 && filteredProducts.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
+                  <ul className="max-h-40 overflow-y-auto">
+                    {filteredProducts.slice(0, 20).map((p: any) => (
+                      <li key={p.id}>
+                        <button
+                          className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                          onClick={() => {
+                            setSelectedProductId(p.id);
+                            setProductSearch(p.name);
+                            setProductDropdownOpen(false);
+                          }}
+                        >
+                          <span className="text-sm font-medium text-navy">{p.name}</span>
+                          {p.sku && <span className="font-mono text-xs text-navy/70">{p.sku}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">
-              Pricing Tier
-            </label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Pricing Tier</label>
             <select
               value={selectedTier}
               onChange={(e) => setSelectedTier(Number(e.target.value))}
@@ -1053,14 +973,18 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             >
               {[1, 2, 3, 4, 5].map((t) => (
                 <option key={t} value={t}>
-                  Tier {t}{t === 1 ? " (List Price)" : ""}
+                  Tier {t}
+                  {t === 1 ? " (List Price)" : ""}
                   {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                 </option>
               ))}
             </select>
             {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/40">
-                Price at Tier {selectedTier}: <span className="font-semibold text-brand-600">{fmt(getTierPrice(selectedProduct, selectedTier))}</span>
+              <p className="mt-1 text-xs text-navy/70">
+                Price at Tier {selectedTier}:{" "}
+                <span className="font-semibold text-brand-600">
+                  {fmt(getTierPrice(selectedProduct, selectedTier))}
+                </span>
               </p>
             )}
           </div>
@@ -1114,8 +1038,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
 
   const commentList: CustomerComment[] = comments ?? [];
   const sortedComments = [...commentList].sort(
-    (a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
 
   return (
@@ -1130,7 +1053,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
             placeholder="Add a comment…"
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <div className="mt-2 flex justify-end">
             <Button
@@ -1147,11 +1070,11 @@ function CommentsTab({ customerId }: { customerId: string }) {
 
         {/* Comments list */}
         {isLoading ? (
-          <p className="text-sm text-navy/40">Loading comments…</p>
+          <p className="text-sm text-navy/70">Loading comments…</p>
         ) : sortedComments.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
             <MessageSquare className="mx-auto h-8 w-8 text-navy/20" />
-            <p className="mt-2 text-sm text-navy/40">No comments yet.</p>
+            <p className="mt-2 text-sm text-navy/70">No comments yet.</p>
           </div>
         ) : (
           <ul className="space-y-4">
@@ -1169,9 +1092,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
                       <p className="text-xs font-semibold text-navy">
                         {(comment as any).user?.username ?? "User"}
                       </p>
-                      <p className="text-xs text-navy/40">
-                        {timeAgo(comment.createdAt)}
-                      </p>
+                      <p className="text-xs text-navy/70">{timeAgo(comment.createdAt)}</p>
                     </div>
                   </div>
                   <button
@@ -1187,9 +1108,7 @@ function CommentsTab({ customerId }: { customerId: string }) {
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-navy/80">
-                  {comment.content}
-                </p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-navy/80">{comment.content}</p>
               </li>
             ))}
           </ul>
@@ -1215,39 +1134,37 @@ function DocumentThumb({
   const base =
     "flex h-40 w-full items-center justify-center bg-gradient-to-br from-surface-raised to-white";
 
-  const body = isImage && !imgFailed ? (
-    <img
-      src={doc.url}
-      alt={doc.originalName}
-      className="h-40 w-full object-cover"
-      onError={() => setImgFailed(true)}
-      loading="lazy"
-    />
-  ) : isImage ? (
-    <div className={cn(base, "flex-col gap-1.5 text-navy/40")}>
-      <Camera className="h-10 w-10" />
-      <span className="text-[10px] font-medium uppercase tracking-wide">Image preview</span>
-    </div>
-  ) : isPdf ? (
-    <div
-      className={cn(
-        base,
-        "flex-col gap-1.5 bg-gradient-to-br from-red-50 to-white text-red-600",
-      )}
-    >
-      <FileText className="h-10 w-10" />
-      <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-        PDF
-      </span>
-    </div>
-  ) : (
-    <div className={cn(base, "flex-col gap-1.5 text-navy/40")}>
-      <FileText className="h-10 w-10" />
-      <span className="text-[10px] font-medium uppercase tracking-wide">
-        {(doc.originalName.split(".").pop() || "File").slice(0, 6)}
-      </span>
-    </div>
-  );
+  const body =
+    isImage && !imgFailed ? (
+      <img
+        src={doc.url}
+        alt={doc.originalName}
+        className="h-40 w-full object-cover"
+        onError={() => setImgFailed(true)}
+        loading="lazy"
+      />
+    ) : isImage ? (
+      <div className={cn(base, "flex-col gap-1.5 text-navy/70")}>
+        <Camera className="h-10 w-10" />
+        <span className="text-[10px] font-medium uppercase tracking-wide">Image preview</span>
+      </div>
+    ) : isPdf ? (
+      <div
+        className={cn(base, "flex-col gap-1.5 bg-gradient-to-br from-red-50 to-white text-red-600")}
+      >
+        <FileText className="h-10 w-10" />
+        <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+          PDF
+        </span>
+      </div>
+    ) : (
+      <div className={cn(base, "flex-col gap-1.5 text-navy/70")}>
+        <FileText className="h-10 w-10" />
+        <span className="text-[10px] font-medium uppercase tracking-wide">
+          {(doc.originalName.split(".").pop() || "File").slice(0, 6)}
+        </span>
+      </div>
+    );
 
   return (
     <button
@@ -1260,15 +1177,11 @@ function DocumentThumb({
   );
 }
 
-function DocumentViewer({
-  doc,
-  onClose,
-}: {
-  doc: CustomerDocument | null;
-  onClose: () => void;
-}) {
+function DocumentViewer({ doc, onClose }: { doc: CustomerDocument | null; onClose: () => void }) {
   const [zoomed, setZoomed] = React.useState(false);
-  React.useEffect(() => { setZoomed(false); }, [doc]);
+  React.useEffect(() => {
+    setZoomed(false);
+  }, [doc]);
   if (!doc) return null;
   const isImage = doc.mimeType.startsWith("image/");
   const isPdf = doc.mimeType === "application/pdf";
@@ -1285,7 +1198,7 @@ function DocumentViewer({
         {isImage && (
           <button
             onClick={() => setZoomed((z) => !z)}
-            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
           >
             <ZoomIn className="h-3.5 w-3.5" />
             {zoomed ? "Fit" : "Zoom"}
@@ -1296,7 +1209,7 @@ function DocumentViewer({
           download={doc.originalName}
           target="_blank"
           rel="noopener noreferrer"
-          className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/60 transition-colors hover:bg-surface-raised hover:text-navy"
+          className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-xs text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
         >
           <Download className="h-3.5 w-3.5" />
           Download
@@ -1321,14 +1234,10 @@ function DocumentViewer({
         </div>
       ) : isPdf ? (
         <div className="h-[75vh]">
-          <iframe
-            src={doc.url}
-            className="h-full w-full border-0"
-            title={doc.originalName}
-          />
+          <iframe src={doc.url} className="h-full w-full border-0" title={doc.originalName} />
         </div>
       ) : (
-        <div className="flex h-48 flex-col items-center justify-center gap-2 text-navy/40">
+        <div className="flex h-48 flex-col items-center justify-center gap-2 text-navy/70">
           <FileText className="h-12 w-12" />
           <p className="text-sm">Preview not available</p>
         </div>
@@ -1359,11 +1268,18 @@ function DocumentsTab({ customerId }: { customerId: string }) {
     if (files.length === 0) return;
     try {
       await upload.mutateAsync({ files, docType });
-      toast({ title: `Uploaded ${files.length} document${files.length !== 1 ? "s" : ""}`, variant: "success" });
+      toast({
+        title: `Uploaded ${files.length} document${files.length !== 1 ? "s" : ""}`,
+        variant: "success",
+      });
       setFiles([]);
       setUploadOpen(false);
     } catch (e: any) {
-      toast({ title: "Upload failed", description: e?.response?.data?.message ?? "", variant: "error" });
+      toast({
+        title: "Upload failed",
+        description: e?.response?.data?.message ?? "",
+        variant: "error",
+      });
     }
   };
 
@@ -1377,45 +1293,59 @@ function DocumentsTab({ customerId }: { customerId: string }) {
   };
 
   const fmtSize = (b: number) =>
-    b < 1024 ? `${b} B` : b < 1_048_576 ? `${Math.round(b / 1024)} KB` : `${(b / 1_048_576).toFixed(1)} MB`;
+    b < 1024
+      ? `${b} B`
+      : b < 1_048_576
+        ? `${Math.round(b / 1024)} KB`
+        : `${(b / 1_048_576).toFixed(1)} MB`;
 
   return (
     <Tabs.Content value="documents" className="mt-5 focus:outline-none">
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-base font-semibold text-navy">Documents</h3>
-          <Button size="sm" leftIcon={<Upload className="h-4 w-4" />} onClick={() => setUploadOpen(true)}>
+          <Button
+            size="sm"
+            leftIcon={<Upload className="h-4 w-4" />}
+            onClick={() => setUploadOpen(true)}
+          >
             Upload Document
           </Button>
         </div>
 
         {isLoading ? (
-          <p className="text-sm text-navy/40">Loading…</p>
+          <p className="text-sm text-navy/70">Loading…</p>
         ) : !docs || docs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
             <FileText className="mx-auto h-8 w-8 text-navy/20" />
-            <p className="mt-2 text-sm text-navy/40">
-              No documents uploaded. Use the Upload button to add tax forms, signed agreements, or other files.
+            <p className="mt-2 text-sm text-navy/70">
+              No documents uploaded. Use the Upload button to add tax forms, signed agreements, or
+              other files.
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {docs.map((d) => (
-              <div key={d.id} className="group relative overflow-hidden rounded-lg border border-surface-border bg-white">
+              <div
+                key={d.id}
+                className="group relative overflow-hidden rounded-lg border border-surface-border bg-white"
+              >
                 <DocumentThumb doc={d} onView={() => setViewing(d)} />
                 <div className="p-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-brand-600">{d.docType}</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-brand-600">
+                    {d.docType}
+                  </p>
                   <p className="mt-0.5 truncate text-sm text-navy" title={d.originalName}>
                     {d.originalName}
                   </p>
-                  <p className="mt-0.5 text-xs text-navy/40">
+                  <p className="mt-0.5 text-xs text-navy/70">
                     {fmtSize(d.sizeBytes)} · {fmtDate(d.createdAt)}
                   </p>
                 </div>
                 <button
                   onClick={() => handleDelete(d.id)}
                   title="Delete document"
-                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/40 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
+                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -1451,7 +1381,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
       >
         <div className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/40">
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/70">
               Document Type
             </label>
             <select
@@ -1467,7 +1397,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/40">
+            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-navy/70">
               Files (images or PDF)
             </label>
             <input
@@ -1480,7 +1410,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
             {files.length > 0 && (
               <ul className="mt-2 space-y-1">
                 {files.map((f, i) => (
-                  <li key={i} className="truncate text-xs text-navy/60">
+                  <li key={i} className="truncate text-xs text-navy/70">
                     {f.name} ({fmtSize(f.size)})
                   </li>
                 ))}
@@ -1500,11 +1430,7 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
 type CustomerStatus = (typeof STATUS_CYCLE)[number];
 
-export default function CustomerDetailPage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default function CustomerDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
@@ -1525,9 +1451,9 @@ export default function CustomerDetailPage({
   const { data: advancePayments } = useCustomerAdvancePayments(params.id);
   const createAdvance = useCreateAdvancePayment();
 
-  const [invoiceFilter, setInvoiceFilter] = React.useState<
-    "all" | "outstanding" | "paid" | "void"
-  >("all");
+  const [invoiceFilter, setInvoiceFilter] = React.useState<"all" | "outstanding" | "paid" | "void">(
+    "all",
+  );
   const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
     customerId: params.id,
     status:
@@ -1543,8 +1469,7 @@ export default function CustomerDetailPage({
   const customerInvoices = invoicesData?.data ?? [];
 
   // New hooks
-  const { data: contactPersons, isLoading: contactsLoading } =
-    useContactPersons(params.id);
+  const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(params.id);
   const deleteContact = useDeleteContactPerson();
   const { data: allTags } = useCustomerTags();
   const assignTag = useAssignCustomerTag();
@@ -1582,8 +1507,7 @@ export default function CustomerDetailPage({
 
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
   const addresses = customer?.addresses ?? [];
-  const currentStatus: CustomerStatus =
-    (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
+  const currentStatus: CustomerStatus = (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
 
   React.useEffect(() => {
     setTitle(customer?.businessName ?? "Customer");
@@ -1593,16 +1517,11 @@ export default function CustomerDetailPage({
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
-  const [pendingStatus, setPendingStatus] =
-    React.useState<CustomerStatus | null>(null);
+  const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
 
   // Delivery time window
-  const [windowStart, setWindowStart] = React.useState(
-    customer?.deliveryWindowStart ?? "",
-  );
-  const [windowEnd, setWindowEnd] = React.useState(
-    customer?.deliveryWindowEnd ?? "",
-  );
+  const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
+  const [windowEnd, setWindowEnd] = React.useState(customer?.deliveryWindowEnd ?? "");
   const [anyTime, setAnyTime] = React.useState(
     !customer?.deliveryWindowStart && !customer?.deliveryWindowEnd,
   );
@@ -1611,9 +1530,7 @@ export default function CustomerDetailPage({
     if (customer) {
       setWindowStart(customer.deliveryWindowStart ?? "");
       setWindowEnd(customer.deliveryWindowEnd ?? "");
-      setAnyTime(
-        !customer.deliveryWindowStart && !customer.deliveryWindowEnd,
-      );
+      setAnyTime(!customer.deliveryWindowStart && !customer.deliveryWindowEnd);
     }
   }, [customer?.deliveryWindowStart, customer?.deliveryWindowEnd]);
 
@@ -1631,11 +1548,14 @@ export default function CustomerDetailPage({
   };
 
   // Tax-document upload with client-side compression
-  const handleTaxDocFiles = React.useCallback(async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const compressed = await Promise.all(Array.from(files).map((f) => compressImage(f)));
-    uploadTaxDocs.mutate(compressed);
-  }, [uploadTaxDocs]);
+  const handleTaxDocFiles = React.useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      const compressed = await Promise.all(Array.from(files).map((f) => compressImage(f)));
+      uploadTaxDocs.mutate(compressed);
+    },
+    [uploadTaxDocs],
+  );
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -1648,19 +1568,13 @@ export default function CustomerDetailPage({
 
   // Standing orders
   const [isStandingOrderOpen, setIsStandingOrderOpen] = React.useState(false);
-  const [editingTemplate, setEditingTemplate] =
-    React.useState<OrderTemplate | null>(null);
-  const [deletingTemplateId, setDeletingTemplateId] = React.useState<
-    string | null
-  >(null);
+  const [editingTemplate, setEditingTemplate] = React.useState<OrderTemplate | null>(null);
+  const [deletingTemplateId, setDeletingTemplateId] = React.useState<string | null>(null);
 
   // Contact person modal
   const [isContactModalOpen, setIsContactModalOpen] = React.useState(false);
-  const [editingContact, setEditingContact] =
-    React.useState<ContactPerson | null>(null);
-  const [deletingContactId, setDeletingContactId] = React.useState<
-    string | null
-  >(null);
+  const [editingContact, setEditingContact] = React.useState<ContactPerson | null>(null);
+  const [deletingContactId, setDeletingContactId] = React.useState<string | null>(null);
 
   // Tag dropdown
   const [tagDropdownOpen, setTagDropdownOpen] = React.useState(false);
@@ -1668,10 +1582,7 @@ export default function CustomerDetailPage({
 
   React.useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (
-        tagDropdownRef.current &&
-        !tagDropdownRef.current.contains(e.target as Node)
-      ) {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
         setTagDropdownOpen(false);
       }
     };
@@ -1690,7 +1601,7 @@ export default function CustomerDetailPage({
   };
 
   if (isLoading) {
-    return <div className="p-12 text-center text-navy/40">Loading...</div>;
+    return <div className="p-12 text-center text-navy/70">Loading...</div>;
   }
 
   if (!customer) {
@@ -1732,25 +1643,18 @@ export default function CustomerDetailPage({
   };
 
   // Tags
-  const assignedTags: CustomerTag[] =
-    customer?.tagAssignments?.map((ta: any) => ta.tag) ?? [];
+  const assignedTags: CustomerTag[] = customer?.tagAssignments?.map((ta: any) => ta.tag) ?? [];
   const assignedTagIds = new Set(assignedTags.map((t) => t.id));
-  const availableTags = (allTags ?? []).filter(
-    (t) => !assignedTagIds.has(t.id),
-  );
+  const availableTags = (allTags ?? []).filter((t) => !assignedTagIds.has(t.id));
 
   // Contact persons
   const contacts: ContactPerson[] = contactPersons ?? [];
 
   // Credit limit usage
-  const creditLimit =
-    customer?.creditLimit != null ? Number(customer.creditLimit) : null;
-  const receivables =
-    customer?.receivables != null ? Number(customer.receivables) : 0;
+  const creditLimit = customer?.creditLimit != null ? Number(customer.creditLimit) : null;
+  const receivables = customer?.receivables != null ? Number(customer.receivables) : 0;
   const creditUsagePercent =
-    creditLimit && creditLimit > 0
-      ? Math.min(100, (receivables / creditLimit) * 100)
-      : 0;
+    creditLimit && creditLimit > 0 ? Math.min(100, (receivables / creditLimit) * 100) : 0;
 
   return (
     <div className="space-y-5 p-6">
@@ -1758,7 +1662,7 @@ export default function CustomerDetailPage({
       <div className="flex items-start gap-4">
         <Link
           href="/customers"
-          className="mt-0.5 flex items-center gap-1.5 text-sm text-navy/60 transition-colors hover:text-navy"
+          className="mt-0.5 flex items-center gap-1.5 text-sm text-navy/70 transition-colors hover:text-navy"
         >
           <ArrowLeft className="h-4 w-4" />
           Customers
@@ -1768,9 +1672,7 @@ export default function CustomerDetailPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-navy">
-              {customer.businessName}
-            </h1>
+            <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -1790,15 +1692,11 @@ export default function CustomerDetailPage({
               )}
             </span>
           </div>
-          <p className="mt-1 text-sm text-navy/60">{customer.contactName}</p>
+          <p className="mt-1 text-sm text-navy/70">{customer.contactName}</p>
         </div>
         <div className="flex items-center gap-3">
           <Badge status={currentStatus} />
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setIsEditOpen(true)}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setIsEditOpen(true)}>
             Edit
           </Button>
         </div>
@@ -1811,9 +1709,7 @@ export default function CustomerDetailPage({
           <TabTrigger value="orders">
             Orders{allOrders.length > 0 ? ` (${allOrders.length})` : ""}
           </TabTrigger>
-          <TabTrigger value="addresses">
-            Addresses ({addresses.length})
-          </TabTrigger>
+          <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
           <TabTrigger value="standing-orders">
             Standing Orders
             {templates.length > 0 ? ` (${templates.length})` : ""}
@@ -1847,31 +1743,13 @@ export default function CustomerDetailPage({
                 <Card title="Customer Details">
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                     {customer.displayName && (
-                      <InfoRow
-                        icon={User}
-                        label="Display Name"
-                        value={customer.displayName}
-                      />
+                      <InfoRow icon={User} label="Display Name" value={customer.displayName} />
                     )}
-                    {customer.email && (
-                      <InfoRow
-                        icon={Mail}
-                        label="Email"
-                        value={customer.email}
-                      />
-                    )}
+                    {customer.email && <InfoRow icon={Mail} label="Email" value={customer.email} />}
                     {customer.mobile && (
-                      <InfoRow
-                        icon={Phone}
-                        label="Mobile"
-                        value={customer.mobile}
-                      />
+                      <InfoRow icon={Phone} label="Mobile" value={customer.mobile} />
                     )}
-                    <InfoRow
-                      icon={Phone}
-                      label="Phone"
-                      value={customer.phone ?? "\u2014"}
-                    />
+                    <InfoRow icon={Phone} label="Phone" value={customer.phone ?? "\u2014"} />
                     <InfoRow
                       icon={Mail}
                       label="Account Email"
@@ -1884,9 +1762,9 @@ export default function CustomerDetailPage({
                     />
                     {customer.currency && (
                       <div className="flex items-start gap-3">
-                        <DollarSign className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                        <DollarSign className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                         <div>
-                          <p className="text-xs text-navy/50">Currency</p>
+                          <p className="text-xs text-navy/70">Currency</p>
                           <span className="mt-0.5 inline-flex items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs font-semibold text-navy">
                             {customer.currency}
                           </span>
@@ -1895,13 +1773,11 @@ export default function CustomerDetailPage({
                     )}
                     {customer.taxId && (
                       <div className="flex items-start gap-3">
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                         <div>
-                          <p className="text-xs text-navy/50">Tax ID</p>
+                          <p className="text-xs text-navy/70">Tax ID</p>
                           <div className="mt-0.5 flex items-center gap-2">
-                            <p className="text-sm font-medium text-navy">
-                              {customer.taxId}
-                            </p>
+                            <p className="text-sm font-medium text-navy">{customer.taxId}</p>
                             {customer.isTaxExempt && (
                               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
                                 Tax Exempt
@@ -1917,7 +1793,7 @@ export default function CustomerDetailPage({
                   {customer.isTaxExempt && (
                     <div className="mt-5 border-t border-surface-border pt-4">
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                           Tax Exempt Documents
                         </p>
                         {isOperator && (
@@ -1943,13 +1819,20 @@ export default function CustomerDetailPage({
                       </div>
 
                       {taxDocs.length === 0 ? (
-                        <p className="text-xs text-navy/40 italic">No documents uploaded yet.</p>
+                        <p className="text-xs text-navy/70 italic">No documents uploaded yet.</p>
                       ) : (
                         <div className="grid grid-cols-3 gap-2">
                           {taxDocs.map((doc) => (
-                            <div key={doc.key} className="group relative aspect-square rounded-lg overflow-hidden border border-surface-border bg-surface-50">
+                            <div
+                              key={doc.key}
+                              className="group relative aspect-square rounded-lg overflow-hidden border border-surface-border bg-surface-50"
+                            >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={doc.url} alt="Tax exempt doc" className="h-full w-full object-cover" />
+                              <img
+                                src={doc.url}
+                                alt="Tax exempt doc"
+                                className="h-full w-full object-cover"
+                              />
                               <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   onClick={() => setTaxDocLightbox(doc.url)}
@@ -1978,7 +1861,7 @@ export default function CustomerDetailPage({
                   {/* Pricing Tier */}
                   <div className="mt-5 border-t border-surface-border pt-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                         Pricing Tier
                       </p>
                       {isOperator && (
@@ -1994,7 +1877,8 @@ export default function CustomerDetailPage({
                         >
                           {[1, 2, 3, 4, 5].map((t) => (
                             <option key={t} value={t}>
-                              Tier {t}{t === 1 ? " (Default)" : ""}
+                              Tier {t}
+                              {t === 1 ? " (Default)" : ""}
                             </option>
                           ))}
                         </select>
@@ -2011,7 +1895,7 @@ export default function CustomerDetailPage({
                   {creditLimit != null && creditLimit > 0 && (
                     <div className="mt-5 border-t border-surface-border pt-4">
                       <div className="mb-1.5 flex items-center justify-between">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/50">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                           Credit Limit
                         </p>
                         <p className="text-sm font-semibold text-navy">
@@ -2031,13 +1915,10 @@ export default function CustomerDetailPage({
                           style={{ width: `${creditUsagePercent}%` }}
                         />
                       </div>
-                      <p className="mt-1 text-xs text-navy/40">
+                      <p className="mt-1 text-xs text-navy/70">
                         {creditUsagePercent.toFixed(0)}% used
                         {creditLimit - receivables > 0 && (
-                          <>
-                            {" "}
-                            &middot; {fmt(creditLimit - receivables)} available
-                          </>
+                          <> &middot; {fmt(creditLimit - receivables)} available</>
                         )}
                       </p>
                     </div>
@@ -2074,9 +1955,7 @@ export default function CustomerDetailPage({
                       </span>
                     ))}
                     {assignedTags.length === 0 && (
-                      <p className="text-xs text-navy/40">
-                        No tags assigned.
-                      </p>
+                      <p className="text-xs text-navy/70">No tags assigned.</p>
                     )}
                   </div>
 
@@ -2108,9 +1987,7 @@ export default function CustomerDetailPage({
                                   className="h-3 w-3 shrink-0 rounded-full"
                                   style={{ backgroundColor: tag.color }}
                                 />
-                                <span className="font-medium text-navy">
-                                  {tag.name}
-                                </span>
+                                <span className="font-medium text-navy">{tag.name}</span>
                               </button>
                             </li>
                           ))}
@@ -2119,9 +1996,7 @@ export default function CustomerDetailPage({
                     )}
                     {tagDropdownOpen && availableTags.length === 0 && (
                       <div className="absolute left-0 z-20 mt-1 w-56 rounded-lg border border-surface-border bg-white p-3 shadow-lg">
-                        <p className="text-xs text-navy/40">
-                          All tags assigned.
-                        </p>
+                        <p className="text-xs text-navy/70">All tags assigned.</p>
                       </div>
                     )}
                   </div>
@@ -2133,25 +2008,14 @@ export default function CustomerDetailPage({
             <Card title="Income & Expenses (Last 6 Months)">
               {!chartData || chartData.length === 0 ? (
                 <div className="flex h-48 items-center justify-center">
-                  <p className="text-sm text-navy/40">
-                    No chart data available.
-                  </p>
+                  <p className="text-sm text-navy/70">No chart data available.</p>
                 </div>
               ) : (
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={chartData}
-                      margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                    >
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="#e5e7eb"
-                      />
-                      <XAxis
-                        dataKey="month"
-                        tick={{ fontSize: 12, fill: "#6b7280" }}
-                      />
+                    <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#6b7280" }} />
                       <YAxis
                         tick={{ fontSize: 12, fill: "#6b7280" }}
                         tickFormatter={(v: number) =>
@@ -2167,12 +2031,7 @@ export default function CustomerDetailPage({
                         }}
                       />
                       <Legend wrapperStyle={{ fontSize: "13px" }} />
-                      <Bar
-                        dataKey="income"
-                        name="Income"
-                        fill="#22c55e"
-                        radius={[4, 4, 0, 0]}
-                      />
+                      <Bar dataKey="income" name="Income" fill="#22c55e" radius={[4, 4, 0, 0]} />
                       <Bar
                         dataKey="expenses"
                         name="Expenses"
@@ -2189,10 +2048,8 @@ export default function CustomerDetailPage({
             <Card>
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-semibold text-navy">
-                    Contact Persons
-                  </h3>
-                  <p className="mt-0.5 text-xs text-navy/50">
+                  <h3 className="text-base font-semibold text-navy">Contact Persons</h3>
+                  <p className="mt-0.5 text-xs text-navy/70">
                     People associated with this customer account.
                   </p>
                 </div>
@@ -2209,13 +2066,11 @@ export default function CustomerDetailPage({
               </div>
 
               {contactsLoading ? (
-                <p className="text-sm text-navy/40">Loading contacts…</p>
+                <p className="text-sm text-navy/70">Loading contacts…</p>
               ) : contacts.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
                   <User className="mx-auto h-8 w-8 text-navy/20" />
-                  <p className="mt-2 text-sm text-navy/40">
-                    No contact persons yet.
-                  </p>
+                  <p className="mt-2 text-sm text-navy/70">No contact persons yet.</p>
                   <button
                     className="mt-2 text-sm text-brand-500 hover:underline"
                     onClick={() => {
@@ -2237,17 +2092,11 @@ export default function CustomerDetailPage({
                         <div className="flex items-center gap-2">
                           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
                             {contact.firstName.charAt(0).toUpperCase()}
-                            {contact.lastName
-                              ? contact.lastName.charAt(0).toUpperCase()
-                              : ""}
+                            {contact.lastName ? contact.lastName.charAt(0).toUpperCase() : ""}
                           </div>
                           <div>
                             <p className="text-sm font-semibold text-navy">
-                              {[
-                                contact.salutation,
-                                contact.firstName,
-                                contact.lastName,
-                              ]
+                              {[contact.salutation, contact.firstName, contact.lastName]
                                 .filter(Boolean)
                                 .join(" ")}
                             </p>
@@ -2261,7 +2110,7 @@ export default function CustomerDetailPage({
                         <div className="flex shrink-0 items-center gap-0.5">
                           <button
                             title="Edit contact"
-                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-white hover:text-navy"
+                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-white hover:text-navy"
                             onClick={() => {
                               setEditingContact(contact);
                               setIsContactModalOpen(true);
@@ -2271,10 +2120,8 @@ export default function CustomerDetailPage({
                           </button>
                           <button
                             title="Delete contact"
-                            className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
-                            onClick={() =>
-                              setDeletingContactId(contact.id)
-                            }
+                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                            onClick={() => setDeletingContactId(contact.id)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -2282,19 +2129,19 @@ export default function CustomerDetailPage({
                       </div>
                       <div className="mt-3 space-y-1.5">
                         {contact.email && (
-                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                          <p className="flex items-center gap-2 text-xs text-navy/70">
                             <Mail className="h-3 w-3 shrink-0 text-navy/30" />
                             {contact.email}
                           </p>
                         )}
                         {contact.phone && (
-                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                          <p className="flex items-center gap-2 text-xs text-navy/70">
                             <Phone className="h-3 w-3 shrink-0 text-navy/30" />
                             {contact.phone}
                           </p>
                         )}
                         {contact.mobile && (
-                          <p className="flex items-center gap-2 text-xs text-navy/60">
+                          <p className="flex items-center gap-2 text-xs text-navy/70">
                             <Phone className="h-3 w-3 shrink-0 text-navy/30" />
                             {contact.mobile}
                             <span className="text-navy/30">(mobile)</span>
@@ -2312,18 +2159,15 @@ export default function CustomerDetailPage({
               <div className="space-y-5 lg:col-span-2">
                 <Card title="Delivery Time Window">
                   <div className="space-y-3">
-                    <p className="text-sm text-navy/60">
-                      Set the customer&apos;s accepted delivery hours. The
-                      route optimizer will schedule this stop within the
-                      window.
+                    <p className="text-sm text-navy/70">
+                      Set the customer&apos;s accepted delivery hours. The route optimizer will
+                      schedule this stop within the window.
                     </p>
                     <label className="flex cursor-pointer items-center gap-2">
                       <input
                         type="checkbox"
                         checked={anyTime}
-                        onChange={(e) =>
-                          handleAnyTimeToggle(e.target.checked)
-                        }
+                        onChange={(e) => handleAnyTimeToggle(e.target.checked)}
                         className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
                       />
                       <span className="text-sm font-medium text-navy">
@@ -2334,7 +2178,7 @@ export default function CustomerDetailPage({
                       className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}
                     >
                       <div className="space-y-1">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/70">
                           <Clock className="h-3.5 w-3.5" />
                           Window Start
                         </label>
@@ -2349,7 +2193,7 @@ export default function CustomerDetailPage({
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/60">
+                        <label className="flex items-center gap-1.5 text-xs font-medium text-navy/70">
                           <Clock className="h-3.5 w-3.5" />
                           Window End
                         </label>
@@ -2375,25 +2219,16 @@ export default function CustomerDetailPage({
                 <Card title="Assigned Routes">
                   <div className="space-y-3">
                     {(customerRoutes ?? []).length === 0 ? (
-                      <p className="text-sm text-navy/40">
-                        Not assigned to any routes yet.
-                      </p>
+                      <p className="text-sm text-navy/70">Not assigned to any routes yet.</p>
                     ) : (
                       <ul className="-mx-6 divide-y divide-surface-border">
                         {(customerRoutes as any[]).map((r) => (
-                          <li
-                            key={r.id}
-                            className="flex items-center gap-3 px-6 py-3"
-                          >
-                            <Route className="h-4 w-4 shrink-0 text-navy/40" />
+                          <li key={r.id} className="flex items-center gap-3 px-6 py-3">
+                            <Route className="h-4 w-4 shrink-0 text-navy/70" />
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-navy">
-                                {r.name}
-                              </p>
+                              <p className="text-sm font-medium text-navy">{r.name}</p>
                               {r.driverName && (
-                                <p className="text-xs text-navy/50">
-                                  Driver: {r.driverName}
-                                </p>
+                                <p className="text-xs text-navy/70">Driver: {r.driverName}</p>
                               )}
                             </div>
                             <span
@@ -2401,7 +2236,7 @@ export default function CustomerDetailPage({
                                 "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
                                 r.isActive
                                   ? "bg-success-bg text-success"
-                                  : "bg-surface-raised text-navy/50",
+                                  : "bg-surface-raised text-navy/70",
                               )}
                             >
                               {r.isActive ? "Active" : "Inactive"}
@@ -2426,7 +2261,7 @@ export default function CustomerDetailPage({
                 <Card title="Account Status">
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center justify-between">
-                      <p className="text-sm text-navy/60">Current status</p>
+                      <p className="text-sm text-navy/70">Current status</p>
                       <Badge status={currentStatus} />
                     </div>
                     <div className="space-y-2">
@@ -2439,7 +2274,7 @@ export default function CustomerDetailPage({
                             "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                             currentStatus === s
                               ? "border-brand-500 bg-brand-50 text-brand-700"
-                              : "border-surface-border text-navy/60 hover:border-navy/30 hover:text-navy",
+                              : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
                           )}
                         >
                           <span
@@ -2459,7 +2294,10 @@ export default function CustomerDetailPage({
                     {currentStatus === "SUSPENDED" && (
                       <div className="border-t border-surface-border pt-4">
                         <button
-                          onClick={() => { setIsDeleteOpen(true); setDeleteConfirm(""); }}
+                          onClick={() => {
+                            setIsDeleteOpen(true);
+                            setDeleteConfirm("");
+                          }}
                           className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -2473,12 +2311,12 @@ export default function CustomerDetailPage({
                 {/* ── Buyer Portal card ──────────────────────────── */}
                 <Card title="Buyer Portal">
                   {portalLoading ? (
-                    <p className="text-sm text-navy/50">Loading…</p>
+                    <p className="text-sm text-navy/70">Loading…</p>
                   ) : (
                     <div className="flex flex-col gap-3">
                       {/* Status row */}
                       <div className="flex items-center justify-between">
-                        <p className="text-sm text-navy/60">Portal status</p>
+                        <p className="text-sm text-navy/70">Portal status</p>
                         <span
                           className={cn(
                             "rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -2490,7 +2328,7 @@ export default function CustomerDetailPage({
                                   ? "bg-brand-50 text-brand-700"
                                   : portalStatus?.status === "DISCONNECTED"
                                     ? "bg-danger/10 text-danger"
-                                    : "bg-surface-raised text-navy/50",
+                                    : "bg-surface-raised text-navy/70",
                           )}
                         >
                           {portalStatus?.status === "NOT_INVITED"
@@ -2517,7 +2355,7 @@ export default function CustomerDetailPage({
 
                       {/* Invited: show expiry */}
                       {portalStatus?.status === "INVITED" && portalStatus.inviteExpiresAt && (
-                        <p className="text-xs text-navy/50">
+                        <p className="text-xs text-navy/70">
                           Expires {new Date(portalStatus.inviteExpiresAt).toLocaleDateString()}
                         </p>
                       )}
@@ -2530,7 +2368,8 @@ export default function CustomerDetailPage({
                       )}
 
                       {/* Override email field for sending invite */}
-                      {(portalStatus?.status === "NOT_INVITED" || portalStatus?.status === "DISCONNECTED") && (
+                      {(portalStatus?.status === "NOT_INVITED" ||
+                        portalStatus?.status === "DISCONNECTED") && (
                         <Input
                           placeholder={`Override email (optional)`}
                           value={portalInviteEmail}
@@ -2541,16 +2380,22 @@ export default function CustomerDetailPage({
 
                       {/* Actions */}
                       <div className="flex flex-col gap-2">
-                        {(portalStatus?.status === "NOT_INVITED" || portalStatus?.status === "DISCONNECTED") && (
+                        {(portalStatus?.status === "NOT_INVITED" ||
+                          portalStatus?.status === "DISCONNECTED") && (
                           <Button
                             size="sm"
                             loading={sendInvite.isPending}
                             onClick={() => {
                               setPortalMsg(null);
                               sendInvite.mutate(
-                                { id: params.id, method: "EMAIL", overrideEmail: portalInviteEmail || undefined },
                                 {
-                                  onSuccess: (d: { message?: string }) => setPortalMsg(d?.message ?? "Invite sent!"),
+                                  id: params.id,
+                                  method: "EMAIL",
+                                  overrideEmail: portalInviteEmail || undefined,
+                                },
+                                {
+                                  onSuccess: (d: { message?: string }) =>
+                                    setPortalMsg(d?.message ?? "Invite sent!"),
                                   onError: () => setPortalMsg(null),
                                 },
                               );
@@ -2568,7 +2413,8 @@ export default function CustomerDetailPage({
                             onClick={() => {
                               setPortalMsg(null);
                               resendInvite.mutate(params.id, {
-                                onSuccess: (d: { message?: string }) => setPortalMsg(d?.message ?? "Invite resent!"),
+                                onSuccess: (d: { message?: string }) =>
+                                  setPortalMsg(d?.message ?? "Invite resent!"),
                                 onError: () => setPortalMsg(null),
                               });
                             }}
@@ -2593,7 +2439,9 @@ export default function CustomerDetailPage({
                           </Button>
                         )}
 
-                        {(portalStatus?.status === "ACTIVE" || portalStatus?.status === "INVITED" || portalStatus?.status === "PENDING_SELLER_APPROVAL") && (
+                        {(portalStatus?.status === "ACTIVE" ||
+                          portalStatus?.status === "INVITED" ||
+                          portalStatus?.status === "PENDING_SELLER_APPROVAL") && (
                           <Button
                             size="sm"
                             variant="danger"
@@ -2622,9 +2470,7 @@ export default function CustomerDetailPage({
         <Tabs.Content value="orders" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-base font-semibold text-navy">
-                Order History
-              </h3>
+              <h3 className="text-base font-semibold text-navy">Order History</h3>
               <div className="w-48">
                 <Select
                   options={[
@@ -2665,11 +2511,15 @@ export default function CustomerDetailPage({
             </div>
 
             {addresses.length === 0 ? (
-              <p className="text-sm text-navy/40">No addresses on file.</p>
+              <p className="text-sm text-navy/70">No addresses on file.</p>
             ) : (
               (() => {
                 const typeOrder = ["BILLING", "SHIPPING", "DELIVERY"];
-                const typeLabel: Record<string, string> = { BILLING: "Billing", SHIPPING: "Shipping", DELIVERY: "Delivery" };
+                const typeLabel: Record<string, string> = {
+                  BILLING: "Billing",
+                  SHIPPING: "Shipping",
+                  DELIVERY: "Delivery",
+                };
                 const typeColor: Record<string, string> = {
                   BILLING: "bg-brand-100 text-brand-700",
                   SHIPPING: "bg-teal-100 text-teal-700",
@@ -2690,15 +2540,22 @@ export default function CustomerDetailPage({
                     {orderedTypes.map((type) => (
                       <div key={type}>
                         <div className="mb-2 flex items-center gap-2">
-                          <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-semibold", typeColor[type] ?? "bg-gray-100 text-gray-700")}>
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                              typeColor[type] ?? "bg-gray-100 text-gray-700",
+                            )}
+                          >
                             {typeLabel[type] ?? type}
                           </span>
-                          <span className="text-xs text-navy/40">{grouped[type].length} address{grouped[type].length > 1 ? "es" : ""}</span>
+                          <span className="text-xs text-navy/70">
+                            {grouped[type].length} address{grouped[type].length > 1 ? "es" : ""}
+                          </span>
                         </div>
                         <ul className="divide-y divide-surface-border rounded-lg border border-surface-border">
                           {grouped[type].map((addr: any) => (
                             <li key={addr.id} className="flex items-start gap-3 px-4 py-3">
-                              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+                              <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2">
                                   <p className="text-sm font-medium text-navy">{addr.label}</p>
@@ -2706,8 +2563,10 @@ export default function CustomerDetailPage({
                                     <Star className="h-3.5 w-3.5 fill-warning text-warning" />
                                   )}
                                 </div>
-                                <p className="mt-0.5 text-sm text-navy/60">
-                                  {addr.line1}{addr.line2 ? `, ${addr.line2}` : ""}, {addr.city}, {addr.state} {addr.zip}
+                                <p className="mt-0.5 text-sm text-navy/70">
+                                  {addr.line1}
+                                  {addr.line2 ? `, ${addr.line2}` : ""}, {addr.city}, {addr.state}{" "}
+                                  {addr.zip}
                                 </p>
                               </div>
                               {addr.isDefault && (
@@ -2728,17 +2587,12 @@ export default function CustomerDetailPage({
         </Tabs.Content>
 
         {/* ── Standing Orders tab ────────────────────────────────── */}
-        <Tabs.Content
-          value="standing-orders"
-          className="mt-5 focus:outline-none"
-        >
+        <Tabs.Content value="standing-orders" className="mt-5 focus:outline-none">
           <Card>
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h3 className="text-base font-semibold text-navy">
-                  Standing Orders
-                </h3>
-                <p className="mt-0.5 text-xs text-navy/50">
+                <h3 className="text-base font-semibold text-navy">Standing Orders</h3>
+                <p className="mt-0.5 text-xs text-navy/70">
                   Auto-generated orders based on recurring schedules.
                 </p>
               </div>
@@ -2756,9 +2610,7 @@ export default function CustomerDetailPage({
 
             {templates.length === 0 ? (
               <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-                <p className="text-sm text-navy/40">
-                  No standing orders yet.
-                </p>
+                <p className="text-sm text-navy/70">No standing orders yet.</p>
                 <button
                   className="mt-2 text-sm text-brand-500 hover:underline"
                   onClick={() => {
@@ -2776,15 +2628,13 @@ export default function CustomerDetailPage({
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-navy">
-                            {tmpl.name}
-                          </p>
+                          <p className="text-sm font-semibold text-navy">{tmpl.name}</p>
                           <span
                             className={cn(
                               "rounded-full px-2 py-0.5 text-xs font-medium",
                               tmpl.isActive
                                 ? "bg-success-bg text-success"
-                                : "bg-surface-raised text-navy/40",
+                                : "bg-surface-raised text-navy/70",
                             )}
                           >
                             {tmpl.isActive ? "Active" : "Paused"}
@@ -2792,15 +2642,7 @@ export default function CustomerDetailPage({
                         </div>
                         <div className="mt-1.5 flex flex-wrap gap-1">
                           {[1, 2, 3, 4, 5, 6, 7].map((iso) => {
-                            const labels = [
-                              "Mon",
-                              "Tue",
-                              "Wed",
-                              "Thu",
-                              "Fri",
-                              "Sat",
-                              "Sun",
-                            ];
+                            const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
                             return tmpl.daysOfWeek.includes(iso) ? (
                               <span
                                 key={iso}
@@ -2811,7 +2653,7 @@ export default function CustomerDetailPage({
                             ) : null;
                           })}
                         </div>
-                        <p className="mt-1 text-xs text-navy/50">
+                        <p className="mt-1 text-xs text-navy/70">
                           {tmpl.items.length} item
                           {tmpl.items.length !== 1 ? "s" : ""}
                           {tmpl.notes && ` \u00b7 ${tmpl.notes}`}
@@ -2819,12 +2661,8 @@ export default function CustomerDetailPage({
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
-                          title={
-                            tmpl.isActive
-                              ? "Pause template"
-                              : "Activate template"
-                          }
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
+                          title={tmpl.isActive ? "Pause template" : "Activate template"}
+                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
                           onClick={() =>
                             updateTemplate.mutate({
                               id: tmpl.id,
@@ -2835,9 +2673,7 @@ export default function CustomerDetailPage({
                           <span
                             className={cn(
                               "block h-4 w-4",
-                              tmpl.isActive
-                                ? "text-success"
-                                : "text-navy/30",
+                              tmpl.isActive ? "text-success" : "text-navy/30",
                             )}
                           >
                             {tmpl.isActive ? "\u23f8" : "\u25b6"}
@@ -2845,13 +2681,10 @@ export default function CustomerDetailPage({
                         </button>
                         <button
                           title="Generate order now"
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600"
                           onClick={() =>
                             generateOrder.mutate(tmpl.id, {
-                              onSuccess: () =>
-                                window.alert(
-                                  `Order generated for "${tmpl.name}"!`,
-                                ),
+                              onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
                             })
                           }
                         >
@@ -2859,7 +2692,7 @@ export default function CustomerDetailPage({
                         </button>
                         <button
                           title="Edit template"
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-surface-raised hover:text-navy"
+                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
                           onClick={() => {
                             setEditingTemplate(tmpl);
                             setIsStandingOrderOpen(true);
@@ -2869,7 +2702,7 @@ export default function CustomerDetailPage({
                         </button>
                         <button
                           title="Delete template"
-                          className="rounded p-1.5 text-navy/40 transition-colors hover:bg-danger-bg hover:text-danger"
+                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
                           onClick={() => setDeletingTemplateId(tmpl.id)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -2891,9 +2724,7 @@ export default function CustomerDetailPage({
             const outstanding = allInvoices.filter((inv) =>
               ["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(inv.status),
             );
-            const overdueCount = allInvoices.filter(
-              (inv) => inv.status === "OVERDUE",
-            ).length;
+            const overdueCount = allInvoices.filter((inv) => inv.status === "OVERDUE").length;
             const outstandingTotal = outstanding.reduce(
               (sum, inv) => sum + (inv.balanceDue ?? inv.total),
               0,
@@ -2901,7 +2732,7 @@ export default function CustomerDetailPage({
             return (
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Outstanding
                   </p>
                   <p
@@ -2911,7 +2742,7 @@ export default function CustomerDetailPage({
                   </p>
                 </Card>
                 <Card>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Overdue
                   </p>
                   <p
@@ -2921,7 +2752,7 @@ export default function CustomerDetailPage({
                   </p>
                 </Card>
                 <Card>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Total Invoices
                   </p>
                   <p className="mt-1 text-xl font-bold text-navy">
@@ -2950,7 +2781,7 @@ export default function CustomerDetailPage({
                     className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                       invoiceFilter === key
                         ? "bg-brand text-white"
-                        : "bg-surface-secondary text-navy/60 hover:bg-surface-border"
+                        : "bg-surface-secondary text-navy/70 hover:bg-surface-border"
                     }`}
                   >
                     {label}
@@ -2968,15 +2799,11 @@ export default function CustomerDetailPage({
 
             {/* Invoice table */}
             {invoicesLoading ? (
-              <p className="py-8 text-center text-sm text-navy/40">
-                Loading invoices…
-              </p>
+              <p className="py-8 text-center text-sm text-navy/70">Loading invoices…</p>
             ) : customerInvoices.length === 0 ? (
               <div className="py-10 text-center">
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
-                <p className="text-sm font-medium text-navy/50">
-                  No invoices found
-                </p>
+                <p className="text-sm font-medium text-navy/70">No invoices found</p>
                 <Link
                   href={`/invoices/new?customerId=${params.id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
@@ -2989,7 +2816,7 @@ export default function CustomerDetailPage({
               <div className="-mx-6 -mb-6 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-surface-border bg-surface-secondary text-left text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    <tr className="border-b border-surface-border bg-surface-secondary text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                       <th className="px-6 py-3">Invoice #</th>
                       <th className="px-4 py-3">Date</th>
                       <th className="px-4 py-3">Due Date</th>
@@ -3015,17 +2842,15 @@ export default function CustomerDetailPage({
                               {inv.invoiceNumber}
                             </Link>
                           </td>
-                          <td className="px-4 py-3 text-navy/60">
+                          <td className="px-4 py-3 text-navy/70">
                             {inv.issueDate ? fmtDate(inv.issueDate) : "—"}
                           </td>
                           <td
-                            className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/60"}`}
+                            className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/70"}`}
                           >
                             {inv.dueDate ? fmtDate(inv.dueDate) : "—"}
                           </td>
-                          <td className="px-4 py-3 text-right text-navy">
-                            {fmt(inv.total)}
-                          </td>
+                          <td className="px-4 py-3 text-right text-navy">{fmt(inv.total)}</td>
                           <td
                             className={`px-4 py-3 text-right font-semibold ${balanceDue > 0 ? "text-danger" : "text-success"}`}
                           >
@@ -3051,7 +2876,7 @@ export default function CustomerDetailPage({
               <Card>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Open Balance
                     </p>
                     <TrendingDown className="h-4 w-4 text-danger" />
@@ -3061,15 +2886,13 @@ export default function CustomerDetailPage({
                   >
                     {fmt(statement?.outstandingAmount ?? 0)}
                   </p>
-                  <p className="text-xs text-navy/50">
-                    Amount currently owed on invoices
-                  </p>
+                  <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
                 </div>
               </Card>
               <Card>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Advance Balance
                     </p>
                     <DollarSign className="h-4 w-4 text-success" />
@@ -3077,9 +2900,7 @@ export default function CustomerDetailPage({
                   <p className="text-2xl font-bold text-success">
                     {fmt(statement?.advanceBalance ?? 0)}
                   </p>
-                  <p className="text-xs text-navy/50">
-                    Pre-paid credit available to apply
-                  </p>
+                  <p className="text-xs text-navy/70">Pre-paid credit available to apply</p>
                   <Button
                     size="sm"
                     variant="secondary"
@@ -3110,17 +2931,14 @@ export default function CustomerDetailPage({
                             {fmt(Number(ap.amount))}
                           </span>
                           <span
-                            className={`text-xs font-medium ${Number(ap.balance) > 0 ? "text-success" : "text-navy/40"}`}
+                            className={`text-xs font-medium ${Number(ap.balance) > 0 ? "text-success" : "text-navy/70"}`}
                           >
                             {fmt(Number(ap.balance))} left
                           </span>
                         </div>
-                        <p className="mt-0.5 text-xs text-navy/50">
+                        <p className="mt-0.5 text-xs text-navy/70">
                           {ap.method}
-                          {ap.reference
-                            ? ` \u00b7 ${ap.reference}`
-                            : ""}{" "}
-                          \u00b7{" "}
+                          {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
                       </li>
@@ -3132,9 +2950,7 @@ export default function CustomerDetailPage({
 
             <div className="space-y-4 lg:col-span-2">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h3 className="text-base font-semibold text-navy">
-                  Statement of Accounts
-                </h3>
+                <h3 className="text-base font-semibold text-navy">Statement of Accounts</h3>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => window.print()}
@@ -3150,19 +2966,15 @@ export default function CustomerDetailPage({
                   <div>
                     <div className="flex items-center gap-2">
                       <img src="/logo.svg" alt="RouteFlow" className="h-7 w-7 object-contain" />
-                      <span className="text-base font-bold text-navy">
-                        RouteFlow
-                      </span>
+                      <span className="text-base font-bold text-navy">RouteFlow</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-navy/50">
-                      Austin, TX · routeflow.io
-                    </p>
+                    <p className="mt-0.5 text-xs text-navy/70">Austin, TX · routeflow.io</p>
                   </div>
                   <div className="text-right">
                     <p className="text-lg font-bold uppercase tracking-wide text-navy">
                       Statement of Accounts
                     </p>
-                    <p className="mt-0.5 text-xs text-navy/50">
+                    <p className="mt-0.5 text-xs text-navy/70">
                       As of{" "}
                       {new Date().toLocaleDateString("en-US", {
                         month: "long",
@@ -3174,19 +2986,13 @@ export default function CustomerDetailPage({
                 </div>
 
                 <div className="mb-6 border-t border-surface-border pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/40">
-                    To
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-navy">
-                    {customer.businessName}
-                  </p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">To</p>
+                  <p className="mt-1 text-sm font-semibold text-navy">{customer.businessName}</p>
                   {customer.contactName && (
-                    <p className="text-sm text-navy/60">
-                      {customer.contactName}
-                    </p>
+                    <p className="text-sm text-navy/70">{customer.contactName}</p>
                   )}
                   {customer.address && (
-                    <p className="mt-0.5 whitespace-pre-line text-xs text-navy/50">
+                    <p className="mt-0.5 whitespace-pre-line text-xs text-navy/70">
                       {customer.address}
                     </p>
                   )}
@@ -3204,8 +3010,7 @@ export default function CustomerDetailPage({
                       value: fmt(
                         statement?.transactions
                           .filter((tx) => tx.type === "invoice")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ??
-                          0,
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
                       ),
                       valueClass: "text-navy",
                     },
@@ -3213,13 +3018,8 @@ export default function CustomerDetailPage({
                       label: "Amount Received",
                       value: fmt(
                         statement?.transactions
-                          .filter(
-                            (tx) =>
-                              tx.type === "payment" ||
-                              tx.type === "advance",
-                          )
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ??
-                          0,
+                          .filter((tx) => tx.type === "payment" || tx.type === "advance")
+                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
                       ),
                       valueClass: "text-success",
                     },
@@ -3227,21 +3027,17 @@ export default function CustomerDetailPage({
                       label: "Balance Due",
                       value: fmt(statement?.outstandingAmount ?? 0),
                       valueClass:
-                        (statement?.outstandingAmount ?? 0) > 0
-                          ? "text-danger"
-                          : "text-success",
+                        (statement?.outstandingAmount ?? 0) > 0 ? "text-danger" : "text-success",
                     },
                   ].map((item) => (
                     <div
                       key={item.label}
                       className="flex flex-col items-center gap-1 bg-white px-4 py-3 text-center"
                     >
-                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
                         {item.label}
                       </span>
-                      <span
-                        className={cn("text-base font-bold", item.valueClass)}
-                      >
+                      <span className={cn("text-base font-bold", item.valueClass)}>
                         {item.value}
                       </span>
                     </div>
@@ -3249,9 +3045,7 @@ export default function CustomerDetailPage({
                 </div>
 
                 {!statement || statement.transactions.length === 0 ? (
-                  <p className="text-sm text-navy/40">
-                    No transactions on record.
-                  </p>
+                  <p className="text-sm text-navy/70">No transactions on record.</p>
                 ) : (
                   <div className="-mx-8 overflow-hidden">
                     <table className="w-full text-sm">
@@ -3280,25 +3074,15 @@ export default function CustomerDetailPage({
                       <tbody className="divide-y divide-surface-border">
                         {statement.transactions.map((tx, i) => {
                           const isInvoice = tx.type === "invoice";
-                          const isPayment =
-                            tx.type === "payment" ||
-                            tx.type === "advance";
+                          const isPayment = tx.type === "payment" || tx.type === "advance";
                           return (
-                            <tr
-                              key={i}
-                              className={
-                                i % 2 === 0 ? "bg-white" : "bg-gray-50/60"
-                              }
-                            >
-                              <td className="px-8 py-2.5 text-xs text-navy/60">
-                                {new Date(tx.date).toLocaleDateString(
-                                  "en-US",
-                                  {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  },
-                                )}
+                            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                              <td className="px-8 py-2.5 text-xs text-navy/70">
+                                {new Date(tx.date).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
                               </td>
                               <td className="px-4 py-2.5">
                                 <span
@@ -3322,9 +3106,7 @@ export default function CustomerDetailPage({
                                     {tx.invoiceNumber}
                                   </Link>
                                 ) : (
-                                  <span className="text-xs text-navy/60">
-                                    {tx.description}
-                                  </span>
+                                  <span className="text-xs text-navy/70">{tx.description}</span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right text-sm">
@@ -3333,9 +3115,7 @@ export default function CustomerDetailPage({
                                     {fmt(Math.abs(tx.amount))}
                                   </span>
                                 ) : (
-                                  <span className="text-navy/30">
-                                    {"\u2014"}
-                                  </span>
+                                  <span className="text-navy/30">{"\u2014"}</span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 text-right text-sm">
@@ -3344,9 +3124,7 @@ export default function CustomerDetailPage({
                                     {fmt(Math.abs(tx.amount))}
                                   </span>
                                 ) : (
-                                  <span className="text-navy/30">
-                                    {"\u2014"}
-                                  </span>
+                                  <span className="text-navy/30">{"\u2014"}</span>
                                 )}
                               </td>
                               <td className="px-8 py-2.5 text-right font-semibold text-navy">
@@ -3358,10 +3136,7 @@ export default function CustomerDetailPage({
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-surface-border bg-gray-50">
-                          <td
-                            colSpan={3}
-                            className="px-8 py-3 text-sm font-bold text-navy"
-                          >
+                          <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">
                             Balance Due
                           </td>
                           <td colSpan={2} />
@@ -3442,9 +3217,7 @@ export default function CustomerDetailPage({
                 </select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                  Amount ($)
-                </label>
+                <label className="mb-1.5 block text-sm font-medium text-navy/80">Amount ($)</label>
                 <input
                   type="number"
                   step="0.01"
@@ -3545,18 +3318,14 @@ export default function CustomerDetailPage({
         onClose={() => setPendingStatus(null)}
         onConfirm={confirmStatusChange}
         title={
-          pendingStatus === "SUSPENDED"
-            ? "Suspend this customer?"
-            : "Deactivate this customer?"
+          pendingStatus === "SUSPENDED" ? "Suspend this customer?" : "Deactivate this customer?"
         }
         description={
           pendingStatus === "SUSPENDED"
             ? `${customer.businessName} will be suspended and will lose access to the platform.`
             : `${customer.businessName} will be marked as inactive.`
         }
-        confirmLabel={
-          pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"
-        }
+        confirmLabel={pendingStatus === "SUSPENDED" ? "Yes, suspend" : "Yes, deactivate"}
         variant={pendingStatus === "SUSPENDED" ? "danger" : "secondary"}
         loading={updateStatus.isPending}
       />
@@ -3613,10 +3382,14 @@ export default function CustomerDetailPage({
         description={`All orders, invoices, addresses, and history for ${customer?.businessName ?? "this customer"} will be permanently erased. This cannot be undone.`}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setIsDeleteOpen(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => setIsDeleteOpen(false)}>
+              Cancel
+            </Button>
             <Button
               variant="danger"
-              disabled={deleteConfirm !== (customer?.businessName ?? "") || deleteCustomer.isPending}
+              disabled={
+                deleteConfirm !== (customer?.businessName ?? "") || deleteCustomer.isPending
+              }
               loading={deleteCustomer.isPending}
               onClick={handleDeleteCustomer}
             >
@@ -3626,15 +3399,16 @@ export default function CustomerDetailPage({
         }
       >
         <div className="space-y-3 pt-2">
-          <p className="text-sm text-navy/60">
-            Type <strong className="font-semibold text-navy">{customer?.businessName}</strong> to confirm deletion:
+          <p className="text-sm text-navy/70">
+            Type <strong className="font-semibold text-navy">{customer?.businessName}</strong> to
+            confirm deletion:
           </p>
           <input
             type="text"
             value={deleteConfirm}
             onChange={(e) => setDeleteConfirm(e.target.value)}
             placeholder={customer?.businessName}
-            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/20"
+            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/20"
           />
         </div>
       </Modal>

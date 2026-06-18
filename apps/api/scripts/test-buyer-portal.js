@@ -50,7 +50,10 @@ async function run() {
     password: "Customer1!",
   });
   if (loginRes.status !== 200 && loginRes.status !== 201) {
-    console.error("  FAIL: Could not login as buyer. Is the server running with seed data?", loginRes.data);
+    console.error(
+      "  FAIL: Could not login as buyer. Is the server running with seed data?",
+      loginRes.data,
+    );
     console.log("\n  Skipping remaining tests (no auth).");
     return;
   }
@@ -83,14 +86,17 @@ async function run() {
 
   // Test categories
   const categories = await api("GET", "/buyer/products/categories");
-  assert(categories.status === 200, `GET /buyer/products/categories returns 200 (got ${categories.status})`);
+  assert(
+    categories.status === 200,
+    `GET /buyer/products/categories returns 200 (got ${categories.status})`,
+  );
   assert(Array.isArray(categories.data), "Categories is an array");
 
   // Test price sort
   const priceSorted = await api("GET", "/buyer/products?sort=price_asc&page=1&limit=5");
   assert(priceSorted.status === 200, "Price sort returns 200");
   if (priceSorted.data.data?.length > 1) {
-    const prices = priceSorted.data.data.map(p => p.buyerPrice);
+    const prices = priceSorted.data.data.map((p) => p.buyerPrice);
     const isSorted = prices.every((p, i) => i === 0 || p >= prices[i - 1]);
     assert(isSorted, "Price-sorted products are in ascending order");
   }
@@ -131,7 +137,10 @@ async function run() {
       notes: "E2E test order",
       status: "DRAFT",
     });
-    assert(createRes.status === 201 || createRes.status === 200, `Create order returns 200/201 (got ${createRes.status})`);
+    assert(
+      createRes.status === 201 || createRes.status === 200,
+      `Create order returns 200/201 (got ${createRes.status})`,
+    );
     if (createRes.data?.id) {
       MANIFEST.orders.push(createRes.data.id);
       console.log(`  Created test order: ${createRes.data.orderNumber || createRes.data.id}`);
@@ -145,11 +154,17 @@ async function run() {
       const editRes = await api("PATCH", `/buyer/orders/${createRes.data.id}/items`, {
         items: [{ productId: testProduct.id, qty: 5 }],
       });
-      assert(editRes.status === 200, `PATCH /buyer/orders/:id/items returns 200 (got ${editRes.status})`);
+      assert(
+        editRes.status === 200,
+        `PATCH /buyer/orders/:id/items returns 200 (got ${editRes.status})`,
+      );
 
       // Cancel order
       const cancelRes = await api("POST", `/buyer/orders/${createRes.data.id}/cancel`);
-      assert(cancelRes.status === 200, `POST /buyer/orders/:id/cancel returns 200 (got ${cancelRes.status})`);
+      assert(
+        cancelRes.status === 200,
+        `POST /buyer/orders/:id/cancel returns 200 (got ${cancelRes.status})`,
+      );
     }
   }
 
@@ -160,14 +175,17 @@ async function run() {
 
     // Add favorite
     const addFav = await api("POST", `/buyer/favorites/${favProduct.id}`);
-    assert(addFav.status === 201 || addFav.status === 200, `Add favorite returns 201 (got ${addFav.status})`);
+    assert(
+      addFav.status === 201 || addFav.status === 200,
+      `Add favorite returns 201 (got ${addFav.status})`,
+    );
     MANIFEST.favorites.push(favProduct.id);
 
     // List favorites
     const favList = await api("GET", "/buyer/favorites");
     assert(favList.status === 200, "GET /buyer/favorites returns 200");
     assert(Array.isArray(favList.data), "Favorites is an array");
-    const hasFav = favList.data.some(f => f.productId === favProduct.id);
+    const hasFav = favList.data.some((f) => f.productId === favProduct.id);
     assert(hasFav, "Favorited product appears in list");
 
     // Duplicate add should conflict

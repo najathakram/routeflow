@@ -2,14 +2,7 @@ import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -26,7 +19,10 @@ const schema = z.object({
     .string()
     .min(3, "Company code must be at least 3 characters")
     .max(30, "Company code is too long")
-    .regex(/^[a-z0-9][a-z0-9-]*$/, "Company code may only contain lowercase letters, numbers, and hyphens"),
+    .regex(
+      /^[a-z0-9][a-z0-9-]*$/,
+      "Company code may only contain lowercase letters, numbers, and hyphens",
+    ),
 });
 
 type CompanyCodeForm = z.infer<typeof schema>;
@@ -50,9 +46,7 @@ export default function CompanyCodeScreen() {
     const slug = companyCode.toLowerCase().trim();
 
     try {
-      const res = await fetch(
-        `${API_BASE}/public/tenants/${encodeURIComponent(slug)}/branding`,
-      );
+      const res = await fetch(`${API_BASE}/public/tenants/${encodeURIComponent(slug)}/branding`);
 
       if (!res.ok) {
         if (res.status === 404) {
@@ -73,10 +67,7 @@ export default function CompanyCodeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <LinearGradient
           colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
           start={{ x: 0, y: 0 }}

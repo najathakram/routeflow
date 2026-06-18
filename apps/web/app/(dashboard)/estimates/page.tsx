@@ -2,16 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import {
-  Plus,
-  Eye,
-  Calendar,
-  X,
-  Loader2,
-  FileText,
-  Trash2,
-  Search,
-} from "lucide-react";
+import { Plus, Eye, Calendar, X, Loader2, FileText, Trash2, Search } from "lucide-react";
 import { PageHeader, Button, Select, cn, Modal, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -75,8 +66,8 @@ function KpiChip({
         active
           ? "border-brand-500 bg-brand-500 text-white"
           : danger && value > 0
-          ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300"
-          : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300"
+            : "border-surface-border bg-white text-navy hover:bg-surface-raised",
       )}
     >
       <span>{label}</span>
@@ -86,8 +77,8 @@ function KpiChip({
           active
             ? "bg-white/20 text-white"
             : danger && value > 0
-            ? "bg-red-200 text-red-700"
-            : "bg-surface-raised text-navy/60",
+              ? "bg-red-200 text-red-700"
+              : "bg-surface-raised text-navy/70",
         )}
       >
         {value}
@@ -118,7 +109,7 @@ interface EstimateLineItem {
   tierPrice: number;
   discountedPrice?: number;
   unitPrice: number;
-  priceType: 'STANDARD' | 'SPECIAL' | 'DISCOUNTED';
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
@@ -155,7 +146,9 @@ function CreateEstimateModal({
   // Customer search
   const [customerSearch, setCustomerSearch] = React.useState("");
   const [debouncedCustomerSearch, setDebouncedCustomerSearch] = React.useState("");
-  const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedEstimateCustomer | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedEstimateCustomer | null>(
+    null,
+  );
 
   // Product search
   const [productSearch, setProductSearch] = React.useState("");
@@ -190,7 +183,11 @@ function CreateEstimateModal({
   }, [productSearch]);
 
   const { data: customersData } = useCustomers({ search: debouncedCustomerSearch || undefined });
-  const { data: productsData } = useProducts({ search: debouncedProductSearch || undefined, isActive: true, includeVariants: true });
+  const { data: productsData } = useProducts({
+    search: debouncedProductSearch || undefined,
+    isActive: true,
+    includeVariants: true,
+  });
 
   const filteredCustomers = React.useMemo(() => {
     if (!debouncedCustomerSearch) return [];
@@ -199,9 +196,7 @@ function CreateEstimateModal({
 
   const filteredProducts = React.useMemo(() => {
     if (!debouncedProductSearch) return [];
-    return (productsData?.data ?? [])
-      .filter((p: any) => !p.parentProductId)
-      .slice(0, 10);
+    return (productsData?.data ?? []).filter((p: any) => !p.parentProductId).slice(0, 10);
   }, [productsData, debouncedProductSearch]);
 
   // Reset on open
@@ -224,7 +219,7 @@ function CreateEstimateModal({
   const addLineItem = (product: any) => {
     if (lineItems.some((li) => li.productId === product.id)) {
       setLineItems((prev) =>
-        prev.map((li) => li.productId === product.id ? { ...li, qty: li.qty + 1 } : li),
+        prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
       );
       setProductSearch("");
       setDebouncedProductSearch("");
@@ -237,7 +232,7 @@ function CreateEstimateModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? 'SPECIAL' as const : 'STANDARD' as const;
+    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {
@@ -257,7 +252,10 @@ function CreateEstimateModal({
     ]);
     setProductSearch("");
     setDebouncedProductSearch("");
-    setErrors((e) => { const { items: _, ...rest } = e; return rest; });
+    setErrors((e) => {
+      const { items: _, ...rest } = e;
+      return rest;
+    });
     setTimeout(() => productSearchRef.current?.focus(), 50);
   };
 
@@ -266,47 +264,67 @@ function CreateEstimateModal({
     const code = productSearch.trim();
     if (!code) return;
     try {
-      const product = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`).then((r) => r.data);
+      const product = await apiClient
+        .get(`/products/barcode/${encodeURIComponent(code)}`)
+        .then((r) => r.data);
       addLineItem(product);
       return;
-    } catch { /* not found by barcode */ }
+    } catch {
+      /* not found by barcode */
+    }
     try {
-      const res = await apiClient.get("/products", { params: { search: code, limit: 10, isActive: true } }).then((r) => r.data);
+      const res = await apiClient
+        .get("/products", { params: { search: code, limit: 10, isActive: true } })
+        .then((r) => r.data);
       const matches: any[] = res?.data ?? [];
       const skuMatch = matches.find((p: any) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
       const toAdd = skuMatch ?? matches[0];
-      if (toAdd) { addLineItem(toAdd); return; }
-    } catch { /* ignore */ }
-    toast({ title: "Product not found", description: `No product matches "${code}"`, variant: "error" });
+      if (toAdd) {
+        addLineItem(toAdd);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    toast({
+      title: "Product not found",
+      description: `No product matches "${code}"`,
+      variant: "error",
+    });
     setProductSearch("");
   };
 
-  const removeLineItem = (tempId: string) => setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
+  const removeLineItem = (tempId: string) =>
+    setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
 
   const setBoxes = (tempId: string, value: number) => {
-    setLineItems((prev) => prev.map((li) => {
-      if (li.tempId !== tempId) return li;
-      const boxes = Math.max(0, isNaN(value) ? 0 : value);
-      const pieces = li.pieces ?? 0;
-      const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-      return { ...li, boxes, qty };
-    }));
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const boxes = Math.max(0, isNaN(value) ? 0 : value);
+        const pieces = li.pieces ?? 0;
+        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+        return { ...li, boxes, qty };
+      }),
+    );
   };
 
   const setPieces = (tempId: string, value: number) => {
-    setLineItems((prev) => prev.map((li) => {
-      if (li.tempId !== tempId) return li;
-      const pieces = Math.max(0, isNaN(value) ? 0 : value);
-      const boxes = li.boxes ?? 0;
-      const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-      return { ...li, pieces, qty };
-    }));
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const pieces = Math.max(0, isNaN(value) ? 0 : value);
+        const boxes = li.boxes ?? 0;
+        const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
+        return { ...li, pieces, qty };
+      }),
+    );
   };
 
   const setQty = (tempId: string, value: number) => {
-    setLineItems((prev) => prev.map((li) =>
-      li.tempId === tempId ? { ...li, qty: Math.max(0, value) } : li,
-    ));
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, qty: Math.max(0, value) } : li)),
+    );
   };
 
   const subtotal = lineItems.reduce(
@@ -329,7 +347,10 @@ function CreateEstimateModal({
     if (!issueDate) errs.issueDate = "Issue date is required.";
     if (!expiryDate) errs.expiryDate = "Expiry date is required.";
     if (lineItems.length === 0) errs.items = "Add at least one product.";
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
     setErrors({});
 
     const dto = {
@@ -341,7 +362,9 @@ function CreateEstimateModal({
         description: li.productName,
         qty: li.qty,
         ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-        ...(li.priceType === 'DISCOUNTED' && li.discountedPrice != null ? { unitPrice: li.discountedPrice } : {}),
+        ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
+          ? { unitPrice: li.discountedPrice }
+          : {}),
       })),
     };
 
@@ -352,7 +375,11 @@ function CreateEstimateModal({
         onSuccess(est.id);
       },
       onError: () => {
-        toast({ title: "Failed to create estimate", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to create estimate",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   }
@@ -381,13 +408,24 @@ function CreateEstimateModal({
           {selectedCustomer ? (
             <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-3 py-2">
               <div>
-                <span className="text-sm font-medium text-navy">{selectedCustomer.businessName}</span>
+                <span className="text-sm font-medium text-navy">
+                  {selectedCustomer.businessName}
+                </span>
                 {selectedCustomer.contactName && (
-                  <span className="ml-2 text-xs text-navy/50">{selectedCustomer.contactName}</span>
+                  <span className="ml-2 text-xs text-navy/70">{selectedCustomer.contactName}</span>
                 )}
-                <span className="ml-2 text-xs text-navy/40">Tier {selectedCustomer.pricingTier ?? 1}</span>
+                <span className="ml-2 text-xs text-navy/70">
+                  Tier {selectedCustomer.pricingTier ?? 1}
+                </span>
               </div>
-              <button type="button" onClick={() => { setSelectedCustomer(null); setLineItems([]); }} className="text-navy/40 hover:text-navy">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCustomer(null);
+                  setLineItems([]);
+                }}
+                className="text-navy/70 hover:text-navy"
+              >
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -408,15 +446,24 @@ function CreateEstimateModal({
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedCustomer({ id: c.id, businessName: c.businessName, contactName: c.contactName, pricingTier: c.pricingTier });
+                          setSelectedCustomer({
+                            id: c.id,
+                            businessName: c.businessName,
+                            contactName: c.contactName,
+                            pricingTier: c.pricingTier,
+                          });
                           setCustomerSearch("");
                           setDebouncedCustomerSearch("");
                         }}
                         className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
                       >
                         <span className="font-medium">{c.businessName}</span>
-                        {c.contactName && <span className="text-xs text-navy/50">{c.contactName}</span>}
-                        <span className="ml-auto text-xs text-navy/40">Tier {c.pricingTier ?? 1}</span>
+                        {c.contactName && (
+                          <span className="text-xs text-navy/70">{c.contactName}</span>
+                        )}
+                        <span className="ml-auto text-xs text-navy/70">
+                          Tier {c.pricingTier ?? 1}
+                        </span>
                       </button>
                     </li>
                   ))}
@@ -468,7 +515,12 @@ function CreateEstimateModal({
                 placeholder="Search by name, SKU, or scan barcode…"
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleProductSearchEnter(); } }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleProductSearchEnter();
+                  }
+                }}
                 className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
               {filteredProducts.length > 0 && productSearch && (
@@ -482,9 +534,11 @@ function CreateEstimateModal({
                       >
                         <div>
                           <span className="font-medium text-navy">{p.name}</span>
-                          {p.sku && <span className="ml-2 font-mono text-xs text-navy/40">{p.sku}</span>}
+                          {p.sku && (
+                            <span className="ml-2 font-mono text-xs text-navy/70">{p.sku}</span>
+                          )}
                         </div>
-                        <span className="text-xs text-navy/50">{fmt(Number(p.pricePerUnit))}</span>
+                        <span className="text-xs text-navy/70">{fmt(Number(p.pricePerUnit))}</span>
                       </button>
                     </li>
                   ))}
@@ -494,7 +548,7 @@ function CreateEstimateModal({
           )}
 
           {!selectedCustomer && (
-            <p className="mb-3 text-xs text-navy/40">Select a customer first to add products.</p>
+            <p className="mb-3 text-xs text-navy/70">Select a customer first to add products.</p>
           )}
 
           {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
@@ -503,17 +557,26 @@ function CreateEstimateModal({
           {lineItems.length > 0 && (
             <div className="space-y-2 rounded-lg border border-surface-border p-3">
               {lineItems.map((li) => (
-                <div key={li.tempId} className="flex items-center gap-2 rounded-lg bg-surface-raised p-2">
+                <div
+                  key={li.tempId}
+                  className="flex items-center gap-2 rounded-lg bg-surface-raised p-2"
+                >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-navy truncate">{li.productName}</span>
-                      {li.priceType === 'SPECIAL' && (
-                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">TIER</span>
+                      <span className="text-sm font-medium text-navy truncate">
+                        {li.productName}
+                      </span>
+                      {li.priceType === "SPECIAL" && (
+                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                          TIER
+                        </span>
                       )}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/50">
-                      <span>{fmt(li.unitPrice)}/{li.unit}</span>
-                      {li.priceType === 'SPECIAL' && (
+                    <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/70">
+                      <span>
+                        {fmt(li.unitPrice)}/{li.unit}
+                      </span>
+                      {li.priceType === "SPECIAL" && (
                         <span className="line-through">{fmt(li.listPrice)}</span>
                       )}
                     </div>
@@ -529,7 +592,7 @@ function CreateEstimateModal({
                         onChange={(e) => setBoxes(li.tempId, Number(e.target.value))}
                         className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
-                      <span className="text-[10px] text-navy/40">box</span>
+                      <span className="text-[10px] text-navy/70">box</span>
                       <input
                         type="number"
                         min="0"
@@ -537,11 +600,17 @@ function CreateEstimateModal({
                         onChange={(e) => setPieces(li.tempId, Number(e.target.value))}
                         className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
-                      <span className="text-[10px] text-navy/40">pcs</span>
+                      <span className="text-[10px] text-navy/70">pcs</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => setQty(li.tempId, li.qty - 1)} className="h-7 w-7 rounded border border-surface-border bg-white text-navy/50 hover:bg-surface-raised">-</button>
+                      <button
+                        type="button"
+                        onClick={() => setQty(li.tempId, li.qty - 1)}
+                        className="h-7 w-7 rounded border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+                      >
+                        -
+                      </button>
                       <input
                         type="number"
                         min="0"
@@ -549,7 +618,13 @@ function CreateEstimateModal({
                         onChange={(e) => setQty(li.tempId, Number(e.target.value))}
                         className="h-8 w-14 rounded border border-surface-border bg-white px-1.5 text-center text-xs text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
-                      <button type="button" onClick={() => setQty(li.tempId, li.qty + 1)} className="h-7 w-7 rounded border border-surface-border bg-white text-navy/50 hover:bg-surface-raised">+</button>
+                      <button
+                        type="button"
+                        onClick={() => setQty(li.tempId, li.qty + 1)}
+                        className="h-7 w-7 rounded border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+                      >
+                        +
+                      </button>
                     </div>
                   )}
 
@@ -567,7 +642,11 @@ function CreateEstimateModal({
                   </span>
 
                   {/* Remove */}
-                  <button type="button" onClick={() => removeLineItem(li.tempId)} className="rounded p-1 text-navy/30 hover:text-danger transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => removeLineItem(li.tempId)}
+                    className="rounded p-1 text-navy/30 hover:text-danger transition-colors"
+                  >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
@@ -578,7 +657,7 @@ function CreateEstimateModal({
           {/* Subtotal */}
           {lineItems.length > 0 && (
             <div className="mt-2 flex justify-end">
-              <p className="text-sm text-navy/60">
+              <p className="text-sm text-navy/70">
                 Subtotal: <span className="font-semibold text-navy">{fmt(subtotal)}</span>
               </p>
             </div>
@@ -588,7 +667,7 @@ function CreateEstimateModal({
         {/* Notes */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes <span className="text-navy/40">(optional)</span>
+            Notes <span className="text-navy/70">(optional)</span>
           </label>
           <textarea
             rows={2}
@@ -608,7 +687,9 @@ function CreateEstimateModal({
 export default function EstimatesPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Estimates"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Estimates");
+  }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [search, setSearch] = React.useState("");
@@ -652,10 +733,7 @@ export default function EstimatesPage() {
       <PageHeader
         title="Estimates"
         action={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => setIsCreateOpen(true)}
-          >
+          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
             New Estimate
           </Button>
         }
@@ -667,39 +745,57 @@ export default function EstimatesPage() {
           label="All"
           value={kpiCounts.total}
           active={statusFilter === ""}
-          onClick={() => { setStatusFilter(""); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Draft"
           value={kpiCounts.draft}
           active={statusFilter === "DRAFT"}
-          onClick={() => { setStatusFilter("DRAFT"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("DRAFT");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Sent"
           value={kpiCounts.sent}
           active={statusFilter === "SENT"}
-          onClick={() => { setStatusFilter("SENT"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("SENT");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Accepted"
           value={kpiCounts.accepted}
           active={statusFilter === "ACCEPTED"}
-          onClick={() => { setStatusFilter("ACCEPTED"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("ACCEPTED");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Declined"
           value={kpiCounts.declined}
           danger
           active={statusFilter === "DECLINED"}
-          onClick={() => { setStatusFilter("DECLINED"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("DECLINED");
+            setPage(1);
+          }}
         />
         <KpiChip
           label="Expired"
           value={kpiCounts.expired}
           danger
           active={statusFilter === "EXPIRED"}
-          onClick={() => { setStatusFilter("EXPIRED"); setPage(1); }}
+          onClick={() => {
+            setStatusFilter("EXPIRED");
+            setPage(1);
+          }}
         />
       </div>
 
@@ -709,39 +805,55 @@ export default function EstimatesPage() {
           type="search"
           placeholder="Search by estimate # or customer…"
           value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-44">
           <Select
             options={STATUS_OPTIONS}
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
         {/* Date range */}
         <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/40" />
+          <Calendar className="h-4 w-4 text-navy/70" />
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              setPage(1);
+            }}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
-          <span className="text-navy/40">–</span>
+          <span className="text-navy/70">–</span>
           <input
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              setPage(1);
+            }}
             className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => { setDateFrom(""); setDateTo(""); setPage(1); }}
-              className="rounded p-1.5 text-navy/40 hover:text-danger transition-colors"
+              onClick={() => {
+                setDateFrom("");
+                setDateTo("");
+                setPage(1);
+              }}
+              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
               <X className="h-3.5 w-3.5" />
@@ -768,7 +880,7 @@ export default function EstimatesPage() {
             {isLoading ? (
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/40" />
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                 </td>
               </tr>
             ) : isError ? (
@@ -782,7 +894,7 @@ export default function EstimatesPage() {
                 <td colSpan={7} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <FileText className="h-8 w-8 text-navy/20" />
-                    <p className="text-sm text-navy/40">No estimates match your filters.</p>
+                    <p className="text-sm text-navy/70">No estimates match your filters.</p>
                     <button
                       className="text-sm text-brand-500 hover:underline"
                       onClick={() => {
@@ -827,7 +939,7 @@ export default function EstimatesPage() {
                     <button
                       title="View estimate"
                       onClick={() => router.push(`/estimates/${est.id}`)}
-                      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                     </button>
@@ -842,8 +954,9 @@ export default function EstimatesPage() {
       {/* Pagination */}
       {meta && meta.totalPages > 1 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-navy/50">
-            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total} estimates
+          <p className="text-sm text-navy/70">
+            Showing {(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, meta.total)} of {meta.total}{" "}
+            estimates
           </p>
           <div className="flex items-center gap-1">
             <button

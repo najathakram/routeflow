@@ -35,8 +35,17 @@ type LoginFormValues = z.infer<typeof loginSchema>;
 // On platform hosts (www.routeflow.info, app.routeflow.info, hosting-provider
 // domains, localhost) the user must type which workspace they're signing into.
 const PLATFORM_SUBDOMAINS = new Set([
-  "www", "app", "api", "admin", "static", "assets",
-  "mail", "support", "platform", "billing", "localhost",
+  "www",
+  "app",
+  "api",
+  "admin",
+  "static",
+  "assets",
+  "mail",
+  "support",
+  "platform",
+  "billing",
+  "localhost",
 ]);
 
 function getSubdomainWorkspace(): string | null {
@@ -54,10 +63,22 @@ function getSubdomainWorkspace(): string | null {
 function GoogleIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+      <path
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+        fill="#4285F4"
+      />
+      <path
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+        fill="#34A853"
+      />
+      <path
+        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+        fill="#FBBC05"
+      />
+      <path
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+        fill="#EA4335"
+      />
     </svg>
   );
 }
@@ -115,7 +136,13 @@ export default function LoginPage() {
       if (user.forcePasswordChange) router.push("/change-password");
       else router.push("/dashboard");
     } catch (err: unknown) {
-      const errObj = err as { response?: { status?: number; headers?: Record<string, string>; data?: { message?: string } } };
+      const errObj = err as {
+        response?: {
+          status?: number;
+          headers?: Record<string, string>;
+          data?: { message?: string };
+        };
+      };
       if (errObj?.response?.status === 429) {
         const retryAfter = errObj.response.headers?.["retry-after"];
         if (retryAfter) {
@@ -183,9 +210,7 @@ export default function LoginPage() {
   // tenant-slug cookie from a previous session would otherwise leak that
   // tenant's name and logo onto the platform-level login screen.
   const useTenantBranding = !!subdomainWorkspace && !!branding?.logoKey;
-  const businessName = useTenantBranding
-    ? (branding?.businessName ?? "RouteFlow")
-    : "RouteFlow";
+  const businessName = useTenantBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
   const logoUrl = useTenantBranding ? `${apiUrl}/uploads/${branding!.logoKey}` : null;
 
   return (
@@ -277,15 +302,11 @@ export default function LoginPage() {
               margin: 0,
             }}
           >
-            Welcome back to{" "}
-            <em style={{ fontStyle: "italic", color: "#7DDCD8" }}>RouteFlow</em>.
+            Welcome back to <em style={{ fontStyle: "italic", color: "#7DDCD8" }}>RouteFlow</em>.
           </h2>
-          <p
-            className="mt-6 text-base leading-relaxed"
-            style={{ color: "rgba(250,246,238,0.7)" }}
-          >
-            Sign in to your wholesale operations dashboard. Manage orders, routes, drivers,
-            invoices and customers — all on one rail.
+          <p className="mt-6 text-base leading-relaxed" style={{ color: "rgba(250,246,238,0.7)" }}>
+            Sign in to your wholesale operations dashboard. Manage orders, routes, drivers, invoices
+            and customers — all on one rail.
           </p>
 
           <ul className="mt-10 space-y-4">
@@ -294,7 +315,11 @@ export default function LoginPage() {
               "Auto-invoicing the moment a delivery is signed off",
               "Real-time P&L by route, van and customer",
             ].map((item) => (
-              <li key={item} className="flex items-start gap-3 text-sm" style={{ color: "rgba(250,246,238,0.85)" }}>
+              <li
+                key={item}
+                className="flex items-start gap-3 text-sm"
+                style={{ color: "rgba(250,246,238,0.85)" }}
+              >
                 <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" style={{ color: "#7DDCD8" }} />
                 {item}
               </li>
@@ -310,7 +335,7 @@ export default function LoginPage() {
           <div className="mb-6 lg:hidden">
             <Link
               href="/"
-              className="mb-6 inline-flex items-center gap-1.5 text-sm text-navy/55 hover:text-navy transition-colors"
+              className="mb-6 inline-flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Back to home
             </Link>
@@ -360,7 +385,7 @@ export default function LoginPage() {
             >
               Sign in
             </h1>
-            <p className="mt-2 text-sm text-navy/60">Wholesaler portal — manage your operations.</p>
+            <p className="mt-2 text-sm text-navy/70">Wholesaler portal — manage your operations.</p>
           </div>
 
           {/* Form card */}
@@ -416,7 +441,7 @@ export default function LoginPage() {
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     autoComplete="current-password"
-                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/40 transition-colors focus:outline-none focus:ring-2 focus:ring-[#0B6E6B] focus:border-transparent"
+                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-[#0B6E6B] focus:border-transparent"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -428,7 +453,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/40 hover:text-navy transition-colors"
+                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
                     tabIndex={-1}
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
@@ -454,7 +479,7 @@ export default function LoginPage() {
             {/* Divider */}
             <div className="my-5 flex items-center gap-3">
               <div className="h-px flex-1 bg-surface-border" />
-              <span className="text-xs text-navy/40 uppercase tracking-wider">or</span>
+              <span className="text-xs text-navy/70 uppercase tracking-wider">or</span>
               <div className="h-px flex-1 bg-surface-border" />
             </div>
 
@@ -482,20 +507,20 @@ export default function LoginPage() {
               )}
             </button>
 
-            <p className="mt-5 text-center text-xs text-navy/55">
+            <p className="mt-5 text-center text-xs text-navy/70">
               First sign-in? You&apos;ll be prompted to change your password.
             </p>
           </div>
 
           {/* Footer links */}
           <div className="mt-6 space-y-2 text-center">
-            <p className="text-xs text-navy/55">
+            <p className="text-xs text-navy/70">
               Not a staff member?{" "}
               <a href="/buyer/login" className="text-[#0B6E6B] hover:underline font-medium">
                 Sign in to retailer portal
               </a>
             </p>
-            <p className="text-xs text-navy/55">
+            <p className="text-xs text-navy/70">
               New to RouteFlow?{" "}
               <a href="/signup" className="text-[#0B6E6B] hover:underline font-medium">
                 Start your 14-day free trial

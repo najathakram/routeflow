@@ -13,11 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import {
-  useAdminDrivers,
-  useAdminRoutes,
-  type AdminDriver,
-} from "../../../lib/api/admin";
+import { useAdminDrivers, useAdminRoutes, type AdminDriver } from "../../../lib/api/admin";
 
 function driverDisplayName(driver: AdminDriver | undefined): string {
   if (!driver) return "Unassigned";
@@ -45,7 +41,9 @@ export default function RoutesListScreen() {
         largeTitle="Routes"
         subtitle={`${routes.length} template${routes.length === 1 ? "" : "s"}`}
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
-        trailing={<NavAction label="Add" bold onPress={() => router.push("/(operator)/routes/new")} />}
+        trailing={
+          <NavAction label="Add" bold onPress={() => router.push("/(operator)/routes/new")} />
+        }
       />
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -60,7 +58,10 @@ export default function RoutesListScreen() {
         ) : routes.length === 0 ? (
           <View style={styles.center}>
             <Text style={styles.emptyText}>No routes yet.</Text>
-            <Pressable style={styles.primaryBtn} onPress={() => router.push("/(operator)/routes/new")}>
+            <Pressable
+              style={styles.primaryBtn}
+              onPress={() => router.push("/(operator)/routes/new")}
+            >
               <Ionicons name="add" size={16} color="#fff" />
               <Text style={styles.primaryBtnText}>Create route</Text>
             </Pressable>
@@ -68,7 +69,9 @@ export default function RoutesListScreen() {
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
             {routes.map((r) => {
-              const driverName = driverDisplayName(r.driverId ? driversById.get(r.driverId) : undefined);
+              const driverName = driverDisplayName(
+                r.driverId ? driversById.get(r.driverId) : undefined,
+              );
               const stopCount = r._count?.stops ?? 0;
               return (
                 <Pressable

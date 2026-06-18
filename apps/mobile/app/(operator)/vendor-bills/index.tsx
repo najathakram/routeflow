@@ -12,14 +12,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
+import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
-  FilterChipRow,
-  NavAction,
-  NavBackButton,
-  NavBar,
-  Pill,
-} from "@routeflow/ui/mobile/ios";
-import { useVendorBills, type VendorBill, type VendorBillStatus } from "../../../lib/api/vendor-bills";
+  useVendorBills,
+  type VendorBill,
+  type VendorBillStatus,
+} from "../../../lib/api/vendor-bills";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -32,11 +30,16 @@ type FilterId = (typeof FILTERS)[number]["id"];
 
 function billPill(status: VendorBillStatus) {
   switch (status) {
-    case "DRAFT": return { variant: "gray" as const, label: "Draft" };
-    case "RECEIVED": return { variant: "orange" as const, label: "Received" };
-    case "PARTIAL": return { variant: "orange" as const, label: "Partial" };
-    case "FULL": return { variant: "green" as const, label: "Paid" };
-    case "VOID": return { variant: "gray" as const, label: "Void" };
+    case "DRAFT":
+      return { variant: "gray" as const, label: "Draft" };
+    case "RECEIVED":
+      return { variant: "orange" as const, label: "Received" };
+    case "PARTIAL":
+      return { variant: "orange" as const, label: "Partial" };
+    case "FULL":
+      return { variant: "green" as const, label: "Paid" };
+    case "VOID":
+      return { variant: "gray" as const, label: "Void" };
   }
 }
 
@@ -49,8 +52,7 @@ export default function VendorBillsScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
 
-  const statusParam =
-    filter === "ALL" ? undefined : (filter as VendorBillStatus | undefined);
+  const statusParam = filter === "ALL" ? undefined : (filter as VendorBillStatus | undefined);
 
   const { data, isLoading, isFetching, refetch } = useVendorBills({
     status: statusParam,
@@ -65,10 +67,7 @@ export default function VendorBillsScreen() {
         leading={<NavBackButton label="Finance" onPress={() => router.back()} />}
         trailing={
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <NavAction
-              label="Scan"
-              onPress={() => router.push("/(operator)/vendor-bills/scan")}
-            />
+            <NavAction label="Scan" onPress={() => router.push("/(operator)/vendor-bills/scan")} />
             <NavAction
               label="New"
               bold
@@ -82,9 +81,7 @@ export default function VendorBillsScreen() {
         chips={FILTERS.map((f) => ({ label: f.label }))}
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
-          setFilter(
-            (FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL",
-          )
+          setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
         }
       />
 
@@ -138,7 +135,9 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
           <Text style={styles.rowSub} numberOfLines={1}>
             {bill.billDate
               ? new Date(bill.billDate).toLocaleDateString(undefined, {
-                  month: "short", day: "numeric", year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
                 })
               : "No date"}
             {bill.dueDate
@@ -146,7 +145,9 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
               : ""}
           </Text>
         </View>
-        <Pill variant={p.variant} dot>{p.label}</Pill>
+        <Pill variant={p.variant} dot>
+          {p.label}
+        </Pill>
       </View>
       <View style={styles.rowFoot}>
         <Text style={styles.rowTotal}>{formatCurrency(bill.totalOwed)}</Text>
@@ -172,8 +173,23 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   row: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   rowHead: { flexDirection: "row", alignItems: "center", gap: 10 },
-  rowTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, letterSpacing: -0.2 },
+  rowTitle: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
   rowSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  rowFoot: { marginTop: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  rowTotal: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  rowFoot: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  rowTotal: {
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
 });

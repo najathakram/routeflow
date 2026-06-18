@@ -1,4 +1,5 @@
 # PENDING APPEND — Phase 12 (W32) + Phase 13 (W33)
+
 # DO NOT EDIT MASTER REPORT UNTIL ENHANCEMENT AGENT (a5717f8c2d384d48a) COMPLETES
 
 ---
@@ -25,14 +26,14 @@
 
 ### Memory Bug Regressions
 
-| Bug | Result | Notes |
-|-----|--------|-------|
-| #1 GET /route-runs/my-stats → 200 | PASS | Confirmed by W29 |
-| #2 Buyer can cancel own PENDING order | PASS | POST /buyer/orders/{id}/cancel → 200 "Order cancelled" |
-| #3 PATCH /customers/me buyer profile edit | PARTIAL-FAIL | Fix works for operator-token CUSTOMER flow; PATCH /buyer/profile → 404 |
-| #4 GET /buyer/returns filtered to customer | FAIL | Endpoint missing entirely → 404 |
-| #5 Route-run create with no POD photos → 201 | PASS | Confirmed, no constraint error |
-| #6 Driver change-password title | N/A | Mobile-only screen |
+| Bug                                          | Result       | Notes                                                                  |
+| -------------------------------------------- | ------------ | ---------------------------------------------------------------------- |
+| #1 GET /route-runs/my-stats → 200            | PASS         | Confirmed by W29                                                       |
+| #2 Buyer can cancel own PENDING order        | PASS         | POST /buyer/orders/{id}/cancel → 200 "Order cancelled"                 |
+| #3 PATCH /customers/me buyer profile edit    | PARTIAL-FAIL | Fix works for operator-token CUSTOMER flow; PATCH /buyer/profile → 404 |
+| #4 GET /buyer/returns filtered to customer   | FAIL         | Endpoint missing entirely → 404                                        |
+| #5 Route-run create with no POD photos → 201 | PASS         | Confirmed, no constraint error                                         |
+| #6 Driver change-password title              | N/A          | Mobile-only screen                                                     |
 
 ---
 
@@ -92,11 +93,11 @@
 
 ## Phase 12 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-185 | P2 | W32/Bug#3 | PATCH /buyer/profile returns 404 — buyer profile is read-only |
-| RF-186 | P2 | W32/Bug#4 | GET /buyer/returns returns 404 — no buyer-facing returns endpoint |
-| RF-187 | P3 | W32/E2E-8 | /finance/dashboard route → "Unmatched Route" 404 |
+| RF     | Severity | Source    | Title                                                             |
+| ------ | -------- | --------- | ----------------------------------------------------------------- |
+| RF-185 | P2       | W32/Bug#3 | PATCH /buyer/profile returns 404 — buyer profile is read-only     |
+| RF-186 | P2       | W32/Bug#4 | GET /buyer/returns returns 404 — no buyer-facing returns endpoint |
+| RF-187 | P3       | W32/E2E-8 | /finance/dashboard route → "Unmatched Route" 404                  |
 
 ---
 
@@ -295,14 +296,14 @@
 
 ## Phase 13 Summary Table
 
-| RF | Severity | Source | Title |
-|----|----------|--------|-------|
-| RF-188 | P2 | W33/9.G.2 | No invoice PDF export + /invoices/:id redirects to /home — invoice detail missing |
-| RF-189 | P2 | W33/9.I.1 | Color contrast sitewide failure — 3.39:1 vs WCAG AA 4.5:1 requirement |
-| RF-190 | P2 | W33/9.I.1 | No semantic landmark structure — zero `<main>` and `<h1>` on any page |
-| RF-191 | P2 | W33/9.I.2 | No keyboard focus ring — zero `:focus` CSS rules; interactive elements are non-semantic divs |
-| RF-192 | P2 | W33/9.I.4 | Form inputs lack all ARIA labels and error associations |
-| RF-193 | P2 | W33/9.L.1-2 | No bulk order select/delete/export at UI or API layer |
-| RF-194 | P2 | W33/9.L.4-5 | Client-side-only search with no server-side pagination on orders and customers |
-| RF-195 | P2 | W33/9.L.6 | Product images not rendered in web UI — /products shows zero img elements |
-| RF-196 | P3 | W33/9.I.3 | Status badges lack ARIA roles — not announced as status by screen readers |
+| RF     | Severity | Source      | Title                                                                                        |
+| ------ | -------- | ----------- | -------------------------------------------------------------------------------------------- |
+| RF-188 | P2       | W33/9.G.2   | No invoice PDF export + /invoices/:id redirects to /home — invoice detail missing            |
+| RF-189 | P2       | W33/9.I.1   | Color contrast sitewide failure — 3.39:1 vs WCAG AA 4.5:1 requirement                        |
+| RF-190 | P2       | W33/9.I.1   | No semantic landmark structure — zero `<main>` and `<h1>` on any page                        |
+| RF-191 | P2       | W33/9.I.2   | No keyboard focus ring — zero `:focus` CSS rules; interactive elements are non-semantic divs |
+| RF-192 | P2       | W33/9.I.4   | Form inputs lack all ARIA labels and error associations                                      |
+| RF-193 | P2       | W33/9.L.1-2 | No bulk order select/delete/export at UI or API layer                                        |
+| RF-194 | P2       | W33/9.L.4-5 | Client-side-only search with no server-side pagination on orders and customers               |
+| RF-195 | P2       | W33/9.L.6   | Product images not rendered in web UI — /products shows zero img elements                    |
+| RF-196 | P3       | W33/9.I.3   | Status badges lack ARIA roles — not announced as status by screen readers                    |

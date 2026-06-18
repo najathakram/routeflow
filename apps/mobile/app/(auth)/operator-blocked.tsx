@@ -13,15 +13,10 @@ export default function OperatorBlockedScreen() {
         <Ionicons name="desktop-outline" size={64} color="#94a3b8" />
         <Text style={styles.title}>Desktop Only</Text>
         <Text style={styles.message}>
-          Operator access is not available on mobile. Please sign in on the web
-          dashboard to manage routes and deliveries.
+          Operator access is not available on mobile. Please sign in on the web dashboard to manage
+          routes and deliveries.
         </Text>
-        <MobileButton
-          onPress={logout}
-          variant="secondary"
-          size="lg"
-          style={styles.button}
-        >
+        <MobileButton onPress={logout} variant="secondary" size="lg" style={styles.button}>
           Sign Out
         </MobileButton>
       </View>

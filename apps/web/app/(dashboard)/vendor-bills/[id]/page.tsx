@@ -133,9 +133,7 @@ function RecordPaymentModal({
     >
       <form id="bill-payment-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Payment Method
-          </label>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment Method</label>
           <select
             value={form.method}
             onChange={(e) =>
@@ -169,7 +167,7 @@ function RecordPaymentModal({
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Reference # <span className="text-navy/40 font-normal">(optional)</span>
+            Reference # <span className="text-navy/70 font-normal">(optional)</span>
           </label>
           <input
             type="text"
@@ -182,7 +180,7 @@ function RecordPaymentModal({
 
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes <span className="text-navy/40 font-normal">(optional)</span>
+            Notes <span className="text-navy/70 font-normal">(optional)</span>
           </label>
           <textarea
             rows={2}
@@ -270,8 +268,8 @@ function RevertToDraftModal({
     >
       <div className="space-y-2 text-sm text-navy/70">
         <p>
-          This will reverse the inventory update that was applied when the bill was received.
-          You can then edit the bill and mark it as received again.
+          This will reverse the inventory update that was applied when the bill was received. You
+          can then edit the bill and mark it as received again.
         </p>
         <p className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-yellow-700">
           <strong>Note:</strong> Stock quantities will be decremented to reverse the original
@@ -291,7 +289,12 @@ interface EditLineItemRow {
   unitCost: string;
 }
 
-const emptyRow = (): EditLineItemRow => ({ productId: "", description: "", qty: "1", unitCost: "" });
+const emptyRow = (): EditLineItemRow => ({
+  productId: "",
+  description: "",
+  qty: "1",
+  unitCost: "",
+});
 
 function EditLineItems({
   items,
@@ -324,7 +327,9 @@ function EditLineItems({
                   update(i, {
                     productId: pid,
                     description: p.name,
-                    unitCost: p.averageCost ? String(parseFloat(p.averageCost).toFixed(4)) : row.unitCost,
+                    unitCost: p.averageCost
+                      ? String(parseFloat(p.averageCost).toFixed(4))
+                      : row.unitCost,
                   });
                 } else {
                   update(i, { productId: "", description: row.description });
@@ -334,7 +339,9 @@ function EditLineItems({
             >
               <option value="">— Custom item —</option>
               {products.map((p: any) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
               ))}
             </select>
             {!row.productId && (
@@ -348,7 +355,7 @@ function EditLineItems({
             )}
           </div>
           <div>
-            <label className="mb-0.5 block text-[10px] text-navy/40">Qty</label>
+            <label className="mb-0.5 block text-[10px] text-navy/70">Qty</label>
             <input
               type="number"
               min="0.001"
@@ -359,7 +366,7 @@ function EditLineItems({
             />
           </div>
           <div>
-            <label className="mb-0.5 block text-[10px] text-navy/40">Unit Cost ($)</label>
+            <label className="mb-0.5 block text-[10px] text-navy/70">Unit Cost ($)</label>
             <input
               type="number"
               min="0"
@@ -446,7 +453,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-navy/40" />
+        <Loader2 className="h-8 w-8 animate-spin text-navy/70" />
       </div>
     );
   }
@@ -486,7 +493,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         });
       },
       onError: () => {
-        toast({ title: "Failed to mark received", description: "Please try again.", variant: "error" });
+        toast({
+          title: "Failed to mark received",
+          description: "Please try again.",
+          variant: "error",
+        });
       },
     });
   };
@@ -495,7 +506,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     voidBill.mutate(bill.id, {
       onSuccess: () => {
         setIsVoidOpen(false);
-        toast({ title: "Bill voided", description: `Bill ${bill.billNumber} has been voided.`, variant: "info" });
+        toast({
+          title: "Bill voided",
+          description: `Bill ${bill.billNumber} has been voided.`,
+          variant: "info",
+        });
       },
       onError: () => {
         toast({ title: "Failed to void bill", description: "Please try again.", variant: "error" });
@@ -579,7 +594,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           });
         },
         onError: () => {
-          toast({ title: "Failed to record payment", description: "Please try again.", variant: "error" });
+          toast({
+            title: "Failed to record payment",
+            description: "Please try again.",
+            variant: "error",
+          });
         },
       },
     );
@@ -596,7 +615,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       {/* Back */}
       <Link
         href="/purchases"
-        className="flex items-center gap-1.5 text-sm text-navy/60 hover:text-navy transition-colors"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
         Vendor Bills
@@ -689,11 +708,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           )}
 
           {status === "PAID" && (
-            <span className="text-sm italic text-navy/40">This bill is fully paid.</span>
+            <span className="text-sm italic text-navy/70">This bill is fully paid.</span>
           )}
 
           {status === "VOID" && (
-            <span className="text-sm italic text-navy/40">This bill is void.</span>
+            <span className="text-sm italic text-navy/70">This bill is void.</span>
           )}
         </div>
       </div>
@@ -707,7 +726,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <div className="mb-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Supplier
                     </label>
                     <SupplierSelect
@@ -720,7 +739,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                         Bill Date
                       </label>
                       <input
@@ -731,7 +750,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                       />
                     </div>
                     <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                         Due Date
                       </label>
                       <input
@@ -744,7 +763,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Notes
                   </label>
                   <textarea
@@ -759,41 +778,43 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             ) : (
               <div className="mb-6 grid grid-cols-2 gap-6">
                 <div>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Supplier
                   </p>
-                  <p className="text-sm font-semibold text-navy">
-                    {bill.supplier?.name ?? "—"}
-                  </p>
+                  <p className="text-sm font-semibold text-navy">{bill.supplier?.name ?? "—"}</p>
                   {bill.supplier?.contactName && (
-                    <p className="text-sm text-navy/60">{bill.supplier.contactName}</p>
+                    <p className="text-sm text-navy/70">{bill.supplier.contactName}</p>
                   )}
                   {bill.supplier?.address && (
-                    <p className="mt-1 text-xs text-navy/50 whitespace-pre-line">
+                    <p className="mt-1 text-xs text-navy/70 whitespace-pre-line">
                       {bill.supplier.address}
                     </p>
                   )}
                 </div>
                 <div>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Bill Details
                   </p>
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Bill #:</span> {bill.billNumber}
                   </p>
                   {bill.purchaseOrder && (
-                    <p className="text-sm text-navy/60">
+                    <p className="text-sm text-navy/70">
                       <span className="font-medium text-navy">PO #:</span>{" "}
                       {bill.purchaseOrder.poNumber}
                     </p>
                   )}
-                  <p className="text-sm text-navy/60">
+                  <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Bill Date:</span>{" "}
                     {fmtDate(bill.billDate ?? bill.createdAt)}
                   </p>
-                  <p className={cn("text-sm", isOverdue ? "text-red-600 font-semibold" : "text-navy/60")}>
-                    <span className="font-medium text-navy">Due Date:</span>{" "}
-                    {fmtDate(bill.dueDate)}
+                  <p
+                    className={cn(
+                      "text-sm",
+                      isOverdue ? "text-red-600 font-semibold" : "text-navy/70",
+                    )}
+                  >
+                    <span className="font-medium text-navy">Due Date:</span> {fmtDate(bill.dueDate)}
                     {isOverdue && " (Overdue)"}
                   </p>
                 </div>
@@ -803,7 +824,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             {/* Line items — view or edit mode */}
             {isEditing ? (
               <div className="border-t border-surface-border pt-4">
-                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Line Items
                 </p>
                 <EditLineItems items={editItems} onChange={setEditItems} />
@@ -816,16 +837,16 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 <table className="w-full text-sm">
                   <thead className="border-b border-surface-border bg-surface-raised">
                     <tr>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/60">
+                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
                         Description
                       </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
                         Qty
                       </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/60">
+                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
                         Unit Cost
                       </th>
-                      <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/60">
+                      <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/70">
                         Amount
                       </th>
                     </tr>
@@ -836,7 +857,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                         <td className="px-6 py-3 text-navy">
                           {item.description}
                           {item.product && (
-                            <span className="ml-2 text-xs text-navy/40">({item.product.name})</span>
+                            <span className="ml-2 text-xs text-navy/70">({item.product.name})</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
@@ -883,7 +904,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             {/* Notes */}
             {!isEditing && bill.notes && (
               <div className="mt-4 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/40">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Notes
                 </p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{bill.notes}</p>
@@ -897,7 +918,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           {/* Payment history */}
           <Card title="Payment History">
             {payments.length === 0 ? (
-              <p className="text-sm text-navy/40">No payments recorded.</p>
+              <p className="text-sm text-navy/70">No payments recorded.</p>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {payments.map((pmt) => (
@@ -910,17 +931,13 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                         <span className="text-sm font-semibold text-navy">
                           {fmt(Number(pmt.amount))}
                         </span>
-                        <span className="text-xs text-navy/50">
-                          {fmtDate(pmt.createdAt)}
-                        </span>
+                        <span className="text-xs text-navy/70">{fmtDate(pmt.createdAt)}</span>
                       </div>
-                      <p className="mt-0.5 text-xs text-navy/60">
+                      <p className="mt-0.5 text-xs text-navy/70">
                         {pmt.method}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
-                      {pmt.notes && (
-                        <p className="mt-0.5 text-xs text-navy/40">{pmt.notes}</p>
-                      )}
+                      {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
                     </div>
                   </li>
                 ))}
@@ -945,13 +962,13 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           <Card>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-navy/60">Bill Total</dt>
+                <dt className="text-navy/70">Bill Total</dt>
                 <dd className="font-medium text-navy">{fmt(isEditing ? editTotal : total)}</dd>
               </div>
               {!isEditing && (
                 <>
                   <div className="flex justify-between">
-                    <dt className="text-navy/60">Paid</dt>
+                    <dt className="text-navy/70">Paid</dt>
                     <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
                   </div>
                   <div
@@ -977,7 +994,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onRecord={handleRecordPayment}
         balance={balance}
         isPending={recordPayment.isPending}
-        defaultMethod={prefs?.["payment.lastMethod"] as PaymentFormState["method"] ?? "ACH"}
+        defaultMethod={(prefs?.["payment.lastMethod"] as PaymentFormState["method"]) ?? "ACH"}
       />
 
       <VoidConfirmModal

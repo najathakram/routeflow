@@ -2,7 +2,11 @@
  * Client-side CSV export utility.
  * Accepts rows as arrays of values; builds a CSV blob and triggers a download.
  */
-export function downloadCsv(filename: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]): void {
+export function downloadCsv(
+  filename: string,
+  headers: string[],
+  rows: (string | number | boolean | null | undefined)[][],
+): void {
   const escape = (v: string | number | boolean | null | undefined): string => {
     const s = v == null ? "" : String(v);
     // Quote if contains comma, newline, or double-quote
@@ -10,10 +14,7 @@ export function downloadCsv(filename: string, headers: string[], rows: (string |
     return s;
   };
 
-  const lines = [
-    headers.map(escape).join(","),
-    ...rows.map((row) => row.map(escape).join(",")),
-  ];
+  const lines = [headers.map(escape).join(","), ...rows.map((row) => row.map(escape).join(","))];
 
   const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

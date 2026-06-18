@@ -3,7 +3,19 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { Plus, Eye, Send, PackageCheck, X, ChevronDown, ChevronUp, Info, Sparkles, Search, SlidersHorizontal } from "lucide-react";
+import {
+  Plus,
+  Eye,
+  Send,
+  PackageCheck,
+  X,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  Sparkles,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
 import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -97,7 +109,10 @@ interface ForecastItem {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function poStatusBadge(status: POStatus) {
-  const map: Record<POStatus, { variant: "neutral" | "info" | "warning" | "success"; label: string }> = {
+  const map: Record<
+    POStatus,
+    { variant: "neutral" | "info" | "warning" | "success"; label: string }
+  > = {
     DRAFT: { variant: "neutral", label: "Draft" },
     SENT: { variant: "info", label: "Sent" },
     PARTIAL: { variant: "warning", label: "Partial" },
@@ -109,7 +124,7 @@ function poStatusBadge(status: POStatus) {
 }
 
 function daysRemainingBadge(days: number | null) {
-  if (days === null) return <span className="text-navy/60 text-xs">N/A</span>;
+  if (days === null) return <span className="text-navy/70 text-xs">N/A</span>;
   const cls =
     days <= 7
       ? "bg-red-100 text-red-700"
@@ -117,9 +132,7 @@ function daysRemainingBadge(days: number | null) {
         ? "bg-yellow-100 text-yellow-700"
         : "bg-green-100 text-green-700";
   return (
-    <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", cls)}>
-      {days} days
-    </span>
+    <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", cls)}>{days} days</span>
   );
 }
 
@@ -208,7 +221,12 @@ function QuickRestockModal({
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
-          <p className="mt-0.5 text-xs text-navy/40">For supplier invoices, use{" "}<a href="/purchases" className="text-brand-500 hover:underline">Purchases &rarr; Vendor Bills</a></p>
+          <p className="mt-0.5 text-xs text-navy/70">
+            For supplier invoices, use{" "}
+            <a href="/purchases" className="text-brand-500 hover:underline">
+              Purchases &rarr; Vendor Bills
+            </a>
+          </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
           <div>
@@ -232,14 +250,15 @@ function QuickRestockModal({
               <option value="">Select product…</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}{p.sku ? ` (${p.sku})` : ""}
+                  {p.name}
+                  {p.sku ? ` (${p.sku})` : ""}
                 </option>
               ))}
             </select>
             {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/50">
+              <p className="mt-1 text-xs text-navy/70">
                 Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
-                {!decimalQty && <span className="ml-2 text-navy/40">(whole numbers only)</span>}
+                {!decimalQty && <span className="ml-2 text-navy/70">(whole numbers only)</span>}
               </p>
             )}
           </div>
@@ -281,7 +300,10 @@ function QuickRestockModal({
             <input
               type="text"
               value={form.reference}
-              onChange={(e) => { setForm((f) => ({ ...f, reference: e.target.value })); setRefSearch(e.target.value); }}
+              onChange={(e) => {
+                setForm((f) => ({ ...f, reference: e.target.value }));
+                setRefSearch(e.target.value);
+              }}
               onFocus={() => setRefOpen(true)}
               placeholder="Select or type reference…"
               autoComplete="off"
@@ -342,8 +364,12 @@ function QuickRestockModal({
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={restock.isPending}>Record Restock</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={restock.isPending}>
+              Record Restock
+            </Button>
           </div>
         </form>
       </div>
@@ -390,17 +416,15 @@ function StockTable({
     comparators: {
       currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
       unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
-      averageCost: (a, b) =>
-        Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
-      totalValue: (a, b) =>
-        Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
+      averageCost: (a, b) => Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
+      totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
     },
   });
 
   if (filtered.length === 0) {
     const q = stockSearch.trim();
     return (
-      <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/40">
+      <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
         {q ? `No products match "${q}"` : "No products found."}
       </div>
     );
@@ -515,14 +539,10 @@ function StockTable({
                 {item.unitsPerBox != null ? item.unitsPerBox : "—"}
               </td>
               <td className="px-4 py-3 text-navy/70">
-                {item.averageCost != null
-                  ? `$${Number(item.averageCost).toFixed(2)}`
-                  : "—"}
+                {item.averageCost != null ? `$${Number(item.averageCost).toFixed(2)}` : "—"}
               </td>
               <td className="px-4 py-3 text-navy/70">
-                {item.totalValue != null
-                  ? `$${Number(item.totalValue).toFixed(2)}`
-                  : "—"}
+                {item.totalValue != null ? `$${Number(item.totalValue).toFixed(2)}` : "—"}
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-3">
@@ -579,9 +599,7 @@ function AdjustStockModal({
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
   const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
   barcodeScanHandlerRef.current = (code: string) => {
-    const match = products.find(
-      (p) => (p.sku ?? "").toLowerCase() === code.toLowerCase(),
-    );
+    const match = products.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
     if (match) {
       setForm((f) => ({ ...f, productId: match.id }));
       setProductSearch("");
@@ -609,13 +627,14 @@ function AdjustStockModal({
     };
     input.addEventListener("keydown", handleKeyDown);
     return () => input.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredProducts = productSearch.trim()
-    ? products.filter((p) =>
-        p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-        (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase())
+    ? products.filter(
+        (p) =>
+          p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+          (p.sku ?? "").toLowerCase().includes(productSearch.toLowerCase()),
       )
     : products;
 
@@ -663,7 +682,7 @@ function AdjustStockModal({
             {productSearch && !form.productId && (
               <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
                 {filteredProducts.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-navy/40">
+                  <p className="px-3 py-2 text-xs text-navy/70">
                     No products match &quot;{productSearch}&quot;
                   </p>
                 ) : (
@@ -678,20 +697,27 @@ function AdjustStockModal({
                       className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
                     >
                       {p.name}
-                      {p.sku ? <span className="text-navy/50"> ({p.sku})</span> : null}
+                      {p.sku ? <span className="text-navy/70"> ({p.sku})</span> : null}
                     </button>
                   ))
                 )}
               </div>
             )}
             {!form.productId && !productSearch && (
-              <p className="mt-1 text-xs text-navy/40">Type to search products</p>
+              <p className="mt-1 text-xs text-navy/70">Type to search products</p>
             )}
             {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/50">
+              <p className="mt-1 text-xs text-navy/70">
                 Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
                 {form.quantity !== "" && !isNaN(qty) && (
-                  <> → <strong>{Number((selectedProduct.currentStock + qty).toFixed(2))} {selectedProduct.unit}</strong></>
+                  <>
+                    {" "}
+                    →{" "}
+                    <strong>
+                      {Number((selectedProduct.currentStock + qty).toFixed(2))}{" "}
+                      {selectedProduct.unit}
+                    </strong>
+                  </>
                 )}
                 {" · "}
                 <button
@@ -757,8 +783,12 @@ function AdjustStockModal({
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" disabled={!form.productId} loading={recordAdjustment.isPending}>Save Adjustment</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!form.productId} loading={recordAdjustment.isPending}>
+              Save Adjustment
+            </Button>
           </div>
         </form>
       </div>
@@ -770,7 +800,13 @@ function AdjustStockModal({
 
 function CreateSupplierModal({ onClose }: { onClose: () => void }) {
   const createSupplier = useCreateSupplier();
-  const [form, setForm] = React.useState({ name: "", contactName: "", phone: "", email: "", notes: "" });
+  const [form, setForm] = React.useState({
+    name: "",
+    contactName: "",
+    phone: "",
+    email: "",
+    notes: "",
+  });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -820,8 +856,12 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={createSupplier.isPending}>Add Supplier</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={createSupplier.isPending}>
+              Add Supplier
+            </Button>
           </div>
         </form>
       </div>
@@ -853,7 +893,9 @@ function CreatePOModal({
   const [supplierId, setSupplierId] = React.useState(defaultSupplierId ?? "");
   const [expectedDate, setExpectedDate] = React.useState("");
   const [notes, setNotes] = React.useState("");
-  const [lines, setLines] = React.useState<POLineItem[]>([{ productId: "", qty: "", unitCost: "" }]);
+  const [lines, setLines] = React.useState<POLineItem[]>([
+    { productId: "", qty: "", unitCost: "" },
+  ]);
 
   const addLine = () => setLines((l) => [...l, { productId: "", qty: "", unitCost: "" }]);
   const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
@@ -877,7 +919,11 @@ function CreatePOModal({
       }));
 
     if (items.length === 0) {
-      toast({ title: "Validation", description: "Add at least one line item.", variant: "warning" });
+      toast({
+        title: "Validation",
+        description: "Add at least one line item.",
+        variant: "warning",
+      });
       return;
     }
 
@@ -903,11 +949,18 @@ function CreatePOModal({
       <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Create Purchase Order</h2>
-          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy">
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-5 overflow-y-auto px-6 py-5" style={{ maxHeight: "80vh" }}>
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-5 overflow-y-auto px-6 py-5"
+          style={{ maxHeight: "80vh" }}
+        >
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-1 block text-xs text-navy">Supplier</label>
@@ -917,9 +970,13 @@ function CreatePOModal({
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 <option value="">No supplier</option>
-                {suppliers.filter((s) => s.isActive).map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
+                {suppliers
+                  .filter((s) => s.isActive)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
               </select>
             </div>
             <div>
@@ -936,7 +993,9 @@ function CreatePOModal({
           {/* Line items */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs font-medium text-navy uppercase tracking-wide">Line Items</label>
+              <label className="text-xs font-medium text-navy uppercase tracking-wide">
+                Line Items
+              </label>
               <button
                 type="button"
                 onClick={addLine}
@@ -971,7 +1030,8 @@ function CreatePOModal({
                             <option value="">Select…</option>
                             {products.map((p) => (
                               <option key={p.id} value={p.id}>
-                                {p.name}{p.sku ? ` (${p.sku})` : ""}
+                                {p.name}
+                                {p.sku ? ` (${p.sku})` : ""}
                               </option>
                             ))}
                           </select>
@@ -1017,8 +1077,15 @@ function CreatePOModal({
                 </tbody>
                 <tfoot className="border-t border-surface-border bg-surface-raised/50">
                   <tr>
-                    <td colSpan={3} className="px-3 py-2 text-right text-xs font-medium text-navy/50">Total</td>
-                    <td className="px-3 py-2 text-right text-sm font-semibold text-navy">${total.toFixed(2)}</td>
+                    <td
+                      colSpan={3}
+                      className="px-3 py-2 text-right text-xs font-medium text-navy/70"
+                    >
+                      Total
+                    </td>
+                    <td className="px-3 py-2 text-right text-sm font-semibold text-navy">
+                      ${total.toFixed(2)}
+                    </td>
                     <td />
                   </tr>
                 </tfoot>
@@ -1037,8 +1104,12 @@ function CreatePOModal({
           </div>
 
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={createPO.isPending}>Create PO</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={createPO.isPending}>
+              Create PO
+            </Button>
           </div>
         </form>
       </div>
@@ -1048,13 +1119,7 @@ function CreatePOModal({
 
 // ─── Receive PO Modal ─────────────────────────────────────────────────────────
 
-function ReceivePOModal({
-  po,
-  onClose,
-}: {
-  po: PurchaseOrder;
-  onClose: () => void;
-}) {
+function ReceivePOModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const receivePO = useReceivePurchaseOrder();
   const { toast } = useToast();
   const [receivedQtys, setReceivedQtys] = React.useState<Record<string, string>>(
@@ -1084,12 +1149,17 @@ function ReceivePOModal({
       <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Receive — {po.poNumber}</h2>
-          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy">
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          <p className="text-xs text-navy/50">Enter the quantity actually received for each item.</p>
+          <p className="text-xs text-navy/70">
+            Enter the quantity actually received for each item.
+          </p>
           <div className="rounded-lg border border-surface-border overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-surface-raised text-xs text-navy/70">
@@ -1122,8 +1192,12 @@ function ReceivePOModal({
             </table>
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={receivePO.isPending}>Confirm Receipt</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={receivePO.isPending}>
+              Confirm Receipt
+            </Button>
           </div>
         </form>
       </div>
@@ -1148,7 +1222,9 @@ function PODetailRow({
   if (isLoading) {
     return (
       <tr>
-        <td colSpan={8} className="px-6 py-4 text-center text-xs text-navy/40">Loading details…</td>
+        <td colSpan={8} className="px-6 py-4 text-center text-xs text-navy/70">
+          Loading details…
+        </td>
       </tr>
     );
   }
@@ -1176,7 +1252,9 @@ function PODetailRow({
                   <tr key={item.id}>
                     <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
                     <td className="px-3 py-2 text-right text-navy/70">{item.qty}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">${Number(item.unitCost).toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-navy/70">
+                      ${Number(item.unitCost).toFixed(2)}
+                    </td>
                     <td className="px-3 py-2 text-right text-navy/70">
                       {item.receivedQty ?? <span className="text-navy/30">—</span>}
                     </td>
@@ -1191,7 +1269,7 @@ function PODetailRow({
 
           {/* Notes */}
           {po.notes && (
-            <p className="text-xs text-navy/50">
+            <p className="text-xs text-navy/70">
               <span className="font-medium">Notes:</span> {po.notes}
             </p>
           )}
@@ -1214,11 +1292,7 @@ function PODetailRow({
               </Button>
             )}
             {(po.status === "SENT" || po.status === "PARTIAL") && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => onReceive(po as PurchaseOrder)}
-              >
+              <Button size="sm" variant="secondary" onClick={() => onReceive(po as PurchaseOrder)}>
                 <PackageCheck className="h-3 w-3 mr-1" /> Receive
               </Button>
             )}
@@ -1246,13 +1320,7 @@ function PODetailRow({
 
 // ─── Reorder Settings Modal ───────────────────────────────────────────────────
 
-function ReorderSettingsModal({
-  item,
-  onClose,
-}: {
-  item: ForecastItem;
-  onClose: () => void;
-}) {
+function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: () => void }) {
   const updateSettings = useUpdateReorderSettings();
   const { toast } = useToast();
   const [reorderPoint, setReorderPoint] = React.useState(String(item.reorderPoint ?? ""));
@@ -1281,12 +1349,15 @@ function ReorderSettingsModal({
       <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Reorder Settings</h2>
-          <button onClick={onClose} className="rounded p-1 text-navy/40 hover:bg-surface-raised hover:text-navy">
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
-          <p className="text-sm text-navy/60">{item.name}</p>
+          <p className="text-sm text-navy/70">{item.name}</p>
           <div>
             <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
             <input
@@ -1312,8 +1383,12 @@ function ReorderSettingsModal({
             />
           </div>
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="secondary" onClick={onClose} type="button">Cancel</Button>
-            <Button type="submit" loading={updateSettings.isPending}>Save</Button>
+            <Button variant="secondary" onClick={onClose} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={updateSettings.isPending}>
+              Save
+            </Button>
           </div>
         </form>
       </div>
@@ -1349,8 +1424,7 @@ function PurchaseOrdersTab({
 
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
 
-  const toggleExpand = (id: string) =>
-    setExpandedId((prev) => (prev === id ? null : id));
+  const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
   return (
     <>
@@ -1374,7 +1448,9 @@ function PurchaseOrdersTab({
         >
           <option value="">All Statuses</option>
           {(["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"] as POStatus[]).map((s) => (
-            <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>
+            <option key={s} value={s}>
+              {s.charAt(0) + s.slice(1).toLowerCase()}
+            </option>
           ))}
         </select>
 
@@ -1385,7 +1461,9 @@ function PurchaseOrdersTab({
         >
           <option value="">All Suppliers</option>
           {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
           ))}
         </select>
 
@@ -1405,8 +1483,13 @@ function PurchaseOrdersTab({
         />
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button
-            onClick={() => { setStatusFilter(""); setSupplierFilter(""); setDateFrom(""); setDateTo(""); }}
-            className="rounded px-2 py-1.5 text-xs text-navy/50 hover:text-navy hover:bg-surface-raised"
+            onClick={() => {
+              setStatusFilter("");
+              setSupplierFilter("");
+              setDateFrom("");
+              setDateTo("");
+            }}
+            className="rounded px-2 py-1.5 text-xs text-navy/70 hover:text-navy hover:bg-surface-raised"
           >
             Clear filters
           </button>
@@ -1424,8 +1507,19 @@ function PurchaseOrdersTab({
           <table className="w-full text-sm">
             <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
-                {["PO #", "Supplier", "Status", "Items", "Total", "Expected Date", "Actions", ""].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
+                {[
+                  "PO #",
+                  "Supplier",
+                  "Status",
+                  "Items",
+                  "Total",
+                  "Expected Date",
+                  "Actions",
+                  "",
+                ].map((h) => (
+                  <th key={h} className="px-4 py-3 text-left font-medium">
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -1433,7 +1527,9 @@ function PurchaseOrdersTab({
               {orders.map((po) => (
                 <React.Fragment key={po.id}>
                   <tr className="transition-colors hover:bg-surface-raised/40">
-                    <td className="px-4 py-3 font-mono text-xs font-medium text-navy">{po.poNumber}</td>
+                    <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
+                      {po.poNumber}
+                    </td>
                     <td className="px-4 py-3 text-navy/70">{po.supplier?.name ?? "—"}</td>
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
@@ -1441,27 +1537,23 @@ function PurchaseOrdersTab({
                       ${Number(po.total ?? 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
-                      {po.expectedDate
-                        ? new Date(po.expectedDate).toLocaleDateString()
-                        : "—"}
+                      {po.expectedDate ? new Date(po.expectedDate).toLocaleDateString() : "—"}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => toggleExpand(po.id)}
                           title="View details"
-                          className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                        {po.status === "DRAFT" && (
-                          <SendPOButton poId={po.id} />
-                        )}
+                        {po.status === "DRAFT" && <SendPOButton poId={po.id} />}
                         {(po.status === "SENT" || po.status === "PARTIAL") && (
                           <button
                             onClick={() => setReceivePO(po)}
                             title="Receive"
-                            className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy"
+                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
                           >
                             <PackageCheck className="h-4 w-4" />
                           </button>
@@ -1481,17 +1573,12 @@ function PurchaseOrdersTab({
                       </button>
                     </td>
                   </tr>
-                  {expandedId === po.id && (
-                    <PODetailRow
-                      poId={po.id}
-                      onReceive={setReceivePO}
-                    />
-                  )}
+                  {expandedId === po.id && <PODetailRow poId={po.id} onReceive={setReceivePO} />}
                 </React.Fragment>
               ))}
               {orders.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
+                  <td colSpan={8} className="px-4 py-10 text-center text-navy/70">
                     No purchase orders found.
                   </td>
                 </tr>
@@ -1508,9 +1595,7 @@ function PurchaseOrdersTab({
           onClose={() => setShowCreateModal(false)}
         />
       )}
-      {receivePO && (
-        <ReceivePOModal po={receivePO} onClose={() => setReceivePO(null)} />
-      )}
+      {receivePO && <ReceivePOModal po={receivePO} onClose={() => setReceivePO(null)} />}
     </>
   );
 }
@@ -1529,7 +1614,7 @@ function SendPOButton({ poId }: { poId: string }) {
       }
       title="Send"
       disabled={sendPO.isPending}
-      className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
     >
       <Send className="h-4 w-4" />
     </button>
@@ -1570,7 +1655,10 @@ function InlineNumberEdit({
         onChange={(e) => setInputVal(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
           if (e.key === "Escape") setEditing(false);
         }}
         className="w-20 rounded border border-brand-400 px-2 py-0.5 text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -1580,7 +1668,10 @@ function InlineNumberEdit({
 
   return (
     <button
-      onClick={() => { setInputVal(value != null ? String(value) : ""); setEditing(true); }}
+      onClick={() => {
+        setInputVal(value != null ? String(value) : "");
+        setEditing(true);
+      }}
       title="Click to edit"
       className="group flex items-center gap-1 rounded px-1 py-0.5 text-sm text-navy/70 hover:bg-surface-raised"
     >
@@ -1606,7 +1697,11 @@ function ForecastingTab({
 
   const [createPOItem, setCreatePOItem] = React.useState<ForecastItem | null>(null);
 
-  const handleSaveField = (item: ForecastItem, field: "reorderPoint" | "reorderQty", value: number) => {
+  const handleSaveField = (
+    item: ForecastItem,
+    field: "reorderPoint" | "reorderQty",
+    value: number,
+  ) => {
     updateSettings.mutate(
       {
         productId: item.productId,
@@ -1652,7 +1747,9 @@ function ForecastingTab({
                   "Status",
                   "Actions",
                 ].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
+                  <th key={h} className="px-4 py-3 text-left font-medium">
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -1668,9 +1765,7 @@ function ForecastingTab({
                   <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
                   <td className="px-4 py-3 text-navy/70">{Number(item.currentStock).toFixed(2)}</td>
                   <td className="px-4 py-3 text-navy/70">
-                    {item.avgDailySales != null
-                      ? Number(item.avgDailySales).toFixed(2)
-                      : "—"}
+                    {item.avgDailySales != null ? Number(item.avgDailySales).toFixed(2) : "—"}
                   </td>
                   <td className="px-4 py-3">{daysRemainingBadge(item.daysRemaining)}</td>
                   <td className="px-4 py-3">
@@ -1710,7 +1805,7 @@ function ForecastingTab({
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-navy/40">
+                  <td colSpan={8} className="px-4 py-10 text-center text-navy/70">
                     No forecasting data available.
                   </td>
                 </tr>
@@ -1735,7 +1830,9 @@ function ForecastingTab({
 
 export default function InventoryPage() {
   const { setTitle } = usePageTitle();
-  React.useEffect(() => { setTitle("Inventory"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Inventory");
+  }, [setTitle]);
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
@@ -1821,12 +1918,12 @@ export default function InventoryPage() {
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <Card>
-          <p className="text-xs text-navy/50">Total Products</p>
+          <p className="text-xs text-navy/70">Total Products</p>
           <p className="mt-1 text-2xl font-bold text-navy">{(stockItems as StockItem[]).length}</p>
         </Card>
         <Card>
           <div className="flex items-center gap-1.5">
-            <p className="text-xs text-navy/50">Inventory Value</p>
+            <p className="text-xs text-navy/70">Inventory Value</p>
             {totalInventoryValue === 0 && (
               <span
                 title="Value is calculated from average cost per unit. Record purchase receipts in the Vendor Bills tab to populate costs."
@@ -1838,16 +1935,23 @@ export default function InventoryPage() {
           </div>
           <p className="mt-1 text-2xl font-bold text-navy">${totalInventoryValue.toFixed(2)}</p>
           {totalInventoryValue === 0 && (
-            <p className="mt-0.5 text-[10px] text-navy/40">Based on average cost — record purchases to update</p>
+            <p className="mt-0.5 text-[10px] text-navy/70">
+              Based on average cost — record purchases to update
+            </p>
           )}
         </Card>
         <Card>
-          <p className="text-xs text-navy/50">Out of Stock</p>
-          <p className={cn("mt-1 text-2xl font-bold", outOfStockCount > 0 ? "text-danger" : "text-navy")}>
+          <p className="text-xs text-navy/70">Out of Stock</p>
+          <p
+            className={cn(
+              "mt-1 text-2xl font-bold",
+              outOfStockCount > 0 ? "text-danger" : "text-navy",
+            )}
+          >
             {outOfStockCount}
           </p>
           {outOfStockCount > (stockItems as StockItem[]).length * 0.5 && (
-            <p className="mt-0.5 text-[10px] text-navy/40">Stock may need updating after import</p>
+            <p className="mt-0.5 text-[10px] text-navy/70">Stock may need updating after import</p>
           )}
         </Card>
       </div>
@@ -1857,8 +1961,9 @@ export default function InventoryPage() {
         <div className="flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-500" />
           <p className="text-sm text-brand-700">
-            Many products show zero stock because stock quantities were not included in the initial import.
-            Use <strong>Quick Restock</strong> or record a purchase receipt to assign stock levels.
+            Many products show zero stock because stock quantities were not included in the initial
+            import. Use <strong>Quick Restock</strong> or record a purchase receipt to assign stock
+            levels.
           </p>
         </div>
       )}
@@ -1871,7 +1976,7 @@ export default function InventoryPage() {
               value={tab.value}
               className={cn(
                 "px-4 py-2 text-sm font-medium transition-colors",
-                "text-navy/50 hover:text-navy",
+                "text-navy/70 hover:text-navy",
                 "data-[state=active]:border-b-2 data-[state=active]:border-brand-500 data-[state=active]:text-brand-600",
               )}
             >
@@ -1889,7 +1994,7 @@ export default function InventoryPage() {
                 dropdown with the top 8 matches so the operator can click
                 "Adjust" without scrolling the table at all. */}
             <div ref={stockSearchContainerRef} className="relative flex-1 min-w-[220px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/70" />
               <input
                 type="search"
                 value={stockSearch}
@@ -1905,9 +2010,7 @@ export default function InventoryPage() {
                   }
                   if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    setStockSuggestHighlight((h) =>
-                      Math.min(h + 1, stockSuggestions.length - 1),
-                    );
+                    setStockSuggestHighlight((h) => Math.min(h + 1, stockSuggestions.length - 1));
                   } else if (e.key === "ArrowUp") {
                     e.preventDefault();
                     setStockSuggestHighlight((h) => Math.max(h - 1, 0));
@@ -1947,7 +2050,7 @@ export default function InventoryPage() {
               {stockSuggestOpen && stockSearch.trim() && (
                 <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
                   {stockSuggestions.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-navy/40">
+                    <p className="px-3 py-2 text-xs text-navy/70">
                       No products match &quot;{stockSearch}&quot;.
                     </p>
                   ) : (
@@ -1958,7 +2061,7 @@ export default function InventoryPage() {
                             ? "text-danger"
                             : s.currentStock <= 5
                               ? "text-warning"
-                              : "text-navy/60";
+                              : "text-navy/70";
                         const stockLabel =
                           Number(s.currentStock) % 1 === 0
                             ? Number(s.currentStock).toFixed(0)
@@ -1987,7 +2090,7 @@ export default function InventoryPage() {
                               <p className="truncate font-medium text-navy" title={s.name}>
                                 {s.name}
                               </p>
-                              <p className="truncate text-[11px] text-navy/40">
+                              <p className="truncate text-[11px] text-navy/70">
                                 {s.sku ? (
                                   <span className="font-mono">{s.sku}</span>
                                 ) : (
@@ -2010,7 +2113,7 @@ export default function InventoryPage() {
                 </div>
               )}
             </div>
-            <p className="text-sm text-navy/50 whitespace-nowrap">
+            <p className="text-sm text-navy/70 whitespace-nowrap">
               {(() => {
                 const total = (stockItems as StockItem[]).length;
                 if (!stockSearch.trim()) return `${total} product${total === 1 ? "" : "s"}`;
@@ -2036,13 +2139,27 @@ export default function InventoryPage() {
               >
                 Adjust Stock
               </Button>
-              <Button size="sm" variant="secondary" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowAddProductModal(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => setShowAddProductModal(true)}
+              >
                 Add Product
               </Button>
-              <Button size="sm" variant="secondary" leftIcon={<Sparkles className="h-4 w-4" />} onClick={() => setShowScanModal(true)}>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Sparkles className="h-4 w-4" />}
+                onClick={() => setShowScanModal(true)}
+              >
                 Scan Invoice
               </Button>
-              <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowPurchaseModal(true)}>
+              <Button
+                size="sm"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => setShowPurchaseModal(true)}
+              >
                 Quick Restock
               </Button>
             </div>
@@ -2072,8 +2189,12 @@ export default function InventoryPage() {
         {/* ── Suppliers tab ── */}
         <Tabs.Content value="suppliers" className="pt-4">
           <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm text-navy/50">{(suppliers as Supplier[]).length} suppliers</p>
-            <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowSupplierModal(true)}>
+            <p className="text-sm text-navy/70">{(suppliers as Supplier[]).length} suppliers</p>
+            <Button
+              size="sm"
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowSupplierModal(true)}
+            >
               Add Supplier
             </Button>
           </div>
@@ -2090,7 +2211,9 @@ export default function InventoryPage() {
                 <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
                   <tr>
                     {["Name", "Contact", "Phone", "Email", "Status"].map((h) => (
-                      <th key={h} className="px-4 py-3 text-left font-medium">{h}</th>
+                      <th key={h} className="px-4 py-3 text-left font-medium">
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -2102,13 +2225,16 @@ export default function InventoryPage() {
                       <td className="px-4 py-3 text-navy/70">{s.phone ?? "—"}</td>
                       <td className="px-4 py-3 text-navy/70">{s.email ?? "—"}</td>
                       <td className="px-4 py-3">
-                        <Badge variant={s.isActive ? "success" : "neutral"} label={s.isActive ? "Active" : "Inactive"} />
+                        <Badge
+                          variant={s.isActive ? "success" : "neutral"}
+                          label={s.isActive ? "Active" : "Inactive"}
+                        />
                       </td>
                     </tr>
                   ))}
                   {(suppliers as Supplier[]).length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-10 text-center text-navy/40">
+                      <td colSpan={5} className="px-4 py-10 text-center text-navy/70">
                         No suppliers yet. Add your first supplier.
                       </td>
                     </tr>
@@ -2165,9 +2291,7 @@ export default function InventoryPage() {
           }}
         />
       )}
-      {showSupplierModal && (
-        <CreateSupplierModal onClose={() => setShowSupplierModal(false)} />
-      )}
+      {showSupplierModal && <CreateSupplierModal onClose={() => setShowSupplierModal(false)} />}
       <InlineCreateProductModal
         isOpen={showAddProductModal}
         onClose={() => setShowAddProductModal(false)}

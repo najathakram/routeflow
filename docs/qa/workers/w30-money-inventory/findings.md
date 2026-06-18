@@ -9,10 +9,12 @@ Tenant: ux-audit-1777265477001
 ### 9.A.1 Penny Rounding
 
 Test A - 3-way split: 3.33 + 3.33 + 3.34 = 10.00
+
 - Invoice INV-2026-0019 id=281274b3, server total=10.00
 - Result: PASS
 
 Test B - 7-way split: 6x1.43 + 1x1.42 = 10.00
+
 - Invoice id=9d631173, server total=10.00
 - Result: PASS
 
@@ -58,6 +60,7 @@ Note: No /finance/ar-aging endpoint (404).
 Setup: Almond Mix 16oz (f31568b9), currentStock=1, two buyers fired concurrently
 
 Results:
+
 - result1: status=201, orderId=3ca47cee
 - result2: status=201, orderId=608986b3
 
@@ -68,6 +71,7 @@ Follow-up: stock reduced to 0 via adjustment, buyer order placed -> 201 Created.
 Result: BUG P1 - No stock check at order placement. Multiple buyers can claim same last unit.
 
 Repro:
+
 1. POST /inventory/movements/adjustment to set qty=1
 2. Login two buyers
 3. Promise.all([POST /buyer/orders qty:1, POST /buyer/orders qty:1]) same product
@@ -76,19 +80,23 @@ Repro:
 ### 9.B.2 OOS Display in Buyer Shop
 
 With currentStock=0 on Almond Mix:
+
 - GET /buyer/products: product still in catalog, NO currentStock/inStock/stockStatus field returned
 - POST /buyer/orders for 0-stock product -> 201 Created, order PENDING
 
 Result: BUG P1
+
 1. Buyer API returns zero stock data - UI cannot show OOS indicator
 2. Buyer can order 0-stock product with no error
 
 ### 9.B.3 Stock Adjustment Audit Log
 
 Endpoint: POST /inventory/movements/adjustment (found via UI network interception)
+
 - POST /inventory/adjustments -> 404 (wrong path)
 
 Test: POST with {productId, quantity:5, reference:COUNT}
+
 - stockBefore=1, stockAfter=6
 - Movement logged: id=dbdda9b5, type=ADJUSTMENT, qty=5, ref=COUNT, date=2026-04-30, performer=ux_admin
 
@@ -99,13 +107,13 @@ Payload only includes {productId, quantity, reference}. Movement notes field = n
 
 ## Bug Summary
 
-| # | Sev | Description | Repro |
-|---|-----|-------------|-------|
-| 1 | P1 | No stock check at buyer order creation - concurrent orders both accepted for stock=1 | Promise.all two orders on same stock=1 product |
-| 2 | P1 | Buyer can order stock=0 products - no OOS rejection | Set stock=0, POST /buyer/orders -> 201 |
-| 3 | P1 | Buyer catalog API returns no stock field - UI cannot show OOS | GET /buyer/products - no currentStock/inStock |
-| 4 | P3 | isOverdue=true for invoice due today (0 days) | POST invoice dueDate=today, send, GET -> isOverdue=true |
-| 5 | P3 | Adjustment reason not persisted to movement log notes | Adjust via UI with reason -> movement notes=null |
-| 6 | Info | POST /inventory/adjustments returns 404 - real path is POST /inventory/movements/adjustment | Endpoint discovery gap |
-| 7 | Info | No /finance/ar-aging endpoint (404) | GET /finance/ar-aging -> 404 |
-| 8 | Info | Zero-value invoices accepted (unitPrice=0) | POST /invoices unitPrice=0 -> 201 |
+| #   | Sev  | Description                                                                                 | Repro                                                   |
+| --- | ---- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | P1   | No stock check at buyer order creation - concurrent orders both accepted for stock=1        | Promise.all two orders on same stock=1 product          |
+| 2   | P1   | Buyer can order stock=0 products - no OOS rejection                                         | Set stock=0, POST /buyer/orders -> 201                  |
+| 3   | P1   | Buyer catalog API returns no stock field - UI cannot show OOS                               | GET /buyer/products - no currentStock/inStock           |
+| 4   | P3   | isOverdue=true for invoice due today (0 days)                                               | POST invoice dueDate=today, send, GET -> isOverdue=true |
+| 5   | P3   | Adjustment reason not persisted to movement log notes                                       | Adjust via UI with reason -> movement notes=null        |
+| 6   | Info | POST /inventory/adjustments returns 404 - real path is POST /inventory/movements/adjustment | Endpoint discovery gap                                  |
+| 7   | Info | No /finance/ar-aging endpoint (404)                                                         | GET /finance/ar-aging -> 404                            |
+| 8   | Info | Zero-value invoices accepted (unitPrice=0)                                                  | POST /invoices unitPrice=0 -> 201                       |

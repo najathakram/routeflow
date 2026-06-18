@@ -46,7 +46,7 @@ module.exports = ({ config }) => ({
     [
       "react-native-maps",
       {
-        googleMapsApiKey,          // iOS AppDelegate
+        googleMapsApiKey, // iOS AppDelegate
         androidGoogleMapsApiKey: googleMapsApiKey, // Android manifest
       },
     ],

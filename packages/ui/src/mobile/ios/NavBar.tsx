@@ -58,7 +58,13 @@ export function NavBar({
 }
 
 /** Reusable "< Back" leading button. */
-export function NavBackButton({ label = "Back", onPress }: { label?: string; onPress?: () => void }) {
+export function NavBackButton({
+  label = "Back",
+  onPress,
+}: {
+  label?: string;
+  onPress?: () => void;
+}) {
   return (
     <Pressable onPress={onPress} style={styles.backBtn} hitSlop={8}>
       <Text style={styles.backChevron}>‹</Text>

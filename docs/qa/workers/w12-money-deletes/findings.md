@@ -15,6 +15,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ## Findings
 
 ### W12-B1 — deleteCustomer() silently hard-cascades ALL financial records (P0)
+
 - **Severity:** P0
 - **File:** `apps/api/src/customers/customers.service.ts:1220–1342`
 - **Issue:** `deleteCustomer()` runs a transaction that unconditionally hard-deletes: invoices, invoice items, credit notes, orders, order items, transactions, payments, advance payments, returns, return items, estimates, recurring invoices, order templates, and route associations. There is no check for PAID invoices, DELIVERED orders, or audit-relevant records. An operator who clicks "Delete Customer" destroys all financial history permanently with no warning dialog enforced at the API level.
@@ -26,6 +27,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ---
 
 ### W12-A4 — Customer.isTaxExempt field is stored but never read by orders or invoices (P1)
+
 - **Severity:** P1
 - **File:** `apps/api/src/customers/dto/create-customer.dto.ts:36`, `apps/api/src/orders/orders.service.ts`, `apps/api/src/bookkeeping/invoice.service.ts`
 - **Issue:** The `Customer` schema has an `isTaxExempt` boolean field, it is editable via the API, and the UI exposes it. However, neither `orders.service.ts` nor `invoice.service.ts` reads this field when computing tax. All customers are taxed at the tenant's configured rate regardless of exempt status. No grep match for `isTaxExempt` anywhere in orders or bookkeeping service code.
@@ -37,6 +39,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ---
 
 ### W12-B2 — bulkDeleteCustomers() and deleteCustomer() destroy OrderItem/InvoiceItem from PAID invoices (P1)
+
 - **Severity:** P1
 - **File:** `apps/api/src/customers/customers.service.ts:1350–1477`
 - **Issue:** `bulkDeleteCustomers()` (the batch version) uses the same unconditional cascade pattern as `deleteCustomer()`. In addition, `routeRunStop.deleteMany` is called twice on line 1311 and line 1450 in the two functions (duplicate, no-op on second call but indicates copy-paste error). Both functions delete PAID invoice items, which corrupts the financial audit trail.
@@ -46,6 +49,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ---
 
 ### W12-A5 — Tax is computed before invoice discount is applied — over-collects tax (P2)
+
 - **Severity:** P2
 - **File:** `apps/api/src/bookkeeping/invoice.service.ts` (invoice total computation)
 - **Issue:** Invoice total computation applies the tax rate to the pre-discount subtotal. The correct calculation is: `tax = (subtotal - discount) * taxRate`. When a discount is applied, tax is calculated on the higher base and the customer is over-charged by `discount * taxRate`.
@@ -55,6 +59,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ---
 
 ### W12-A6 — VOID payments counted as paid in AR aging; credit notes not netted (P2)
+
 - **Severity:** P2
 - **File:** AR aging query in `apps/api/src/bookkeeping/bookkeeping.service.ts`
 - **Issue:** AR aging bucket calculation sums all payments without filtering `status != VOID`. Voided payments reduce AR artificially. Additionally, applied credit notes are not subtracted from outstanding balance in the aging report, causing double-counting of credits.
@@ -64,6 +69,7 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 ---
 
 ### W12-B5 — StockMovement.performedById FK not nullified before user delete — latent 500 (P2)
+
 - **Severity:** P2
 - **File:** `apps/api/src/customers/customers.service.ts:1340`, Prisma schema `StockMovement` model
 - **Issue:** `deleteCustomer()` deletes the associated `User` record (`tx.user.delete`) after deleting customer records. If the deleted user created any `StockMovement` records (via product adjustments in their session), the `StockMovement.performedById` FK still references the deleted user. Prisma's default FK behavior on most databases will either cascade-delete the movement (silently destroying inventory history) or throw a FK violation (500 error).
@@ -74,11 +80,11 @@ Six findings identified: one P0 (silent cascade destroys all financial history o
 
 ## Summary Table
 
-| ID | Severity | Title |
-|----|----------|-------|
-| W12-B1 | P0 | deleteCustomer() silently destroys all financial records |
-| W12-A4 | P1 | isTaxExempt stored but never applied — all exempt customers taxed |
-| W12-B2 | P1 | bulkDeleteCustomers() destroys InvoiceItem/OrderItem from PAID invoices |
-| W12-A5 | P2 | Tax computed before discount — over-collects tax |
-| W12-A6 | P2 | VOID payments counted in AR aging; credit notes not netted |
-| W12-B5 | P2 | StockMovement.performedById FK not nullified before user delete |
+| ID     | Severity | Title                                                                   |
+| ------ | -------- | ----------------------------------------------------------------------- |
+| W12-B1 | P0       | deleteCustomer() silently destroys all financial records                |
+| W12-A4 | P1       | isTaxExempt stored but never applied — all exempt customers taxed       |
+| W12-B2 | P1       | bulkDeleteCustomers() destroys InvoiceItem/OrderItem from PAID invoices |
+| W12-A5 | P2       | Tax computed before discount — over-collects tax                        |
+| W12-A6 | P2       | VOID payments counted in AR aging; credit notes not netted              |
+| W12-B5 | P2       | StockMovement.performedById FK not nullified before user delete         |

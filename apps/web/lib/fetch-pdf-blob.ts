@@ -39,10 +39,7 @@ function originOf(maybeUrl: string | null | undefined): string | null {
   }
 }
 
-export async function fetchPdfBlob(
-  url: string,
-  authClient: AxiosInstance,
-): Promise<Blob> {
+export async function fetchPdfBlob(url: string, authClient: AxiosInstance): Promise<Blob> {
   const isAbsolute = /^https?:\/\//i.test(url);
   const urlOrigin = isAbsolute ? originOf(url) : null;
   const clientOrigin = originOf(authClient.defaults.baseURL);

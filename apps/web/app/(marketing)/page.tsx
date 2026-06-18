@@ -60,7 +60,9 @@ export default function MarketingHome() {
   return (
     <>
       {/* Hero */}
-      <section style={{ position: "relative", overflow: "hidden", paddingTop: 72, paddingBottom: 40 }}>
+      <section
+        style={{ position: "relative", overflow: "hidden", paddingTop: 72, paddingBottom: 40 }}
+      >
         <div
           aria-hidden="true"
           style={{
@@ -123,9 +125,9 @@ export default function MarketingHome() {
               margin: "28px auto 0",
             }}
           >
-            RouteFlow connects wholesalers, distributors and jobbers with the corner stores,
-            bodegas and small businesses they serve — orders, routes, drivers, invoices and
-            payments on one shared rail.
+            RouteFlow connects wholesalers, distributors and jobbers with the corner stores, bodegas
+            and small businesses they serve — orders, routes, drivers, invoices and payments on one
+            shared rail.
           </p>
 
           <div style={{ marginTop: 18, fontSize: 13, color: "var(--rf-ink-3)" }}>
@@ -284,9 +286,7 @@ export default function MarketingHome() {
             Spin up an account in 4 minutes. Bring your customer list and your first order is live
             the same day.
           </p>
-          <div
-            style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}
-          >
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <Link href="/signup" className="btn btn-primary btn-lg">
               Start free trial <ArrowIcon />
             </Link>

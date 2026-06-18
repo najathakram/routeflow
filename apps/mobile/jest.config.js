@@ -28,7 +28,5 @@ module.exports = {
     "^@routeflow/types$": "<rootDir>/__tests__/__mocks__/@routeflow/types.js",
   },
   // Avoid trying to transform node_modules (except socket.io-client which ships ESM)
-  transformIgnorePatterns: [
-    "node_modules/(?!(socket\\.io-client|engine\\.io-client)/)",
-  ],
+  transformIgnorePatterns: ["node_modules/(?!(socket\\.io-client|engine\\.io-client)/)"],
 };

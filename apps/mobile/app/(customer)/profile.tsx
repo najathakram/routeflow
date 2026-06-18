@@ -17,7 +17,9 @@ export default function CustomerProfileScreen() {
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
       />
       {isLoading ? (
-        <View style={styles.center}><ActivityIndicator color={ios.brand} /></View>
+        <View style={styles.center}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
       ) : (
         <View style={styles.section}>
           <View style={styles.card}>
@@ -25,7 +27,12 @@ export default function CustomerProfileScreen() {
             <Row label="Email" value={profile?.email ?? "—"} />
             <Row label="Phone" value={profile?.phone ?? "—"} />
             {profile?.address?.line1 ? (
-              <Row label="Address" value={[profile.address.line1, profile.address.city, profile.address.postcode].filter(Boolean).join(", ")} />
+              <Row
+                label="Address"
+                value={[profile.address.line1, profile.address.city, profile.address.postcode]
+                  .filter(Boolean)
+                  .join(", ")}
+              />
             ) : null}
           </View>
         </View>
@@ -38,7 +45,9 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.row}>
       <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value} numberOfLines={2}>{value}</Text>
+      <Text style={styles.value} numberOfLines={2}>
+        {value}
+      </Text>
     </View>
   );
 }
@@ -59,5 +68,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   label: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, flexShrink: 0 },
-  value: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, flex: 1, textAlign: "right" },
+  value: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    flex: 1,
+    textAlign: "right",
+  },
 });

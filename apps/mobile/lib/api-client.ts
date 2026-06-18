@@ -3,8 +3,7 @@ import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 
-const BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export const apiClient = axios.create({ baseURL: `${BASE_URL}/api/v1`, timeout: 15000 });
 
@@ -17,13 +16,19 @@ async function storageGet(key: string): Promise<string | null> {
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
-  if (Platform.OS === "web") { localStorage.setItem(key, value); return; }
+  if (Platform.OS === "web") {
+    localStorage.setItem(key, value);
+    return;
+  }
   const { setItemAsync } = await import("expo-secure-store");
   await setItemAsync(key, value);
 }
 
 async function storageDel(key: string): Promise<void> {
-  if (Platform.OS === "web") { localStorage.removeItem(key); return; }
+  if (Platform.OS === "web") {
+    localStorage.removeItem(key);
+    return;
+  }
   const { deleteItemAsync } = await import("expo-secure-store");
   await deleteItemAsync(key);
 }
@@ -69,10 +74,7 @@ async function getActiveRefreshToken(): Promise<{ token: string; isDriver: boole
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
 
 apiClient.interceptors.request.use(async (config) => {
-  const [token, tenantSlug] = await Promise.all([
-    getActiveAccessToken(),
-    storageGet("tenantSlug"),
-  ]);
+  const [token, tenantSlug] = await Promise.all([getActiveAccessToken(), storageGet("tenantSlug")]);
   if (token) config.headers.Authorization = `Bearer ${token}`;
   if (tenantSlug) config.headers["X-Tenant-Slug"] = tenantSlug;
   return config;
@@ -148,9 +150,7 @@ apiClient.interceptors.response.use(
     // error, not to recurse and wipe tokens.
     const url = original?.url ?? "";
     const isAuthEndpoint =
-      url.includes("/auth/login") ||
-      url.includes("/auth/refresh") ||
-      url.includes("/auth/logout");
+      url.includes("/auth/login") || url.includes("/auth/refresh") || url.includes("/auth/logout");
     if (error.response?.status !== 401 || original?._retry || isAuthEndpoint) {
       return Promise.reject(error);
     }

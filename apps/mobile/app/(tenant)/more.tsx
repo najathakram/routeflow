@@ -31,9 +31,7 @@ export default function TenantMoreScreen() {
           </View>
           <View>
             <Text style={styles.name}>{user?.username ?? "Owner"}</Text>
-            <Text style={styles.sub}>
-              {tenantName ?? "Tenant"}
-            </Text>
+            <Text style={styles.sub}>{tenantName ?? "Tenant"}</Text>
           </View>
         </View>
 
@@ -202,12 +200,19 @@ export default function TenantMoreScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   identityRow: {
-    flexDirection: "row", alignItems: "center",
-    gap: 12, paddingHorizontal: 20, paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   avatar: {
-    width: 52, height: 52, borderRadius: 999,
-    backgroundColor: ios.brand, alignItems: "center", justifyContent: "center",
+    width: 52,
+    height: 52,
+    borderRadius: 999,
+    backgroundColor: ios.brand,
+    alignItems: "center",
+    justifyContent: "center",
   },
   avatarText: { color: "#fff", fontSize: 18, fontFamily: "Inter_700Bold" },
   name: { fontSize: 20, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },

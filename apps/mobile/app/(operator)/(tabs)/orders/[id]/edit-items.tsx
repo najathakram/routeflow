@@ -13,11 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  NavBackButton,
-  NavBar,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
 import { useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useProducts } from "../../../../../lib/api/products";
@@ -222,8 +218,7 @@ export default function EditOrderItemsScreen() {
           // reached via deep link or a fresh tab switch.
           router.replace("/(operator)/(tabs)/orders" as any);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -343,7 +338,10 @@ export default function EditOrderItemsScreen() {
             }
             setShowPicker(false);
           }}
-          onClose={() => { setShowPicker(false); setSubstituteFor(null); }}
+          onClose={() => {
+            setShowPicker(false);
+            setSubstituteFor(null);
+          }}
         />
       ) : (
         <>
@@ -471,23 +469,13 @@ function DraftItemCard({
           </Text>
           {/* Meta line: unit price + box hint + override badge */}
           <View style={styles.cardMetaRow}>
-            <Pressable
-              onPress={onPressPrice}
-              style={styles.priceTap}
-              hitSlop={6}
-            >
+            <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
               {isOverridden ? (
                 <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
               ) : null}
-              <Text
-                style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}
-              >
+              <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
                 ${item.unitPrice.toFixed(2)}
-                {isBoxed
-                  ? ` / box of ${upb}`
-                  : item.unit
-                    ? ` / ${item.unit}`
-                    : ""}
+                {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
               </Text>
               <Ionicons
                 name="pencil-outline"
@@ -503,11 +491,7 @@ function DraftItemCard({
       {/* Editor */}
       {isBoxed ? (
         <View style={{ gap: 8 }}>
-          <StepperRow
-            label="Boxes"
-            value={item.boxes ?? 0}
-            onChange={onSetBoxes}
-          />
+          <StepperRow label="Boxes" value={item.boxes ?? 0} onChange={onSetBoxes} />
           <StepperRow
             label={`Loose ${item.unit ?? "pieces"}`}
             value={item.pieces ?? 0}
@@ -542,12 +526,7 @@ function DraftItemCard({
             size={14}
             color={isOverridden ? ios.system.orangeInk : ios.brand}
           />
-          <Text
-            style={[
-              styles.actionChipText,
-              isOverridden && { color: ios.system.orangeInk },
-            ]}
-          >
+          <Text style={[styles.actionChipText, isOverridden && { color: ios.system.orangeInk }]}>
             {isOverridden ? "Price overridden" : "Override price"}
           </Text>
         </Pressable>
@@ -737,10 +716,7 @@ function ProductPicker({
 
   return (
     <>
-      <NavBar
-        inlineTitle={title}
-        leading={<NavBackButton label="Cancel" onPress={onClose} />}
-      />
+      <NavBar inlineTitle={title} leading={<NavBackButton label="Cancel" onPress={onClose} />} />
       <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
       <ScrollView showsVerticalScrollIndicator={false}>
         {isLoading ? (
@@ -930,7 +906,12 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: ios.separator,
   },
-  footerEyebrow: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.4 },
+  footerEyebrow: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.4,
+  },
   footerTotal: {
     fontSize: 24,
     fontFamily: "Inter_700Bold",

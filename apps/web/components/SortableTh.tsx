@@ -5,8 +5,7 @@ import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import type { SortDirection } from "@/lib/use-sortable-data";
 
-interface SortableThProps
-  extends Omit<React.ThHTMLAttributes<HTMLTableCellElement>, "onClick"> {
+interface SortableThProps extends Omit<React.ThHTMLAttributes<HTMLTableCellElement>, "onClick"> {
   /** Stable identifier for this column — passed to `requestSort()`. */
   name: string;
   /** Currently active sort key (from `useSortableData`). */
@@ -75,7 +74,7 @@ export function SortableTh({
         {children}
         <span
           className={cn(
-            "text-navy/40 transition-opacity",
+            "text-navy/70 transition-opacity",
             isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100",
           )}
           aria-hidden="true"

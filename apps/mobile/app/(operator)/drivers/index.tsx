@@ -33,11 +33,7 @@ export default function DriversListScreen() {
         subtitle={`${drivers.length} driver${drivers.length === 1 ? "" : "s"}`}
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
         trailing={
-          <NavAction
-            label="Add"
-            bold
-            onPress={() => router.push("/(operator)/drivers/new")}
-          />
+          <NavAction label="Add" bold onPress={() => router.push("/(operator)/drivers/new")} />
         }
       />
       <ScrollView
@@ -89,7 +85,9 @@ export default function DriversListScreen() {
                         : "No vehicle"}
                     </Text>
                   </View>
-                  <Pill variant={d.status === "ACTIVE" ? "green" : "gray"}>{d.status.toLowerCase()}</Pill>
+                  <Pill variant={d.status === "ACTIVE" ? "green" : "gray"}>
+                    {d.status.toLowerCase()}
+                  </Pill>
                 </Pressable>
               );
             })}

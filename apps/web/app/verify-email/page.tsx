@@ -77,7 +77,9 @@ function VerifyEmailInner() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [token, apiUrl, router]);
 
   return (
@@ -91,7 +93,9 @@ function VerifyEmailInner() {
                 <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
               </div>
               <h1 className="text-xl font-bold text-navy">Verifying your email…</h1>
-              <p className="mt-2 text-sm text-navy/60">Just a moment while we activate your account.</p>
+              <p className="mt-2 text-sm text-navy/70">
+                Just a moment while we activate your account.
+              </p>
             </>
           )}
 
@@ -102,7 +106,7 @@ function VerifyEmailInner() {
                 <CheckCircle2 className="h-8 w-8 text-success" />
               </div>
               <h1 className="text-xl font-bold text-navy">Email verified!</h1>
-              <p className="mt-2 text-sm text-navy/60">
+              <p className="mt-2 text-sm text-navy/70">
                 Your account is active. Taking you to your dashboard…
               </p>
               <div className="mt-4 flex justify-center">
@@ -118,7 +122,7 @@ function VerifyEmailInner() {
                 <XCircle className="h-8 w-8 text-danger" />
               </div>
               <h1 className="text-xl font-bold text-navy">Verification failed</h1>
-              <p className="mt-2 text-sm text-navy/60">{errorMsg}</p>
+              <p className="mt-2 text-sm text-navy/70">{errorMsg}</p>
               <div className="mt-6 space-y-3">
                 <a
                   href="/signup"

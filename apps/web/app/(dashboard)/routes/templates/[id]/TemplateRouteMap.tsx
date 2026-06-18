@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import * as React from 'react';
+import * as React from "react";
 import {
   APIProvider,
   Map,
@@ -8,33 +8,33 @@ import {
   InfoWindow,
   useMap,
   useMapsLibrary,
-} from '@vis.gl/react-google-maps';
-import { Home, MapPin, Trash2 } from 'lucide-react';
-import { cn } from '@routeflow/ui/web';
-import type { RouteTemplateStop } from '@/lib/api/routes';
-import { useGoogleMapsKey } from '@/hooks/useGoogleMapsKey';
+} from "@vis.gl/react-google-maps";
+import { Home, MapPin, Trash2 } from "lucide-react";
+import { cn } from "@routeflow/ui/web";
+import type { RouteTemplateStop } from "@/lib/api/routes";
+import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
 
 // ─── Numbered stop bubble ──────────────────────────────────────────────────────
 
 function MarkerBubble({ stop, selected }: { stop: RouteTemplateStop; selected: boolean }) {
   const size = selected ? 36 : 32;
-  const bg = selected ? '#3b82f6' : '#94a3b8';
+  const bg = selected ? "#3b82f6" : "#94a3b8";
   return (
     <div
       style={{
         width: size,
         height: size,
-        borderRadius: '50%',
+        borderRadius: "50%",
         background: bg,
-        border: '2px solid white',
-        boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'white',
+        border: "2px solid white",
+        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "white",
         fontWeight: 700,
         fontSize: selected ? 13 : 11,
-        transition: 'all 0.15s',
+        transition: "all 0.15s",
       }}
     >
       {stop.stopNumber}
@@ -50,14 +50,14 @@ function DepotMarkerBubble() {
       style={{
         width: 36,
         height: 36,
-        borderRadius: '50%',
-        background: '#059669',
-        border: '3px solid white',
-        boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: 'white',
+        borderRadius: "50%",
+        background: "#059669",
+        border: "3px solid white",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.35)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "white",
       }}
     >
       <Home style={{ width: 16, height: 16 }} />
@@ -75,7 +75,7 @@ function PolylineLayer({
   depot?: { lat: number; lng: number } | null;
 }) {
   const map = useMap();
-  const mapsLib = useMapsLibrary('maps');
+  const mapsLib = useMapsLibrary("maps");
   const polylineRef = React.useRef<google.maps.Polyline | null>(null);
 
   React.useEffect(() => {
@@ -94,12 +94,14 @@ function PolylineLayer({
     if (polylineRef.current) polylineRef.current.setMap(null);
     polylineRef.current = new mapsLib.Polyline({
       path: coords,
-      strokeColor: '#3b82f6',
+      strokeColor: "#3b82f6",
       strokeOpacity: 0.8,
       strokeWeight: 3,
       map,
     });
-    return () => { polylineRef.current?.setMap(null); };
+    return () => {
+      polylineRef.current?.setMap(null);
+    };
   }, [map, mapsLib, stops, depot]);
 
   return null;
@@ -115,7 +117,7 @@ function FitBoundsLayer({
   depot?: { lat: number; lng: number } | null;
 }) {
   const map = useMap();
-  const mapsLib = useMapsLibrary('maps');
+  const mapsLib = useMapsLibrary("maps");
   const fitted = React.useRef(false);
 
   React.useEffect(() => {
@@ -123,7 +125,9 @@ function FitBoundsLayer({
     const geo = stops.filter((s) => s.customerAddress?.lat != null);
     if (!geo.length && !depot) return;
     const bounds = new (google.maps as any).LatLngBounds();
-    geo.forEach((s) => bounds.extend({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
+    geo.forEach((s) =>
+      bounds.extend({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }),
+    );
     if (depot) bounds.extend({ lat: depot.lat, lng: depot.lng });
     map.fitBounds(bounds, 80);
     fitted.current = true;
@@ -136,7 +140,7 @@ function FitBoundsLayer({
 
 function MapPlaceholder({ message }: { message: string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised text-navy/40">
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised text-navy/70">
       <MapPin className="h-10 w-10" />
       <p className="text-sm">{message}</p>
     </div>
@@ -167,10 +171,7 @@ function MapContent({
   const [openInfoId, setOpenInfoId] = React.useState<string | null>(null);
   const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
 
-  const depot =
-    depotLat != null && depotLng != null
-      ? { lat: depotLat, lng: depotLng }
-      : null;
+  const depot = depotLat != null && depotLng != null ? { lat: depotLat, lng: depotLng } : null;
 
   const geoStops = stops.filter(
     (s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null,
@@ -184,10 +185,7 @@ function MapContent({
       {/* Depot marker */}
       {depot && (
         <>
-          <AdvancedMarker
-            position={depot}
-            onClick={() => setDepotInfoOpen((v) => !v)}
-          >
+          <AdvancedMarker position={depot} onClick={() => setDepotInfoOpen((v) => !v)}>
             <DepotMarkerBubble />
           </AdvancedMarker>
           {depotInfoOpen && (
@@ -198,9 +196,7 @@ function MapContent({
             >
               <div className="min-w-[160px] p-1 text-sm">
                 <p className="font-semibold text-navy">Depot</p>
-                {depotAddress && (
-                  <p className="mt-0.5 text-xs text-navy/60">{depotAddress}</p>
-                )}
+                {depotAddress && <p className="mt-0.5 text-xs text-navy/70">{depotAddress}</p>}
               </div>
             </InfoWindow>
           )}
@@ -216,7 +212,10 @@ function MapContent({
               onSelectStop?.(stop.id);
             }}
           >
-            <MarkerBubble stop={stop} selected={selectedStopId === stop.id || openInfoId === stop.id} />
+            <MarkerBubble
+              stop={stop}
+              selected={selectedStopId === stop.id || openInfoId === stop.id}
+            />
           </AdvancedMarker>
 
           {openInfoId === stop.id && (
@@ -227,9 +226,9 @@ function MapContent({
             >
               <div className="min-w-[180px] space-y-2 p-1 text-sm">
                 <p className="font-semibold text-navy">
-                  #{stop.stopNumber} — {stop.customer?.businessName ?? 'Customer'}
+                  #{stop.stopNumber} — {stop.customer?.businessName ?? "Customer"}
                 </p>
-                <p className="text-xs text-navy/60">
+                <p className="text-xs text-navy/70">
                   {stop.customerAddress?.line1}, {stop.customerAddress?.city}
                 </p>
                 {onRemoveStop && (
@@ -270,7 +269,7 @@ export function TemplateRouteMap({
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-surface-raised">
         <MapPin className="h-10 w-10 animate-pulse text-navy/20" />
-        <p className="text-sm text-navy/50">Loading map…</p>
+        <p className="text-sm text-navy/70">Loading map…</p>
       </div>
     );
   }
@@ -295,7 +294,7 @@ export function TemplateRouteMap({
         mapId="template-route-map"
         gestureHandling="greedy"
         disableDefaultUI={false}
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: "100%", height: "100%" }}
       >
         <MapContent
           stops={stops}

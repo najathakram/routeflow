@@ -53,17 +53,11 @@ export function GetAppSection() {
           }}
         >
           <div>
-            <div
-              className="eyebrow"
-              style={{ marginBottom: 20, color: "var(--rf-teal-bright)" }}
-            >
-              <span className="dot" style={{ background: "var(--rf-teal-bright)" }} /> The
-              retailer app
+            <div className="eyebrow" style={{ marginBottom: 20, color: "var(--rf-teal-bright)" }}>
+              <span className="dot" style={{ background: "var(--rf-teal-bright)" }} /> The retailer
+              app
             </div>
-            <h2
-              className="display"
-              style={{ fontSize: 64, margin: 0, color: "var(--rf-cream)" }}
-            >
+            <h2 className="display" style={{ fontSize: 64, margin: 0, color: "var(--rf-cream)" }}>
               Reorder in
               <br />
               two <em style={{ color: "var(--rf-teal-bright)" }}>taps.</em>
@@ -130,9 +124,7 @@ export function GetAppSection() {
                 >
                   Free
                 </div>
-                <div
-                  style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}
-                >
+                <div style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}>
                   Forever, for retailers
                 </div>
               </div>
@@ -146,9 +138,7 @@ export function GetAppSection() {
                 >
                   EN&nbsp;/&nbsp;ES
                 </div>
-                <div
-                  style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}
-                >
+                <div style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}>
                   English &amp; Spanish, voice-first
                 </div>
               </div>
@@ -162,9 +152,7 @@ export function GetAppSection() {
                 >
                   22 MB
                 </div>
-                <div
-                  style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}
-                >
+                <div style={{ fontSize: 12, color: "rgba(250,246,238,0.6)", marginTop: 4 }}>
                   Light enough for any phone
                 </div>
               </div>

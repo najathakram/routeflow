@@ -40,7 +40,7 @@ function loadEnvDatabaseUrl() {
 }
 
 const dbUrl = loadEnvDatabaseUrl();
-console.log(`\n🔗 Connecting to: ${dbUrl.replace(/:([^:@]+)@/, ':***@')}`);
+console.log(`\n🔗 Connecting to: ${dbUrl.replace(/:([^:@]+)@/, ":***@")}`);
 
 const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);
@@ -108,7 +108,9 @@ async function cleanupFromManifest(filePath) {
 
   // Route runs
   if (manifest.routeRuns?.length) {
-    const rrs = await prisma.routeRunStop.deleteMany({ where: { runId: { in: manifest.routeRuns } } });
+    const rrs = await prisma.routeRunStop.deleteMany({
+      where: { runId: { in: manifest.routeRuns } },
+    });
     const rr = await prisma.routeRun.deleteMany({ where: { id: { in: manifest.routeRuns } } });
     totalDeleted += rrs.count + rr.count;
     console.log(`   ✓ Deleted ${rr.count} route runs (${rrs.count} stops)`);
@@ -116,7 +118,9 @@ async function cleanupFromManifest(filePath) {
 
   // Routes
   if (manifest.routes?.length) {
-    const rc = await prisma.routeCustomer.deleteMany({ where: { routeId: { in: manifest.routes } } });
+    const rc = await prisma.routeCustomer.deleteMany({
+      where: { routeId: { in: manifest.routes } },
+    });
     const rs = await prisma.routeStop.deleteMany({ where: { routeId: { in: manifest.routes } } });
     const rt = await prisma.route.deleteMany({ where: { id: { in: manifest.routes } } });
     totalDeleted += rc.count + rs.count + rt.count;

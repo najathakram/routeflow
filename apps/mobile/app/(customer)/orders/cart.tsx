@@ -21,9 +21,14 @@ function formatDisplayDate(iso: string): string {
   if (!iso || iso.length < 10) return "";
   try {
     return new Date(iso + "T00:00:00").toLocaleDateString(undefined, {
-      weekday: "short", month: "short", day: "numeric", year: "numeric",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
     });
-  } catch { return iso; }
+  } catch {
+    return iso;
+  }
 }
 
 function addDays(n: number): string {
@@ -57,8 +62,7 @@ export default function CartScreen() {
           showToast("Order placed");
           router.replace(`/(customer)/orders/${order.id}`);
         },
-        onError: (e: any) =>
-          showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
   };
@@ -85,7 +89,10 @@ export default function CartScreen() {
         }
       />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 120 }}
+      >
         {items.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="cart-outline" size={48} color={ios.label3} />
@@ -107,13 +114,19 @@ export default function CartScreen() {
                     key={item.productId}
                     style={[
                       styles.itemRow,
-                      i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: ios.separator },
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
                     ]}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+                      <Text style={styles.itemName} numberOfLines={1}>
+                        {item.name}
+                      </Text>
                       <Text style={styles.itemPrice}>
-                        ${item.unitPrice.toFixed(2)}{item.unit ? ` / ${item.unit}` : ""}
+                        ${item.unitPrice.toFixed(2)}
+                        {item.unit ? ` / ${item.unit}` : ""}
                       </Text>
                     </View>
                     <View style={styles.qtyRow}>
@@ -137,9 +150,7 @@ export default function CartScreen() {
                         <Ionicons name="add" size={14} color={ios.brand} />
                       </Pressable>
                     </View>
-                    <Text style={styles.itemTotal}>
-                      ${(item.qty * item.unitPrice).toFixed(2)}
-                    </Text>
+                    <Text style={styles.itemTotal}>${(item.qty * item.unitPrice).toFixed(2)}</Text>
                   </View>
                 ))}
               </View>
@@ -148,21 +159,34 @@ export default function CartScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Details (optional)</Text>
               <View style={styles.detailCard}>
-                <View style={[styles.detailRow, { flexDirection: "column", alignItems: "flex-start", gap: 8 }]}>
+                <View
+                  style={[
+                    styles.detailRow,
+                    { flexDirection: "column", alignItems: "flex-start", gap: 8 },
+                  ]}
+                >
                   <Text style={styles.detailLabel}>Delivery date</Text>
                   {/* Quick chips */}
                   <View style={styles.dateChips}>
                     {[
                       { label: "Tomorrow", value: addDays(1) },
-                      { label: "+2 days",  value: addDays(2) },
-                      { label: "+3 days",  value: addDays(3) },
+                      { label: "+2 days", value: addDays(2) },
+                      { label: "+3 days", value: addDays(3) },
                     ].map((opt) => (
                       <Pressable
                         key={opt.value}
                         onPress={() => setDeliveryDate(deliveryDate === opt.value ? "" : opt.value)}
-                        style={[styles.dateChip, deliveryDate === opt.value && styles.dateChipActive]}
+                        style={[
+                          styles.dateChip,
+                          deliveryDate === opt.value && styles.dateChipActive,
+                        ]}
                       >
-                        <Text style={[styles.dateChipText, deliveryDate === opt.value && styles.dateChipTextActive]}>
+                        <Text
+                          style={[
+                            styles.dateChipText,
+                            deliveryDate === opt.value && styles.dateChipTextActive,
+                          ]}
+                        >
                           {opt.label}
                         </Text>
                       </Pressable>
@@ -269,8 +293,21 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
   qtyBtn: { width: 20, alignItems: "center", justifyContent: "center" },
-  qtyText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, minWidth: 18, textAlign: "center" },
-  itemTotal: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label, fontVariant: ["tabular-nums"], minWidth: 52, textAlign: "right" },
+  qtyText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    minWidth: 18,
+    textAlign: "center",
+  },
+  itemTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+    minWidth: 52,
+    textAlign: "right",
+  },
   detailCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
   detailRow: {
     flexDirection: "row",
@@ -281,8 +318,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: ios.separator,
   },
-  detailLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, width: 90, paddingTop: 2 },
-  detailInput: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label, paddingTop: 2 },
+  detailLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    width: 90,
+    paddingTop: 2,
+  },
+  detailInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    paddingTop: 2,
+  },
   dateChips: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   dateChip: {
     borderRadius: 20,
@@ -306,7 +355,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   summaryLabel: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
-  summaryTotal: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.label, fontVariant: ["tabular-nums"] },
+  summaryTotal: {
+    fontSize: 18,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   footer: {
     position: "absolute",
     bottom: 0,

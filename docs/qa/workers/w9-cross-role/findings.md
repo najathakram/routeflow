@@ -10,16 +10,16 @@
 
 ## Summary
 
-| ID | Title | Severity |
-|----|-------|----------|
-| W9-001 | Frontend never receives real-time events — Socket.IO gateway exists but no client | P0 |
-| W9-002 | RouteRun created via API gets `tenantId: null` — driver cannot see assigned run | P0 |
-| W9-003 | Concurrent orders allow oversell — no stock reservation at order creation | P1 |
-| W9-004 | UI updates require SPA navigation — no polling, no push | P1 |
-| W9-005 | Stop completion does not update linked order status | P2 |
-| W9-006 | `PATCH /route-runs/:id` with User ID as `driverId` returns opaque 500 | P2 |
-| W9-007 | Buyer order placed, operator home count stale until navigation | P2 |
-| W9-008 | Cross-role session isolation relies on separate localStorage keys (works correctly) | INFO |
+| ID     | Title                                                                               | Severity |
+| ------ | ----------------------------------------------------------------------------------- | -------- |
+| W9-001 | Frontend never receives real-time events — Socket.IO gateway exists but no client   | P0       |
+| W9-002 | RouteRun created via API gets `tenantId: null` — driver cannot see assigned run     | P0       |
+| W9-003 | Concurrent orders allow oversell — no stock reservation at order creation           | P1       |
+| W9-004 | UI updates require SPA navigation — no polling, no push                             | P1       |
+| W9-005 | Stop completion does not update linked order status                                 | P2       |
+| W9-006 | `PATCH /route-runs/:id` with User ID as `driverId` returns opaque 500               | P2       |
+| W9-007 | Buyer order placed, operator home count stale until navigation                      | P2       |
+| W9-008 | Cross-role session isolation relies on separate localStorage keys (works correctly) | INFO     |
 
 ---
 
@@ -170,12 +170,12 @@ Three independent architectural gaps account for most findings:
 
 ## Recommended Fix Priority
 
-| Priority | Finding | Estimated effort |
-|----------|---------|-----------------|
-| P0 | W9-002 — Add `tenantId` to `RouteRun.create()` | 15 min (one-liner + backfill migration) |
-| P0 | W9-001 — Wire socket.io-client in frontend | 1-2 days (hook + query invalidation) |
-| P1 | W9-003 — Add stock reservation on order create | 0.5-1 day (Prisma transaction + lock) |
-| P1 | W9-004 — Add polling fallback while WS pending | 2 hours (refetchInterval on critical queries) |
-| P2 | W9-005 — Populate orderId on RunStop; advance order on stop completion | 0.5 day |
-| P2 | W9-006 — Translate FK constraint error to 400 | 1 hour |
-| P2 | W9-007 — Dashboard stale count | Resolved by W9-001/W9-004 |
+| Priority | Finding                                                                | Estimated effort                              |
+| -------- | ---------------------------------------------------------------------- | --------------------------------------------- |
+| P0       | W9-002 — Add `tenantId` to `RouteRun.create()`                         | 15 min (one-liner + backfill migration)       |
+| P0       | W9-001 — Wire socket.io-client in frontend                             | 1-2 days (hook + query invalidation)          |
+| P1       | W9-003 — Add stock reservation on order create                         | 0.5-1 day (Prisma transaction + lock)         |
+| P1       | W9-004 — Add polling fallback while WS pending                         | 2 hours (refetchInterval on critical queries) |
+| P2       | W9-005 — Populate orderId on RunStop; advance order on stop completion | 0.5 day                                       |
+| P2       | W9-006 — Translate FK constraint error to 400                          | 1 hour                                        |
+| P2       | W9-007 — Dashboard stale count                                         | Resolved by W9-001/W9-004                     |

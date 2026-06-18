@@ -14,8 +14,14 @@ export default function CustomerChangePasswordScreen() {
   const [loading, setLoading] = useState(false);
 
   const onSave = async () => {
-    if (!current || !next) { showToast("Both fields required"); return; }
-    if (next.length < 8) { showToast("New password must be at least 8 characters"); return; }
+    if (!current || !next) {
+      showToast("Both fields required");
+      return;
+    }
+    if (next.length < 8) {
+      showToast("New password must be at least 8 characters");
+      return;
+    }
     setLoading(true);
     try {
       await buyerApiClient.post("/buyer/auth/change-password", {
@@ -85,7 +91,13 @@ const styles = StyleSheet.create({
     borderBottomColor: ios.separator,
     gap: 4,
   },
-  label: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.label2, letterSpacing: 0.3, textTransform: "uppercase" },
+  label: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
   input: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, paddingVertical: 4 },
   saveBtn: {
     backgroundColor: ios.brand,

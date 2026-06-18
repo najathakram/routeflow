@@ -9,7 +9,13 @@ import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { AddDriverModal } from "./_components/AddDriverModal";
 import { EditDriverModal } from "./_components/EditDriverModal";
-import { useDrivers, useCreateDriver, useUpdateDriver, useDeleteDriver, type Driver } from "@/lib/api/drivers";
+import {
+  useDrivers,
+  useCreateDriver,
+  useUpdateDriver,
+  useDeleteDriver,
+  type Driver,
+} from "@/lib/api/drivers";
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 
@@ -21,7 +27,12 @@ function DriverStatusBadge({ driver }: { driver: Driver }) {
 // ─── Vehicle display helper ───────────────────────────────────────────────────
 
 function vehicleLabel(driver: Driver): string {
-  const parts = [driver.vehicleMake, driver.vehicleModel, driver.vehicleColour, driver.vehiclePlate].filter(Boolean);
+  const parts = [
+    driver.vehicleMake,
+    driver.vehicleModel,
+    driver.vehicleColour,
+    driver.vehiclePlate,
+  ].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 
@@ -40,7 +51,9 @@ export default function DriversPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = React.useState(false);
 
-  React.useEffect(() => { setTitle("Drivers"); }, [setTitle]);
+  React.useEffect(() => {
+    setTitle("Drivers");
+  }, [setTitle]);
 
   const { data, isLoading, isError } = useDrivers();
   const createDriver = useCreateDriver();
@@ -55,7 +68,14 @@ export default function DriversPage() {
     return drivers.filter((d) => {
       if (statusFilter && d.status !== statusFilter) return false;
       if (q) {
-        const haystack = [d.contactName, d.phone, d.vehicleMake, d.vehicleModel, d.vehiclePlate, d.user?.username]
+        const haystack = [
+          d.contactName,
+          d.phone,
+          d.vehicleMake,
+          d.vehicleModel,
+          d.vehiclePlate,
+          d.user?.username,
+        ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -66,16 +86,26 @@ export default function DriversPage() {
   }, [drivers, search, statusFilter]);
 
   const toggleSelect = (id: string) =>
-    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  const exitSelectMode = () => { setSelectMode(false); setSelected(new Set()); };
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+  };
 
   const handleBulkDelete = async () => {
     if (isBulkDeleting) return;
     setIsBulkDeleting(true);
     try {
       await Promise.all(Array.from(selected).map((id) => deleteDriver.mutateAsync(id)));
-      toast({ title: `${selected.size} driver${selected.size !== 1 ? "s" : ""} deleted`, variant: "success" });
+      toast({
+        title: `${selected.size} driver${selected.size !== 1 ? "s" : ""} deleted`,
+        variant: "success",
+      });
       exitSelectMode();
     } catch {
       toast({ title: "Failed to delete some drivers", variant: "error" });
@@ -110,7 +140,8 @@ export default function DriversPage() {
       toast({ title: `${driver.contactName} deleted`, variant: "success" });
       // If currently on their detail page, go back to list (handled by list-page context only)
     } catch (err: unknown) {
-      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data
+        ?.message;
       toast({ title: apiMsg || "Failed to delete driver", variant: "error" });
       setDeleteTarget(null);
     }
@@ -122,35 +153,46 @@ export default function DriversPage() {
 
   const columns = React.useMemo<ColumnDef<Driver, unknown>[]>(
     () => [
-      ...(selectMode ? [{
-        id: "select",
-        header: () => (
-          <input
-            type="checkbox"
-            checked={allChecked}
-            ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
-            onChange={() => { if (allChecked) setSelected(new Set()); else setSelected(new Set(allFilteredIds)); }}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-        ),
-        cell: ({ row }: { row: { original: Driver } }) => (
-          <input
-            type="checkbox"
-            checked={selected.has(row.original.id)}
-            onChange={() => toggleSelect(row.original.id)}
-            onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-          />
-        ),
-        enableSorting: false,
-        size: 40,
-      } as ColumnDef<Driver, unknown>] : []),
+      ...(selectMode
+        ? [
+            {
+              id: "select",
+              header: () => (
+                <input
+                  type="checkbox"
+                  checked={allChecked}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someChecked && !allChecked;
+                  }}
+                  onChange={() => {
+                    if (allChecked) setSelected(new Set());
+                    else setSelected(new Set(allFilteredIds));
+                  }}
+                  className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                />
+              ),
+              cell: ({ row }: { row: { original: Driver } }) => (
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.original.id)}
+                  onChange={() => toggleSelect(row.original.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                />
+              ),
+              enableSorting: false,
+              size: 40,
+            } as ColumnDef<Driver, unknown>,
+          ]
+        : []),
       {
         accessorKey: "contactName",
         header: "Name",
         cell: ({ row }) => (
           <div>
-            <p className="font-medium text-navy">{row.original.contactName ?? row.original.user?.username ?? "—"}</p>
+            <p className="font-medium text-navy">
+              {row.original.contactName ?? row.original.user?.username ?? "—"}
+            </p>
             <p className="text-xs text-navy/80">{row.original.user?.username}</p>
           </div>
         ),
@@ -159,9 +201,7 @@ export default function DriversPage() {
         accessorKey: "phone",
         header: "Phone",
         enableSorting: false,
-        cell: ({ row }) => (
-          <span className="text-navy/70">{row.original.phone ?? "—"}</span>
-        ),
+        cell: ({ row }) => <span className="text-navy/70">{row.original.phone ?? "—"}</span>,
       },
       {
         id: "vehicle",
@@ -187,21 +227,21 @@ export default function DriversPage() {
             <button
               title="View driver"
               onClick={() => router.push(`/drivers/${row.original.id}`)}
-              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Eye className="h-4 w-4" />
             </button>
             <button
               title="Edit driver"
               onClick={() => setEditTarget(row.original)}
-              className="rounded p-1.5 text-navy/40 hover:bg-surface-raised hover:text-navy transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
             >
               <Pencil className="h-4 w-4" />
             </button>
             <button
               title="Delete driver"
               onClick={() => setDeleteTarget(row.original)}
-              className="rounded p-1.5 text-navy/40 hover:bg-red-50 hover:text-danger transition-colors"
+              className="rounded p-1.5 text-navy/70 hover:bg-red-50 hover:text-danger transition-colors"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -224,7 +264,9 @@ export default function DriversPage() {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              leftIcon={selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+              leftIcon={
+                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+              }
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
             >
               {selectMode ? "Cancel" : "Select"}
@@ -242,7 +284,7 @@ export default function DriversPage() {
             "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
             !statusFilter
               ? "bg-brand-100 text-brand-700"
-              : "bg-surface-raised text-navy/60 hover:text-navy",
+              : "bg-surface-raised text-navy/70 hover:text-navy",
           )}
         >
           All ({drivers.length})
@@ -253,7 +295,7 @@ export default function DriversPage() {
             "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
             statusFilter === "ACTIVE"
               ? "bg-success-bg text-success"
-              : "bg-surface-raised text-navy/60 hover:text-navy",
+              : "bg-surface-raised text-navy/70 hover:text-navy",
           )}
         >
           Active ({activeCount})
@@ -263,8 +305,8 @@ export default function DriversPage() {
           className={cn(
             "cursor-pointer rounded-full px-3 py-1 font-medium transition-colors",
             statusFilter === "INACTIVE"
-              ? "bg-surface-border text-navy/60"
-              : "bg-surface-raised text-navy/60 hover:text-navy",
+              ? "bg-surface-border text-navy/70"
+              : "bg-surface-raised text-navy/70 hover:text-navy",
           )}
         >
           Inactive ({inactiveCount})
@@ -278,10 +320,18 @@ export default function DriversPage() {
             {selected.size} driver{selected.size !== 1 ? "s" : ""} selected
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => setSelected(new Set())} className="text-sm text-navy/50 hover:text-navy transition-colors">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
               Deselect all
             </button>
-            <Button variant="danger" leftIcon={<Trash2 className="h-4 w-4" />} loading={isBulkDeleting} onClick={handleBulkDelete}>
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              loading={isBulkDeleting}
+              onClick={handleBulkDelete}
+            >
               Delete {selected.size}
             </Button>
           </div>
@@ -295,11 +345,14 @@ export default function DriversPage() {
           placeholder="Search by name, phone, plate…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(search || statusFilter) && (
           <button
-            onClick={() => { setSearch(""); setStatusFilter(""); }}
+            onClick={() => {
+              setSearch("");
+              setStatusFilter("");
+            }}
             className="text-sm text-brand-500 hover:underline"
           >
             Clear filters
@@ -320,28 +373,36 @@ export default function DriversPage() {
             else router.push(`/drivers/${row.original.id}`);
           }}
           emptyState={
-            isLoading ? "Loading drivers…" :
-            (search || statusFilter) ? (
+            isLoading ? (
+              "Loading drivers…"
+            ) : search || statusFilter ? (
               <div className="flex flex-col items-center gap-2">
-                <p className="text-sm text-navy/40">No drivers match your search.</p>
+                <p className="text-sm text-navy/70">No drivers match your search.</p>
                 <button
                   className="text-sm text-brand-500 hover:underline"
-                  onClick={() => { setSearch(""); setStatusFilter(""); }}
+                  onClick={() => {
+                    setSearch("");
+                    setStatusFilter("");
+                  }}
                 >
                   Clear filters
                 </button>
               </div>
-            ) :
-            <EmptyState
-              variant="drivers"
-              title="No drivers yet"
-              description="Add your first driver to get started assigning routes."
-              action={
-                <button className="text-sm text-brand-600 hover:underline" onClick={() => setIsAddOpen(true)}>
-                  Add a driver
-                </button>
-              }
-            />
+            ) : (
+              <EmptyState
+                variant="drivers"
+                title="No drivers yet"
+                description="Add your first driver to get started assigning routes."
+                action={
+                  <button
+                    className="text-sm text-brand-600 hover:underline"
+                    onClick={() => setIsAddOpen(true)}
+                  >
+                    Add a driver
+                  </button>
+                }
+              />
+            )
           }
         />
       )}

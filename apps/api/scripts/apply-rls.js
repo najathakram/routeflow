@@ -8,18 +8,58 @@ require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const TENANT_TABLES = [
-  "User","Customer","CustomerAddress","CustomerPrice","CustomerTag",
-  "CustomerTagAssignment","CustomerComment","ContactPerson",
-  "Driver","Product","Route","RouteStop","RouteCustomer","RouteRun",
-  "RouteRunStop","DeliveryMutation","Order","OrderItem","OrderTemplate",
-  "OrderTemplateItem","Transaction","TransactionItem","Payment",
-  "Invoice","InvoiceItem","InvoicePayment","PaymentCounter",
-  "CreditNote","Estimate","EstimateItem","RecurringInvoice",
-  "RecurringInvoiceItem","AdvancePayment","Return","ReturnItem",
-  "Supplier","PurchaseOrder","PurchaseOrderItem","VendorBill",
-  "VendorBillItem","BillPayment","Expense","ExpenseCategory",
-  "ExpenseLineItem","MileageRate","StockMovement","StockLot",
-  "Message","RefreshToken","DeviceToken","UserPreference","ProductMapping",
+  "User",
+  "Customer",
+  "CustomerAddress",
+  "CustomerPrice",
+  "CustomerTag",
+  "CustomerTagAssignment",
+  "CustomerComment",
+  "ContactPerson",
+  "Driver",
+  "Product",
+  "Route",
+  "RouteStop",
+  "RouteCustomer",
+  "RouteRun",
+  "RouteRunStop",
+  "DeliveryMutation",
+  "Order",
+  "OrderItem",
+  "OrderTemplate",
+  "OrderTemplateItem",
+  "Transaction",
+  "TransactionItem",
+  "Payment",
+  "Invoice",
+  "InvoiceItem",
+  "InvoicePayment",
+  "PaymentCounter",
+  "CreditNote",
+  "Estimate",
+  "EstimateItem",
+  "RecurringInvoice",
+  "RecurringInvoiceItem",
+  "AdvancePayment",
+  "Return",
+  "ReturnItem",
+  "Supplier",
+  "PurchaseOrder",
+  "PurchaseOrderItem",
+  "VendorBill",
+  "VendorBillItem",
+  "BillPayment",
+  "Expense",
+  "ExpenseCategory",
+  "ExpenseLineItem",
+  "MileageRate",
+  "StockMovement",
+  "StockLot",
+  "Message",
+  "RefreshToken",
+  "DeviceToken",
+  "UserPreference",
+  "ProductMapping",
 ];
 
 async function applyRls() {
@@ -59,10 +99,10 @@ async function applyRls() {
     const { rows } = await client.query(
       `SELECT tablename, rowsecurity FROM pg_tables
        WHERE schemaname = 'public' AND rowsecurity = true
-       ORDER BY tablename`
+       ORDER BY tablename`,
     );
     console.log(`\nDone: ${applied} tables secured, ${skipped} skipped.`);
-    console.log(`Tables with RLS (${rows.length}): ${rows.map(r => r.tablename).join(", ")}`);
+    console.log(`Tables with RLS (${rows.length}): ${rows.map((r) => r.tablename).join(", ")}`);
   } finally {
     client.release();
     await pool.end();

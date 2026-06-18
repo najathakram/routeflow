@@ -1,22 +1,11 @@
 import { useMemo } from "react";
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  InlineStats,
-  NavAction,
-  NavBackButton,
-  NavBar,
-} from "@routeflow/ui/mobile/ios";
+import { InlineStats, NavAction, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminDrivers, useAdminRoutes } from "../../lib/api/admin";
 
 export default function OperatorDriverDetailScreen() {
@@ -65,7 +54,9 @@ export default function OperatorDriverDetailScreen() {
   }
 
   const name = driver.user
-    ? ([driver.user.firstName, driver.user.lastName].filter(Boolean).join(" ") || driver.user.username || "Driver")
+    ? [driver.user.firstName, driver.user.lastName].filter(Boolean).join(" ") ||
+      driver.user.username ||
+      "Driver"
     : "Unknown driver";
   const initials = driver.user
     ? `${driver.user.firstName?.[0] ?? ""}${driver.user.lastName?.[0] ?? ""}`.toUpperCase()
@@ -130,9 +121,7 @@ export default function OperatorDriverDetailScreen() {
                     <Text style={styles.routeName}>{r.name}</Text>
                     <Text style={styles.routeSub}>
                       {stopCount} stop{stopCount === 1 ? "" : "s"}
-                      {runStatus
-                        ? ` · ${runStatus.toLowerCase().replace("_", " ")}`
-                        : ""}
+                      {runStatus ? ` · ${runStatus.toLowerCase().replace("_", " ")}` : ""}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
@@ -193,7 +182,12 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 8,
   },
-  sectionTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.3 },
+  sectionTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
   routeCard: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,

@@ -187,10 +187,7 @@ export default function WholesalersPage() {
       <section className="sect" style={{ background: "var(--rf-ink)", color: "var(--rf-cream)" }}>
         <div className="wrap">
           <div style={{ textAlign: "center", marginBottom: 16 }}>
-            <h2
-              className="display"
-              style={{ fontSize: 56, color: "var(--rf-cream)", margin: 0 }}
-            >
+            <h2 className="display" style={{ fontSize: 56, color: "var(--rf-cream)", margin: 0 }}>
               What we&apos;re building toward,
               <br />
               <em style={{ color: "var(--rf-teal-bright)" }}>per route:</em>
@@ -253,14 +250,10 @@ export default function WholesalersPage() {
           <h2 className="display" style={{ fontSize: 64, margin: "0 0 20px" }}>
             Ready to <em>tighten</em> the wheel?
           </h2>
-          <p
-            style={{ fontSize: 17, color: "var(--rf-ink-3)", marginBottom: 32 }}
-          >
+          <p style={{ fontSize: 17, color: "var(--rf-ink-3)", marginBottom: 32 }}>
             Free 14-day trial. We&apos;ll help you migrate your customer list and product catalog.
           </p>
-          <div
-            style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}
-          >
+          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <Link href="/signup" className="btn btn-primary btn-lg">
               Start free trial <ArrowIcon />
             </Link>

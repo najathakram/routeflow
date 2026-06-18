@@ -1,13 +1,6 @@
 import * as React from "react";
 import { useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import type { GestureResponderEvent } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -58,21 +51,13 @@ export default function DispatchScreen() {
         largeTitle="Dispatch"
         inlineTitle="Assign"
         trailing={
-          <NavAction
-            label="+ New"
-            bold
-            onPress={() => router.push("/(operator)/new-order")}
-          />
+          <NavAction label="+ New" bold onPress={() => router.push("/(operator)/new-order")} />
         }
       />
 
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
-          <SegmentedControl
-            items={["Routes", "Drivers"]}
-            value={tab}
-            onChange={setTab}
-          />
+          <SegmentedControl items={["Routes", "Drivers"]} value={tab} onChange={setTab} />
         </View>
 
         {tab === "Routes" ? (
@@ -218,13 +203,7 @@ function RoutesTab({
   );
 }
 
-function DriversTab({
-  drivers,
-  loading,
-}: {
-  drivers: AdminDriver[];
-  loading: boolean;
-}) {
+function DriversTab({ drivers, loading }: { drivers: AdminDriver[]; loading: boolean }) {
   const router = useRouter();
   if (loading) {
     return (
@@ -248,9 +227,7 @@ function DriversTab({
           <Text style={styles.empty}>No drivers on this tenant.</Text>
         ) : (
           drivers.map((d) => {
-            const name = d.user
-              ? `${d.user.firstName} ${d.user.lastName}`
-              : "Unknown driver";
+            const name = d.user ? `${d.user.firstName} ${d.user.lastName}` : "Unknown driver";
             const initials = d.user
               ? `${d.user.firstName?.[0] ?? ""}${d.user.lastName?.[0] ?? ""}`.toUpperCase()
               : "??";

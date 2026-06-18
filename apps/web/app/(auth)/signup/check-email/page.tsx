@@ -45,17 +45,13 @@ function CheckEmailInner() {
           </div>
 
           <h1 className="text-xl font-bold text-navy">Check your inbox</h1>
-          <p className="mt-3 text-sm text-navy/60 leading-relaxed">
+          <p className="mt-3 text-sm text-navy/70 leading-relaxed">
             We sent a verification link to{" "}
-            {email ? (
-              <strong className="text-navy">{email}</strong>
-            ) : (
-              "your email address"
-            )}
-            . Click the link to activate your account and get started.
+            {email ? <strong className="text-navy">{email}</strong> : "your email address"}. Click
+            the link to activate your account and get started.
           </p>
 
-          <div className="mt-6 rounded-lg bg-surface-raised px-4 py-3 text-left text-xs text-navy/60 space-y-1">
+          <div className="mt-6 rounded-lg bg-surface-raised px-4 py-3 text-left text-xs text-navy/70 space-y-1">
             <p className="font-medium text-navy">Didn&apos;t receive it?</p>
             <ul className="list-disc pl-4 space-y-0.5">
               <li>Check your spam or junk folder</li>
@@ -94,11 +90,11 @@ function CheckEmailInner() {
         <div className="mt-6 space-y-2 text-center">
           <a
             href="/login"
-            className="flex items-center justify-center gap-1.5 text-xs text-navy/50 hover:text-navy transition-colors"
+            className="flex items-center justify-center gap-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
           >
             <ArrowLeft className="h-3 w-3" /> Back to Sign In
           </a>
-          <p className="text-xs text-navy/40">
+          <p className="text-xs text-navy/70">
             Wrong email?{" "}
             <a href="/signup" className="text-brand-600 hover:underline">
               Sign up again

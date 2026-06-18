@@ -65,11 +65,7 @@ export function alertInfo(title: string, message?: string): void {
  * Each action's `onPress` (when present) fires after the dialog closes.
  * `cancel`-styled actions don't need `onPress` — tapping them just dismisses.
  */
-export function chooseAction(
-  title: string,
-  message: string,
-  actions: ConfirmAction[],
-): void {
+export function chooseAction(title: string, message: string, actions: ConfirmAction[]): void {
   if (Platform.OS === "web") {
     useConfirmStore.getState().show({ title, message, actions });
     return;

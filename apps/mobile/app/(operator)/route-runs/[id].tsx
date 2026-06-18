@@ -138,29 +138,23 @@ export default function OperatorRouteRunScreen() {
     }
     const useCurrent = run?.status === "IN_PROGRESS";
     const origin = useCurrent ? await readCurrentLocation() : null;
-    const input = origin
-      ? { id, originLat: origin.lat, originLng: origin.lng }
-      : id;
+    const input = origin ? { id, originLat: origin.lat, originLng: origin.lng } : id;
     optimizeMut.mutate(input, {
       onSuccess: (res) => {
         showToast(res?.usedFallback ? "Reordered (fallback)" : "Run optimized");
         refetch();
       },
-      onError: (e: any) =>
-        showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
   };
 
   const handleOpenInMaps = async () => {
-    const pending = stops.filter(
-      (s) => s.status === "PENDING" || s.status === "IN_PROGRESS",
-    );
+    const pending = stops.filter((s) => s.status === "PENDING" || s.status === "IN_PROGRESS");
     if (pending.length === 0) {
       showToast("No pending stops");
       return;
     }
-    const origin =
-      run?.status === "IN_PROGRESS" ? await readCurrentLocation() : null;
+    const origin = run?.status === "IN_PROGRESS" ? await readCurrentLocation() : null;
     openRouteInMaps(pending, {
       originLat: origin?.lat,
       originLng: origin?.lng,
@@ -169,36 +163,42 @@ export default function OperatorRouteRunScreen() {
 
   const handleSkip = (stopId: string) => {
     if (!id) return;
-    confirm("Skip stop?", "It will be marked as skipped on this run.", () =>
-      updateStatusMut.mutate(
-        { runId: id, stopId, status: "SKIPPED" },
-        {
-          onSuccess: () => {
-            showToast("Stop skipped");
-            refetch();
+    confirm(
+      "Skip stop?",
+      "It will be marked as skipped on this run.",
+      () =>
+        updateStatusMut.mutate(
+          { runId: id, stopId, status: "SKIPPED" },
+          {
+            onSuccess: () => {
+              showToast("Stop skipped");
+              refetch();
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
           },
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-        },
-      ),
+        ),
       { confirmText: "Skip", destructive: true },
     );
   };
 
   const handleReopen = (stopId: string) => {
     if (!id) return;
-    confirm("Reopen stop?", "The stop status will reset to pending.", () =>
-      reopenMut.mutate(
-        { runId: id, stopId },
-        {
-          onSuccess: () => {
-            showToast("Stop reopened");
-            refetch();
+    confirm(
+      "Reopen stop?",
+      "The stop status will reset to pending.",
+      () =>
+        reopenMut.mutate(
+          { runId: id, stopId },
+          {
+            onSuccess: () => {
+              showToast("Stop reopened");
+              refetch();
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
           },
-          onError: (e: any) =>
-            showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-        },
-      ),
+        ),
       { confirmText: "Reopen" },
     );
   };
@@ -243,10 +243,8 @@ export default function OperatorRouteRunScreen() {
   const total = stops.length;
   const pending = total - completed - skipped;
   const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const canOptimize =
-    run.status === "SCHEDULED" || run.status === "IN_PROGRESS";
-  const isTerminal =
-    run.status === "COMPLETED" || run.status === "CANCELLED";
+  const canOptimize = run.status === "SCHEDULED" || run.status === "IN_PROGRESS";
+  const isTerminal = run.status === "COMPLETED" || run.status === "CANCELLED";
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -261,7 +259,8 @@ export default function OperatorRouteRunScreen() {
             <View style={styles.banner}>
               <Ionicons name="alert-circle-outline" size={13} color={ios.system.orangeInk} />
               <Text style={styles.bannerText}>
-                {missingCount} stop{missingCount === 1 ? "" : "s"} not shown — missing geocoded address
+                {missingCount} stop{missingCount === 1 ? "" : "s"} not shown — missing geocoded
+                address
               </Text>
             </View>
           ) : null}
@@ -370,17 +369,14 @@ export default function OperatorRouteRunScreen() {
                 {optimizeMut.isPending
                   ? "Optimizing…"
                   : run.status === "IN_PROGRESS"
-                  ? "Re-optimize from here"
-                  : "Optimize run"}
+                    ? "Re-optimize from here"
+                    : "Optimize run"}
               </Text>
             </Pressable>
           ) : null}
 
           {pins.length > 0 ? (
-            <Pressable
-              style={styles.actionBtn}
-              onPress={() => openRouteInMaps(stops as any)}
-            >
+            <Pressable style={styles.actionBtn} onPress={() => openRouteInMaps(stops as any)}>
               <Ionicons name="navigate-outline" size={18} color={ios.brand} />
               <Text style={styles.actionText}>Open in Google Maps</Text>
             </Pressable>
@@ -446,8 +442,12 @@ export default function OperatorRouteRunScreen() {
                       <Text style={styles.stopName} numberOfLines={1}>
                         {s.customer?.businessName ?? s.customerId}
                       </Text>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
-                        <Text style={styles.stopStatus}>{s.status.replace("_", " ").toLowerCase()}</Text>
+                      <View
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}
+                      >
+                        <Text style={styles.stopStatus}>
+                          {s.status.replace("_", " ").toLowerCase()}
+                        </Text>
                         {noLoc ? (
                           <>
                             <Text style={styles.stopStatus}>·</Text>

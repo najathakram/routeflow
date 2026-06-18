@@ -44,6 +44,7 @@ A product can have 50 pending orders against 1 unit of on-hand stock and the das
 **Test:** Both Buyer 2 and Buyer 3 submitted checkout simultaneously (391ms round-trip via `Promise.all`).
 
 **Results:**
+
 - Buyer 2: HTTP 201 Created — order `fa23eaad`
 - Buyer 3: HTTP 201 Created — order `28d3247b`
 - Post-race stock: 1 (unchanged — orders don't decrement)
@@ -56,13 +57,13 @@ A product can have 50 pending orders against 1 unit of on-hand stock and the das
 
 **Result: PASS** — All operator-side endpoints return 401 for buyer JWT. Cross-buyer IDOR returns 403. Query param overrides for `customerId` are silently ignored (returns own orders only).
 
-| Endpoint | Result |
-|----------|--------|
-| POST /routes | 401 |
-| PATCH /products/:id | 401 |
-| GET /orders | 401 |
-| GET /users, /customers, /drivers, /invoices | 401 |
-| GET /buyer/orders/{other-buyer-order} | 403 |
+| Endpoint                                    | Result |
+| ------------------------------------------- | ------ |
+| POST /routes                                | 401    |
+| PATCH /products/:id                         | 401    |
+| GET /orders                                 | 401    |
+| GET /users, /customers, /drivers, /invoices | 401    |
+| GET /buyer/orders/{other-buyer-order}       | 403    |
 
 ---
 
@@ -77,10 +78,12 @@ A product can have 50 pending orders against 1 unit of on-hand stock and the das
 ## New Findings
 
 ### W22-001 — Price change at checkout not communicated to buyer (P3 UX)
+
 - If a product price changes between when the buyer adds it to cart and when they check out, the buyer is silently charged the new price. No warning message, no price-change indicator. The server correctly enforces live pricing — this is purely a UX communication gap.
 - **Fix:** Return a `priceAdjusted: true` flag in the 201 order response when the charged price differs from a buyer's cached price; buyer portal should surface "Prices updated for X items."
 
 ### W22-002 — Frontend bundle hardcodes non-documented API hostname (P3)
+
 - The frontend JS bundle (`entry-accc24f5ed58f1773525d07807cf3835.js`) hardcodes `https://routeflowapi-production-d504.up.railway.app` as the API base URL. This differs from the documented hostname (`routeflowapi-production.up.railway.app`). Both work currently.
 - Risk: the d504 subdomain may be a different Railway deployment with a potentially different code version. If the two deployments diverge, the frontend could silently be talking to a different backend.
 - **Fix:** Move API base URL to `EXPO_PUBLIC_API_URL` build-time env var. Ensure both hostnames point to the same deployment.
@@ -89,10 +92,10 @@ A product can have 50 pending orders against 1 unit of on-hand stock and the das
 
 ## Summary Table
 
-| Scenario | Result | Severity | Notes |
-|----------|--------|----------|-------|
-| 13.10 — Price race at checkout | PASS | — | UX gap: no warning (RF-145) |
-| 13.13 — Low-stock from buyer order | INFORMATIONAL | Medium design gap | No stock reservation concept |
-| 13.14 — Oversell race | FAIL | High | Confirms RF-017 via live browser test |
-| 10.3 — Buyer privilege escalation | PASS | — | |
-| 10.7 — Secrets in bundle | PASS | Low note | Hardcoded d504 hostname (RF-146) |
+| Scenario                           | Result        | Severity          | Notes                                 |
+| ---------------------------------- | ------------- | ----------------- | ------------------------------------- |
+| 13.10 — Price race at checkout     | PASS          | —                 | UX gap: no warning (RF-145)           |
+| 13.13 — Low-stock from buyer order | INFORMATIONAL | Medium design gap | No stock reservation concept          |
+| 13.14 — Oversell race              | FAIL          | High              | Confirms RF-017 via live browser test |
+| 10.3 — Buyer privilege escalation  | PASS          | —                 |                                       |
+| 10.7 — Secrets in bundle           | PASS          | Low note          | Hardcoded d504 hostname (RF-146)      |

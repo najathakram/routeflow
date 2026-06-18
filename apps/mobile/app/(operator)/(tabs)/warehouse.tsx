@@ -1,23 +1,10 @@
 import { useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import {
-  KpiCard,
-  NavAction,
-  NavBar,
-  ProgressTrack,
-  SearchBar,
-} from "@routeflow/ui/mobile/ios";
+import { KpiCard, NavAction, NavBar, ProgressTrack, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 
 type StockFilter = "ALL" | "LOW" | "LOW_ACTIVE" | "OUT_OF_STOCK" | "OOS_ACTIVE";
@@ -79,13 +66,17 @@ export default function WarehouseScreen() {
       return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) <= 0);
     }
     if (activeFilter === "OOS_ACTIVE") {
-      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) <= 0 && p.isActive);
+      return (filteredQuery.data?.data ?? []).filter(
+        (p) => toNumber(p.currentStock) <= 0 && p.isActive,
+      );
     }
     if (activeFilter === "LOW") {
       return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) > 0);
     }
     if (activeFilter === "LOW_ACTIVE") {
-      return (filteredQuery.data?.data ?? []).filter((p) => toNumber(p.currentStock) > 0 && p.isActive);
+      return (filteredQuery.data?.data ?? []).filter(
+        (p) => toNumber(p.currentStock) > 0 && p.isActive,
+      );
     }
     // ALL = show low-stock (positive stock, below threshold)
     return lowProducts
@@ -112,9 +103,7 @@ export default function WarehouseScreen() {
           : "No low stock";
     }
     // ALL filter
-    return count > 0
-      ? `Low-stock alerts (${count})`
-      : "All stock levels healthy";
+    return count > 0 ? `Low-stock alerts (${count})` : "All stock levels healthy";
   })();
 
   return (
@@ -131,15 +120,8 @@ export default function WarehouseScreen() {
             >
               <Ionicons name="barcode-outline" size={18} color={ios.label} />
             </Pressable>
-            <NavAction
-              label="All"
-              onPress={() => router.push("/(operator)/products")}
-            />
-            <NavAction
-              label="Add"
-              bold
-              onPress={() => router.push("/(operator)/products/new")}
-            />
+            <NavAction label="All" onPress={() => router.push("/(operator)/products")} />
+            <NavAction label="Add" bold onPress={() => router.push("/(operator)/products/new")} />
           </View>
         }
       />
@@ -159,9 +141,7 @@ export default function WarehouseScreen() {
           <>
             <View style={styles.kpiRow}>
               <Pressable
-                onPress={() =>
-                  setActiveFilter((f) => (f === "LOW" ? "ALL" : "LOW"))
-                }
+                onPress={() => setActiveFilter((f) => (f === "LOW" ? "ALL" : "LOW"))}
                 style={{ flex: 1 }}
               >
                 <KpiCard
@@ -172,11 +152,7 @@ export default function WarehouseScreen() {
                       color={activeFilter === "LOW" ? "#fff" : ios.system.orangeInk}
                     />
                   }
-                  iconBg={
-                    activeFilter === "LOW"
-                      ? ios.system.orangeInk
-                      : ios.system.orangeWash
-                  }
+                  iconBg={activeFilter === "LOW" ? ios.system.orangeInk : ios.system.orangeWash}
                   value={String(lowTotal)}
                   label="Low stock"
                   highlighted={activeFilter === "LOW"}
@@ -184,9 +160,7 @@ export default function WarehouseScreen() {
               </Pressable>
               <Pressable
                 onPress={() =>
-                  setActiveFilter((f) =>
-                    f === "OUT_OF_STOCK" ? "ALL" : "OUT_OF_STOCK",
-                  )
+                  setActiveFilter((f) => (f === "OUT_OF_STOCK" ? "ALL" : "OUT_OF_STOCK"))
                 }
                 style={{ flex: 1 }}
               >
@@ -195,18 +169,10 @@ export default function WarehouseScreen() {
                     <Ionicons
                       name="close-circle-outline"
                       size={18}
-                      color={
-                        activeFilter === "OUT_OF_STOCK"
-                          ? "#fff"
-                          : ios.system.redInk
-                      }
+                      color={activeFilter === "OUT_OF_STOCK" ? "#fff" : ios.system.redInk}
                     />
                   }
-                  iconBg={
-                    activeFilter === "OUT_OF_STOCK"
-                      ? ios.system.redInk
-                      : ios.system.redWash
-                  }
+                  iconBg={activeFilter === "OUT_OF_STOCK" ? ios.system.redInk : ios.system.redWash}
                   value={String(outTotal)}
                   label="Out of stock"
                   highlighted={activeFilter === "OUT_OF_STOCK"}
@@ -235,7 +201,11 @@ export default function WarehouseScreen() {
                     <Ionicons
                       name="cube-outline"
                       size={18}
-                      color={activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE" ? "#fff" : ios.system.purpleInk}
+                      color={
+                        activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE"
+                          ? "#fff"
+                          : ios.system.purpleInk
+                      }
                     />
                   }
                   iconBg={
@@ -244,23 +214,27 @@ export default function WarehouseScreen() {
                       : ios.system.purpleWash
                   }
                   value={String(displayProducts.filter((p) => p.isActive).length)}
-                  label={activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE" ? "OOS & active" : "Low & active"}
+                  label={
+                    activeFilter === "OUT_OF_STOCK" || activeFilter === "OOS_ACTIVE"
+                      ? "OOS & active"
+                      : "Low & active"
+                  }
                   highlighted={activeFilter === "LOW_ACTIVE" || activeFilter === "OOS_ACTIVE"}
                 />
               </Pressable>
             </View>
 
             {activeFilter !== "ALL" ? (
-              <Pressable
-                style={styles.filterBanner}
-                onPress={() => setActiveFilter("ALL")}
-              >
+              <Pressable style={styles.filterBanner} onPress={() => setActiveFilter("ALL")}>
                 <Text style={styles.filterBannerText}>
                   Filtering:{" "}
-                  {activeFilter === "LOW" ? "Low stock" :
-                   activeFilter === "LOW_ACTIVE" ? "Low stock · active only" :
-                   activeFilter === "OOS_ACTIVE" ? "Out of stock · active only" :
-                   "Out of stock"}
+                  {activeFilter === "LOW"
+                    ? "Low stock"
+                    : activeFilter === "LOW_ACTIVE"
+                      ? "Low stock · active only"
+                      : activeFilter === "OOS_ACTIVE"
+                        ? "Out of stock · active only"
+                        : "Out of stock"}
                 </Text>
                 <Ionicons name="close" size={14} color={ios.brand} />
               </Pressable>
@@ -317,18 +291,14 @@ export default function WarehouseScreen() {
                   const stock = toNumber(p.currentStock);
                   const threshold = p.reorderPoint ?? 5;
                   const pct =
-                    threshold > 0
-                      ? Math.min(100, Math.round((stock / threshold) * 100))
-                      : 100;
+                    threshold > 0 ? Math.min(100, Math.round((stock / threshold) * 100)) : 100;
                   const out = isOutOfStock(p);
                   const low = isLowStock(p);
                   return (
                     <Pressable
                       key={p.id}
                       style={styles.row}
-                      onPress={() =>
-                        router.push(`/(operator)/products/${p.id}`)
-                      }
+                      onPress={() => router.push(`/(operator)/products/${p.id}`)}
                     >
                       <View style={{ flex: 1 }}>
                         <View style={styles.topRow}>
@@ -336,10 +306,7 @@ export default function WarehouseScreen() {
                             {p.name}
                           </Text>
                           <Text style={styles.qty}>
-                            {stock}{" "}
-                            <Text style={styles.min}>
-                              / {p.reorderPoint ?? "—"}
-                            </Text>
+                            {stock} <Text style={styles.min}>/ {p.reorderPoint ?? "—"}</Text>
                           </Text>
                         </View>
                         <View style={styles.progressRow}>
@@ -383,10 +350,7 @@ function QuickBtn({
   onPress: () => void;
 }) {
   return (
-    <Pressable
-      style={[styles.quickBtn, { backgroundColor: bg }]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.quickBtn, { backgroundColor: bg }]} onPress={onPress}>
       <Ionicons name={icon} size={20} color={color} />
       <Text style={[styles.quickBtnLabel, { color }]}>{label}</Text>
     </Pressable>

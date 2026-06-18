@@ -18,10 +18,7 @@ const FAQS: Array<[string, string]> = [
     "What about sales tax filing?",
     "RouteFlow generates Sales tax & 1099 exports natively. Your accountant will love it.",
   ],
-  [
-    "Can I cancel anytime?",
-    "Yes. Month-to-month, no contracts. Yearly plans pro-rate refunds.",
-  ],
+  ["Can I cancel anytime?", "Yes. Month-to-month, no contracts. Yearly plans pro-rate refunds."],
   [
     "Will the price go up later?",
     "We honour your launch price for life. The price you sign up at is the price you keep.",
@@ -32,10 +29,7 @@ export function PricingFaq() {
   return (
     <section className="sect">
       <div className="wrap-narrow">
-        <h2
-          className="display"
-          style={{ fontSize: 48, margin: "0 0 32px", textAlign: "center" }}
-        >
+        <h2 className="display" style={{ fontSize: 48, margin: "0 0 32px", textAlign: "center" }}>
           Common <em>questions.</em>
         </h2>
         <div style={{ display: "grid", gap: 12 }}>
