@@ -12,11 +12,22 @@ import {
   Eye,
   ChevronRight,
   Download,
+  FileText,
+  ShoppingCart,
+  Receipt,
+  Check,
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useQuery } from "@tanstack/react-query";
-import { useCreateInvoice, useUpdateInvoice, type CreateInvoiceItem } from "@/lib/api/invoices";
+import {
+  useCreateInvoice,
+  useUpdateInvoice,
+  useCreateInvoiceFromOrder,
+  type CreateInvoiceItem,
+} from "@/lib/api/invoices";
+import { useCreateSale, useUninvoicedOrders } from "@/lib/api/orders";
+import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
@@ -388,6 +399,191 @@ function lineTotal(item: LineItemState): number {
   return Math.max(0, Number(item.qty) * Number(item.unitPrice) - Number(item.discount));
 }
 
+// ─── Basis chooser ────────────────────────────────────────────────────────────
+// Every invoice should sit on top of an order. The chooser makes the operator
+// pick the basis up front so an order always exists (except the explicit "other
+// charge" exception).
+
+function InvoiceBasisChooser({
+  onPick,
+}: {
+  onPick: (basis: "existing" | "newSale" | "standalone") => void;
+}) {
+  const options = [
+    {
+      key: "existing" as const,
+      icon: FileText,
+      title: "Bill an existing order",
+      desc: "Pick an order you already took for this customer.",
+    },
+    {
+      key: "newSale" as const,
+      icon: ShoppingCart,
+      title: "New sale",
+      desc: "Add products now — delivered today, or billed before delivery.",
+    },
+  ];
+  return (
+    <div className="pb-24">
+      <div className="mx-auto max-w-2xl space-y-5 p-6">
+        <Link
+          href="/invoices"
+          className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" /> Invoices
+        </Link>
+        <div>
+          <h1 className="text-2xl font-bold text-navy">Create an invoice</h1>
+          <p className="mt-1 text-sm text-navy/70">What is this invoice for?</p>
+        </div>
+        <div className="space-y-3">
+          {options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => onPick(o.key)}
+              className="flex w-full items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left transition-colors hover:border-brand-400 hover:bg-brand-50/40"
+            >
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
+                <o.icon className="h-5 w-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-navy">{o.title}</span>
+                <span className="block text-sm text-navy/70">{o.desc}</span>
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-navy/40" />
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => onPick("standalone")}
+          className="flex items-center gap-2 pt-1 text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          <Receipt className="h-4 w-4" />
+          Other charge (a fee or correction with no order)
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Bill an existing order ─────────────────────────────────────────────────────
+
+function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [customer, setCustomer] = React.useState<Customer | null>(null);
+  const { orders, isLoading } = useUninvoicedOrders(customer?.id);
+  const createFromOrder = useCreateInvoiceFromOrder();
+  const [splitOrder, setSplitOrder] = React.useState<{
+    id: string;
+    orderNumber: string | null;
+    items: {
+      id: string;
+      productName: string;
+      qty: number;
+      invoicedQty: number;
+      unitPrice: number;
+      unit?: string;
+    }[];
+  } | null>(null);
+
+  const billWhole = (orderId: string) => {
+    createFromOrder.mutate(orderId, {
+      onSuccess: (inv: any) => {
+        toast({ title: "Invoice created", variant: "success" });
+        router.push(`/invoices/${inv.id}`);
+      },
+      onError: () => toast({ title: "Could not create the invoice", variant: "error" }),
+    });
+  };
+
+  return (
+    <div className="pb-24">
+      <div className="mx-auto max-w-2xl space-y-5 p-6">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+        <h1 className="text-2xl font-bold text-navy">Bill an existing order</h1>
+        <Card title="Customer *">
+          <CustomerSearch value={customer} onSelect={setCustomer} />
+        </Card>
+        {customer && (
+          <Card title="Open orders ready to bill">
+            {isLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
+              </div>
+            ) : orders.length === 0 ? (
+              <p className="py-6 text-center text-sm text-navy/70">
+                No un-invoiced orders for this customer. Use “New sale” to add products.
+              </p>
+            ) : (
+              <ul className="divide-y divide-surface-border">
+                {orders.map((o) => (
+                  <li key={o.id} className="flex flex-wrap items-center gap-3 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-navy">{o.orderNumber}</p>
+                      <p className="text-xs text-navy/70">
+                        {o.lineItems.length} item{o.lineItems.length !== 1 ? "s" : ""} ·{" "}
+                        {fmt(o.total)} · {o.status}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() =>
+                        setSplitOrder({
+                          id: o.id,
+                          orderNumber: o.orderNumber,
+                          items: (o.lineItems ?? []).map((li) => ({
+                            id: li.id,
+                            productName: li.product?.name ?? "Item",
+                            qty: Number(li.qty),
+                            invoicedQty: Number(li.invoicedQty ?? 0),
+                            unitPrice: Number(li.unitPrice),
+                            unit: li.product?.unit,
+                          })),
+                        })
+                      }
+                    >
+                      Choose items…
+                    </Button>
+                    <Button
+                      size="sm"
+                      loading={createFromOrder.isPending}
+                      onClick={() => billWhole(o.id)}
+                    >
+                      Bill whole order
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        )}
+      </div>
+      {splitOrder && (
+        <SplitInvoiceModal
+          isOpen={!!splitOrder}
+          orderId={splitOrder.id}
+          orderNumber={splitOrder.orderNumber}
+          items={splitOrder.items}
+          onClose={() => setSplitOrder(null)}
+          onCreated={(invoiceId: string) => {
+            setSplitOrder(null);
+            router.push(`/invoices/${invoiceId}`);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewInvoicePage() {
@@ -396,6 +592,13 @@ export default function NewInvoicePage() {
   const { toast } = useToast();
   const createInvoice = useCreateInvoice();
   const updateInvoice = useUpdateInvoice();
+  const createSale = useCreateSale();
+
+  // Which kind of invoice the operator is creating, chosen on the basis screen.
+  const [basis, setBasis] = React.useState<"existing" | "newSale" | "standalone" | null>(null);
+  // New-sale only: are the goods going out today? Yes = van/cash sale (order
+  // delivered + invoice sent now); No = bill before delivery (PENDING order + draft).
+  const [deliveredNow, setDeliveredNow] = React.useState(true);
 
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
@@ -859,6 +1062,60 @@ export default function NewInvoicePage() {
     }
   }
 
+  /**
+   * "New sale" submit — creates an order AND its invoice (POST /orders/sell) so the
+   * invoice is always tied to an order. deliveredNow=true issues it immediately (van sale);
+   * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
+   */
+  function handleSubmitSale(send: boolean) {
+    // A sale must be made of real products (an order needs products).
+    const saleItems = items
+      .filter((it) => it.productId && Number(it.qty) > 0)
+      .map((it) => ({
+        productId: it.productId as string,
+        qty: Number(it.qty),
+        unitPrice: Number(it.unitPrice),
+        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+      }));
+
+    const errs: Record<string, string> = {};
+    if (!customer) errs.customer = "Please select a customer.";
+    if (saleItems.length === 0)
+      errs.items =
+        "Add at least one product. (For a fee or charge with no products, go back and choose “Other charge”.)";
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      toast({ title: errs.customer ?? errs.items, variant: "error" });
+      return;
+    }
+
+    createSale.mutate(
+      {
+        customerId: customer!.id,
+        items: saleItems,
+        deliveredNow,
+        notes: notes.trim() || undefined,
+        ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+        send,
+      },
+      {
+        onSuccess: (inv) => {
+          toast({
+            title: deliveredNow ? "Sale recorded" : send ? "Invoice sent" : "Invoice saved",
+            variant: "success",
+          });
+          router.push(`/invoices/${inv.id}`);
+        },
+        onError: () =>
+          toast({
+            title: "Could not create the sale",
+            description: "Please check your inputs and try again.",
+            variant: "error",
+          }),
+      },
+    );
+  }
+
   function handleSubmit(sendNow: boolean) {
     if (!validate()) return;
 
@@ -914,19 +1171,70 @@ export default function NewInvoicePage() {
     });
   }
 
+  // Pick the basis first so every invoice (except the explicit exception) is tied to an order.
+  if (basis === null) return <InvoiceBasisChooser onPick={setBasis} />;
+  if (basis === "existing") return <ExistingOrderInvoiceFlow onBack={() => setBasis(null)} />;
+
+  // basis === "newSale" | "standalone" — both share the customer + line-item form below.
+  const isSale = basis === "newSale";
+
   return (
     <div className="pb-24">
       <div className="space-y-5 p-6">
-        {/* Back */}
-        <Link
-          href="/invoices"
+        {/* Back to the basis chooser */}
+        <button
+          onClick={() => setBasis(null)}
           className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Invoices
-        </Link>
+          Change
+        </button>
 
-        <h1 className="text-2xl font-bold text-navy">New Invoice</h1>
+        <h1 className="text-2xl font-bold text-navy">{isSale ? "New sale" : "Other charge"}</h1>
+
+        {isSale ? (
+          <div className="flex flex-col gap-3 rounded-xl border border-surface-border bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-navy">Going out today?</p>
+              <p className="text-sm text-navy/70">
+                {deliveredNow
+                  ? "Delivered today — the order is marked delivered and the invoice is issued now."
+                  : "Deliver later — the order is created now; the invoice sends when it’s delivered."}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={() => setDeliveredNow(true)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                  deliveredNow
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy/70 hover:text-navy",
+                )}
+              >
+                {deliveredNow && <Check className="h-4 w-4" />} Yes, delivered today
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeliveredNow(false)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                  !deliveredNow
+                    ? "border-brand-500 bg-brand-50 text-brand-700"
+                    : "border-surface-border bg-white text-navy/70 hover:text-navy",
+                )}
+              >
+                {!deliveredNow && <Check className="h-4 w-4" />} No, deliver later
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-warning/30 bg-warning-bg/40 px-4 py-3 text-sm text-navy/80">
+            This invoice won’t be linked to an order. Use it only for one-off charges — a fee, a
+            correction, or a charge with no products.
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
           {/* ── Left column (3/5) ── */}
@@ -1485,40 +1793,72 @@ export default function NewInvoicePage() {
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-surface-border bg-white px-6 py-3 shadow-[0_-2px_8px_0_rgb(0,0,0,0.06)]">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              leftIcon={<Eye className="h-4 w-4" />}
-              onClick={handlePreview}
-              loading={previewLoading}
-              disabled={previewLoading || createInvoice.isPending}
-            >
-              Preview
-            </Button>
-            <Button
-              variant="secondary"
-              leftIcon={<Download className="h-4 w-4" />}
-              onClick={handleDownload}
-              loading={downloadLoading}
-              disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
-              title="Save as draft and download the PDF without sending"
-            >
-              Download
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => handleSubmit(false)}
-              loading={createInvoice.isPending || updateInvoice.isPending}
-              disabled={createInvoice.isPending || updateInvoice.isPending}
-            >
-              Save as Draft
-            </Button>
-            <Button
-              onClick={() => handleSubmit(true)}
-              loading={createInvoice.isPending || updateInvoice.isPending}
-              disabled={createInvoice.isPending || updateInvoice.isPending}
-            >
-              Save and Send
-            </Button>
+            {isSale ? (
+              deliveredNow ? (
+                <Button
+                  onClick={() => handleSubmitSale(true)}
+                  loading={createSale.isPending}
+                  disabled={createSale.isPending}
+                >
+                  Create sale &amp; invoice
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="secondary"
+                    onClick={() => handleSubmitSale(false)}
+                    loading={createSale.isPending}
+                    disabled={createSale.isPending}
+                  >
+                    Save invoice
+                  </Button>
+                  <Button
+                    onClick={() => handleSubmitSale(true)}
+                    loading={createSale.isPending}
+                    disabled={createSale.isPending}
+                  >
+                    Save &amp; send
+                  </Button>
+                </>
+              )
+            ) : (
+              <>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Eye className="h-4 w-4" />}
+                  onClick={handlePreview}
+                  loading={previewLoading}
+                  disabled={previewLoading || createInvoice.isPending}
+                >
+                  Preview
+                </Button>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Download className="h-4 w-4" />}
+                  onClick={handleDownload}
+                  loading={downloadLoading}
+                  disabled={downloadLoading || createInvoice.isPending || updateInvoice.isPending}
+                  title="Save as draft and download the PDF without sending"
+                >
+                  Download
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => handleSubmit(false)}
+                  loading={createInvoice.isPending || updateInvoice.isPending}
+                  disabled={createInvoice.isPending || updateInvoice.isPending}
+                >
+                  Save as Draft
+                </Button>
+                <Button
+                  onClick={() => handleSubmit(true)}
+                  loading={createInvoice.isPending || updateInvoice.isPending}
+                  disabled={createInvoice.isPending || updateInvoice.isPending}
+                >
+                  Save and Send
+                </Button>
+              </>
+            )}
             <button
               onClick={() => router.push("/invoices")}
               className="px-3 py-1.5 text-sm text-navy/70 hover:text-navy transition-colors"

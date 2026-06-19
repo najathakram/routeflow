@@ -20,6 +20,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
+import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
@@ -100,6 +101,18 @@ export class OrdersController {
       if (merged) return merged;
     }
     return created;
+  }
+
+  /**
+   * "Bill now": create an order and its invoice in one step (the invoice screen's "New sale" flow).
+   * deliveredNow=true issues a van/cash sale (order DELIVERED + invoice SENT); deliveredNow=false
+   * creates a PENDING order + linked DRAFT invoice. Returns the created Invoice so the UI can open it.
+   */
+  @Post("sell")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  sell(@Body() dto: CreateSaleDto, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.createSale(dto, user);
   }
 
   /**
