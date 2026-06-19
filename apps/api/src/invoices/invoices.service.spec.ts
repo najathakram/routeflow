@@ -230,4 +230,122 @@ describe("InvoicesService", () => {
       expect(createCall.data.taxAmount).toBe(0);
     });
   });
+
+  // ─── Pending-mirror reconcile ──────────────────────────────────────────────
+
+  describe("reconcileOrderDraftInvoice", () => {
+    const order = {
+      id: "o1",
+      customerId: "c1",
+      subtotal: 50,
+      tax: 5,
+      lineItems: [
+        {
+          id: "li1",
+          productId: "p1",
+          qty: 10,
+          deliveredQty: 8,
+          unitPrice: 5,
+          originalPrice: null,
+          priceType: "STANDARD",
+          product: { name: "P1" },
+          status: "PENDING",
+        },
+      ],
+    };
+
+    function armReconcile() {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d1", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue(order);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d1", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+    }
+
+    it("returns null and does nothing when there is no open draft", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      const res = await service.reconcileOrderDraftInvoice("o1", { basis: "order" });
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("basis=order bills full qty, stays DRAFT, sets invoicedQty to full qty", async () => {
+      armReconcile();
+      await service.reconcileOrderDraftInvoice("o1", { basis: "order" });
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.status).toBe(InvoiceStatus.DRAFT);
+      expect(data.items.create[0].qty).toBe(10);
+      expect(data.subtotal).toBeCloseTo(50, 2);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li1" },
+        data: { invoicedQty: 10 },
+      });
+    });
+
+    it("basis=delivered bills delivered qty and sets invoicedQty to delivered", async () => {
+      armReconcile();
+      await service.reconcileOrderDraftInvoice("o1", { basis: "delivered" });
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.items.create[0].qty).toBe(8);
+      expect(data.subtotal).toBeCloseTo(40, 2);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li1" },
+        data: { invoicedQty: 8 },
+      });
+    });
+  });
+
+  // ─── send(): invoice-after-delivery gating ─────────────────────────────────
+
+  describe("send() — pending-mirror gating", () => {
+    it("blocks an order-linked DRAFT before the order is delivered", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: "o1",
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.order.findUnique.mockResolvedValue({ status: "PENDING", orderNumber: "O1" });
+      await expect(service.send("i1")).rejects.toThrow(BadRequestException);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("allows sending once the order is delivered", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: "o1",
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.order.findUnique.mockResolvedValue({ status: "DELIVERED", orderNumber: "O1" });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+      });
+      await expect(service.send("i1")).resolves.toBeDefined();
+    });
+
+    it("allows a standalone (no-order) invoice without checking an order", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: null,
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+      });
+      await expect(service.send("i1")).resolves.toBeDefined();
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+  });
 });

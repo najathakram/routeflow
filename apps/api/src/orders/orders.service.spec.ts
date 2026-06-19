@@ -113,7 +113,11 @@ describe("OrdersService", () => {
             createInvoiceFromOrder: jest
               .fn()
               .mockResolvedValue({ id: "inv-1", invoiceNumber: "INV-1" }),
+            createInvoiceFromOrderWithTenant: jest.fn().mockResolvedValue({ id: "inv-1" }),
             send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
+            findOpenOrderDraft: jest.fn().mockResolvedValue(null),
+            reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
           },
         },
         {
@@ -329,10 +333,10 @@ describe("OrdersService", () => {
       expect(invoices.send).not.toHaveBeenCalled();
     });
 
-    it("bill before delivery with send=true: issues (sends) the draft invoice", async () => {
+    it("deliver later NEVER auto-sends, even with send=true (the draft is the order's pending mirror)", async () => {
       const invoices = (service as any).invoicesService;
       await service.createSale({ ...baseDto, deliveredNow: false, send: true }, user);
-      expect(invoices.send).toHaveBeenCalledWith("inv-1");
+      expect(invoices.send).not.toHaveBeenCalled();
     });
   });
 
@@ -361,6 +365,29 @@ describe("OrdersService", () => {
       await expect(
         service.changeStatus("ord-1", { status: "CONFIRMED" as any }, customerPayload),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("cancelling an order voids its pending mirror draft", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+
+      await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
+
+      expect(invoices.voidInvoice).toHaveBeenCalledWith("d1");
+    });
+
+    it("marking DELIVERED reconciles the pending mirror (no duplicate invoice)", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
+      expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
     });
   });
 

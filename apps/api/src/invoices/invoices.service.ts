@@ -288,18 +288,9 @@ export class InvoicesService {
 
     // Build invoice items from REMAINING qty per order item (carries price type info).
     const tenantId = this.prisma.getTenantId();
-    const itemsData = remainingItems.map(({ li, remainingQty }: any) => ({
-      description: li.product?.name ?? `Product`,
-      productId: li.productId,
-      qty: remainingQty,
-      unitPrice: Number(li.unitPrice),
-      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
-      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-      priceType: li.priceType ?? "STANDARD",
-      taxRate: 0,
-      subtotal: remainingQty * Number(li.unitPrice),
-      tenantId, // nested creates bypass forTenant() extension
-    }));
+    const itemsData = remainingItems.map(({ li, remainingQty }: any) =>
+      this.buildInvoiceItemData(li, remainingQty, tenantId),
+    );
 
     const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
     // Use the order's tax rate proportionally: tax = (subtotal_remaining / order.subtotal) * order.tax
@@ -367,6 +358,122 @@ export class InvoicesService {
     }
 
     return invoice;
+  }
+
+  /**
+   * Shared per-line invoice-item shape built from an order line, billing `qty`
+   * of it. Reused by createInvoiceFromOrder and reconcileOrderDraftInvoice so
+   * the two never drift.
+   */
+  private buildInvoiceItemData(li: any, qty: number, tenantId: string | null) {
+    return {
+      description: li.product?.name ?? `Product`,
+      productId: li.productId,
+      qty,
+      unitPrice: Number(li.unitPrice),
+      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+      priceType: li.priceType ?? "STANDARD",
+      taxRate: 0,
+      subtotal: qty * Number(li.unitPrice),
+      ...(tenantId ? { tenantId } : {}),
+    };
+  }
+
+  /** The order's single open "pending mirror" draft, or null. */
+  async findOpenOrderDraft(orderId: string, tx?: any) {
+    const db = tx ?? this.prisma.forTenant();
+    return db.invoice.findFirst({
+      where: { orderId, status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
+  /**
+   * Re-sync the order's open pending-mirror draft to the order. No-op (returns
+   * null) when the order has no open draft.
+   *  - basis "order"     → mirror the full (non-cancelled) order line items.
+   *  - basis "delivered" → bill only the delivered quantity per line (uses the
+   *    cumulative OrderItem.deliveredQty, so it's idempotent across batches and
+   *    excludes refused/zero lines).
+   * Keeps the invoice DRAFT, rebuilds its items, recomputes totals (proportional
+   * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
+   * this draft now bills (0 for unbilled lines) — the draft is the order's sole
+   * consumer, so set-not-increment stays correct on repeat.
+   */
+  async reconcileOrderDraftInvoice(
+    orderId: string,
+    opts: { basis: "order" | "delivered"; tx?: any },
+  ) {
+    const db = opts.tx ?? this.prisma.forTenant();
+    const draft = await this.findOpenOrderDraft(orderId, db);
+    if (!draft) return null;
+
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: { product: { select: { name: true } } },
+        },
+      },
+    });
+    if (!order) return null;
+
+    const tenantId = this.prisma.getTenantId();
+    const billable = order.lineItems
+      .map((li: any) => ({
+        li,
+        billQty: opts.basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty),
+      }))
+      .filter((x: any) => x.billQty > 0.001);
+
+    const itemsData = billable.map(({ li, billQty }: any) =>
+      this.buildInvoiceItemData(li, billQty, tenantId),
+    );
+    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+
+    const customer = await db.customer.findUnique({
+      where: { id: order.customerId },
+      select: { isTaxExempt: true },
+    });
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const proportion = subtotal / orderSubtotal;
+    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax) * proportion;
+    const total =
+      subtotal - Number(draft.discount ?? 0) + Number(draft.shippingFee ?? 0) + taxAmount;
+
+    await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
+    const updated = await db.invoice.update({
+      where: { id: draft.id },
+      data: {
+        subtotal,
+        taxAmount,
+        total,
+        status: InvoiceStatus.DRAFT,
+        pdfUrl: null,
+        items: { create: itemsData },
+      },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        items: true,
+        payments: true,
+      },
+    });
+
+    // Reset invoicedQty on every order line to exactly what this draft bills.
+    const billMap = new Map<string, number>(
+      billable.map(({ li, billQty }: any) => [li.id, billQty]),
+    );
+    const allLines = await db.orderItem.findMany({ where: { orderId }, select: { id: true } });
+    for (const ol of allLines) {
+      await db.orderItem.update({
+        where: { id: ol.id },
+        data: { invoicedQty: billMap.get(ol.id) ?? 0 },
+      });
+    }
+
+    return updated;
   }
 
   /**
@@ -788,6 +895,9 @@ export class InvoicesService {
         },
         items: { include: { product: { select: { id: true, name: true, unit: true } } } },
         payments: { orderBy: { createdAt: "desc" } },
+        // The web invoice page gates Edit/Send for an order-linked DRAFT until the
+        // order is delivered (the "pending mirror"). Surface the order's status here.
+        order: { select: { status: true, orderNumber: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
@@ -821,6 +931,7 @@ export class InvoicesService {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.DRAFT)
       throw new BadRequestException("Only DRAFT invoices can be edited");
+    await this.assertOrderInvoiceUnlocked(inv);
 
     if (dto.items) {
       await this.prisma.forTenant().invoiceItem.deleteMany({ where: { invoiceId: id } });
@@ -955,10 +1066,35 @@ export class InvoicesService {
     });
   }
 
+  /**
+   * Enforce "invoice after delivery": an order-linked DRAFT that is the order's
+   * pending mirror (no deliveryBatchId) cannot be sent or hand-edited until the
+   * order has been delivered. Pre-delivery the invoice mirrors the order — staff
+   * edit the order, not the invoice. Van sales (delivered now) and standalone
+   * no-order invoices are unaffected.
+   */
+  private async assertOrderInvoiceUnlocked(inv: {
+    orderId: string | null;
+    status: InvoiceStatus;
+    deliveryBatchId: string | null;
+  }): Promise<void> {
+    if (!inv.orderId || inv.status !== InvoiceStatus.DRAFT || inv.deliveryBatchId != null) return;
+    const order = await this.prisma.forTenant().order.findUnique({
+      where: { id: inv.orderId },
+      select: { status: true, orderNumber: true },
+    });
+    if (order && order.status !== "DELIVERED" && order.status !== "PARTIALLY_DELIVERED") {
+      throw new BadRequestException(
+        `This invoice mirrors order #${order.orderNumber ?? ""} and can't be sent or edited until the order is delivered. Edit the order instead — the invoice updates automatically.`,
+      );
+    }
+  }
+
   async send(id: string) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot send a voided invoice");
+    await this.assertOrderInvoiceUnlocked(inv);
     const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: { status: InvoiceStatus.SENT, sentAt: new Date() },
@@ -985,6 +1121,7 @@ export class InvoicesService {
     if (!inv) throw new NotFoundException("Invoice not found");
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot send a voided invoice");
+    await this.assertOrderInvoiceUnlocked(inv);
 
     const recipientEmail = overrideEmail || inv.customer?.email;
     if (!recipientEmail)

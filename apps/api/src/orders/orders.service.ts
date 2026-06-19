@@ -414,6 +414,15 @@ export class OrdersService implements OnApplicationBootstrap {
         });
       }
       for (const loser of losers) {
+        // Remove a loser's pending mirror draft (and its items) before deleting
+        // the order so the Invoice→Order FK doesn't block. A SENT invoice on a
+        // loser is a real bill — leave it, so order.delete FK-fails rather than
+        // silently dropping a billed order (preserves prior safety).
+        const loserDraft = await this.invoicesService.findOpenOrderDraft(loser.id, tx);
+        if (loserDraft) {
+          await tx.invoiceItem.deleteMany({ where: { invoiceId: loserDraft.id } });
+          await tx.invoice.delete({ where: { id: loserDraft.id } });
+        }
         await tx.orderItem.deleteMany({ where: { orderId: loser.id } });
         await tx.order.delete({ where: { id: loser.id } });
       }
@@ -429,6 +438,8 @@ export class OrdersService implements OnApplicationBootstrap {
         where: { id: winner.id },
         data: { subtotal, tax, total: subtotal + tax, ...routeUpdate },
       });
+      // If the winner carries a pending mirror draft, re-sync it to the merged lines.
+      await this.invoicesService.reconcileOrderDraftInvoice(winner.id, { basis: "order", tx });
     });
 
     this.logger.log(
@@ -858,9 +869,12 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
-    // 4. Van sale → issue immediately (SENT). Bill-before-delivery → SENT only if requested;
-    //    otherwise leave it as a DRAFT linked to the order.
-    if (dto.deliveredNow || dto.send) {
+    // 4. Van sale (delivered now) → issue immediately (SENT). Deliver-later →
+    //    NEVER auto-send: this draft is the order's "pending mirror" — it stays a
+    //    DRAFT, auto-syncs to order edits, and is reconciled to the delivered qty
+    //    at delivery, after which staff review & send it. (dto.send is ignored
+    //    for deliver-later; sending before delivery is blocked server-side.)
+    if (dto.deliveredNow) {
       return this.invoicesService.send(invoice.id);
     }
     return invoice;
@@ -932,14 +946,27 @@ export class OrdersService implements OnApplicationBootstrap {
       previousStatus: order.status,
     });
 
-    // Auto-create invoice when operator manually marks order as delivered.
-    // Capture tenantId now — the fire-and-forget promise escapes the request
-    // lifecycle and AsyncLocalStorage context would be lost.
+    // Settle the order's invoice on a manual status change.
     if (dto.status === OrderStatus.DELIVERED) {
-      const capturedTenantId = this.prisma.getTenantId();
-      this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId).catch((err) => {
-        this.logger.error(`Failed to auto-create invoice for order ${id}: ${err?.message ?? err}`);
-      });
+      // Manual "mark delivered" = fully delivered. If the order has a pending
+      // mirror draft, reconcile it to the order and leave it DRAFT for staff to
+      // review & send (awaited so it runs inside the tenant context). Otherwise
+      // keep the old behaviour: fire-and-forget auto-create (explicit tenantId).
+      const draft = await this.invoicesService.findOpenOrderDraft(id);
+      if (draft) {
+        await this.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
+      } else {
+        const capturedTenantId = this.prisma.getTenantId();
+        this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId).catch((err) => {
+          this.logger.error(
+            `Failed to auto-create invoice for order ${id}: ${err?.message ?? err}`,
+          );
+        });
+      }
+    } else if (dto.status === OrderStatus.CANCELLED) {
+      // Cancelling an order voids its pending mirror draft (releases invoicedQty).
+      const draft = await this.invoicesService.findOpenOrderDraft(id);
+      if (draft) await this.invoicesService.voidInvoice(draft.id);
     }
 
     // Fire-and-forget push notifications for key status transitions
@@ -1297,6 +1324,11 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
 
+    // Keep the order's pending-mirror draft invoice (if any) in lockstep with the
+    // edit. updateOrderItems only runs on undelivered orders, so a basis="order"
+    // re-sync is always appropriate. No-op when the order has no open draft.
+    await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
+
     if (shouldRevert) {
       this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {
         orderId,
@@ -1531,9 +1563,21 @@ export class OrdersService implements OnApplicationBootstrap {
           invoiceTransactionIds.push(createdTxn.id);
         }
 
-        // Create per-batch invoice for items delivered in THIS batch
+        // Per-batch invoicing. If the order has an open "pending mirror" draft
+        // (created via the deliver-later flow), reconcile THAT draft to the
+        // cumulative delivered qty and leave it DRAFT for staff to review & send —
+        // do NOT also create a separate SENT per-batch invoice (that would
+        // double-bill). Normal route orders (no pending draft) keep auto-SENT.
+        const openDraft = await tx.invoice.findFirst({
+          where: { orderId: order.id, status: InvoiceStatus.DRAFT, deliveryBatchId: null },
+        });
         const deliveredInBatch = batchDeliveredItems.get(order.id);
-        if (deliveredInBatch && deliveredInBatch.length > 0) {
+        if (openDraft) {
+          await this.invoicesService.reconcileOrderDraftInvoice(order.id, {
+            basis: "delivered",
+            tx,
+          });
+        } else if (deliveredInBatch && deliveredInBatch.length > 0) {
           // Generate invoice number
           const year = new Date().getFullYear();
           const invPrefix = `INV-${year}-`;

@@ -73,6 +73,10 @@ export interface Invoice {
   writeOffReason?: string;
   writtenOffAt?: string;
   orderId?: string;
+  /** Set on per-batch delivery invoices; null/absent on the order-level "pending mirror" draft. */
+  deliveryBatchId?: string | null;
+  /** Linked order summary (present on the detail endpoint) — used to gate the pending-mirror draft. */
+  order?: { status: string; orderNumber?: string | null };
   recurringInvoiceId?: string;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
