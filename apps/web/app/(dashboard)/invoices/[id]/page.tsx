@@ -984,6 +984,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
+  // The order-linked DRAFT that mirrors an un-delivered order: it auto-syncs to
+  // the order and can't be edited or sent until the order is delivered. Edit the
+  // order, not the invoice.
+  const isPendingMirror =
+    !!invoice.orderId &&
+    status === "DRAFT" &&
+    !invoice.deliveryBatchId &&
+    !!invoice.order &&
+    invoice.order.status !== "DELIVERED" &&
+    invoice.order.status !== "PARTIALLY_DELIVERED";
+
   const canRecordPayment =
     status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
   const canWriteOff =
@@ -1306,8 +1317,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
         {/* Zoho-style action toolbar */}
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Edit — only for draft */}
-          {status === "DRAFT" && (
+          {/* Pending mirror: this draft tracks an un-delivered order. Edit/Send are
+              hidden until the order is delivered — edit the order, not the invoice. */}
+          {isPendingMirror && (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700">
+              <Info className="h-3.5 w-3.5" />
+              Mirrors the order — ready to send after delivery
+            </span>
+          )}
+
+          {/* Edit — only for a draft that isn't a pending mirror */}
+          {status === "DRAFT" && !isPendingMirror && (
             <Button
               size="sm"
               variant="secondary"
@@ -1319,7 +1339,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           )}
 
           {/* Send (DRAFT) / Send Reminder (SENT/VIEWED/OVERDUE) */}
-          {status === "DRAFT" && (
+          {status === "DRAFT" && !isPendingMirror && (
             <Button
               size="sm"
               variant="primary"
@@ -1414,16 +1434,19 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               button avoids the dead-click + invisible-toast UX where the
               panel opens, the user clicks Apply, and the success/error
               toast gets covered by the install prompt or other corner UI. */}
-          {status !== "VOID" && status !== "WRITTEN_OFF" && status !== "PAID" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
-              onClick={() => setShowAdjustPanel((v) => !v)}
-            >
-              Adjust Prices
-            </Button>
-          )}
+          {status !== "VOID" &&
+            status !== "WRITTEN_OFF" &&
+            status !== "PAID" &&
+            !isPendingMirror && (
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+                onClick={() => setShowAdjustPanel((v) => !v)}
+              >
+                Adjust Prices
+              </Button>
+            )}
 
           {/* More actions (...) */}
           <DropdownMenu
@@ -1463,6 +1486,24 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
       {/* What's Next guidance banner */}
       <WhatsNextBanner status={status} onRecordPayment={() => setIsPaymentOpen(true)} />
+
+      {/* Pending mirror: explain that the invoice tracks the order until delivery. */}
+      {isPendingMirror && (
+        <div className="flex items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+          <Info className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
+          <div className="text-sm text-navy/80">
+            This invoice mirrors{" "}
+            <Link
+              href={`/orders/${invoice.orderId}`}
+              className="font-semibold text-brand-700 hover:underline"
+            >
+              order #{invoice.order?.orderNumber ?? ""}
+            </Link>{" "}
+            and updates automatically until it&apos;s delivered. To change what&apos;s billed, edit
+            the order — you&apos;ll review and send this invoice after delivery.
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ── Invoice document (2/3) ── */}

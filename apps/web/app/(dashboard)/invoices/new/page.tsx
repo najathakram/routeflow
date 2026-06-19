@@ -1199,7 +1199,7 @@ export default function NewInvoicePage() {
               <p className="text-sm text-navy/70">
                 {deliveredNow
                   ? "Delivered today — the order is marked delivered and the invoice is issued now."
-                  : "Deliver later — the order is created now; the invoice sends when it’s delivered."}
+                  : "Deliver later — a draft invoice is created and mirrors the order; review and send it after the order is delivered."}
               </p>
             </div>
             <div className="flex shrink-0 gap-2">
@@ -1803,23 +1803,15 @@ export default function NewInvoicePage() {
                   Create sale &amp; invoice
                 </Button>
               ) : (
-                <>
-                  <Button
-                    variant="secondary"
-                    onClick={() => handleSubmitSale(false)}
-                    loading={createSale.isPending}
-                    disabled={createSale.isPending}
-                  >
-                    Save invoice
-                  </Button>
-                  <Button
-                    onClick={() => handleSubmitSale(true)}
-                    loading={createSale.isPending}
-                    disabled={createSale.isPending}
-                  >
-                    Save &amp; send
-                  </Button>
-                </>
+                // Deliver later → only create the draft. It mirrors the order and
+                // becomes sendable after the order is delivered (never sent here).
+                <Button
+                  onClick={() => handleSubmitSale(false)}
+                  loading={createSale.isPending}
+                  disabled={createSale.isPending}
+                >
+                  Save draft invoice
+                </Button>
               )
             ) : (
               <>
