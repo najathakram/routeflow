@@ -38,8 +38,12 @@ function AuthCallbackInner() {
       if (tenantSlug) {
         setTenantCookie(tenantSlug);
       }
-      // Navigate to dashboard — the AuthProvider will pick up the stored token
-      router.replace("/");
+      // Full document navigation (NOT router.replace): the root AuthProvider only
+      // reads localStorage on mount, so a client-side navigation would leave it
+      // unauthenticated and the dashboard guard would bounce the user back to
+      // login on the first attempt (requiring a second "Sign in with Google"
+      // click). A hard load remounts the provider so it reads the stored token.
+      window.location.replace("/");
     } else {
       setError("Google sign-in failed. Please try again.");
       setTimeout(() => router.replace("/login?error=google_failed"), 2000);

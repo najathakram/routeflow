@@ -136,9 +136,15 @@ function GoogleCallbackInner() {
         // (without this the middleware can't tell a buyer apart from a
         // logged-out user and may misroute them).
         document.cookie = `rf-buyer-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-        // Redirect to buyer portal — show linked banner if just accepted an invite
+        // Redirect to buyer portal — show linked banner if just accepted an invite.
+        // Use a full document navigation (NOT router.replace): the auth providers
+        // live at the app root and only read localStorage on mount. A client-side
+        // navigation would not re-read the tokens we just wrote, so the portal
+        // guard would bounce the user back to login on the first attempt and they'd
+        // have to click "Sign in with Google" twice. A hard load remounts the
+        // providers so the new session is picked up immediately.
         const destination = linked === "true" ? "/buyer/portal?linked=true" : "/buyer/portal";
-        router.replace(destination);
+        window.location.replace(destination);
       } else {
         // Store staff tokens under both the namespaced keys (read by
         // `AuthProvider` / `getStoredUser`) and the legacy keys (read by
@@ -155,12 +161,12 @@ function GoogleCallbackInner() {
           setTenantCookie(tenantSlug);
         }
 
-        // Role-based post-login destination
-        if (role === "CUSTOMER") {
-          router.replace("/dashboard"); // Customers see limited dashboard view
-        } else {
-          router.replace("/dashboard");
-        }
+        // Full document navigation so the root AuthProvider remounts and reads
+        // the tokens we just stored (see the buyer branch above) — otherwise the
+        // dashboard guard bounces the user back to login on the first attempt.
+        // All staff roles (operator / customer / driver / admin) land on the
+        // dashboard, which renders a role-appropriate view.
+        window.location.replace("/dashboard");
       }
     }
   }, [params, router]);
