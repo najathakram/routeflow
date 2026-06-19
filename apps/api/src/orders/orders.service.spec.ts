@@ -28,6 +28,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
+import { OrderStatus, UserRole } from "@prisma/client";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -109,6 +110,10 @@ describe("OrdersService", () => {
           provide: InvoicesService,
           useValue: {
             createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            createInvoiceFromOrder: jest
+              .fn()
+              .mockResolvedValue({ id: "inv-1", invoiceNumber: "INV-1" }),
+            send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
           },
         },
         {
@@ -272,6 +277,62 @@ describe("OrdersService", () => {
           }),
         }),
       );
+    });
+  });
+
+  // ─── createSale (order + invoice in one step) ─────────────────────────────
+
+  describe("createSale", () => {
+    const user = { sub: "op-1", role: UserRole.OPERATOR, tenantId: "test-tenant" } as any;
+    const baseDto = {
+      customerId: "cust-1",
+      items: [{ productId: "p1", qty: 2, unitPrice: 5 }],
+      deliveredNow: true,
+    } as any;
+    const fakeOrder = { id: "ord-1", customerId: "cust-1", orderNumber: "ORD-1" } as any;
+
+    beforeEach(() => {
+      // Don't exercise the heavy real create() — assert the orchestration around it.
+      jest.spyOn(service, "create").mockResolvedValue(fakeOrder);
+    });
+
+    it("van sale (deliveredNow=true): isolates the order, marks it DELIVERED, invoices once, sends", async () => {
+      const invoices = (service as any).invoicesService;
+      const result = await service.createSale({ ...baseDto, deliveredNow: true }, user);
+
+      // A discrete sale never merges into an existing open order.
+      expect(service.create).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: "cust-1", status: "PENDING" }),
+        user,
+        { skipAutoMerge: true },
+      );
+      // Marked DELIVERED *directly* — bypasses changeStatus so the auto DRAFT invoice
+      // never fires (no duplicate). Generated exactly one invoice, then issued it.
+      expect(prisma.forTenant().order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ord-1" },
+          data: expect.objectContaining({ status: OrderStatus.DELIVERED }),
+        }),
+      );
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1");
+      expect(invoices.send).toHaveBeenCalledWith("inv-1");
+      expect(result).toEqual(expect.objectContaining({ id: "inv-1" }));
+    });
+
+    it("bill before delivery (deliveredNow=false, send=false): PENDING order, draft invoice, not sent", async () => {
+      const invoices = (service as any).invoicesService;
+      await service.createSale({ ...baseDto, deliveredNow: false, send: false }, user);
+
+      expect(prisma.forTenant().order.update).not.toHaveBeenCalled();
+      expect(invoices.createInvoiceFromOrder).toHaveBeenCalledTimes(1);
+      expect(invoices.send).not.toHaveBeenCalled();
+    });
+
+    it("bill before delivery with send=true: issues (sends) the draft invoice", async () => {
+      const invoices = (service as any).invoicesService;
+      await service.createSale({ ...baseDto, deliveredNow: false, send: true }, user);
+      expect(invoices.send).toHaveBeenCalledWith("inv-1");
     });
   });
 

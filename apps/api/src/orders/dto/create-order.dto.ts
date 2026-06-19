@@ -22,7 +22,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 // because there were no upper bounds on qty/unitPrice. Sane caps below
 // (qty <= 100,000 units, unitPrice <= $1,000,000) keep the math under
 // the Decimal(10,2) precision the schema reserves for totals.
-class OrderItemDto {
+export class OrderItemDto {
   @IsString() @MaxLength(64) productId: string;
   @IsInt() @Min(1) @Max(100_000) qty: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;

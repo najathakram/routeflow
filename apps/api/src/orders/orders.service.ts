@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
@@ -26,6 +27,7 @@ import {
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
+import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
@@ -805,6 +807,63 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     return order;
+  }
+
+  /**
+   * Create a "sale" = an Order plus its Invoice in one step (the operator "bill now" flow).
+   * This is what backs the invoice screen's "New sale" option, guaranteeing that every such
+   * invoice is tied to an order (no floating invoices).
+   *
+   *  - deliveredNow=true  → mark the order DELIVERED and issue the invoice (SENT) — van/cash sale.
+   *  - deliveredNow=false → leave the order PENDING with a DRAFT invoice linked; send now only if
+   *                         dto.send is set, otherwise it stays a draft until the order is delivered.
+   *
+   * The order is always created in isolation (skipAutoMerge) so a discrete sale never folds into an
+   * existing open order.
+   */
+  async createSale(dto: CreateSaleDto, user: JwtPayload) {
+    // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement).
+    const order = await this.create(
+      {
+        customerId: dto.customerId,
+        items: dto.items,
+        notes: dto.notes,
+        discountAmount: dto.discountAmount,
+        requestedDeliveryDate: dto.requestedDeliveryDate,
+        status: "PENDING",
+      },
+      user,
+      { skipAutoMerge: true },
+    );
+
+    // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
+    //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
+    //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
+    if (dto.deliveredNow) {
+      await this.prisma.forTenant().order.update({
+        where: { id: order.id },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: new Date() },
+      });
+    }
+
+    // 3. Generate the invoice from the order — sets Invoice.orderId and increments
+    //    OrderItem.invoicedQty (so a later delivery of a not-yet-delivered sale won't
+    //    create a second invoice).
+    const invoice = await this.invoicesService.createInvoiceFromOrder(order.id);
+    if (!invoice) {
+      // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the
+      // order intact and surface a clear error so the operator can retry from the order page.
+      throw new InternalServerErrorException(
+        "The order was created but its invoice could not be generated. Open the order and use “Generate Invoice”.",
+      );
+    }
+
+    // 4. Van sale → issue immediately (SENT). Bill-before-delivery → SENT only if requested;
+    //    otherwise leave it as a DRAFT linked to the order.
+    if (dto.deliveredNow || dto.send) {
+      return this.invoicesService.send(invoice.id);
+    }
+    return invoice;
   }
 
   async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {

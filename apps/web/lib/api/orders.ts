@@ -117,6 +117,55 @@ export function useCreateOrder() {
   });
 }
 
+export interface CreateSaleDto {
+  customerId: string;
+  items: {
+    productId: string;
+    qty: number;
+    boxes?: number;
+    pieces?: number;
+    unitPrice?: number;
+    notes?: string;
+  }[];
+  /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
+  deliveredNow: boolean;
+  notes?: string;
+  discountAmount?: number;
+  requestedDeliveryDate?: string;
+  /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
+  send?: boolean;
+}
+
+/**
+ * "Bill now": create an order AND its invoice in one step (POST /orders/sell).
+ * Guarantees the invoice is tied to an order. Returns the created invoice.
+ */
+export function useCreateSale() {
+  const qc = useQueryClient();
+  return useMutation<{ id: string; invoiceNumber?: string }, Error, CreateSaleDto>({
+    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
+
+/**
+ * A customer's orders that still have un-invoiced quantity (qty > invoicedQty on any line item).
+ * Backs the invoice screen's "Bill an existing order" flow.
+ */
+export function useUninvoicedOrders(customerId: string | null | undefined) {
+  const query = useOrders(customerId ? { customerId, limit: 50 } : undefined);
+  const orders = (query.data?.data ?? []).filter(
+    (o) =>
+      (!customerId || o.customerId === customerId) &&
+      o.status !== "CANCELLED" &&
+      (o.lineItems ?? []).some((li) => Number(li.qty) - Number(li.invoicedQty ?? 0) > 0.001),
+  );
+  return { isLoading: query.isLoading, isError: query.isError, orders };
+}
+
 /**
  * Look up the most recent DRAFT/PENDING order for a customer (operator only).
  * Used by the create-order modal to ask the operator whether to merge or keep separate.
