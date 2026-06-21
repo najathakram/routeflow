@@ -82,8 +82,13 @@ const nextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
+            // camera=(self): the dashboard scans barcodes / invoices with the
+            // device camera (getUserMedia). camera=() disabled it entirely —
+            // Android Chrome enforces this header and threw "access denied"
+            // even with the browser permission granted (iOS Safari ignored it,
+            // so iPhone worked). Same-origin is all the scanner needs.
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=(), payment=(self)",
+            value: "camera=(self), microphone=(), geolocation=(self), payment=(self)",
           },
           { key: "Content-Security-Policy", value: csp },
         ],

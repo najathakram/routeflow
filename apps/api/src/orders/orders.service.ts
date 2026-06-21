@@ -13,7 +13,7 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { computeLineSubtotal } from "../common/pricing";
+import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
 import {
   OrderStatus,
   UserRole,
@@ -273,7 +273,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const addQty = qtyAdditions.get(li.productId) ?? 0;
         if (addQty <= 0) continue;
         const newQty = Number(li.qty) + addQty;
-        const newSubtotal = newQty * Number(li.unitPrice);
+        const newSubtotal = roundMoney(newQty * Number(li.unitPrice));
         await tx.orderItem.update({
           where: { id: li.id },
           data: { qty: newQty, subtotal: newSubtotal },
@@ -288,7 +288,7 @@ export class OrdersService implements OnApplicationBootstrap {
             productId,
             qty: data.qty,
             unitPrice: data.unitPrice,
-            subtotal: data.qty * data.unitPrice,
+            subtotal: roundMoney(data.qty * data.unitPrice),
             status: ItemStatus.PENDING,
             priceType: data.priceType,
             originalPrice: data.originalPrice,
@@ -309,11 +309,13 @@ export class OrdersService implements OnApplicationBootstrap {
       const activeItems = await tx.orderItem.findMany({
         where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
       });
-      const subtotal = activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0);
-      const tax = subtotal * taxRate;
+      const subtotal = roundMoney(
+        activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
+      );
+      const tax = roundMoney(subtotal * taxRate);
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: subtotal + tax },
+        data: { subtotal, tax, total: roundMoney(subtotal + tax) },
       });
     });
 
@@ -393,7 +395,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const newQty = Number(li.qty) + addQty;
         await tx.orderItem.update({
           where: { id: li.id },
-          data: { qty: newQty, subtotal: newQty * Number(li.unitPrice) },
+          data: { qty: newQty, subtotal: roundMoney(newQty * Number(li.unitPrice)) },
         });
       }
       for (const [productId, data] of newItemsByProductId.entries()) {
@@ -403,7 +405,7 @@ export class OrdersService implements OnApplicationBootstrap {
             productId,
             qty: data.qty,
             unitPrice: data.unitPrice,
-            subtotal: data.qty * data.unitPrice,
+            subtotal: roundMoney(data.qty * data.unitPrice),
             status: ItemStatus.PENDING,
             priceType: data.priceType,
             originalPrice: data.originalPrice,
@@ -429,14 +431,16 @@ export class OrdersService implements OnApplicationBootstrap {
       const activeItems = await tx.orderItem.findMany({
         where: { orderId: winner.id, status: { not: ItemStatus.CANCELLED } },
       });
-      const subtotal = activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0);
-      const tax = subtotal * taxRate;
+      const subtotal = roundMoney(
+        activeItems.reduce((s: number, li: any) => s + Number(li.subtotal), 0),
+      );
+      const tax = roundMoney(subtotal * taxRate);
       const routeUpdate = routeAssignment
         ? { routeRunId: routeAssignment.routeRunId, routeRunStopId: routeAssignment.routeRunStopId }
         : {};
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: subtotal + tax, ...routeUpdate },
+        data: { subtotal, tax, total: roundMoney(subtotal + tax), ...routeUpdate },
       });
       // If the winner carries a pending mirror draft, re-sync it to the merged lines.
       await this.invoicesService.reconcileOrderDraftInvoice(winner.id, { basis: "order", tx });
@@ -613,11 +617,20 @@ export class OrdersService implements OnApplicationBootstrap {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
-      // Recompute qty from boxes/pieces when provided (backend is authoritative)
+      // Recompute qty from boxes/pieces when provided (backend is authoritative).
+      // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
       let qty = item.qty;
+      let boxes = item.boxes ?? null;
+      let pieces = item.pieces ?? null;
       if (item.boxes != null || item.pieces != null) {
-        const unitsPerBox = Number(product.unitsPerBox ?? 0);
-        qty = (item.boxes ?? 0) * unitsPerBox + (item.pieces ?? 0);
+        const split = normalizeBoxesPieces({
+          boxes: item.boxes,
+          pieces: item.pieces,
+          unitsPerBox: product.unitsPerBox,
+        });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
       }
 
       // Resolve tier: per-product override > customer default tier
@@ -649,16 +662,16 @@ export class OrdersService implements OnApplicationBootstrap {
       const itemSubtotal = computeLineSubtotal({
         unitPrice,
         qty,
-        boxes: item.boxes ?? null,
-        pieces: item.pieces ?? null,
+        boxes,
+        pieces,
         unitsPerBox: product.unitsPerBox,
       });
       subtotal += itemSubtotal;
       return {
         productId: item.productId,
         qty,
-        boxes: item.boxes ?? null,
-        pieces: item.pieces ?? null,
+        boxes,
+        pieces,
         unitPrice,
         priceType,
         originalPrice,
@@ -668,9 +681,10 @@ export class OrdersService implements OnApplicationBootstrap {
       };
     });
 
+    subtotal = roundMoney(subtotal);
     const orderDiscount = dto.discountAmount ?? 0;
-    const tax = subtotal * (await this.getTaxRate());
-    const total = subtotal + tax - orderDiscount;
+    const tax = roundMoney(subtotal * (await this.getTaxRate()));
+    const total = roundMoney(subtotal + tax - orderDiscount);
 
     // RF-017 + RF-014: create the order inside a transaction so we can
     // (a) hold a pessimistic lock on product rows while checking/decrementing
@@ -1113,11 +1127,20 @@ export class OrdersService implements OnApplicationBootstrap {
           if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
           // Recompute qty from boxes/pieces when the operator split a boxed
-          // product (matches createOrder's authority). Falls back to plain qty.
+          // product (matches createOrder's authority). Normalize to integers and
+          // roll loose pieces >= unitsPerBox into boxes. Falls back to plain qty.
           let qty = item.qty ?? 0;
+          let boxes = item.boxes ?? null;
+          let pieces = item.pieces ?? null;
           if (item.boxes != null || item.pieces != null) {
-            const upb = Number(product.unitsPerBox ?? 0);
-            qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+            const split = normalizeBoxesPieces({
+              boxes: item.boxes,
+              pieces: item.pieces,
+              unitsPerBox: product.unitsPerBox,
+            });
+            qty = split.qty;
+            boxes = split.boxes;
+            pieces = split.pieces;
           }
           if (qty <= 0) continue;
 
@@ -1128,8 +1151,8 @@ export class OrdersService implements OnApplicationBootstrap {
           const subtotal = computeLineSubtotal({
             unitPrice,
             qty,
-            boxes: item.boxes ?? null,
-            pieces: item.pieces ?? null,
+            boxes,
+            pieces,
             unitsPerBox: product.unitsPerBox,
           });
           await this.prisma.forTenant().orderItem.create({
@@ -1137,8 +1160,8 @@ export class OrdersService implements OnApplicationBootstrap {
               orderId,
               productId: item.productId,
               qty,
-              boxes: item.boxes ?? null,
-              pieces: item.pieces ?? null,
+              boxes,
+              pieces,
               unitPrice,
               subtotal,
               status: "PENDING",
@@ -1296,8 +1319,8 @@ export class OrdersService implements OnApplicationBootstrap {
     const activeItems = await this.prisma.forTenant().orderItem.findMany({
       where: { orderId, status: { not: "CANCELLED" } },
     });
-    const subtotal = activeItems.reduce((s, li) => s + Number(li.subtotal), 0);
-    const tax = subtotal * (await this.getTaxRate());
+    const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
+    const tax = roundMoney(subtotal * (await this.getTaxRate()));
 
     // Revert CONFIRMED (or later) orders back to PENDING when items are edited
     // so the operator must re-confirm the updated pick list before dispatch.
@@ -1314,7 +1337,7 @@ export class OrdersService implements OnApplicationBootstrap {
       data: {
         subtotal,
         tax,
-        total: subtotal + tax,
+        total: roundMoney(subtotal + tax),
         ...(shouldRevert ? { status: "PENDING" } : {}),
         ...(dto.orderNotes !== undefined
           ? { notes: (order.notes ?? "") + (revertNote ?? "") + "\n" + dto.orderNotes }

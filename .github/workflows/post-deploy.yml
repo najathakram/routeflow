@@ -1,0 +1,132 @@
+# ─── Post-Deploy Verification ────────────────────────────────────────────────
+# Triggered by a Railway deploy webhook after a successful production deploy.
+# Also triggerable manually for ad-hoc verification.
+#
+# Railway deploy hook setup (one-time, in Railway dashboard):
+#   1. Generate a GitHub Personal Access Token (classic) with `repo` scope.
+#   2. Add it as a Railway env var: GITHUB_DISPATCH_TOKEN
+#   3. In Railway → Service → Settings → Deploy Hooks, add a hook:
+#      Name: "Run post-deploy tests"
+#      URL:  https://api.github.com/repos/YOUR_ORG/routeflow/dispatches
+#      Method: POST
+#      Headers:
+#        Authorization: Bearer ${{ GITHUB_DISPATCH_TOKEN }}
+#        Accept: application/vnd.github+json
+#        X-GitHub-Api-Version: 2022-11-28
+#      Body: {"event_type":"railway-deploy","client_payload":{"api_url":"${{RAILWAY_PUBLIC_DOMAIN}}"}}
+#
+# Alternatively, trigger manually from the Actions tab → "Post-Deploy Verification"
+# → "Run workflow" with optional URL overrides.
+#
+# Self-hosted runner (recommended for private repos with $0 budget):
+#   Deploy a GitHub Actions runner on Railway as a separate service:
+#     image: myoung34/github-runner:latest
+#     env: RUNNER_SCOPE=repo, REPO_URL=..., ACCESS_TOKEN=..., RUNNER_NAME=railway-runner
+#   Then change `runs-on: ubuntu-latest` to `runs-on: self-hosted` below.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Post-Deploy Verification
+
+on:
+  repository_dispatch:
+    types: [railway-deploy]
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API base URL to verify"
+        required: false
+        default: ""
+      web_url:
+        description: "Web base URL for Playwright"
+        required: false
+        default: ""
+      wait_for_health:
+        description: "Retry health check before running tests (seconds × 10)"
+        required: false
+        default: "30"
+
+concurrency:
+  group: post-deploy
+  cancel-in-progress: true # a newer deploy supersedes an in-flight check
+
+env:
+  NODE_VERSION: "20"
+  # Prefer manual dispatch inputs, then repository_dispatch payload, then secrets, then defaults
+  API_URL: >-
+    ${{
+      inputs.api_url ||
+      github.event.client_payload.api_url ||
+      secrets.SMOKE_BASE_URL ||
+      'https://routeflowapi-production.up.railway.app'
+    }}
+  WEB_URL: >-
+    ${{
+      inputs.web_url ||
+      github.event.client_payload.web_url ||
+      secrets.PLAYWRIGHT_BASE_URL ||
+      'https://routeflowweb-production.up.railway.app'
+    }}
+
+jobs:
+  # ─── Wait + Authenticated API smoke ──────────────────────────────────────────
+  api-smoke:
+    name: Wait → API smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root deps
+        run: |
+          rm -f package-lock.json
+          npm install --force
+
+      - name: Run post-deploy check (waits for health first)
+        run: npm run post-deploy-check
+        env:
+          SMOKE_BASE_URL: ${{ env.API_URL }}
+          SMOKE_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
+          # Wait up to (SMOKE_WAIT_RETRIES × 10)s for the API to become healthy after deploy
+          SMOKE_WAIT_RETRIES: ${{ inputs.wait_for_health || '30' }}
+
+  # ─── Playwright E2E (runs after smoke passes) ────────────────────────────────
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    needs: api-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install chromium --with-deps
+
+      - name: Run Playwright tests
+        working-directory: apps/web
+        run: npx playwright test
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ env.WEB_URL }}
+          PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-post-deploy-${{ github.run_number }}
+          path: apps/web/playwright-report/
+          retention-days: 7

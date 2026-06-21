@@ -1,0 +1,104 @@
+# ─── Nightly Regression ──────────────────────────────────────────────────────
+# Runs every night at 02:00 UTC against the production Railway deployment.
+# Also triggerable manually via "Run workflow" in the GitHub Actions UI.
+#
+# Jobs:
+#   api-smoke   — authenticated post-deploy-check.mjs (login, list endpoints,
+#                 float-artifact scan, invoice math assertion)
+#   playwright  — full Playwright e2e suite against the production web URL
+#
+# Required GitHub secrets:
+#   SMOKE_BASE_URL        — API URL  (e.g. https://routeflowapi-production.up.railway.app)
+#   PLAYWRIGHT_BASE_URL   — Web URL  (e.g. https://routeflowweb-production.up.railway.app)
+#   PLAYWRIGHT_TENANT_SLUG — tenant slug for test logins (e.g. e2e-routeflow)
+#
+# $0 Actions budget note: scheduled workflows only run on PUBLIC repos on the
+# free plan. Toggle the repo public, run, then make it private again — or add
+# a self-hosted runner (see the post-deploy.yml comment for the Railway runner
+# setup instructions).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Nightly Regression
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC every day
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API base URL (overrides secret)"
+        required: false
+      web_url:
+        description: "Web base URL (overrides secret)"
+        required: false
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false # let a running nightly finish
+
+env:
+  NODE_VERSION: "20"
+  API_URL: ${{ inputs.api_url || secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
+  WEB_URL: ${{ inputs.web_url || secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
+
+jobs:
+  # ─── Authenticated API smoke ─────────────────────────────────────────────────
+  api-smoke:
+    name: API smoke (authenticated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install root deps
+        run: |
+          rm -f package-lock.json
+          npm install --force
+
+      - name: Run post-deploy check
+        run: npm run post-deploy-check
+        env:
+          SMOKE_BASE_URL: ${{ env.API_URL }}
+          SMOKE_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
+          SMOKE_WAIT_RETRIES: "0" # production is already running; no need to wait
+
+  # ─── Playwright E2E ──────────────────────────────────────────────────────────
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install chromium --with-deps
+
+      - name: Run Playwright tests
+        working-directory: apps/web
+        run: npx playwright test
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ env.WEB_URL }}
+          PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-nightly-${{ github.run_number }}
+          path: apps/web/playwright-report/
+          retention-days: 14

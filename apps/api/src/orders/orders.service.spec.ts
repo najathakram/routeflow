@@ -231,13 +231,15 @@ describe("OrdersService", () => {
         customerPayload,
       );
 
+      // Totals are rounded to cents (money discipline): 14.97, tax 1.497→1.50,
+      // total 14.97+1.50 = 16.47 (not the raw FP 16.467000000000002).
       expect(prisma.order.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             customerId: "cust-1",
-            subtotal: 4.99 * 3,
-            tax: 4.99 * 3 * 0.1,
-            total: 4.99 * 3 * 1.1,
+            subtotal: 14.97,
+            tax: 1.5,
+            total: 16.47,
           }),
         }),
       );
