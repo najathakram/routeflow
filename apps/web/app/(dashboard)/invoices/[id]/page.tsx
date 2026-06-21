@@ -26,7 +26,7 @@ import {
   Package,
   SlidersHorizontal,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
@@ -85,32 +85,6 @@ function methodBadgeClass(method: string) {
     default:
       return "bg-gray-100 text-gray-600";
   }
-}
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<InvoiceStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  SENT: "bg-blue-100 text-blue-700",
-  VIEWED: "bg-purple-100 text-purple-700",
-  PARTIAL: "bg-yellow-100 text-yellow-700",
-  PAID: "bg-green-100 text-green-700",
-  VOID: "bg-red-100 text-red-600",
-  OVERDUE: "bg-red-100 text-red-600",
-  WRITTEN_OFF: "bg-stone-100 text-stone-600",
-};
-
-function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status === "WRITTEN_OFF" ? "Written Off" : status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
 }
 
 // ─── Status ribbon (diagonal corner badge on invoice doc) ─────────────────────
@@ -1312,7 +1286,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold text-navy">{invoice.invoiceNumber}</h1>
-          <InvoiceStatusBadge status={status} />
+          <Badge status={status} />
         </div>
 
         {/* Zoho-style action toolbar */}

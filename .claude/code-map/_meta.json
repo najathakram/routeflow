@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "mappedSha": "e85935dd426a05944cf41f442aca7191f15fef15",
+  "mappedSha": "c33a0075f1db442bd68bb0102b1239307fb82904",
   "generatedAt": "2026-06-21",
   "areas": ["api", "web", "mobile", "packages"],
-  "fileCount": 748,
-  "notes": "Reconciled to HEAD e85935d. Working-tree additions (uncommitted): money-math session (mobile lib/qty.ts, lib/share-pdf.ts; roundMoney+normalizeBoxesPieces; invoices.recomputeOrderFromInvoices; Permissions-Policy camera=(self)); regression/CI session (scripts/post-deploy-check.mjs, .github/workflows/nightly.yml, .github/workflows/post-deploy.yml, e2e/06-critical-paths.spec.ts, playwright.config.ts critical-paths project). fileCount = non-test .ts/.tsx under apps/ + packages/."
+  "fileCount": 750,
+  "notes": "UI consistency pass (PR #100): Badge extended to 30+ statuses (all finance/returns/invoice/estimate values); new Tabs component; both login pages → unified blue Button CTA + PasswordInput + Instrument Serif headings on buyer login; STATUS_COLORS removed from 10+ dashboard pages (credit-notes, estimates, returns, vendor-bills, invoices, expenses, payments); page h1 sizes standardised to text-2xl in suppliers/[id], products/[id], routes/create, payments/[id]."
 }

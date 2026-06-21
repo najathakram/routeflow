@@ -6,8 +6,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
-import { Input, Button } from "@routeflow/ui/web";
+import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Input, Button, PasswordInput } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
@@ -91,7 +91,6 @@ export default function LoginPage() {
   const { branding } = useTenant();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
-  const [showPassword, setShowPassword] = React.useState(false);
   const [googleLoading, setGoogleLoading] = React.useState(false);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
   const [throttleSeconds, setThrottleSeconds] = React.useState<number | null>(null);
@@ -431,46 +430,27 @@ export default function LoginPage() {
                   }
                 }}
               />
-              <div className="flex flex-col gap-1">
-                <label htmlFor="password" className="text-sm font-medium text-navy">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    autoComplete="current-password"
-                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-[#0B6E6B] focus:border-transparent"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSubmit(onSubmit)();
-                      }
-                    }}
-                    {...register("password")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
-                    tabIndex={-1}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="text-xs text-danger">{errors.password.message}</p>
-                )}
-              </div>
+              <PasswordInput
+                id="password"
+                label="Password"
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                className="rounded-lg"
+                register={register("password")}
+                error={errors.password?.message}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmit(onSubmit)();
+                  }
+                }}
+              />
 
               <Button
                 type="submit"
                 loading={isLoading}
                 disabled={!!(throttleSeconds && throttleSeconds > 0)}
                 className="mt-2 w-full"
-                style={{ background: "#0E1F36", color: "#FAF6EE" }}
               >
                 Sign in <ArrowRight className="h-4 w-4 ml-1" />
               </Button>
@@ -492,7 +472,7 @@ export default function LoginPage() {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={googleLoading || isLoading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-[#0B6E6B] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {googleLoading ? (
                 <>

@@ -12,7 +12,7 @@ import {
   DollarSign,
   Calendar,
 } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import {
@@ -34,43 +34,6 @@ function fmtDate(d: string) {
     day: "numeric",
     year: "numeric",
   });
-}
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<ReturnStatus, string> = {
-  PENDING: "bg-yellow-100 text-yellow-700",
-  APPROVED: "bg-blue-100 text-blue-700",
-  IN_TRANSIT: "bg-purple-100 text-purple-700",
-  RECEIVED: "bg-green-100 text-green-700",
-  REFUNDED: "bg-emerald-100 text-emerald-800",
-  REJECTED: "bg-red-100 text-red-600",
-  CANCELLED: "bg-gray-100 text-gray-500",
-  PROCESSED: "bg-teal-100 text-teal-700",
-};
-
-const STATUS_LABELS: Record<ReturnStatus, string> = {
-  PENDING: "Pending",
-  APPROVED: "Approved",
-  IN_TRANSIT: "In Transit",
-  RECEIVED: "Received",
-  REFUNDED: "Refunded",
-  REJECTED: "Rejected",
-  CANCELLED: "Cancelled",
-  PROCESSED: "Processed",
-};
-
-function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {STATUS_LABELS[status]}
-    </span>
-  );
 }
 
 // ─── Reason label ─────────────────────────────────────────────────────────────
@@ -646,7 +609,7 @@ export default function ReturnsPage() {
                   <td className="px-4 py-3 text-center text-navy/70">{ret.items.length}</td>
                   <td className="px-4 py-3 text-navy/70">{REASON_LABELS[ret.reason]}</td>
                   <td className="px-4 py-3">
-                    <ReturnStatusBadge status={ret.status} />
+                    <Badge status={ret.status} />
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <button

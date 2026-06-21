@@ -104,7 +104,7 @@ export default function PaymentDetailPage() {
         {/* Receipt header */}
         <div className="bg-surface-raised border-b border-surface-border px-6 py-5 flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-bold text-navy">Payment Receipt</h1>
+            <h1 className="text-2xl font-bold text-navy">Payment Receipt</h1>
             {payment.paymentNumber && (
               <p className="font-mono text-sm text-navy/70 mt-0.5">{payment.paymentNumber}</p>
             )}

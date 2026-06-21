@@ -15,7 +15,38 @@ export type BadgeStatus =
   | "CANCELLED"
   | "SCHEDULED"
   | "IN_PROGRESS"
-  | "COMPLETED";
+  | "COMPLETED"
+  // Finance / invoice statuses
+  | "SENT"
+  | "PAID"
+  | "VOID"
+  | "OVERDUE"
+  | "VIEWED"
+  | "PARTIAL"
+  | "PROCESSING"
+  | "FAILED"
+  // Returns / credit notes
+  | "RETURNED"
+  | "REFUNDED"
+  | "RECEIVED"
+  | "APPROVED"
+  | "REJECTED"
+  // Estimates
+  | "EXPIRED"
+  | "ACCEPTED"
+  | "DECLINED"
+  // Payments
+  | "ADVANCE"
+  | "CREDIT_NOTE"
+  // Credit notes
+  | "ISSUED"
+  | "APPLIED"
+  // Estimates
+  | "CONVERTED"
+  // Returns / logistics
+  | "IN_TRANSIT"
+  | "WRITTEN_OFF"
+  | "PROCESSED";
 
 const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> = {
   DRAFT: { variant: "neutral", label: "Draft" },
@@ -30,6 +61,37 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
   SCHEDULED: { variant: "neutral", label: "Scheduled" },
   IN_PROGRESS: { variant: "info", label: "In Progress" },
   COMPLETED: { variant: "success", label: "Completed" },
+  // Finance / invoice
+  SENT: { variant: "warning", label: "Sent" },
+  PAID: { variant: "success", label: "Paid" },
+  VOID: { variant: "neutral", label: "Void" },
+  OVERDUE: { variant: "danger", label: "Overdue" },
+  VIEWED: { variant: "info", label: "Viewed" },
+  PARTIAL: { variant: "warning", label: "Partial" },
+  PROCESSING: { variant: "info", label: "Processing" },
+  FAILED: { variant: "danger", label: "Failed" },
+  // Returns / credit notes
+  RETURNED: { variant: "warning", label: "Returned" },
+  REFUNDED: { variant: "success", label: "Refunded" },
+  RECEIVED: { variant: "success", label: "Received" },
+  APPROVED: { variant: "success", label: "Approved" },
+  REJECTED: { variant: "danger", label: "Rejected" },
+  // Estimates
+  EXPIRED: { variant: "danger", label: "Expired" },
+  ACCEPTED: { variant: "success", label: "Accepted" },
+  DECLINED: { variant: "danger", label: "Declined" },
+  // Payments
+  ADVANCE: { variant: "info", label: "Advance" },
+  CREDIT_NOTE: { variant: "neutral", label: "Credit Note" },
+  // Credit notes
+  ISSUED: { variant: "success", label: "Issued" },
+  APPLIED: { variant: "success", label: "Applied" },
+  // Estimates
+  CONVERTED: { variant: "success", label: "Converted" },
+  // Returns / logistics
+  IN_TRANSIT: { variant: "info", label: "In Transit" },
+  WRITTEN_OFF: { variant: "neutral", label: "Written Off" },
+  PROCESSED: { variant: "success", label: "Processed" },
 };
 
 const VARIANT_STYLES: Record<BadgeVariant, { badge: string; dot: string }> = {

@@ -13,7 +13,7 @@ import {
   ThumbsUp,
   FileText,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useEstimate,
@@ -22,34 +22,9 @@ import {
   useDeclineEstimate,
   useConvertEstimateToInvoice,
   useVoidEstimate,
-  type EstimateStatus,
 } from "@/lib/api/estimates";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<EstimateStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  SENT: "bg-blue-100 text-blue-700",
-  ACCEPTED: "bg-green-100 text-green-700",
-  DECLINED: "bg-red-100 text-red-600",
-  EXPIRED: "bg-orange-100 text-orange-700",
-  CONVERTED: "bg-purple-100 text-purple-700",
-};
-
-function EstimateStatusBadge({ status }: { status: EstimateStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
 
@@ -252,7 +227,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h1>
-          <EstimateStatusBadge status={status} />
+          <Badge status={status} />
         </div>
 
         {/* Actions */}
@@ -456,7 +431,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               <div className="flex justify-between">
                 <dt className="text-navy/70">Status</dt>
                 <dd>
-                  <EstimateStatusBadge status={status} />
+                  <Badge status={status} />
                 </dd>
               </div>
               <div className="flex justify-between">

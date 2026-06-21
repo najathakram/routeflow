@@ -5,8 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
-import { Input, Button } from "@routeflow/ui/web";
+import { Input, Button, PasswordInput } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
@@ -50,7 +49,6 @@ function BuyerLoginInner() {
   const { login, isAuthenticated } = useBuyerAuth();
   const [isLoading, setIsLoading] = React.useState(false);
   const [apiError, setApiError] = React.useState<string | null>(null);
-  const [showPassword, setShowPassword] = React.useState(false);
   const [googleLoading, setGoogleLoading] = React.useState(false);
   const [googleError, setGoogleError] = React.useState<string | null>(null);
 
@@ -144,7 +142,19 @@ function BuyerLoginInner() {
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm p-2">
             <img src="/logo-buyer.svg" alt="RouteFlow" className="h-full w-full object-contain" />
           </div>
-          <h2 className="text-3xl font-bold text-white mb-4">Order smarter with RouteFlow</h2>
+          <h2
+            style={{
+              fontFamily: "var(--font-instrument-serif), serif",
+              fontSize: 44,
+              lineHeight: 1.08,
+              letterSpacing: "-0.025em",
+              color: "#fff",
+              margin: 0,
+              marginBottom: 16,
+            }}
+          >
+            Order smarter with <em style={{ fontStyle: "italic", color: "#6ee7b7" }}>RouteFlow</em>.
+          </h2>
           <p className="text-buyer-200 text-base leading-relaxed">
             Browse catalogs, track deliveries, and manage invoices. Your one-stop B2B ordering
             platform.
@@ -177,7 +187,18 @@ function BuyerLoginInner() {
 
           {/* Desktop heading */}
           <div className="mb-6 hidden lg:block">
-            <h1 className="text-2xl font-bold text-navy">Welcome back</h1>
+            <h1
+              style={{
+                fontFamily: "var(--font-instrument-serif), serif",
+                fontSize: 34,
+                letterSpacing: "-0.02em",
+                color: "#0E1F36",
+                margin: 0,
+                lineHeight: 1.1,
+              }}
+            >
+              Welcome back
+            </h1>
             <p className="text-sm text-navy/70 mt-1">Sign in to your buyer account</p>
           </div>
 
@@ -201,50 +222,24 @@ function BuyerLoginInner() {
                   }
                 }}
               />
-              <div className="flex flex-col gap-1">
-                <label htmlFor="buyer-password" className="text-sm font-medium text-navy">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    id="buyer-password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter your password"
-                    autoComplete="current-password"
-                    className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleSubmit(onSubmit)();
-                      }
-                    }}
-                    {...register("password")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy transition-colors"
-                    tabIndex={-1}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {errors.password && (
-                  <p className="text-xs text-danger">{errors.password.message}</p>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="mt-2 flex h-10 w-full items-center justify-center rounded-lg bg-buyer-600 text-sm font-semibold text-white transition-colors hover:bg-buyer-700 focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {isLoading ? (
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                ) : (
-                  "Sign in"
-                )}
-              </button>
+              <PasswordInput
+                id="buyer-password"
+                label="Password"
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                className="rounded-lg"
+                register={register("password")}
+                error={errors.password?.message}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSubmit(onSubmit)();
+                  }
+                }}
+              />
+              <Button type="submit" loading={isLoading} className="mt-2 w-full">
+                Sign in
+              </Button>
             </form>
 
             {/* Divider */}
@@ -264,7 +259,7 @@ function BuyerLoginInner() {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={googleLoading}
-              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-buyer-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full items-center justify-center gap-3 rounded-lg border border-surface-border bg-white px-4 py-2.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {googleLoading ? (
                 <>

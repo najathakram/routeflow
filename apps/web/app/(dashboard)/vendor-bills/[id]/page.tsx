@@ -16,7 +16,7 @@ import {
   Trash2,
   Save,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBill,
@@ -35,29 +35,6 @@ import { SupplierSelect } from "@/components/SupplierSelect";
 import { useProducts } from "@/lib/api/products";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<VendorBillStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  RECEIVED: "bg-blue-100 text-blue-700",
-  PARTIAL: "bg-yellow-100 text-yellow-700",
-  PAID: "bg-green-100 text-green-700",
-  VOID: "bg-red-100 text-red-600",
-};
-
-function VendorBillStatusBadge({ status }: { status: VendorBillStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
 
 // ─── Record Payment Modal ─────────────────────────────────────────────────────
 
@@ -625,7 +602,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-navy">{bill.billNumber}</h1>
-          <VendorBillStatusBadge status={status} />
+          <Badge status={status} />
           {isOverdue && (
             <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
               Overdue

@@ -377,7 +377,7 @@ export default function SupplierDetailPage() {
               <Building2 className="h-6 w-6 text-brand-500" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-navy">{supplier.name}</h1>
+              <h1 className="text-2xl font-bold text-navy">{supplier.name}</h1>
               <div className="flex items-center gap-2 mt-0.5">
                 {supplier.contactName && (
                   <span className="text-sm text-navy/70">{supplier.contactName}</span>

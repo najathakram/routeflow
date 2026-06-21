@@ -3,13 +3,21 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Eye, Calendar, X, Loader2, Trash2, Search } from "lucide-react";
-import { PageHeader, Button, Select, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Button,
+  Select,
+  cn,
+  Modal,
+  useToast,
+  EmptyState,
+  Badge,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useEstimates,
   useCreateEstimate,
   type Estimate,
-  type EstimateStatus,
   type CreateEstimateItem,
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
@@ -18,30 +26,6 @@ import { computeLineSubtotal } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { getTierPrice } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<EstimateStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  SENT: "bg-blue-100 text-blue-700",
-  ACCEPTED: "bg-green-100 text-green-700",
-  DECLINED: "bg-red-100 text-red-600",
-  EXPIRED: "bg-orange-100 text-orange-700",
-  CONVERTED: "bg-purple-100 text-purple-700",
-};
-
-function EstimateStatusBadge({ status }: { status: EstimateStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
@@ -950,7 +934,7 @@ export default function EstimatesPage() {
                     {fmt(Number(est.total))}
                   </td>
                   <td className="px-4 py-3">
-                    <EstimateStatusBadge status={est.status} />
+                    <Badge status={est.status} />
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <button
