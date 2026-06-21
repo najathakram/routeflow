@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -10,6 +10,8 @@ import {
   type BuyerInvoiceItem,
   type BuyerInvoicePayment,
 } from "../../../lib/api/buyer";
+import { sharePdf } from "../../../lib/share-pdf";
+import { showToast } from "../../../lib/toast";
 
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
@@ -64,6 +66,20 @@ export default function CustomerInvoiceDetailScreen() {
   const p = invoicePill(invoice.status, invoice.isOverdue);
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
+  const pdfUrl = (invoice as any).pdfUrl as string | undefined;
+
+  const handleSharePdf = async () => {
+    if (!pdfUrl) return;
+    try {
+      await sharePdf({
+        url: pdfUrl,
+        filename: `${invoice.invoiceNumber || "invoice"}.pdf`,
+        dialogTitle: `Invoice ${invoice.invoiceNumber ?? ""}`.trim(),
+      });
+    } catch (e: any) {
+      showToast(e?.message ?? "Couldn't share the PDF.");
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -105,6 +121,14 @@ export default function CustomerInvoiceDetailScreen() {
             <Text style={styles.dueDate}>Due: {fmtDate(invoice.dueDate)}</Text>
           ) : null}
         </View>
+
+        {/* Share PDF — straight to the share sheet, no download */}
+        {pdfUrl ? (
+          <Pressable style={styles.shareBtn} onPress={handleSharePdf}>
+            <Ionicons name="share-outline" size={18} color={ios.brand} />
+            <Text style={styles.shareBtnText}>Share PDF</Text>
+          </Pressable>
+        ) : null}
 
         {/* Balance due banner */}
         {invoice.status !== "PAID" && invoice.status !== "VOID" && balanceDue > 0 ? (
@@ -237,6 +261,18 @@ const styles = StyleSheet.create({
   },
   dueCardTitle: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.system.orangeInk },
   dueCardAmount: { fontSize: 18, fontFamily: "Inter_700Bold", color: ios.system.orangeInk },
+  shareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    paddingVertical: 13,
+  },
+  shareBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.brand },
   section: { paddingHorizontal: 16, paddingBottom: 8 },
   sectionTitle: {
     fontSize: 13,

@@ -78,8 +78,7 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
           audio: false,
         });
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Unable to start the camera.";
-        setError(msg);
+        setError(friendlyCameraError(e));
         setManualMode(true);
         return;
       }
@@ -236,6 +235,27 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
       </Pressable>
     </View>
   );
+}
+
+function friendlyCameraError(err: unknown): string {
+  const name = (err as { name?: string })?.name ?? "";
+  switch (name) {
+    case "NotAllowedError":
+    case "PermissionDeniedError":
+      return "Camera access was blocked. Tap the lock/camera icon in your browser's address bar, allow the camera for this site, then try again. (If you added the app to your home screen, grant the camera there too.)";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "No camera was found on this device.";
+    case "NotReadableError":
+    case "TrackStartError":
+      return "The camera is in use by another app. Close it and try again.";
+    case "OverconstrainedError":
+      return "Couldn't open the rear camera on this device.";
+    case "SecurityError":
+      return "The camera needs a secure (https) connection.";
+    default:
+      return (err as { message?: string })?.message || "Unable to start the camera.";
+  }
 }
 
 const styles = StyleSheet.create({

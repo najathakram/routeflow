@@ -45,6 +45,26 @@ or inside a workspace — `eslint` from the repo root will not resolve a config.
 - Finance: `invoices`, `credit-notes`, `vendor-bills`, `estimates`, `recurring-invoices`, `bookkeeping`, `billing`.
 - Platform: `uploads`/`storage`, `notifications`/`messages`, `email`, `analytics`, `audit`, `import`, `config`/`system-config`.
 
+## Code map routine
+
+A signature-level **code map** lives at [`.claude/code-map/`](.claude/code-map/) (the `code-map`
+skill). **Use it instead of re-reading the repo.**
+
+- **Before reading/changing code:** read `code-map/INDEX.md` → the relevant area file
+  (`api`/`web`/`mobile`/`packages`.md) → open only the file it points to. Plan changes from the map.
+- **After _every_ change (surgical, not a regen):** update the touched entries (purpose,
+  exports/signatures, cross-refs) and bump `_meta.json` (`mappedSha`, `generatedAt`). A small code
+  change is a few-line map edit.
+- Trust the code over the map when they disagree, and fix the map. Money math lives in
+  `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three mirrors in sync.
+
+## Money discipline
+
+All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal` (boxed proration),
+`normalizeBoxesPieces` (integer boxes/pieces + rollover), and `roundMoney` (cents). **Round every
+monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
+Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
+
 ## Conventions
 
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**

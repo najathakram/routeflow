@@ -348,4 +348,91 @@ describe("InvoicesService", () => {
       expect(prisma.order.findUnique).not.toHaveBeenCalled();
     });
   });
+
+  // ─── Backward sync: recomputeOrderFromInvoices ─────────────────────────────
+
+  describe("recomputeOrderFromInvoices — backward sync (issue 2)", () => {
+    it("rebuilds the order from the SUM of all its non-void invoices", async () => {
+      // Two invoices each bill 1 unit of p1 @ 220 → order should show qty 2, $440.
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o1",
+        subtotal: 100, // prior values — used to derive effective tax rate (10%)
+        tax: 10,
+        lineItems: [{ id: "li1", productId: "p1" }],
+      });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "a",
+          status: InvoiceStatus.SENT,
+          items: [{ productId: "p1", qty: 1, subtotal: 220, unitPrice: 220 }],
+        },
+        {
+          id: "b",
+          status: InvoiceStatus.DRAFT,
+          items: [{ productId: "p1", qty: 1, subtotal: 220, unitPrice: 220 }],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 0 }]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({});
+
+      const res = await service.recomputeOrderFromInvoices("o1");
+
+      // Order line synced to the aggregate.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li1" },
+          data: expect.objectContaining({ qty: 2, subtotal: 440, invoicedQty: 2 }),
+        }),
+      );
+      // Order totals: subtotal 440, tax = 440 * (10/100) = 44, total 484.
+      const data = prisma.order.update.mock.calls[0][0].data;
+      expect(data.subtotal).toBeCloseTo(440, 2);
+      expect(data.tax).toBeCloseTo(44, 2);
+      expect(data.total).toBeCloseTo(484, 2);
+      expect(res).toMatchObject({ subtotal: 440, total: 484 });
+    });
+
+    it("re-derives the boxes/pieces split for boxed products", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o1",
+        subtotal: 100,
+        tax: 0,
+        lineItems: [{ id: "li1", productId: "p1" }],
+      });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "a",
+          status: InvoiceStatus.SENT,
+          items: [{ productId: "p1", qty: 22, subtotal: 440, unitPrice: 220 }],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 11 }]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({});
+
+      await service.recomputeOrderFromInvoices("o1");
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ qty: 22, boxes: 2, pieces: 0, subtotal: 440 }),
+        }),
+      );
+    });
+
+    it("is a no-op when the order has no surviving (non-void) invoices", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o1",
+        subtotal: 100,
+        tax: 10,
+        lineItems: [{ id: "li1", productId: "p1" }],
+      });
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      const res = await service.recomputeOrderFromInvoices("o1");
+      expect(res).toBeNull();
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -20,6 +20,7 @@ import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
 import { computeLineSubtotal, effectiveQty } from "../../../../../lib/pricing";
+import { sanitizeIntInput } from "../../../../../lib/qty";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
 /**
@@ -590,14 +591,15 @@ function StepperRow({
           style={styles.qtyInput}
           value={draft}
           onChangeText={(txt) => {
-            if (/^\d*$/.test(txt)) {
-              setDraft(txt);
-              if (txt === "") return;
-              const n = Number(txt);
-              if (Number.isFinite(n)) {
-                const clamped = max != null ? Math.min(max, n) : n;
-                onChange(clamped);
-              }
+            // Integer-only: strip non-digits + leading zeros live (no "05", no
+            // decimals even when Android shows a decimal key); allow empty mid-edit.
+            const clean = sanitizeIntInput(txt);
+            setDraft(clean);
+            if (clean === "") return;
+            const n = parseInt(clean, 10);
+            if (Number.isFinite(n)) {
+              const clamped = max != null ? Math.min(max, n) : n;
+              onChange(clamped);
             }
           }}
           onBlur={() => {

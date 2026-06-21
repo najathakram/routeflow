@@ -200,7 +200,10 @@ export default function OrderDetailScreen() {
 
   const s = statusPill(order.status);
   const actions = statusActions(order.status);
-  const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
+  // Mirror the API guard (updateOrderItems allows DRAFT/PENDING/CONFIRMED).
+  // DRAFT was previously omitted, so draft orders showed no Edit option at all.
+  const canEdit =
+    order.status === "DRAFT" || order.status === "PENDING" || order.status === "CONFIRMED";
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const handleStatusChange = (action: StatusAction) => {
@@ -314,8 +317,13 @@ export default function OrderDetailScreen() {
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Items</Text>
               {canEdit ? (
-                <Pressable onPress={() => router.push(`/(operator)/orders/${order.id}/edit-items`)}>
-                  <Text style={styles.linkText}>Edit</Text>
+                <Pressable
+                  onPress={() => router.push(`/(operator)/orders/${order.id}/edit-items`)}
+                  hitSlop={8}
+                  style={styles.editItemsBtn}
+                >
+                  <Ionicons name="create-outline" size={16} color={ios.brand} />
+                  <Text style={styles.linkText}>Edit items</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -514,6 +522,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  editItemsBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
   customerName: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 4 },
   customerSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
   notes: {

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { getTierPrice } from "../utils/pricing";
-import { computeLineSubtotal } from "../common/pricing";
+import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
 @Injectable()
 export class EstimatesService {
@@ -109,9 +109,10 @@ export class EstimatesService {
       };
     });
 
+    subtotal = roundMoney(subtotal);
     const discount = dto.discount ?? 0;
     const tax = dto.taxAmount ?? 0;
-    const total = subtotal - discount + tax;
+    const total = roundMoney(subtotal - discount + tax);
 
     return this.prisma.forTenant().estimate.create({
       data: {

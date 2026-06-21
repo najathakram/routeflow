@@ -20,6 +20,7 @@ import { useCreateOrderAsDriver, useActiveOrderForCustomer } from "../lib/api/or
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { computeLineSubtotal, effectiveQty } from "../lib/pricing";
+import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
@@ -1132,15 +1133,15 @@ function CartStepperRow({
           style={styles.cartStepperInput}
           value={draft}
           onChangeText={(txt) => {
-            // accept digits only; live-commit when valid; allow empty mid-edit
-            if (/^\d*$/.test(txt)) {
-              setDraft(txt);
-              if (txt === "") return;
-              const n = Number(txt);
-              if (Number.isFinite(n)) {
-                const clamped = max != null ? Math.min(max, n) : n;
-                onChange(clamped);
-              }
+            // Integer-only: strip non-digits + leading zeros live (no "05", no
+            // decimals even when Android shows a decimal key); allow empty mid-edit.
+            const clean = sanitizeIntInput(txt);
+            setDraft(clean);
+            if (clean === "") return;
+            const n = parseInt(clean, 10);
+            if (Number.isFinite(n)) {
+              const clamped = max != null ? Math.min(max, n) : n;
+              onChange(clamped);
             }
           }}
           onBlur={() => {

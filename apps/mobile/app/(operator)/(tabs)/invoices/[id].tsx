@@ -1,6 +1,5 @@
 import {
   ActivityIndicator,
-  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -25,6 +24,7 @@ import {
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
+import { sharePdf } from "../../../../lib/share-pdf";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -113,7 +113,7 @@ export default function InvoiceDetailScreen() {
                 },
               ),
           },
-          { label: "View PDF", style: "default", onPress: handlePdf },
+          { label: "Share PDF", style: "default", onPress: handlePdf },
           { label: "Cancel", style: "cancel" },
         ],
       );
@@ -174,11 +174,20 @@ export default function InvoiceDetailScreen() {
   const handlePdf = () => {
     if (!id) return;
     pdfMut.mutate(id, {
-      onSuccess: (data) => {
-        if (data?.url) {
-          Linking.openURL(data.url);
-        } else {
+      onSuccess: async (data) => {
+        if (!data?.url) {
           showToast("PDF is still generating, try again in a moment.");
+          return;
+        }
+        // Share the PDF directly to the OS/browser share sheet — no download.
+        try {
+          await sharePdf({
+            url: data.url,
+            filename: `${invoice.invoiceNumber || "invoice"}.pdf`,
+            dialogTitle: `Invoice ${invoice.invoiceNumber ?? ""}`.trim(),
+          });
+        } catch (e: any) {
+          showToast(e?.message ?? "Couldn't share the PDF.");
         }
       },
       onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
@@ -237,8 +246,8 @@ export default function InvoiceDetailScreen() {
               />
             ) : null}
             <ActionTile
-              icon="document-text-outline"
-              label={pdfMut.isPending ? "Loading…" : "View PDF"}
+              icon="share-outline"
+              label={pdfMut.isPending ? "Loading…" : "Share PDF"}
               onPress={handlePdf}
             />
             {!isVoid ? (

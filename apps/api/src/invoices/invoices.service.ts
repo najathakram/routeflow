@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal } from "../common/pricing";
+import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -129,16 +129,22 @@ export class InvoicesService {
     let subtotal = 0;
     const itemsData = dto.items.map((item) => {
       let qty = item.qty;
-      let boxes: number | undefined;
-      let pieces: number | undefined;
+      let boxes: number | null = null;
+      let pieces: number | null = null;
       let unitsPerBox: number | undefined;
       if (item.productId && (item.boxes != null || item.pieces != null)) {
         const product = productMap.get(item.productId);
         if (product?.unitsPerBox) {
-          boxes = item.boxes ?? 0;
-          pieces = item.pieces ?? 0;
           unitsPerBox = product.unitsPerBox;
-          qty = boxes * product.unitsPerBox + pieces;
+          // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
+          const split = normalizeBoxesPieces({
+            boxes: item.boxes,
+            pieces: item.pieces,
+            unitsPerBox,
+          });
+          boxes = split.boxes;
+          pieces = split.pieces;
+          qty = split.qty;
         }
       }
       const beforeDiscount = computeLineSubtotal({
@@ -148,7 +154,7 @@ export class InvoicesService {
         pieces,
         unitsPerBox,
       });
-      const lineSub = beforeDiscount - (item.discount ?? 0);
+      const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
       subtotal += lineSub;
       return {
         description: item.description,
@@ -158,11 +164,12 @@ export class InvoicesService {
         discount: item.discount ?? 0,
         taxRate: item.taxRate ?? 0,
         subtotal: lineSub,
-        boxes: boxes ?? null,
-        pieces: pieces ?? null,
+        boxes,
+        pieces,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
+    subtotal = roundMoney(subtotal);
 
     // Validate no line item has a negative subtotal (discount > line total)
     for (const item of itemsData) {
@@ -175,14 +182,14 @@ export class InvoicesService {
 
     const invDiscount = dto.discount ?? 0;
     const shipping = dto.shippingFee ?? 0;
-    // RF-079: tax-exempt customers owe $0 tax regardless of line item tax rates
+    // RF-079: tax-exempt customers owe $0 tax regardless of line item tax rates.
+    // Tax is derived from each line's stored post-discount subtotal — the SAME
+    // basis as the line itself — so boxed/prorated lines are taxed on what they
+    // actually bill (previously re-derived qty*unitPrice, which diverged).
     const taxTotal = (customer as any).isTaxExempt
       ? 0
-      : dto.items.reduce((sum, item) => {
-          const lineSub = item.qty * item.unitPrice - (item.discount ?? 0);
-          return sum + lineSub * (item.taxRate ?? 0);
-        }, 0);
-    const total = subtotal - invDiscount + shipping + taxTotal;
+      : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
+    const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
     if (invDiscount > subtotal) {
@@ -254,7 +261,7 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true } } },
+          include: { product: { select: { name: true, unitsPerBox: true } } },
         },
       },
     });
@@ -292,13 +299,13 @@ export class InvoicesService {
       this.buildInvoiceItemData(li, remainingQty, tenantId),
     );
 
-    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+    const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
     // Use the order's tax rate proportionally: tax = (subtotal_remaining / order.subtotal) * order.tax
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
     // RF-079: tax-exempt customers owe $0 tax
-    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax) * proportion;
-    const total = subtotal + taxAmount;
+    const taxAmount = customer?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const total = roundMoney(subtotal + taxAmount);
 
     // Due date from configured payment terms (e.g. "Net 30")
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
@@ -366,16 +373,32 @@ export class InvoicesService {
    * the two never drift.
    */
   private buildInvoiceItemData(li: any, qty: number, tenantId: string | null) {
+    // For BOXED products the order line stores `unitPrice` as the BOX price and
+    // `qty` as total pieces. Billing `qty * unitPrice` would multiply the box
+    // price by the piece count (a unitsPerBox-fold overcharge). Re-derive the
+    // boxes/pieces split from the (possibly partial) billed qty and prorate
+    // through the shared helper so the invoice line matches the order line.
+    const unitsPerBox = Number(li.product?.unitsPerBox ?? 0);
+    const split = normalizeBoxesPieces({ qty, unitsPerBox });
+    const unitPrice = Number(li.unitPrice);
     return {
       description: li.product?.name ?? `Product`,
       productId: li.productId,
-      qty,
-      unitPrice: Number(li.unitPrice),
-      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
+      qty: split.qty,
+      boxes: split.boxes,
+      pieces: split.pieces,
+      unitPrice,
+      discount: li.originalPrice != null ? Number(li.originalPrice) - unitPrice : 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
-      subtotal: qty * Number(li.unitPrice),
+      subtotal: computeLineSubtotal({
+        unitPrice,
+        qty: split.qty,
+        boxes: split.boxes,
+        pieces: split.pieces,
+        unitsPerBox,
+      }),
       ...(tenantId ? { tenantId } : {}),
     };
   }
@@ -414,7 +437,7 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true } } },
+          include: { product: { select: { name: true, unitsPerBox: true } } },
         },
       },
     });
@@ -431,7 +454,7 @@ export class InvoicesService {
     const itemsData = billable.map(({ li, billQty }: any) =>
       this.buildInvoiceItemData(li, billQty, tenantId),
     );
-    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+    const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
 
     const customer = await db.customer.findUnique({
       where: { id: order.customerId },
@@ -439,9 +462,10 @@ export class InvoicesService {
     });
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
-    const taxAmount = customer?.isTaxExempt ? 0 : Number(order.tax) * proportion;
-    const total =
-      subtotal - Number(draft.discount ?? 0) + Number(draft.shippingFee ?? 0) + taxAmount;
+    const taxAmount = customer?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const total = roundMoney(
+      subtotal - Number(draft.discount ?? 0) + Number(draft.shippingFee ?? 0) + taxAmount,
+    );
 
     await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
     const updated = await db.invoice.update({
@@ -477,6 +501,130 @@ export class InvoicesService {
   }
 
   /**
+   * BACKWARD SYNC (inverse of reconcileOrderDraftInvoice): rebuild a linked
+   * order's line items + totals from the SUM of ALL its non-void invoices, so
+   * editing an invoice keeps the order in step with what was actually billed.
+   *
+   * Aggregates billed qty + subtotal per product across every surviving invoice,
+   * re-derives the boxes/pieces split + order totals (preserving the order's
+   * effective tax rate), and cancels order lines that no invoice bills. No-op
+   * when the order has no surviving (non-void) invoices — we never wipe an order
+   * just because its last invoice was voided.
+   */
+  async recomputeOrderFromInvoices(orderId: string, tx?: any) {
+    const db = tx ?? this.prisma.forTenant();
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: { lineItems: true },
+    });
+    if (!order) return null;
+
+    const invoices = await db.invoice.findMany({
+      where: { orderId, status: { not: InvoiceStatus.VOID } },
+      include: { items: true },
+    });
+    if (invoices.length === 0) return null;
+
+    // Aggregate billed qty (pieces) + subtotal per product across all invoices.
+    const byProduct = new Map<string, { qty: number; subtotal: number; unitPrice: number }>();
+    for (const inv of invoices) {
+      for (const it of inv.items as any[]) {
+        if (!it.productId) continue; // freeform invoice lines don't map to an order line
+        const prev = byProduct.get(it.productId) ?? {
+          qty: 0,
+          subtotal: 0,
+          unitPrice: Number(it.unitPrice),
+        };
+        prev.qty += Number(it.qty);
+        prev.subtotal += Number(it.subtotal);
+        prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
+        byProduct.set(it.productId, prev);
+      }
+    }
+
+    // unitsPerBox for boxed re-split of the aggregated piece qty.
+    const productIds = [...byProduct.keys()];
+    const products = productIds.length
+      ? await db.product.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, unitsPerBox: true },
+        })
+      : [];
+    const upbMap = new Map<string, number>(
+      products.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
+    );
+
+    const tenantId = this.prisma.getTenantId();
+    const existingByProduct = new Map<string, any>();
+    for (const li of order.lineItems as any[]) {
+      if (li.productId) existingByProduct.set(li.productId, li);
+    }
+
+    let subtotal = 0;
+    for (const [productId, agg] of byProduct.entries()) {
+      const split = normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upbMap.get(productId) ?? 0 });
+      const lineSubtotal = roundMoney(agg.subtotal);
+      subtotal += lineSubtotal;
+      const existing = existingByProduct.get(productId);
+      if (existing) {
+        await db.orderItem.update({
+          where: { id: existing.id },
+          data: {
+            qty: split.qty,
+            boxes: split.boxes,
+            pieces: split.pieces,
+            unitPrice: agg.unitPrice,
+            subtotal: lineSubtotal,
+            invoicedQty: split.qty,
+            status: "PENDING",
+          },
+        });
+        existingByProduct.delete(productId);
+      } else {
+        await db.orderItem.create({
+          data: {
+            orderId,
+            productId,
+            qty: split.qty,
+            boxes: split.boxes,
+            pieces: split.pieces,
+            unitPrice: agg.unitPrice,
+            subtotal: lineSubtotal,
+            invoicedQty: split.qty,
+            status: "PENDING",
+            ...(tenantId ? { tenantId } : {}),
+          },
+        });
+      }
+    }
+
+    // Order lines billed by no invoice → cancel (they weren't actually sold).
+    for (const orphan of existingByProduct.values()) {
+      await db.orderItem.update({
+        where: { id: orphan.id },
+        data: {
+          status: "CANCELLED",
+          qty: 0,
+          subtotal: 0,
+          boxes: null,
+          pieces: null,
+          invoicedQty: 0,
+        },
+      });
+    }
+
+    // Preserve the order's effective tax rate (avoids depending on global config
+    // drift); mirror updateOrderItems' total = subtotal + tax convention.
+    subtotal = roundMoney(subtotal);
+    const prevSubtotal = Number(order.subtotal) || 0;
+    const effectiveTaxRate = prevSubtotal > 0 ? Number(order.tax) / prevSubtotal : 0;
+    const tax = roundMoney(subtotal * effectiveTaxRate);
+    const total = roundMoney(subtotal + tax);
+    await db.order.update({ where: { id: orderId }, data: { subtotal, tax, total } });
+    return { orderId, subtotal, tax, total };
+  }
+
+  /**
    * Fire-and-forget safe variant of createInvoiceFromOrder.
    * Accepts an explicit tenantId so it doesn't depend on AsyncLocalStorage
    * (which is lost when the call is not awaited in the request lifecycle).
@@ -487,7 +635,7 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true } } },
+          include: { product: { select: { name: true, unitsPerBox: true } } },
         },
       },
     });
@@ -508,18 +656,12 @@ export class InvoicesService {
       });
     }
 
-    const itemsData = remainingItems.map(({ li, remainingQty }: any) => ({
-      description: li.product?.name ?? `Product`,
-      productId: li.productId,
-      qty: remainingQty,
-      unitPrice: Number(li.unitPrice),
-      discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
-      originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-      priceType: li.priceType ?? "STANDARD",
-      taxRate: 0,
-      subtotal: remainingQty * Number(li.unitPrice),
-      tenantId,
-    }));
+    // Reuse buildInvoiceItemData so boxed-product proration + rounding stay
+    // identical to the in-request path (was a flat remainingQty * unitPrice,
+    // which over-charged boxed lines by unitsPerBox).
+    const itemsData = remainingItems.map(({ li, remainingQty }: any) =>
+      this.buildInvoiceItemData(li, remainingQty, tenantId),
+    );
 
     // RF-079: apply tax-exempt check in the fire-and-forget path too.
     const customerForTax = tenantId
@@ -528,11 +670,11 @@ export class InvoicesService {
           select: { isTaxExempt: true },
         })
       : null;
-    const subtotal = itemsData.reduce((s: number, it: any) => s + it.subtotal, 0);
+    const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
-    const taxAmount = customerForTax?.isTaxExempt ? 0 : Number(order.tax) * proportion;
-    const total = subtotal + taxAmount;
+    const taxAmount = customerForTax?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const total = roundMoney(subtotal + taxAmount);
 
     // Resolve default terms — read SystemConfig with explicit tenantId since we're
     // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
@@ -623,7 +765,7 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true } } },
+          include: { product: { select: { name: true, unitsPerBox: true } } },
         },
       },
     });
@@ -647,29 +789,23 @@ export class InvoicesService {
           `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
         );
       }
-      const lineSub = req.qty * Number(li.unitPrice);
-      subtotal += lineSub;
-      itemsData.push({
-        description: li.product?.name ?? "Product",
-        productId: li.productId,
-        qty: req.qty,
-        unitPrice: Number(li.unitPrice),
-        discount: li.originalPrice != null ? Number(li.originalPrice) - Number(li.unitPrice) : 0,
-        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
-        priceType: li.priceType ?? "STANDARD",
-        taxRate: 0,
-        subtotal: lineSub,
-        tenantId: this.prisma.getTenantId(),
-      });
+      // Reuse the shared builder so boxed lines prorate (req.qty is in pieces,
+      // unitPrice is the box price) and rounding stays consistent.
+      const itemData = this.buildInvoiceItemData(li, req.qty, this.prisma.getTenantId());
+      subtotal += itemData.subtotal;
+      itemsData.push(itemData);
     }
+    subtotal = roundMoney(subtotal);
 
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: order.customerId }, select: { isTaxExempt: true } });
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
-    const taxAmount = (customer as any)?.isTaxExempt ? 0 : Number(order.tax) * proportion;
-    const total = subtotal + taxAmount;
+    const taxAmount = (customer as any)?.isTaxExempt
+      ? 0
+      : roundMoney(Number(order.tax) * proportion);
+    const total = roundMoney(subtotal + taxAmount);
 
     // Resolve due date: explicit dto.dueDate wins, else default term.
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
@@ -953,16 +1089,21 @@ export class InvoicesService {
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
         let qty = item.qty;
-        let boxes: number | undefined;
-        let pieces: number | undefined;
+        let boxes: number | null = null;
+        let pieces: number | null = null;
         let unitsPerBox: number | undefined;
         if (item.productId && (item.boxes != null || item.pieces != null)) {
           const product = productMap.get(item.productId);
           if (product?.unitsPerBox) {
-            boxes = item.boxes ?? 0;
-            pieces = item.pieces ?? 0;
             unitsPerBox = product.unitsPerBox;
-            qty = boxes * product.unitsPerBox + pieces;
+            const split = normalizeBoxesPieces({
+              boxes: item.boxes,
+              pieces: item.pieces,
+              unitsPerBox,
+            });
+            boxes = split.boxes;
+            pieces = split.pieces;
+            qty = split.qty;
           }
         }
         const beforeDiscount = computeLineSubtotal({
@@ -972,7 +1113,7 @@ export class InvoicesService {
           pieces,
           unitsPerBox,
         });
-        const lineSub = beforeDiscount - (item.discount ?? 0);
+        const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
         subtotal += lineSub;
         return {
           description: item.description,
@@ -982,24 +1123,23 @@ export class InvoicesService {
           discount: item.discount ?? 0,
           taxRate: item.taxRate ?? 0,
           subtotal: lineSub,
-          boxes: boxes ?? null,
-          pieces: pieces ?? null,
+          boxes,
+          pieces,
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });
+      subtotal = roundMoney(subtotal);
       const customerForTax = await this.prisma
         .forTenant()
         .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
+      // Tax from each line's stored post-discount subtotal (same basis as the line).
       const taxTotal = (customerForTax as any)?.isTaxExempt
         ? 0
-        : dto.items.reduce(
-            (s, i) => s + (i.qty * i.unitPrice - (i.discount ?? 0)) * (i.taxRate ?? 0),
-            0,
-          );
+        : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
-      const total = subtotal - invDiscount + shipping + taxTotal;
-      return this.prisma.forTenant().invoice.update({
+      const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
+      const updated = await this.prisma.forTenant().invoice.update({
         where: { id },
         data: {
           subtotal,
@@ -1022,6 +1162,9 @@ export class InvoicesService {
           payments: true,
         },
       });
+      // Backward sync: keep the linked order in step with the edited invoice.
+      if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
+      return updated;
     }
 
     // RF-012: if discount or shippingFee changed, recompute total from existing items.
@@ -1031,10 +1174,14 @@ export class InvoicesService {
       const existingItems = await this.prisma
         .forTenant()
         .invoiceItem.findMany({ where: { invoiceId: id } });
-      const subtotal = existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0);
-      const taxTotal = existingItems.reduce(
-        (s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
-        0,
+      const subtotal = roundMoney(
+        existingItems.reduce((s: number, i: any) => s + Number(i.subtotal), 0),
+      );
+      const taxTotal = roundMoney(
+        existingItems.reduce(
+          (s: number, i: any) => s + Number(i.subtotal) * Number(i.taxRate ?? 0),
+          0,
+        ),
       );
       const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
       const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
@@ -1043,11 +1190,11 @@ export class InvoicesService {
         taxAmount: taxTotal,
         discount: invDiscount,
         shippingFee: shipping,
-        total: subtotal - invDiscount + shipping + taxTotal,
+        total: roundMoney(subtotal - invDiscount + shipping + taxTotal),
       };
     }
 
-    return this.prisma.forTenant().invoice.update({
+    const updated = await this.prisma.forTenant().invoice.update({
       where: { id },
       data: {
         ...(dto.dueDate && { dueDate: new Date(dto.dueDate) }),
@@ -1064,6 +1211,9 @@ export class InvoicesService {
         payments: true,
       },
     });
+    // Backward sync: discount/shipping changes alter the order total too.
+    if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
+    return updated;
   }
 
   /**
@@ -1383,26 +1533,27 @@ export class InvoicesService {
       .forTenant()
       .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
 
-    const itemsData = inv.items.map((i) => {
-      const lineSub = Number(i.qty) * Number(i.unitPrice) - Number(i.discount ?? 0);
-      return {
-        description: i.description,
-        productId: i.productId,
-        qty: i.qty,
-        unitPrice: i.unitPrice,
-        discount: i.discount,
-        taxRate: i.taxRate,
-        subtotal: lineSub,
-        tenantId: this.prisma.getTenantId(),
-      };
-    });
-    const subtotal = itemsData.reduce((s, i) => s + Number(i.subtotal), 0);
+    // Duplicate carries each line's already-correct stored subtotal + boxes/pieces
+    // split verbatim (recomputing qty*unitPrice would over-charge boxed lines).
+    const itemsData = inv.items.map((i) => ({
+      description: i.description,
+      productId: i.productId,
+      qty: i.qty,
+      unitPrice: i.unitPrice,
+      discount: i.discount,
+      taxRate: i.taxRate,
+      boxes: (i as any).boxes ?? null,
+      pieces: (i as any).pieces ?? null,
+      subtotal: roundMoney(Number(i.subtotal)),
+      tenantId: this.prisma.getTenantId(),
+    }));
+    const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
     const taxTotal = (customer as any)?.isTaxExempt
       ? 0
-      : itemsData.reduce((s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0);
+      : roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0));
     const invDiscount = Number(inv.discount ?? 0);
     const shipping = Number(inv.shippingFee ?? 0);
-    const total = subtotal - invDiscount + shipping + taxTotal;
+    const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
 
     return this.prisma.forTenant().invoice.create({
       data: {
@@ -2078,7 +2229,17 @@ export class InvoicesService {
       for (const item of inv.items) {
         const newPrice = localPriceMap.get(item.id);
         if (newPrice == null) continue;
-        const newSubtotal = Number(item.qty) * newPrice - Number(item.discount ?? 0);
+        // Recover the line's selling-unit multiplier (box-equivalent for boxed
+        // lines, plain qty otherwise) from the existing line so re-pricing keeps
+        // boxed proration without needing unitsPerBox here:
+        //   beforeDiscount = subtotal + discount = oldUnitPrice * multiplier.
+        const oldUnitPrice = Number(item.unitPrice);
+        const oldDiscount = Number(item.discount ?? 0);
+        const multiplier =
+          oldUnitPrice > 0
+            ? (Number(item.subtotal) + oldDiscount) / oldUnitPrice
+            : Number(item.qty);
+        const newSubtotal = roundMoney(newPrice * multiplier - oldDiscount);
         await this.prisma.forTenant().invoiceItem.update({
           where: { id: item.id },
           data: { unitPrice: newPrice, subtotal: newSubtotal },
@@ -2089,12 +2250,13 @@ export class InvoicesService {
       const updatedItems = await this.prisma
         .forTenant()
         .invoiceItem.findMany({ where: { invoiceId: inv.id } });
-      const subtotal = updatedItems.reduce((s, li) => s + Number(li.subtotal), 0);
-      const taxAmount = updatedItems.reduce(
-        (s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0),
-        0,
+      const subtotal = roundMoney(updatedItems.reduce((s, li) => s + Number(li.subtotal), 0));
+      const taxAmount = roundMoney(
+        updatedItems.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
       );
-      const total = subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount;
+      const total = roundMoney(
+        subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
+      );
 
       const existingInternal = (inv as any).internalNotes ?? "";
       await this.prisma.forTenant().invoice.update({
@@ -2106,6 +2268,8 @@ export class InvoicesService {
           internalNotes: existingInternal ? `${existingInternal}\n${auditLine}` : auditLine,
         },
       });
+      // Backward sync: a re-priced invoice updates its linked order's totals.
+      if ((inv as any).orderId) await this.recomputeOrderFromInvoices((inv as any).orderId);
     };
 
     if (dto.scope === "SINGLE") {
