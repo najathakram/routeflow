@@ -109,5 +109,18 @@ export default defineConfig({
       testMatch: /05-cross-cutting\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
     },
+
+    // ── Critical-path regression tests ────────────────────────────────────────
+    // Money-math and core integrity checks — run after every deploy.
+    // Uses operator auth state; no mutations (safe against production data).
+    {
+      name: "critical-paths",
+      testMatch: /06-critical-paths\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

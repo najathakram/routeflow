@@ -1,0 +1,79 @@
+# Code Map — RouteFlow
+
+> Signature-level index of this repo. **Read this first; open only the files it points to.**
+> Last reconciled: see [`_meta.json`](_meta.json) `mappedSha`. Maintained by the `code-map`
+> skill — update it surgically after changes; trust the code over the map when they disagree.
+
+## Stack & shape
+
+Multi-tenant delivery / route-management SaaS. **npm workspaces + Turbo** monorepo.
+
+- **API** — [`apps/api`](api.md): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), JWT auth.
+  Everything tenant-scoped. Jest specs.
+- **Web** — [`apps/web`](web.md): Next.js 14 App Router. The **golden reference** for flows/DTOs.
+  Radix + Tailwind, TanStack Query, Zustand, RHF + zod. Playwright e2e.
+- **Mobile** — [`apps/mobile`](mobile.md): Expo 55 / RN 0.83, expo-router, multi-role. Mirrors
+  web's API/DTOs/flows; only UI differs. Jest (pure-logic).
+- **Packages** — [`packages`](packages.md): `types`, `ui`, `config`, `eslint-config`,
+  `typescript-config`.
+- **Deploy**: Railway via per-app Docker. `CMD = node dist/main.js` only — never auto-migrate.
+
+## Entry points
+
+- **api** → `apps/api/src/main.ts` — boots Nest on `:3000`, global prefix `/api/v1`, health
+  `GET /api/v1/health`. Runs from compiled `dist/main.js` (watch mode is broken).
+- **web** → `apps/web/app/layout.tsx` (+ `app/providers.tsx`) — `next dev` on `:3001`.
+- **mobile** → `apps/mobile/app/_layout.tsx` — `expo start`. Deep-link scheme `routeflow://`.
+
+## Build / test / run (from repo root)
+
+| Action      | Command                                        |
+| ----------- | ---------------------------------------------- |
+| dev (all)   | `npm run dev`                                  |
+| build       | `npm run build`                                |
+| typecheck   | `npm run check-types`                          |
+| lint        | `npm run lint` (per-workspace; no root config) |
+| test        | `npm run test` (Jest: api, mobile)             |
+| e2e         | `npm run test:e2e` (Playwright: web)           |
+| format      | `npm run format`                               |
+| db up/down  | `npm run db:up` / `npm run db:down`            |
+| api rebuild | `cd apps/api && npx nest build`                |
+
+## Where to find (global — cross-area greatest hits)
+
+| Need / symptom                           | Start at                                                                                                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tenant isolation engine                  | [`api`](api.md) → `src/prisma/prisma.service.ts` `forTenant()`                                                                                                                                         |
+| Global guard wiring (Throttler/Tenant)   | [`api`](api.md) → `src/app.module.ts`                                                                                                                                                                  |
+| Startup, CORS, helmet, secrets           | [`api`](api.md) → `src/main.ts` `assertSecrets()`                                                                                                                                                      |
+| Env config & secret derivation           | [`api`](api.md) → `src/config/configuration.ts`                                                                                                                                                        |
+| Auth (server)                            | [`api`](api.md) → `src/auth/`                                                                                                                                                                          |
+| Auth (web client, tokens, tenant cookie) | [`web`](web.md) → `lib/api-client.ts`, `lib/auth.ts`, `lib/tenant-cookie.ts`                                                                                                                           |
+| Auth (mobile, SecureStore)               | [`mobile`](mobile.md) → `lib/api-client.ts`, `lib/auth.ts`                                                                                                                                             |
+| A domain end-to-end (e.g. invoices)      | api `src/invoices/` → web `app/(dashboard)/invoices/` + `lib/api/invoices.ts` → mobile `lib/api/invoices.ts`                                                                                           |
+| Money / line totals (round, boxed)       | `{api/src/common,web/lib,mobile/lib}/pricing.ts` — `computeLineSubtotal`/`normalizeBoxesPieces`/`roundMoney` (3 mirrors)                                                                               |
+| Invoice↔Order sync (both directions)     | api `invoices.service.ts` → `reconcileOrderDraftInvoice` (fwd) + `recomputeOrderFromInvoices` (back)                                                                                                   |
+| Smoke / pre-push verify                  | `npm run verify` (types+lint+test), `npm run smoke` (`scripts/smoke.mjs`), `npm run post-deploy-check` (authenticated + float-artifact scan); `smoke-check` skill                                      |
+| E2E Playwright                           | `apps/web/e2e/` — 6 spec files, `playwright.config.ts` projects; `06-critical-paths.spec.ts` = money-math regression guard                                                                             |
+| Autonomous regression (CI/CD)            | `.github/workflows/ci.yml` (e2e job on master), `nightly.yml` (2am UTC), `post-deploy.yml` (Railway webhook `repository_dispatch`); `/regression` skill; scheduled task `routeflow-nightly-regression` |
+| Routes / driver runs / POD               | api `src/routes/` → web `app/(dashboard)/routes/` → mobile `app/(driver)/route/`                                                                                                                       |
+| Shared DTOs / enums                      | [`packages`](packages.md) → `packages/types/index.ts`                                                                                                                                                  |
+| Shared UI components / tokens            | [`packages`](packages.md) → `packages/ui/src/{web,mobile}/`                                                                                                                                            |
+| Security headers / CSP                   | [`web`](web.md) → `next.config.mjs`                                                                                                                                                                    |
+| File uploads & signed URLs               | [`api`](api.md) → `src/uploads/`                                                                                                                                                                       |
+| Realtime (Socket.io)                     | api `src/gateways/` → web `lib/socket.ts` → mobile `hooks/useSocket.ts`                                                                                                                                |
+| Deploy / Dockerfile / health             | per-app `Dockerfile` + `railway.toml`; debug via `debug-deploy` skill                                                                                                                                  |
+
+## Areas
+
+- [`api`](api.md) — NestJS API: 30+ tenant-scoped feature modules, Prisma schema, auth, finance.
+- [`web`](web.md) — Next.js dashboard (operator), platform-admin panel, buyer portal, marketing.
+- [`mobile`](mobile.md) — Expo multi-role app: `(auth)`, `(customer)`, `(driver)`, `(operator)`, `(tenant)`.
+- [`packages`](packages.md) — shared `types`, `ui`, and build/config presets.
+
+## How to navigate
+
+1. Read this INDEX. Pick the area(s) the task touches from the table above.
+2. Open that `<area>.md`, use its **Where to find** table → land on the exact file/symbol.
+3. Open only those files. Expand outward only where an entry's cross-refs say a change ripples.
+4. After editing, update the touched entries here/in the area file and bump `_meta.json`.

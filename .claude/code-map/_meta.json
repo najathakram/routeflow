@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "mappedSha": "e85935dd426a05944cf41f442aca7191f15fef15",
+  "generatedAt": "2026-06-21",
+  "areas": ["api", "web", "mobile", "packages"],
+  "fileCount": 748,
+  "notes": "Reconciled to HEAD e85935d. Working-tree additions (uncommitted): money-math session (mobile lib/qty.ts, lib/share-pdf.ts; roundMoney+normalizeBoxesPieces; invoices.recomputeOrderFromInvoices; Permissions-Policy camera=(self)); regression/CI session (scripts/post-deploy-check.mjs, .github/workflows/nightly.yml, .github/workflows/post-deploy.yml, e2e/06-critical-paths.spec.ts, playwright.config.ts critical-paths project). fileCount = non-test .ts/.tsx under apps/ + packages/."
+}
