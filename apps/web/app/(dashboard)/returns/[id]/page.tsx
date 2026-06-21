@@ -14,7 +14,7 @@ import {
   Clock,
   FileText,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useReturn,
@@ -49,18 +49,7 @@ function fmtDateTime(d: string) {
   });
 }
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<ReturnStatus, string> = {
-  PENDING: "bg-yellow-100 text-yellow-700",
-  APPROVED: "bg-blue-100 text-blue-700",
-  IN_TRANSIT: "bg-purple-100 text-purple-700",
-  RECEIVED: "bg-green-100 text-green-700",
-  REFUNDED: "bg-emerald-100 text-emerald-800",
-  REJECTED: "bg-red-100 text-red-600",
-  CANCELLED: "bg-gray-100 text-gray-500",
-  PROCESSED: "bg-teal-100 text-teal-700",
-};
+// ─── Status timeline labels ────────────────────────────────────────────────────
 
 const STATUS_LABELS: Record<ReturnStatus, string> = {
   PENDING: "Pending",
@@ -72,19 +61,6 @@ const STATUS_LABELS: Record<ReturnStatus, string> = {
   CANCELLED: "Cancelled",
   PROCESSED: "Processed",
 };
-
-function ReturnStatusBadge({ status }: { status: ReturnStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {STATUS_LABELS[status]}
-    </span>
-  );
-}
 
 // ─── Reason label ─────────────────────────────────────────────────────────────
 
@@ -459,7 +435,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-navy">{ret.returnNumber}</h1>
-          <ReturnStatusBadge status={status} />
+          <Badge status={status} />
         </div>
 
         {/* Actions based on status */}

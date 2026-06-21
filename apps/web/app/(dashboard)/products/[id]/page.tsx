@@ -1033,7 +1033,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       );
                     })()
                   ) : (
-                    <h1 className="text-xl font-bold text-navy">{product.name}</h1>
+                    <h1 className="text-2xl font-bold text-navy">{product.name}</h1>
                   )}
                   {!isEditing && (
                     <p className="mt-1 font-mono text-xs text-navy/70">{product.sku}</p>

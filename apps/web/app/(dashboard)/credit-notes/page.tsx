@@ -3,39 +3,21 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Eye, Calendar, X, Loader2, Search } from "lucide-react";
-import { PageHeader, Button, Select, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
-import { usePageTitle } from "@/lib/page-title-context";
 import {
-  useCreditNotes,
-  useCreateCreditNote,
-  type CreditNote,
-  type CreditNoteStatus,
-} from "@/lib/api/credit-notes";
+  PageHeader,
+  Button,
+  Select,
+  cn,
+  Modal,
+  useToast,
+  EmptyState,
+  Badge,
+} from "@routeflow/ui/web";
+import { usePageTitle } from "@/lib/page-title-context";
+import { useCreditNotes, useCreateCreditNote, type CreditNote } from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtDate } from "@/lib/formatting";
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<CreditNoteStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  ISSUED: "bg-blue-100 text-blue-700",
-  APPLIED: "bg-green-100 text-green-700",
-  VOID: "bg-red-100 text-red-600",
-};
-
-function CreditNoteStatusBadge({ status }: { status: CreditNoteStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
@@ -582,7 +564,7 @@ export default function CreditNotesPage() {
                     {fmt(Number(cn.amount))}
                   </td>
                   <td className="px-4 py-3">
-                    <CreditNoteStatusBadge status={cn.status} />
+                    <Badge status={cn.status} />
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                     <button

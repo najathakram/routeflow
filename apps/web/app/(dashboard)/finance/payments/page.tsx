@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/invoices";
 import { useInvoices } from "@/lib/api/invoices";
 import { useCustomers } from "@/lib/api/customers";
-import { useToast, EmptyState, Button } from "@routeflow/ui/web";
+import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
 
@@ -36,11 +36,6 @@ const METHOD_COLORS: Record<string, string> = {
   OTHER: "bg-surface-raised text-navy/70",
   CREDIT_NOTE: "bg-purple-100 text-purple-800",
   ADVANCE: "bg-teal-50 text-teal-700",
-};
-const STATUS_STYLES: Record<string, string> = {
-  PAID: "bg-success-bg text-success",
-  DRAFT: "bg-warning-bg text-warning",
-  VOID: "bg-surface-raised text-navy/70 line-through",
 };
 
 const fieldCls =
@@ -719,11 +714,7 @@ export default function FinancePaymentsPage() {
                   </td>
                   <td className="px-4 py-3 text-navy/70">{p.reference ?? "—"}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[p.status ?? "PAID"] ?? STATUS_STYLES.PAID}`}
-                    >
-                      {p.status ?? "PAID"}
-                    </span>
+                    <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-success">
                     {fmt(p.amount)}

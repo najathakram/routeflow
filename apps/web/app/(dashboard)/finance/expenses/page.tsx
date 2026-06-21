@@ -22,7 +22,7 @@ import {
   PackageCheck,
   CheckCircle2,
 } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBills,
@@ -73,29 +73,6 @@ function dueThisWeek(bill: VendorBill) {
   const weekEnd = new Date();
   weekEnd.setDate(now.getDate() + 7);
   return due >= now && due <= weekEnd;
-}
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<VendorBillStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  RECEIVED: "bg-blue-100 text-blue-700",
-  PARTIAL: "bg-yellow-100 text-yellow-700",
-  PAID: "bg-green-100 text-green-700",
-  VOID: "bg-red-100 text-red-600",
-};
-
-function VendorBillStatusBadge({ status }: { status: VendorBillStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
 }
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
@@ -1080,7 +1057,7 @@ function InventoryPurchasesTab() {
                       })()}
                     </td>
                     <td className="px-4 py-3">
-                      <VendorBillStatusBadge status={bill.status} />
+                      <Badge status={bill.status} />
                     </td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <button
@@ -1490,7 +1467,7 @@ function OtherExpensesTab() {
                   </td>
                   <td className="px-5 py-3 text-navy/70">{e.supplier?.name ?? "—"}</td>
                   <td className="px-5 py-3">
-                    <StatusBadge status={e.status ?? "PENDING"} />
+                    <Badge status={e.status ?? "PENDING"} />
                   </td>
                   {/* Receipt column */}
                   <td className="px-5 py-3">
@@ -1613,28 +1590,6 @@ function OtherExpensesTab() {
   );
 }
 
-// ─── Status Badge ─────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: "PENDING" | "RECEIVED" | "PAID" | "VOID" }) {
-  const styles: Record<string, string> = {
-    PENDING: "bg-navy/5 text-navy/70 border-navy/10",
-    RECEIVED: "bg-blue-50 text-blue-700 border-blue-200",
-    PAID: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    VOID: "bg-navy/5 text-navy/70 border-navy/10 line-through",
-  };
-  const label = status[0] + status.slice(1).toLowerCase();
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-        styles[status],
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 // ─── Expense Detail Modal ────────────────────────────────────────────────────
 
 function ExpenseDetailModal({
@@ -1675,7 +1630,7 @@ function ExpenseDetailModal({
             <p className="text-2xl font-semibold text-navy">{fmt(Number(expense.amount))}</p>
             <p className="text-sm text-navy/70">{fmtDate(expense.date)}</p>
           </div>
-          <StatusBadge status={expense.status ?? "PENDING"} />
+          <Badge status={expense.status ?? "PENDING"} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">

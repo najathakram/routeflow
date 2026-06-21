@@ -13,40 +13,17 @@ import {
   Receipt,
   Search,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useCreditNote,
   useIssueCreditNote,
   useApplyCreditNote,
   useVoidCreditNote,
-  type CreditNoteStatus,
 } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
-
-// ─── Status badge ─────────────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<CreditNoteStatus, string> = {
-  DRAFT: "bg-gray-100 text-gray-600",
-  ISSUED: "bg-blue-100 text-blue-700",
-  APPLIED: "bg-green-100 text-green-700",
-  VOID: "bg-red-100 text-red-600",
-};
-
-function CreditNoteStatusBadge({ status }: { status: CreditNoteStatus }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold",
-        STATUS_COLORS[status],
-      )}
-    >
-      {status.charAt(0) + status.slice(1).toLowerCase()}
-    </span>
-  );
-}
 
 // ─── Issue confirm modal ──────────────────────────────────────────────────────
 
@@ -342,7 +319,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-navy">{cn.creditNoteNumber}</h1>
-          <CreditNoteStatusBadge status={status} />
+          <Badge status={status} />
         </div>
 
         {/* Actions */}
@@ -496,7 +473,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               <div className="flex justify-between">
                 <dt className="text-navy/70">Status</dt>
                 <dd>
-                  <CreditNoteStatusBadge status={status} />
+                  <Badge status={status} />
                 </dd>
               </div>
               <div className="flex justify-between">

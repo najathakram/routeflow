@@ -297,7 +297,7 @@ export default function CreateRoutePage() {
             Routes
           </Link>
           <div className="h-4 w-px bg-surface-border" />
-          <h1 className="text-lg font-bold text-navy">Create Route</h1>
+          <h1 className="text-2xl font-bold text-navy">Create Route</h1>
         </div>
       </div>
 

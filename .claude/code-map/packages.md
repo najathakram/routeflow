@@ -32,8 +32,10 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
 Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./tokens`.
 
 - **Web** (`src/web/`, Tailwind + Radix): `Button`, `Input`, `PasswordInput`, `Textarea`,
-  `Select`, `Modal`, `Table`, `Avatar`, `Card`, `Badge`, `PageHeader`, `EmptyState`, `Toast`
-  (ToastProvider/useToast), `StatCard`; utils `cn()`, `mergeRefs()`; illustration set.
+  `Select`, `Modal`, `Table`, `Avatar`, `Card`, `Badge` (BadgeStatus now covers 30+ statuses
+  incl. all finance/returns/estimate/invoice values), `PageHeader`, `EmptyState`, `Toast`
+  (ToastProvider/useToast), `StatCard`, `Tabs` (underline tab bar, key+label+badge);
+  utils `cn()`, `mergeRefs()`; illustration set.
 - **Mobile** (`src/mobile/index.ts`): `MobileButton`, `MobileInput`, `StatusBadge`,
   `ScreenHeader`, `SectionHeader`, `EmptyState`.
 - **iOS** (`src/mobile/ios/`): `NavBar`, `NavBackButton`, `NavAction`, `IosTabBar`, `KpiCard`,

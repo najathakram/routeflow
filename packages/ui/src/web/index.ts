@@ -39,6 +39,9 @@ export type { PageHeaderProps } from "./PageHeader";
 
 export { cn, mergeRefs } from "./utils";
 
+export { Tabs } from "./Tabs";
+export type { TabsProps, Tab } from "./Tabs";
+
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
 
