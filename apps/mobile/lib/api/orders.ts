@@ -51,7 +51,14 @@ export interface CreateOrderAsDriverDto {
    * boxes+pieces, also include those — the server recomputes `qty` from
    * them and uses them for line-subtotal proration (BOX price × box-equivalent).
    */
-  items: { productId: string; qty: number; boxes?: number; pieces?: number }[];
+  items: {
+    productId: string;
+    qty: number;
+    boxes?: number;
+    pieces?: number;
+    /** One-time discounted price override (per catalog unit; box price for boxed). */
+    unitPrice?: number;
+  }[];
   notes?: string;
   routeRunId?: string;
   routeRunStopId?: string;
@@ -211,6 +218,27 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
     queryKey: ["orders", "active", customerId],
     queryFn: () => apiClient.get("/orders/active", { params: { customerId } }).then((r) => r.data),
     enabled: !!customerId,
+  });
+}
+
+export interface CustomerPriceHistory {
+  [productId: string]: {
+    lastPrice: number;
+    listPriceAtTime: number;
+  };
+}
+
+/**
+ * Per-product last-given price for a customer. Fetched once when the customer
+ * is selected so scanning is instant — no per-item API call needed.
+ */
+export function useCustomerPriceHistory(customerId: string | null | undefined) {
+  return useQuery<CustomerPriceHistory>({
+    queryKey: ["orders", "price-history", customerId],
+    queryFn: () =>
+      apiClient.get("/orders/price-history", { params: { customerId } }).then((r) => r.data),
+    enabled: !!customerId,
+    staleTime: 60_000,
   });
 }
 

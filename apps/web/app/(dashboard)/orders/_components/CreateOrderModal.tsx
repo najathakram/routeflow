@@ -12,6 +12,7 @@ import { useProducts } from "@/lib/api/products";
 import {
   useCreateOrder,
   useActiveOrderForCustomer,
+  useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
@@ -105,6 +106,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   // Pre-check: as soon as a customer is selected, look up their active order so we can
   // surface the prompt the moment "Create Order" is clicked.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
+
+  // Per-product last-given price for this customer — fetched once on customer select so
+  // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
+  const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
 
   // Debounce customer search
   React.useEffect(() => {
@@ -259,6 +264,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
     const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+
+    // Pre-fill from customer's last-given price for this product (only when below
+    // the effective tier price, and only when this isn't already a SPECIAL price
+    // — SPECIAL prices are permanent, the discount is already in tierPrice).
+    const histEntry = priceHistory?.[product.id as string];
+    const hasHistDiscount =
+      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
+
     setLineItems((prev) => [
       ...prev,
       {
@@ -271,8 +284,9 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         unit: product.unit ?? "each",
         listPrice,
         specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
-        unitPrice: tierPrice,
-        priceType,
+        discountedPrice: hasHistDiscount ? histEntry.lastPrice : undefined,
+        unitPrice: hasHistDiscount ? histEntry.lastPrice : tierPrice,
+        priceType: hasHistDiscount ? ("DISCOUNTED" as const) : priceType,
         qty: upb ? upb : 1,
         unitsPerBox: upb,
         boxes: upb ? 1 : undefined,
@@ -812,8 +826,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                       )}
                       {/* One-time discount input (only when no special price already applied) */}
                       {li.priceType !== "SPECIAL" && (
-                        <div className="mt-1 flex items-center gap-1">
-                          <span className="text-[10px] text-navy/70">One-time discount price:</span>
+                        <div className="mt-1 flex items-center gap-1 flex-wrap">
+                          <span className="text-[10px] text-navy/70">Price:</span>
                           <input
                             type="number"
                             min={0}
@@ -823,6 +837,12 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                             onChange={(e) => setDiscountedPrice(li.tempId, e.target.value)}
                             className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                           />
+                          {priceHistory?.[li.productId] &&
+                            priceHistory[li.productId].lastPrice < li.listPrice && (
+                              <span className="text-[10px] text-navy/50">
+                                Last: ${priceHistory[li.productId].lastPrice.toFixed(2)}
+                              </span>
+                            )}
                         </div>
                       )}
                     </div>

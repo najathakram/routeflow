@@ -16,10 +16,15 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
-import { useCreateOrderAsDriver, useActiveOrderForCustomer } from "../lib/api/orders";
+import {
+  useCreateOrderAsDriver,
+  useActiveOrderForCustomer,
+  useCustomerPriceHistory,
+  type CustomerPriceHistory,
+} from "../lib/api/orders";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { computeLineSubtotal, effectiveQty } from "../lib/pricing";
+import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
@@ -80,6 +85,12 @@ type LineState = {
   qty: number;
   boxes?: number;
   pieces?: number;
+  /**
+   * Optional one-time price override (the "discounted price"). When unset the
+   * catalog price is used. For boxed products this is the BOX price, matching
+   * the catalog price unit; computeLineSubtotal prorates loose pieces.
+   */
+  unitPrice?: number;
 };
 
 /** Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone. */
@@ -95,6 +106,11 @@ function toNumber(v: number | string | null | undefined): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+/** The effective per-unit price for a line: the override, else the catalog price. */
+function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
+  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
 }
 
 export function NewOrderScreen({
@@ -282,6 +298,8 @@ function ProductPickView({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, LineState>>({});
+  // Fetched once when customer is confirmed — price pre-fill is instant during scanning.
+  const { data: priceHistory } = useCustomerPriceHistory(customerId);
   const [scanOpen, setScanOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   /**
@@ -324,14 +342,21 @@ function ProductPickView({
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
+    // Snapshot history at call time (closed over — loaded before scanning starts).
+    const histEntry = priceHistory?.[id];
     setItems((m) => {
+      const isNew = !m[id];
       const prev = m[id] ?? { qty: 0 };
       if (isBoxed) {
         const boxes = (prev.boxes ?? 0) + 1;
         const pieces = prev.pieces ?? 0;
-        return { ...m, [id]: { qty: boxes * upb + pieces, boxes, pieces } };
+        const line: LineState = { qty: boxes * upb + pieces, boxes, pieces };
+        if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+        return { ...m, [id]: line };
       }
-      return { ...m, [id]: { qty: (prev.qty ?? 0) + 1 } };
+      const line: LineState = { qty: (prev.qty ?? 0) + 1 };
+      if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+      return { ...m, [id]: line };
     });
     if (productSnapshot && !productById.has(id)) {
       setScannedById((m) => ({ ...m, [id]: productSnapshot }));
@@ -414,6 +439,20 @@ function ProductPickView({
       const next = { ...m };
       delete next[id];
       return next;
+    });
+
+  // Set (or clear) a one-time price override for a line. Empty/invalid clears it
+  // so the line falls back to the catalog price.
+  const setLinePrice = (id: string, raw: string) =>
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      const parsed = parseFloat(raw);
+      if (raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0) {
+        const { unitPrice: _drop, ...rest } = prev;
+        return { ...m, [id]: rest };
+      }
+      return { ...m, [id]: { ...prev, unitPrice: parsed } };
     });
 
   const handleBarcodeScanned = async (code: string) => {
@@ -501,14 +540,14 @@ function ProductPickView({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: toNumber(p.pricePerUnit),
+        unitPrice: effectiveUnitPrice(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
         unitsPerBox: p.unitsPerBox ?? null,
       });
     }
-    return { total, totalItems };
+    return { total: roundMoney(total), totalItems };
   }, [items, productById]);
 
   const inc = (id: string) => addOne(id);
@@ -526,7 +565,12 @@ function ProductPickView({
       .map(([productId, line]) => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
-        const base = { productId, qty };
+        // Only send a unitPrice override when the operator actually discounted
+        // below the catalog price — the server treats it as a one-time override.
+        const catalog = p ? toNumber(p.pricePerUnit) : 0;
+        const override =
+          line.unitPrice != null && line.unitPrice < catalog ? { unitPrice: line.unitPrice } : {};
+        const base = { productId, qty, ...override };
         // Include boxes/pieces when set so the server uses the BOX-price math
         // for proration and stores the split alongside the order line.
         if (line.boxes != null || line.pieces != null) {
@@ -860,6 +904,7 @@ function ProductPickView({
         open={cartOpen}
         items={items}
         productById={productById}
+        priceHistory={priceHistory}
         total={total}
         totalItems={totalItems}
         saving={createOrder.isPending}
@@ -867,6 +912,7 @@ function ProductPickView({
         onChangeBoxes={setBoxes}
         onChangePieces={setPieces}
         onChangeQty={setQty}
+        onChangePrice={setLinePrice}
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
@@ -891,6 +937,7 @@ function CartModal({
   open,
   items,
   productById,
+  priceHistory,
   total,
   totalItems,
   saving,
@@ -898,6 +945,7 @@ function CartModal({
   onChangeBoxes,
   onChangePieces,
   onChangeQty,
+  onChangePrice,
   onIncrement,
   onDecrement,
   onRemove,
@@ -906,6 +954,7 @@ function CartModal({
   open: boolean;
   items: Record<string, LineState>;
   productById: Map<string, Product>;
+  priceHistory?: CustomerPriceHistory;
   total: number;
   totalItems: number;
   saving: boolean;
@@ -913,6 +962,7 @@ function CartModal({
   onChangeBoxes: (id: string, n: number) => void;
   onChangePieces: (id: string, n: number) => void;
   onChangeQty: (id: string, n: number) => void;
+  onChangePrice: (id: string, raw: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
@@ -961,9 +1011,11 @@ function CartModal({
                   key={id}
                   product={product}
                   line={line}
+                  historyPrice={priceHistory?.[id]?.lastPrice}
                   onChangeBoxes={(n) => onChangeBoxes(id, n)}
                   onChangePieces={(n) => onChangePieces(id, n)}
                   onChangeQty={(n) => onChangeQty(id, n)}
+                  onChangePrice={(raw) => onChangePrice(id, raw)}
                   onIncrement={() => onIncrement(id)}
                   onDecrement={() => onDecrement(id)}
                   onRemove={() => onRemove(id)}
@@ -1007,28 +1059,34 @@ function CartModal({
 function CartRow({
   product,
   line,
+  historyPrice,
   onChangeBoxes,
   onChangePieces,
   onChangeQty,
+  onChangePrice,
   onIncrement,
   onDecrement,
   onRemove,
 }: {
   product: Product;
   line: LineState;
+  historyPrice?: number;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
   onChangeQty: (n: number) => void;
+  onChangePrice: (raw: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
-  const unitPrice = toNumber(product.pricePerUnit);
+  const catalogPrice = toNumber(product.pricePerUnit);
+  const effUnit = effectiveUnitPrice(line, product);
+  const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
-    unitPrice,
+    unitPrice: effUnit,
     qty,
     boxes: line.boxes ?? null,
     pieces: line.pieces ?? null,
@@ -1043,14 +1101,37 @@ function CartRow({
             {displayName(product)}
           </Text>
           <Text style={styles.cartRowMeta}>
-            ${unitPrice.toFixed(2)}
-            {isBoxed ? ` / box of ${upb}` : product.unit ? ` / ${product.unit}` : ""}
-            {product.sku ? ` · ${product.sku}` : ""}
+            {isBoxed ? `box of ${upb}` : product.unit ? `per ${product.unit}` : ""}
+            {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
         </View>
         <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
           <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
         </Pressable>
+      </View>
+
+      {/* Editable price — the "discounted price". Defaults to the catalog price;
+          typing a lower value records a one-time override sent as the line's
+          unitPrice. */}
+      <View style={styles.cartPriceRow}>
+        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / box" : ""}</Text>
+        <View style={styles.cartPriceInputWrap}>
+          <Text style={styles.cartPriceCurrency}>$</Text>
+          <TextInput
+            style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
+            value={line.unitPrice != null ? String(line.unitPrice) : ""}
+            onChangeText={onChangePrice}
+            placeholder={catalogPrice.toFixed(2)}
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+            selectTextOnFocus
+          />
+          {isOverridden ? (
+            <Text style={styles.cartPriceWas}>Current: ${catalogPrice.toFixed(2)}</Text>
+          ) : historyPrice != null && historyPrice < catalogPrice ? (
+            <Text style={styles.cartPriceWas}>Last: ${historyPrice.toFixed(2)}</Text>
+          ) : null}
+        </View>
       </View>
 
       {isBoxed ? (
@@ -1462,6 +1543,39 @@ const styles = StyleSheet.create({
     backgroundColor: ios.fill3,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cartPriceRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  cartPriceLabel: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+  },
+  cartPriceInputWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cartPriceCurrency: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
+  cartPriceInput: {
+    minWidth: 70,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+    borderRadius: 8,
+    textAlign: "right",
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  cartPriceWas: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textDecorationLine: "line-through",
   },
   cartStepperRow: {
     flexDirection: "row",

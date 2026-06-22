@@ -159,6 +159,45 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
+   * Return the last-given (discounted) unitPrice per product for a customer.
+   * Only lines where originalPrice is set are returned — those are the lines
+   * where an operator gave a one-time price below the catalog price.
+   * Used by the order-creation UI to pre-fill the price field on scan.
+   */
+  async getCustomerPriceHistory(
+    tenantId: string,
+    customerId: string,
+  ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
+    const items = await this.prisma.orderItem.findMany({
+      where: {
+        order: {
+          customerId,
+          tenantId,
+          status: { notIn: [OrderStatus.CANCELLED] },
+        },
+        originalPrice: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      distinct: ["productId"],
+      select: {
+        productId: true,
+        unitPrice: true,
+        originalPrice: true,
+      },
+    });
+
+    return Object.fromEntries(
+      items.map((item) => [
+        item.productId,
+        {
+          lastPrice: roundMoney(Number(item.unitPrice)),
+          listPriceAtTime: roundMoney(Number(item.originalPrice)),
+        },
+      ]),
+    );
+  }
+
+  /**
    * Find the most recent active (DRAFT/PENDING) order for a customer.
    * Used by the buyer portal to merge new items into an existing order.
    */
@@ -1429,13 +1468,14 @@ export class OrdersService implements OnApplicationBootstrap {
           productName: string;
           priceType: string;
           originalPrice: number | null;
+          unitsPerBox: number;
         }>
       >();
 
       for (const delivery of dto.deliveries) {
         const orderItem = await tx.orderItem.findUnique({
           where: { id: delivery.orderItemId },
-          include: { product: { select: { name: true } } },
+          include: { product: { select: { name: true, unitsPerBox: true } } },
         });
         if (!orderItem) throw new NotFoundException(`Order item ${delivery.orderItemId} not found`);
 
@@ -1527,6 +1567,7 @@ export class OrdersService implements OnApplicationBootstrap {
               priceType: orderItem.priceType ?? PriceType.STANDARD,
               originalPrice:
                 orderItem.originalPrice != null ? Number(orderItem.originalPrice) : null,
+              unitsPerBox: Number(orderItem.product?.unitsPerBox ?? 0),
             });
             batchDeliveredItems.set(orderItem.orderId, items);
           }
@@ -1614,10 +1655,21 @@ export class OrdersService implements OnApplicationBootstrap {
           const dueDate = new Date();
           dueDate.setDate(dueDate.getDate() + invoiceDueDays);
 
-          // Compute totals from delivered items only
-          const invoiceSubtotal = deliveredInBatch.reduce(
-            (sum, li) => sum + li.qty * li.unitPrice,
-            0,
+          // Compute totals from delivered items only. For boxed products `unitPrice`
+          // is the BOX price and `qty` is in pieces — re-split through the shared
+          // helper so we don't multiply the box price by the piece count.
+          const lineSubtotal = (li: { qty: number; unitPrice: number; unitsPerBox: number }) => {
+            const split = normalizeBoxesPieces({ qty: li.qty, unitsPerBox: li.unitsPerBox });
+            return computeLineSubtotal({
+              unitPrice: li.unitPrice,
+              qty: split.qty,
+              boxes: split.boxes,
+              pieces: split.pieces,
+              unitsPerBox: li.unitsPerBox,
+            });
+          };
+          const invoiceSubtotal = roundMoney(
+            deliveredInBatch.reduce((sum, li) => sum + lineSubtotal(li), 0),
           );
 
           await tx.invoice.create({
@@ -1645,11 +1697,14 @@ export class OrdersService implements OnApplicationBootstrap {
                   productId: li.productId,
                   qty: li.qty,
                   unitPrice: li.unitPrice,
-                  discount: li.originalPrice != null ? li.originalPrice - li.unitPrice : 0,
+                  // `unitPrice` is already the net (post-override) price; `originalPrice`
+                  // carries the strikethrough. Re-deriving a discount here would
+                  // double-count the override (bill 80 for a 100→90 line).
+                  discount: 0,
                   originalPrice: li.originalPrice,
                   priceType: li.priceType as any,
                   taxRate: 0,
-                  subtotal: li.qty * li.unitPrice,
+                  subtotal: lineSubtotal(li),
                 })),
               },
             },

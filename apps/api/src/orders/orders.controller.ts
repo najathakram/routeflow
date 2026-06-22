@@ -137,6 +137,17 @@ export class OrdersController {
     };
   }
 
+  @Get("price-history")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  getCustomerPriceHistory(
+    @Query("customerId") customerId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    if (!user.tenantId || !customerId) return {};
+    return this.ordersService.getCustomerPriceHistory(user.tenantId, customerId);
+  }
+
   @Get(":id/tracking")
   getTracking(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.getOrderTracking(id, user);

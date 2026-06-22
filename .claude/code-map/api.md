@@ -105,8 +105,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `orders/`
 
-- **controller** `orders` (+ `route-runs`) — `active`, `@Get/:id`, `:id/tracking`, `@Patch :id/status|items|urgent`, `:id/reopen`, `sweep-pending`, `force-consolidate/:customerId`, bulk/single delete; RouteRun stop complete.
-- **service** — `findAll`, `findOne`, `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`. side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED; delivery-mutation tracking.
+- **controller** `orders` (+ `route-runs`) — `active`, `price-history` (GET, OPERATOR, ?customerId → last-given price per product), `@Get/:id`, `:id/tracking`, `@Patch :id/status|items|urgent`, `:id/reopen`, `sweep-pending`, `force-consolidate/:customerId`, bulk/single delete; RouteRun stop complete.
+- **service** — `findAll`, `findOne`, `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`, **`getCustomerPriceHistory(tenantId,customerId)`** (returns `Record<productId,{lastPrice,listPriceAtTime}>` — only lines with `originalPrice` set; used to pre-fill the price field when scanning). side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED (per-batch lines use `computeLineSubtotal` for boxed proration + `discount: 0` for overrides — never `qty*unitPrice`); delivery-mutation tracking.
 
 ### `routes/` & `route-optimization/`
 
@@ -118,7 +118,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `invoices/`
 
 - **controller** `invoices` — from-order(+/partial), payments (export/record/get/list), per-id: get/patch, send, send-email, send-reminder, void, revert-to-draft, unvoid, reopen, duplicate, pdf, write-off, payments CRUD, price-adjustment, delete.
-- **service** — `findAll`, `findOne`, `createFromOrder`, `update`, `send`, `sendEmail`, `sendReminder`, `void`, `revertToDraft`, `unvoid`, `reopen`, `duplicate`, `generatePDF`, `recordPayment`, `voidPayment`, `priceAdjustment`, `writeOff`. **`buildInvoiceItemData`** prorates boxed lines; **`recomputeOrderFromInvoices(orderId)`** = backward sync (rebuilds the linked order's items+totals from the SUM of all non-void invoices), called from `update`/`priceAdjustment` when `orderId` set (inverse of `reconcileOrderDraftInvoice`). side effects: Invoice/InvoiceItem/InvoicePayment + linked Order writes; Transaction ledger; email; PDF; journal entries.
+- **service** — `findAll`, `findOne`, `createFromOrder`, `update`, `send`, `sendEmail`, `sendReminder`, `void`, `revertToDraft`, `unvoid`, `reopen`, `duplicate`, `generatePDF`, `recordPayment`, `voidPayment`, `priceAdjustment`, `writeOff`. **`buildInvoiceItemData`** prorates boxed lines and carries an order line's override as net `unitPrice` + `originalPrice` (strikethrough) with **`discount: 0`** — it must NOT re-derive a discount from `originalPrice` or the override double-counts (every consumer bills `computeLineSubtotal(unitPrice) − discount`); **`recomputeOrderFromInvoices(orderId)`** = backward sync (rebuilds the linked order's items+totals from the SUM of all non-void invoices), called from `update`/`priceAdjustment` when `orderId` set (inverse of `reconcileOrderDraftInvoice`). side effects: Invoice/InvoiceItem/InvoicePayment + linked Order writes; Transaction ledger; email; PDF; journal entries.
 
 ### `credit-notes/`
 
