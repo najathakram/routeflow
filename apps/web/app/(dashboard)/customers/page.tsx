@@ -622,7 +622,7 @@ export default function CustomersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsAddOpen(true)}>Add Customer</Button>
+            <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
           </div>
         }
       />

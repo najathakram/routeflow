@@ -38,22 +38,22 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
   today.setHours(0, 0, 0, 0);
 
   if (status === "PAID") {
-    return <span className="text-xs font-semibold text-green-600">Paid</span>;
+    return <span className="text-xs font-semibold text-success">Paid</span>;
   }
   if (status === "VOID") {
-    return <span className="text-xs font-semibold text-gray-400">Void</span>;
+    return <span className="text-xs font-semibold text-navy/40">Void</span>;
   }
   if (status === "WRITTEN_OFF") {
-    return <span className="text-xs font-semibold text-stone-500">Written Off</span>;
+    return <span className="text-xs font-semibold text-navy/50">Written Off</span>;
   }
   if (status === "DRAFT") {
-    return <span className="text-xs font-semibold text-gray-500">Draft</span>;
+    return <span className="text-xs font-semibold text-navy/50">Draft</span>;
   }
   if (status === "SENT") {
-    return <span className="text-xs font-semibold text-blue-600">Sent</span>;
+    return <span className="text-xs font-semibold text-brand-600">Sent</span>;
   }
   if (status === "VIEWED") {
-    return <span className="text-xs font-semibold text-purple-600">Viewed</span>;
+    return <span className="text-xs font-semibold text-brand-700">Viewed</span>;
   }
 
   // For PARTIAL / OVERDUE — compute days to add context
@@ -67,13 +67,13 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
       const overdueDays = Math.abs(diffDays);
       if (status === "PARTIAL") {
         return (
-          <span className="text-xs font-semibold text-orange-500">
+          <span className="text-xs font-semibold text-danger">
             Partial · Overdue{overdueDays > 0 ? ` by ${overdueDays}d` : ""}
           </span>
         );
       }
       return (
-        <span className="text-xs font-semibold text-red-600">
+        <span className="text-xs font-semibold text-danger">
           Overdue{overdueDays > 0 ? ` by ${overdueDays} day${overdueDays !== 1 ? "s" : ""}` : ""}
         </span>
       );
@@ -81,19 +81,19 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
 
     if (diffDays === 0) {
       if (status === "PARTIAL") {
-        return <span className="text-xs font-semibold text-yellow-600">Partial · Due Today</span>;
+        return <span className="text-xs font-semibold text-warning">Partial · Due Today</span>;
       }
-      return <span className="text-xs font-semibold text-orange-500">Due Today</span>;
+      return <span className="text-xs font-semibold text-warning">Due Today</span>;
     }
 
     if (status === "PARTIAL") {
       return (
-        <span className="text-xs font-semibold text-yellow-600">Partial · Due in {diffDays}d</span>
+        <span className="text-xs font-semibold text-warning">Partial · Due in {diffDays}d</span>
       );
     }
 
     return (
-      <span className="text-xs font-semibold text-blue-600">
+      <span className="text-xs font-semibold text-brand-600">
         Due in {diffDays} day{diffDays !== 1 ? "s" : ""}
       </span>
     );
@@ -107,13 +107,13 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
     OVERDUE: "Overdue",
   };
   const colors: Record<string, string> = {
-    SENT: "text-blue-600",
-    VIEWED: "text-purple-600",
-    PARTIAL: "text-yellow-600",
-    OVERDUE: "text-red-600",
+    SENT: "text-brand-600",
+    VIEWED: "text-brand-700",
+    PARTIAL: "text-warning",
+    OVERDUE: "text-danger",
   };
   return (
-    <span className={cn("text-xs font-semibold", colors[status] ?? "text-gray-500")}>
+    <span className={cn("text-xs font-semibold", colors[status] ?? "text-navy/50")}>
       {labels[status] ?? status}
     </span>
   );
@@ -593,7 +593,7 @@ export default function InvoicesPage() {
                       description="Create an invoice to bill a customer and start tracking receivables."
                       action={
                         <Button size="sm" onClick={() => router.push("/invoices/new")}>
-                          New invoice
+                          New Invoice
                         </Button>
                       }
                     />
@@ -674,7 +674,7 @@ export default function InvoicesPage() {
                                 });
                               }
                             }}
-                            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-red-700 disabled:opacity-50 transition-colors"
+                            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
                           >
                             {deleteInvoice.isPending ? (
                               <Loader2 className="h-3 w-3 animate-spin" />

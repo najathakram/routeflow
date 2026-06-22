@@ -1592,10 +1592,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             <span className="text-xs text-navy/70 line-through">
                               {fmt(Number(item.originalPrice))}
                             </span>
-                            <span className="font-medium text-emerald-600">
+                            <span className="font-medium text-success">
                               {fmt(Number(item.unitPrice))}
                             </span>
-                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                            <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
                               Special price
                             </span>
                           </div>
@@ -1604,10 +1604,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             <span className="text-xs text-navy/70 line-through">
                               {fmt(Number(item.originalPrice))}
                             </span>
-                            <span className="font-medium text-amber-600">
+                            <span className="font-medium text-warning">
                               {fmt(Number(item.unitPrice))}
                             </span>
-                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
                               Discounted price
                             </span>
                           </div>

@@ -825,7 +825,7 @@ export default function SuppliersPage() {
                 setShowModal(true);
               }}
             >
-              Add Supplier
+              New Supplier
             </Button>
           </div>
         }

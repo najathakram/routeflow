@@ -664,15 +664,15 @@ export default function DashboardPage() {
             <span className="text-sm font-medium text-navy/70 hidden sm:block">Quick create</span>
             <Button href="/orders?action=new" size="sm" variant="secondary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Order
+              New Order
             </Button>
             <Button href="/routes/create" size="sm" variant="secondary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Route
+              New Route
             </Button>
             <Button href="/invoices/new" size="sm" variant="secondary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Invoice
+              New Invoice
             </Button>
           </div>
         </div>

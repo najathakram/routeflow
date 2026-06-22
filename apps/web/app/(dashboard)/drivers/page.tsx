@@ -274,7 +274,7 @@ export default function DriversPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsAddOpen(true)}>Add Driver</Button>
+            <Button onClick={() => setIsAddOpen(true)}>New Driver</Button>
           </div>
         }
       />

@@ -440,7 +440,7 @@ export default function RoutesPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => router.push("/routes/create")}>Create Route</Button>
+            <Button onClick={() => router.push("/routes/create")}>New Route</Button>
           </div>
         }
       />
