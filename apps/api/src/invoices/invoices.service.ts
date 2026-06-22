@@ -388,7 +388,13 @@ export class InvoicesService {
       boxes: split.boxes,
       pieces: split.pieces,
       unitPrice,
-      discount: li.originalPrice != null ? Number(li.originalPrice) - unitPrice : 0,
+      // `unitPrice` is ALREADY the net (post-override) price — the order stores the
+      // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
+      // Re-deriving a `discount` from originalPrice here double-counts it: every
+      // invoice consumer computes `computeLineSubtotal(unitPrice) - discount`, so a
+      // line of {unitPrice 90, discount 10} would bill 80 for a 100→90 override.
+      // Keep discount 0; the savings is shown via `originalPrice` (mirrors the order).
+      discount: 0,
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,

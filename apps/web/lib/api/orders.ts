@@ -178,6 +178,27 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
   });
 }
 
+export interface CustomerPriceHistory {
+  [productId: string]: {
+    lastPrice: number;
+    listPriceAtTime: number;
+  };
+}
+
+/**
+ * Per-product last-given price for a customer. Fetched once when the customer
+ * is selected so scanning is instant — no per-item API call needed.
+ */
+export function useCustomerPriceHistory(customerId: string | null | undefined) {
+  return useQuery<CustomerPriceHistory>({
+    queryKey: ["orders", "price-history", customerId],
+    queryFn: () =>
+      apiClient.get("/orders/price-history", { params: { customerId } }).then((r) => r.data),
+    enabled: !!customerId,
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateOrderStatus() {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({

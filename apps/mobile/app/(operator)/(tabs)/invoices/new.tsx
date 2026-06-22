@@ -19,7 +19,7 @@ import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
-import { computeLineSubtotal, effectiveQty } from "../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/pricing";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { BarcodeFab } from "../../../../components/BarcodeFab";
 
@@ -74,11 +74,19 @@ type Product = {
   parent?: { id: string; name: string } | null;
 };
 
-type LineState = { qty: number; boxes?: number; pieces?: number };
+// `unitPrice` is an optional one-time price override (the "discounted price").
+// When unset, the catalog price is used. For boxed products it is the BOX price,
+// matching the catalog price unit; computeLineSubtotal prorates pieces.
+type LineState = { qty: number; boxes?: number; pieces?: number; unitPrice?: number };
 
 function displayName(p: Product): string {
   if (p.parent?.name) return `${p.parent.name} - ${p.name}`;
   return p.name;
+}
+
+/** The effective per-unit price for a line: the override, else the catalog price. */
+function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
+  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
 }
 
 export default function NewInvoiceScreen() {
@@ -287,6 +295,19 @@ function InvoiceComposer({
       return next;
     });
 
+  // Set (or clear) a one-time price override for a line. Empty/invalid clears it.
+  const setLinePrice = (id: string, raw: string) =>
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      const parsed = parseFloat(raw);
+      if (raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0) {
+        const { unitPrice: _drop, ...rest } = prev;
+        return { ...m, [id]: rest };
+      }
+      return { ...m, [id]: { ...prev, unitPrice: parsed } };
+    });
+
   const handleScanned = async (code: string) => {
     const trimmed = code.trim();
     if (!trimmed) return;
@@ -343,14 +364,14 @@ function InvoiceComposer({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: toNumber(p.pricePerUnit),
+        unitPrice: effectiveUnitPrice(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
         unitsPerBox: p.unitsPerBox ?? null,
       });
     }
-    return { total, totalItems };
+    return { total: roundMoney(total), totalItems };
   }, [items, productById]);
 
   const createMut = useCreateInvoice();
@@ -380,7 +401,7 @@ function InvoiceComposer({
         description: displayName(p),
         productId,
         qty,
-        unitPrice: toNumber(p.pricePerUnit),
+        unitPrice: effectiveUnitPrice(line, p),
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
       });
@@ -560,6 +581,7 @@ function InvoiceComposer({
         onRemove={removeLine}
         onIncrement={addOne}
         onDecrement={removeOne}
+        onSetPrice={setLinePrice}
       />
 
       <BarcodeFab onScanned={handleScanned} hidden={reviewOpen} />
@@ -578,6 +600,7 @@ function ReviewSheet({
   onRemove,
   onIncrement,
   onDecrement,
+  onSetPrice,
 }: {
   open: boolean;
   onClose: () => void;
@@ -587,6 +610,7 @@ function ReviewSheet({
   onRemove: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
+  onSetPrice: (id: string, raw: string) => void;
 }) {
   const rows = useMemo(() => {
     const list: { id: string; product: Product; line: LineState }[] = [];
@@ -623,8 +647,11 @@ function ReviewSheet({
                 const upb = Number(product.unitsPerBox ?? 0);
                 const isBoxed = upb > 1;
                 const qty = effectiveQty(line, product.unitsPerBox);
+                const catalogPrice = toNumber(product.pricePerUnit);
+                const effUnit = effectiveUnitPrice(line, product);
+                const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
                 const lineTotal = computeLineSubtotal({
-                  unitPrice: toNumber(product.pricePerUnit),
+                  unitPrice: effUnit,
                   qty,
                   boxes: line.boxes ?? null,
                   pieces: line.pieces ?? null,
@@ -637,10 +664,22 @@ function ReviewSheet({
                   <View key={id} style={styles.reviewRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.reviewName}>{displayName(product)}</Text>
-                      <Text style={styles.reviewMeta}>
-                        ${toNumber(product.pricePerUnit).toFixed(2)}
-                        {isBoxed ? ` / box of ${upb}` : product.unit ? ` / ${product.unit}` : ""}
-                      </Text>
+                      <View style={styles.priceEditRow}>
+                        <Text style={styles.priceCurrency}>$</Text>
+                        <TextInput
+                          value={line.unitPrice != null ? String(line.unitPrice) : ""}
+                          onChangeText={(t) => onSetPrice(id, t)}
+                          placeholder={catalogPrice.toFixed(2)}
+                          keyboardType="decimal-pad"
+                          style={[styles.priceInput, isOverridden && styles.priceInputActive]}
+                        />
+                        <Text style={styles.reviewMeta}>
+                          {isBoxed ? `/ box of ${upb}` : product.unit ? `/ ${product.unit}` : ""}
+                        </Text>
+                        {isOverridden ? (
+                          <Text style={styles.priceWas}>was ${catalogPrice.toFixed(2)}</Text>
+                        ) : null}
+                      </View>
                     </View>
                     <View style={styles.stepper}>
                       <Pressable style={styles.stepBtn} onPress={() => onDecrement(id)}>
@@ -926,6 +965,27 @@ const styles = StyleSheet.create({
   },
   reviewName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   reviewMeta: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  priceEditRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  priceCurrency: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  priceInput: {
+    minWidth: 56,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: ios.separator,
+    borderRadius: 8,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  priceInputActive: { borderColor: ios.brand, color: ios.brand },
+  priceWas: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textDecorationLine: "line-through",
+  },
   reviewTotal: {
     fontSize: 14,
     fontFamily: "Inter_700Bold",

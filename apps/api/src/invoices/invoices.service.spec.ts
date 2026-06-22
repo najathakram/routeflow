@@ -295,6 +295,46 @@ describe("InvoicesService", () => {
         data: { invoicedQty: 8 },
       });
     });
+
+    // Regression: a one-time price override (list 100 → net 90) is stored on the
+    // order line as unitPrice=90 + originalPrice=100. The invoice line must NOT
+    // re-encode that as a discount, or the override double-counts to bill 80×qty.
+    it("does NOT double-count a price override: net unitPrice, discount 0, subtotal = net×qty", async () => {
+      const overridden = {
+        id: "o2",
+        customerId: "c1",
+        subtotal: 450,
+        tax: 0,
+        lineItems: [
+          {
+            id: "li2",
+            productId: "p2",
+            qty: 5,
+            deliveredQty: 5,
+            unitPrice: 90, // net (post-override) price
+            originalPrice: 100, // list price — drives the strikethrough only
+            priceType: "DISCOUNTED",
+            product: { name: "P2", unitsPerBox: 0 },
+            status: "PENDING",
+          },
+        ],
+      };
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d2", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue(overridden);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d2", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li2" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+
+      await service.reconcileOrderDraftInvoice("o2", { basis: "order" });
+
+      const line = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(line.unitPrice).toBe(90);
+      expect(line.discount).toBe(0); // not 10 — the override is already in unitPrice
+      expect(line.originalPrice).toBe(100);
+      expect(line.subtotal).toBeCloseTo(450, 2); // 90 × 5, NOT (90 − 10) × 5 = 400
+    });
   });
 
   // ─── send(): invoice-after-delivery gating ─────────────────────────────────
