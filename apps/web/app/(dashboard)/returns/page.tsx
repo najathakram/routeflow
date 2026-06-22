@@ -201,7 +201,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="New Return / RMA"
+      title="Create Return"
       description="Create a return request for a delivered order."
       footer={
         <>
@@ -217,7 +217,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
       <form id="create-return-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         {/* Customer */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+          <label className="mb-1.5 block text-sm font-medium text-navy">
             Customer<span className="text-danger ml-0.5">*</span>
           </label>
           <input
@@ -247,7 +247,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
         {/* Order */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+          <label className="mb-1.5 block text-sm font-medium text-navy">
             Order<span className="text-danger ml-0.5">*</span>
           </label>
           <select
@@ -273,7 +273,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
         {/* Return Reason */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+          <label className="mb-1.5 block text-sm font-medium text-navy">
             Return Reason<span className="text-danger ml-0.5">*</span>
           </label>
           <select
@@ -297,7 +297,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
         {/* Items to return */}
         {returnItems.length > 0 && (
           <div>
-            <label className="mb-2 block text-sm font-medium text-navy/80">Items to Return</label>
+            <label className="mb-2 block text-sm font-medium text-navy">Items to Return</label>
             {errors.items && <p className="mb-2 text-xs text-danger">{errors.items}</p>}
             <div className="overflow-hidden rounded-lg border border-surface-border">
               <table className="w-full text-sm">
@@ -356,7 +356,7 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
 
         {/* General notes */}
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+          <label className="mb-1.5 block text-sm font-medium text-navy">
             Notes <span className="text-navy/70 font-normal">(optional)</span>
           </label>
           <textarea

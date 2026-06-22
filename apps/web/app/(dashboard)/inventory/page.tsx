@@ -993,9 +993,7 @@ function CreatePOModal({
           {/* Line items */}
           <div>
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs font-medium text-navy uppercase tracking-wide">
-                Line Items
-              </label>
+              <label className="text-sm font-semibold text-navy">Line Items</label>
               <button
                 type="button"
                 onClick={addLine}

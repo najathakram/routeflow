@@ -328,7 +328,7 @@ export default function OrdersPage() {
             >
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>Create Order</Button>
+            <Button onClick={() => setIsCreateOpen(true)}>New Order</Button>
           </div>
         }
       />

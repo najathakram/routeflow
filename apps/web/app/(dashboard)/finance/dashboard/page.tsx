@@ -160,7 +160,7 @@ export default function FinanceDashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-navy">Finance Overview</h1>
+          <h1 className="text-xl font-bold text-navy">Finance Overview</h1>
           <p className="text-sm text-navy/70">Your business financial summary</p>
         </div>
         <button

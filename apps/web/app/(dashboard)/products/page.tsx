@@ -1558,7 +1558,7 @@ export default function ProductsPage() {
                     className={cn(
                       "min-w-[30px] rounded px-2 py-1.5 text-xs font-medium transition-colors",
                       page === item
-                        ? "bg-navy text-white"
+                        ? "bg-brand-500 text-white"
                         : "text-navy/70 hover:bg-surface-raised hover:text-navy",
                     )}
                   >
