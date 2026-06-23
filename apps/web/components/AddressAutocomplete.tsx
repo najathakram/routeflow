@@ -3,6 +3,7 @@
 import * as React from "react";
 import { MapPin, Loader2 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { apiClient } from "../lib/api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,8 +33,6 @@ export interface AddressAutocompleteProps {
   className?: string;
   disabled?: boolean;
 }
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -67,11 +66,9 @@ export function AddressAutocomplete({
 
     setIsLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/public/places/autocomplete?q=${encodeURIComponent(q.trim())}`,
+      const { data } = await apiClient.get<{ suggestions?: Suggestion[] }>(
+        `/public/places/autocomplete?q=${encodeURIComponent(q.trim())}`,
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { suggestions?: Suggestion[] };
       const list = data.suggestions ?? [];
       setSuggestions(list);
       setIsOpen(list.length > 0);
@@ -101,11 +98,9 @@ export function AddressAutocomplete({
       // Fallback: fetch details separately
       onChange(s.mainText || s.display);
       try {
-        const res = await fetch(
-          `${API_BASE}/public/places/details?placeId=${encodeURIComponent(s.placeId)}`,
+        const { data: parts } = await apiClient.get<AddressParts>(
+          `/public/places/details?placeId=${encodeURIComponent(s.placeId)}`,
         );
-        if (!res.ok) throw new Error(`${res.status}`);
-        const parts = (await res.json()) as AddressParts;
         if (parts.street) onChange(parts.street);
         onAddressSelect(parts);
       } catch (err) {

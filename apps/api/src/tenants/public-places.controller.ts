@@ -45,7 +45,8 @@ export class PublicPlacesController {
 
   @Get("autocomplete")
   @ApiOperation({ summary: "Autocomplete a US address via Google Places API (New)" })
-  @Throttle({ default: { ttl: 1_000, limit: 10 } }) // 10 req/sec per IP
+  @Throttle({ default: { ttl: 1_000, limit: 10 } })
+  @UseGuards(JwtAuthGuard)
   async autocomplete(@Query("q") q: string) {
     if (!q || q.trim().length < 3) {
       return { suggestions: [] };
@@ -111,6 +112,7 @@ export class PublicPlacesController {
   @Get("details")
   @ApiOperation({ summary: "Get address components for a place ID" })
   @Throttle({ default: { ttl: 1_000, limit: 10 } })
+  @UseGuards(JwtAuthGuard)
   async details(@Query("placeId") placeId: string) {
     if (!placeId) throw new BadRequestException("placeId is required");
     if (!this.apiKey) {
