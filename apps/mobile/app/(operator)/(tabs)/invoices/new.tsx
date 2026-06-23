@@ -79,6 +79,17 @@ type Product = {
 // matching the catalog price unit; computeLineSubtotal prorates pieces.
 type LineState = { qty: number; boxes?: number; pieces?: number; unitPrice?: number };
 
+/**
+ * An ad-hoc, non-catalog ("unlisted") invoice line: free-text description +
+ * required price; never boxed. Serialised as `{ description, qty, unitPrice }`
+ * (no productId). Keyed locally by a synthetic id.
+ */
+type UnlistedLine = { id: string; name: string; unitPrice: number; qty: number };
+
+function newLocalId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function displayName(p: Product): string {
   if (p.parent?.name) return `${p.parent.name} - ${p.name}`;
   return p.name;
@@ -227,6 +238,9 @@ function InvoiceComposer({
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<Record<string, LineState>>({});
+  // Ad-hoc lines not in the catalog (no productId on submit).
+  const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
+  const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
   // Scroll the just-scanned product row into view as the operator scans.
   const scrollRef = useRef<ScrollView>(null);
@@ -320,6 +334,21 @@ function InvoiceComposer({
       return { ...m, [id]: { ...prev, unitPrice: parsed } };
     });
 
+  // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
+  const addUnlisted = (name: string, unitPrice: number, qty: number) =>
+    setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
+  const updateUnlistedQty = (id: string, qty: number) =>
+    setUnlisted((u) =>
+      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
+    );
+  const updateUnlistedPrice = (id: string, raw: string) =>
+    setUnlisted((u) => {
+      const parsed = parseFloat(raw);
+      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
+    });
+  const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
+
   const handleScanned = async (code: string) => {
     const trimmed = code.trim();
     if (!trimmed) return;
@@ -385,8 +414,14 @@ function InvoiceComposer({
         unitsPerBox: p.unitsPerBox ?? null,
       });
     }
+    // Unlisted lines: never boxed, simple unitPrice × qty.
+    for (const u of unlisted) {
+      if (u.qty <= 0) continue;
+      totalItems += u.qty;
+      total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
+    }
     return { total: roundMoney(total), totalItems };
-  }, [items, productById]);
+  }, [items, productById, unlisted]);
 
   const createMut = useCreateInvoice();
   const canSave = totalItems > 0 && !createMut.isPending;
@@ -419,6 +454,11 @@ function InvoiceComposer({
         ...(line.boxes != null ? { boxes: line.boxes } : {}),
         ...(line.pieces != null ? { pieces: line.pieces } : {}),
       });
+    }
+    // Unlisted lines → `{ description, qty, unitPrice }` (no productId).
+    for (const u of unlisted) {
+      if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
+      payload.push({ description: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
     }
     createMut.mutate(
       { customerId, items: payload, dueDate, terms, send },
@@ -524,6 +564,19 @@ function InvoiceComposer({
           </View>
         )}
 
+        {/* Add an ad-hoc line that isn't in the catalog (free-text + price). */}
+        <View style={styles.unlistedCtaWrap}>
+          <Pressable style={styles.unlistedCta} onPress={() => setUnlistedModalOpen(true)}>
+            <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
+            <Text style={styles.unlistedCtaText}>Add unlisted item</Text>
+          </Pressable>
+          {unlisted.length > 0 ? (
+            <Text style={styles.unlistedCount}>
+              {unlisted.length} custom line{unlisted.length === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </View>
+
         {/* Terms + due date — always shown so the operator can tweak before save */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Payment terms</Text>
@@ -600,14 +653,32 @@ function InvoiceComposer({
         onClose={() => setReviewOpen(false)}
         items={items}
         productById={productById}
+        unlisted={unlisted}
         total={total}
         onRemove={removeLine}
         onIncrement={addOne}
         onDecrement={removeOne}
         onSetPrice={setLinePrice}
+        onChangeUnlistedQty={updateUnlistedQty}
+        onChangeUnlistedPrice={updateUnlistedPrice}
+        onRemoveUnlisted={removeUnlisted}
+        onAddUnlisted={() => {
+          setReviewOpen(false);
+          setUnlistedModalOpen(true);
+        }}
       />
 
-      <BarcodeFab onScanned={handleScanned} hidden={reviewOpen} />
+      <UnlistedItemModal
+        open={unlistedModalOpen}
+        onClose={() => setUnlistedModalOpen(false)}
+        onAdd={(name, unitPrice, qty) => {
+          addUnlisted(name, unitPrice, qty);
+          setUnlistedModalOpen(false);
+          showToast(`Added ${name}`);
+        }}
+      />
+
+      <BarcodeFab onScanned={handleScanned} hidden={reviewOpen || unlistedModalOpen} />
     </>
   );
 }
@@ -619,21 +690,31 @@ function ReviewSheet({
   onClose,
   items,
   productById,
+  unlisted,
   total,
   onRemove,
   onIncrement,
   onDecrement,
   onSetPrice,
+  onChangeUnlistedQty,
+  onChangeUnlistedPrice,
+  onRemoveUnlisted,
+  onAddUnlisted,
 }: {
   open: boolean;
   onClose: () => void;
   items: Record<string, LineState>;
   productById: Map<string, Product>;
+  unlisted: UnlistedLine[];
   total: number;
   onRemove: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onSetPrice: (id: string, raw: string) => void;
+  onChangeUnlistedQty: (id: string, n: number) => void;
+  onChangeUnlistedPrice: (id: string, raw: string) => void;
+  onRemoveUnlisted: (id: string) => void;
+  onAddUnlisted: () => void;
 }) {
   const rows = useMemo(() => {
     const list: { id: string; product: Product; line: LineState }[] = [];
@@ -661,7 +742,7 @@ function ReviewSheet({
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }}
           >
-            {rows.length === 0 ? (
+            {rows.length === 0 && unlisted.length === 0 ? (
               <View style={[styles.center, { paddingVertical: 40 }]}>
                 <Text style={styles.emptyText}>No items.</Text>
               </View>
@@ -721,9 +802,154 @@ function ReviewSheet({
                 );
               })
             )}
+            {unlisted.map((u) => {
+              const lineTotal = computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
+              return (
+                <View key={u.id} style={styles.reviewRow}>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.unlistedTagRow}>
+                      <Text style={styles.reviewName} numberOfLines={1}>
+                        {u.name || "Unlisted item"}
+                      </Text>
+                      <View style={styles.customTag}>
+                        <Text style={styles.customTagText}>Custom</Text>
+                      </View>
+                    </View>
+                    <View style={styles.priceEditRow}>
+                      <Text style={styles.priceCurrency}>$</Text>
+                      <TextInput
+                        value={u.unitPrice ? String(u.unitPrice) : ""}
+                        onChangeText={(t) => onChangeUnlistedPrice(u.id, t)}
+                        placeholder="0.00"
+                        keyboardType="decimal-pad"
+                        style={[styles.priceInput, styles.priceInputActive]}
+                      />
+                      <Text style={styles.reviewMeta}>/ unit</Text>
+                    </View>
+                  </View>
+                  <View style={styles.stepper}>
+                    <Pressable
+                      style={styles.stepBtn}
+                      onPress={() => onChangeUnlistedQty(u.id, Math.max(0, u.qty - 1))}
+                    >
+                      <Text style={styles.stepBtnText}>−</Text>
+                    </Pressable>
+                    <Text style={styles.stepQty}>{u.qty}</Text>
+                    <Pressable
+                      style={styles.stepBtn}
+                      onPress={() => onChangeUnlistedQty(u.id, u.qty + 1)}
+                    >
+                      <Text style={styles.stepBtnText}>+</Text>
+                    </Pressable>
+                  </View>
+                  <Text style={styles.reviewTotal}>${lineTotal.toFixed(2)}</Text>
+                  <Pressable
+                    onPress={() => onRemoveUnlisted(u.id)}
+                    hitSlop={6}
+                    style={styles.removeBtn}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
+                  </Pressable>
+                </View>
+              );
+            })}
+            <Pressable style={styles.reviewAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
+              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+              <Text style={styles.reviewAddUnlistedText}>Add unlisted item</Text>
+            </Pressable>
           </ScrollView>
         </View>
       </View>
+    </Modal>
+  );
+}
+
+// ─── Unlisted item modal ─────────────────────────────────────────────────────
+
+function UnlistedItemModal({
+  open,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (name: string, unitPrice: number, qty: number) => void;
+}) {
+  const [name, setName] = useState("");
+  const [priceText, setPriceText] = useState("");
+  const [qtyText, setQtyText] = useState("1");
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setPriceText("");
+      setQtyText("1");
+    }
+  }, [open]);
+
+  const price = parseFloat(priceText);
+  const qty = parseInt(qtyText || "0", 10);
+  const valid = name.trim() !== "" && Number.isFinite(price) && price > 0 && qty > 0;
+
+  return (
+    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
+        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.unlistedTitle}>Add unlisted item</Text>
+          <Text style={styles.unlistedSub}>A one-off line that isn't in your catalog.</Text>
+
+          <Text style={styles.unlistedFieldLabel}>Item description</Text>
+          <TextInput
+            style={styles.unlistedInput}
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Delivery surcharge"
+            placeholderTextColor={ios.label3}
+            autoFocus
+          />
+
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.unlistedFieldLabel}>Unit price</Text>
+              <TextInput
+                style={styles.unlistedInput}
+                value={priceText}
+                onChangeText={setPriceText}
+                placeholder="0.00"
+                placeholderTextColor={ios.label3}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+              />
+            </View>
+            <View style={{ width: 96 }}>
+              <Text style={styles.unlistedFieldLabel}>Qty</Text>
+              <TextInput
+                style={styles.unlistedInput}
+                value={qtyText}
+                onChangeText={(t) => setQtyText(t.replace(/[^0-9]/g, ""))}
+                placeholder="1"
+                placeholderTextColor={ios.label3}
+                keyboardType="number-pad"
+                maxLength={5}
+                selectTextOnFocus
+              />
+            </View>
+          </View>
+
+          <View style={styles.modalBtns}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
+              onPress={() => valid && onAdd(name.trim(), price, qty)}
+              disabled={!valid}
+            >
+              <Text style={styles.modalBtnFillText}>Add to invoice</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
     </Modal>
   );
 }
@@ -1025,4 +1251,109 @@ const styles = StyleSheet.create({
     backgroundColor: ios.system.redWash,
     borderRadius: 8,
   },
+
+  // ── Unlisted item CTA + tag + modal ───────────────────────────────────────
+  unlistedCtaWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginTop: 16,
+  },
+  unlistedCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  unlistedCtaText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  unlistedCount: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  customTag: {
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  customTagText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.2,
+  },
+  reviewAddUnlisted: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    paddingVertical: 12,
+  },
+  reviewAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  unlistedOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  unlistedCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+  },
+  unlistedTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+    marginBottom: 2,
+  },
+  unlistedSub: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 12,
+  },
+  unlistedFieldLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  unlistedInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    marginBottom: 12,
+  },
+  modalBtns: { flexDirection: "row", gap: 10, marginTop: 4 },
+  modalBtnGhost: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.fill3,
+  },
+  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  modalBtnFill: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.brand,
+  },
+  modalBtnDisabled: { opacity: 0.4 },
+  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
 });

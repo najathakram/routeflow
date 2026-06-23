@@ -271,7 +271,8 @@ export class AnalyticsService {
     });
     const map: Record<string, number> = {};
     for (const i of items) {
-      const cat = i.product.category ?? "Uncategorized";
+      // Unlisted lines have no product → bucket under Uncategorized.
+      const cat = i.product?.category ?? "Uncategorized";
       map[cat] = (map[cat] ?? 0) + Number(i.subtotal);
     }
     return Object.entries(map)

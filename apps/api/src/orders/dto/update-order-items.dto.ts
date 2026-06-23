@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -22,9 +23,26 @@ class UpdateOrderItemDto {
   @IsString()
   productId?: string;
 
+  /**
+   * Free-text label for an unlisted (non-catalog) line. Present on a new
+   * id-less item when `productId` is omitted, or to rename an existing
+   * unlisted line. Catalog items leave this unset.
+   */
   @IsOptional()
-  @IsIn(["CANCEL", "UPDATE"])
-  action?: "CANCEL" | "UPDATE";
+  @IsString()
+  @MaxLength(256)
+  @StripHtml()
+  name?: string;
+
+  /**
+   * - CANCEL → strike the line off (status CANCELLED, qty 0) but keep the row.
+   * - DELETE → hard-remove the line entirely (only when it has not been invoiced
+   *   or delivered; otherwise the service falls back to CANCEL to preserve history).
+   * - UPDATE → edit qty/price/etc.
+   */
+  @IsOptional()
+  @IsIn(["CANCEL", "DELETE", "UPDATE"])
+  action?: "CANCEL" | "DELETE" | "UPDATE";
 
   @IsOptional()
   @IsNumber()

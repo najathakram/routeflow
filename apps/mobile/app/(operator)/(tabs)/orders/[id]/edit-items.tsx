@@ -15,7 +15,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
-import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
+import {
+  useCustomerPriceHistory,
+  useUpdateOrderItems,
+  type UpdateOrderItemInput,
+} from "../../../../../lib/api/orders";
 import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
@@ -42,6 +46,23 @@ type DraftItem = {
   overrideReason?: string;
 };
 
+/**
+ * A new ad-hoc (unlisted) line being added in this edit session. Serialised as
+ * `{ name, qty, unitPrice }` on save (no productId; never boxed). Existing
+ * unlisted lines on the order are NOT loaded here (the replace-all edit only
+ * re-sends catalog lines + any newly added unlisted lines).
+ */
+type UnlistedDraft = {
+  id: string;
+  name: string;
+  unitPrice: number;
+  qty: number;
+};
+
+function newLocalId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
   if (typeof v === "string") {
@@ -64,6 +85,10 @@ export default function EditOrderItemsScreen() {
   const canSplitBoxes = userRole !== "CUSTOMER";
 
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
+  // New + existing ad-hoc lines (productId null). Kept separate from `draft`
+  // (which is keyed by productId) and re-sent on save so they aren't dropped.
+  const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
+  const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
@@ -72,7 +97,19 @@ export default function EditOrderItemsScreen() {
   useEffect(() => {
     if (!order) return;
     const next: Record<string, DraftItem> = {};
+    const nextUnlisted: UnlistedDraft[] = [];
     for (const li of order.lineItems) {
+      // Unlisted line (no productId): carry it through the replace-all save so
+      // it isn't lost. `name` holds the free-text label.
+      if (!li.productId) {
+        nextUnlisted.push({
+          id: li.id ?? newLocalId(),
+          name: li.name ?? "Unlisted item",
+          unitPrice: toNumber(li.unitPrice),
+          qty: toNumber(li.qty),
+        });
+        continue;
+      }
       const product = (li as any).product ?? {};
       const catalogPrice = toNumber(product.pricePerUnit ?? li.unitPrice);
       const upbRaw = product.unitsPerBox;
@@ -91,6 +128,7 @@ export default function EditOrderItemsScreen() {
       };
     }
     setDraft(next);
+    setUnlisted(nextUnlisted);
   }, [order]);
 
   // Live total mirrors the server math (BOX-price proration when split).
@@ -107,12 +145,33 @@ export default function EditOrderItemsScreen() {
         unitsPerBox: it.unitsPerBox ?? null,
       });
     }
+    for (const u of unlisted) {
+      if (u.qty <= 0) continue;
+      t += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
+    }
     return t;
-  }, [draft]);
+  }, [draft, unlisted]);
 
-  const itemCount = Object.values(draft).filter(
-    (it) => effectiveQty(it, it.unitsPerBox) > 0,
-  ).length;
+  const itemCount =
+    Object.values(draft).filter((it) => effectiveQty(it, it.unitsPerBox) > 0).length +
+    unlisted.filter((u) => u.qty > 0).length;
+
+  // ── Unlisted line helpers ──────────────────────────────────────────────────
+  const addUnlisted = (name: string, unitPrice: number, qty: number) =>
+    setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
+  const setUnlistedQty = (id: string, qty: number) =>
+    setUnlisted((u) =>
+      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
+    );
+  const setUnlistedPrice = (id: string, raw: string) =>
+    setUnlisted((u) => {
+      const parsed = parseFloat(raw);
+      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
+    });
+  const setUnlistedName = (id: string, name: string) =>
+    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, name } : x)));
+  const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   // ── Per-line helpers ──────────────────────────────────────────────────────
 
@@ -183,8 +242,8 @@ export default function EditOrderItemsScreen() {
 
   const save = () => {
     if (!id) return;
-    const items = Object.values(draft)
-      .map((i) => {
+    const catalogItems: UpdateOrderItemInput[] = Object.values(draft)
+      .map((i): UpdateOrderItemInput => {
         const qty = effectiveQty(i, i.unitsPerBox);
         const base: {
           productId: string;
@@ -205,7 +264,12 @@ export default function EditOrderItemsScreen() {
         if (i.overrideReason) base.overrideReason = i.overrideReason;
         return base;
       })
-      .filter((i) => i.qty > 0);
+      .filter((i) => "productId" in i && i.qty > 0);
+    // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
+    const unlistedItems: UpdateOrderItemInput[] = unlisted
+      .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
+      .map((u) => ({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice }));
+    const items = [...catalogItems, ...unlistedItems];
     if (items.length === 0) {
       showToast("Orders can't be saved empty.");
       return;
@@ -265,6 +329,16 @@ export default function EditOrderItemsScreen() {
           onCancel={() => setPriceEditItem(null)}
         />
       ) : null}
+
+      <UnlistedItemModal
+        open={unlistedModalOpen}
+        onClose={() => setUnlistedModalOpen(false)}
+        onAdd={(name, unitPrice, qty) => {
+          addUnlisted(name, unitPrice, qty);
+          setUnlistedModalOpen(false);
+          showToast(`Added ${name}`);
+        }}
+      />
 
       {showPicker ? (
         <ProductPicker
@@ -356,7 +430,7 @@ export default function EditOrderItemsScreen() {
         <>
           <ScrollView showsVerticalScrollIndicator={false}>
             <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-              {Object.values(draft).length === 0 ? (
+              {Object.values(draft).length === 0 && unlisted.length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
               ) : (
                 Object.values(draft).map((it) => (
@@ -384,9 +458,28 @@ export default function EditOrderItemsScreen() {
                   />
                 ))
               )}
+              {unlisted.map((u) => (
+                <UnlistedDraftCard
+                  key={u.id}
+                  line={u}
+                  onSetName={(name) => setUnlistedName(u.id, name)}
+                  onSetPrice={(raw) => setUnlistedPrice(u.id, raw)}
+                  onSetQty={(n) => setUnlistedQty(u.id, n)}
+                  onRemove={() =>
+                    confirm("Remove item?", u.name || "Unlisted item", () => removeUnlisted(u.id), {
+                      confirmText: "Remove",
+                      destructive: true,
+                    })
+                  }
+                />
+              ))}
               <Pressable style={styles.addBtn} onPress={() => setShowPicker(true)}>
                 <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
                 <Text style={styles.addBtnText}>Add product</Text>
+              </Pressable>
+              <Pressable style={styles.addUnlistedBtn} onPress={() => setUnlistedModalOpen(true)}>
+                <Ionicons name="create-outline" size={18} color={ios.brand} />
+                <Text style={styles.addBtnText}>Add unlisted item</Text>
               </Pressable>
             </View>
             <View style={{ height: 16 }} />
@@ -746,6 +839,169 @@ function PriceOverrideModal({
   );
 }
 
+// ─── Unlisted draft card ─────────────────────────────────────────────────────
+
+/**
+ * Card for an ad-hoc (unlisted) line: editable free-text name + price + qty,
+ * a "Custom" tag, and no product image (it isn't in the catalog).
+ */
+function UnlistedDraftCard({
+  line,
+  onSetName,
+  onSetPrice,
+  onSetQty,
+  onRemove,
+}: {
+  line: UnlistedDraft;
+  onSetName: (name: string) => void;
+  onSetPrice: (raw: string) => void;
+  onSetQty: (n: number) => void;
+  onRemove: () => void;
+}) {
+  const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.unlistedTagRow}>
+            <View style={styles.customTag}>
+              <Text style={styles.customTagText}>Custom</Text>
+            </View>
+          </View>
+          <TextInput
+            style={styles.unlistedNameInput}
+            value={line.name}
+            onChangeText={onSetName}
+            placeholder="Item name"
+            placeholderTextColor={ios.label3}
+          />
+          <View style={styles.unlistedPriceRow}>
+            <Text style={styles.cardMeta}>$</Text>
+            <TextInput
+              style={styles.unlistedPriceInput}
+              value={line.unitPrice ? String(line.unitPrice) : ""}
+              onChangeText={onSetPrice}
+              placeholder="0.00"
+              placeholderTextColor={ios.label3}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+            />
+            <Text style={styles.cardMeta}>/ unit</Text>
+          </View>
+        </View>
+        <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
+      </View>
+
+      <StepperRow
+        label="Qty"
+        value={line.qty}
+        onChange={onSetQty}
+        onIncrement={() => onSetQty(line.qty + 1)}
+        onDecrement={() => onSetQty(Math.max(0, line.qty - 1))}
+      />
+
+      <View style={styles.cardActions}>
+        <View style={{ flex: 1 }} />
+        <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
+          <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ─── Unlisted item modal ─────────────────────────────────────────────────────
+
+function UnlistedItemModal({
+  open,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (name: string, unitPrice: number, qty: number) => void;
+}) {
+  const [name, setName] = useState("");
+  const [priceText, setPriceText] = useState("");
+  const [qtyText, setQtyText] = useState("1");
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setPriceText("");
+      setQtyText("1");
+    }
+  }, [open]);
+
+  const price = parseFloat(priceText);
+  const qty = parseInt(qtyText || "0", 10);
+  const valid = name.trim() !== "" && Number.isFinite(price) && price > 0 && qty > 0;
+
+  if (!open) return null;
+
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalOverlay} onPress={onClose}>
+        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.modalTitle}>Add unlisted item</Text>
+          <Text style={styles.modalSub}>A one-off line that isn't in your catalog.</Text>
+
+          <Text style={styles.modalFieldLabel}>Item name</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Delivery surcharge"
+            placeholderTextColor={ios.label3}
+            autoFocus
+          />
+
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalFieldLabel}>Unit price</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={priceText}
+                onChangeText={setPriceText}
+                placeholder="0.00"
+                placeholderTextColor={ios.label3}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+              />
+            </View>
+            <View style={{ width: 96 }}>
+              <Text style={styles.modalFieldLabel}>Qty</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={qtyText}
+                onChangeText={(t) => setQtyText(sanitizeIntInput(t))}
+                placeholder="1"
+                placeholderTextColor={ios.label3}
+                keyboardType="number-pad"
+                maxLength={5}
+                selectTextOnFocus
+              />
+            </View>
+          </View>
+
+          <View style={styles.modalBtns}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
+              onPress={() => valid && onAdd(name.trim(), price, qty)}
+              disabled={!valid}
+            >
+              <Text style={styles.modalBtnFillText}>Add to order</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // ─── Product picker ──────────────────────────────────────────────────────────
 
 function ProductPicker({
@@ -951,6 +1207,53 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   addBtnText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  addUnlistedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    paddingVertical: 14,
+  },
+
+  // ── Unlisted draft card ──────────────────────────────────────────────────
+  unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
+  customTag: {
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  customTagText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.2,
+  },
+  unlistedNameInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+  },
+  unlistedPriceRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
+  unlistedPriceInput: {
+    minWidth: 70,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.brand,
+    borderRadius: 8,
+    textAlign: "right",
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    fontVariant: ["tabular-nums"],
+  },
 
   // ── Product picker rows ───────────────────────────────────────────────────
   pickRow: {

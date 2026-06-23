@@ -46,6 +46,10 @@ export interface Invoice {
   total: number;
   dueDate?: string;
   notes?: string;
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
   createdAt: string;
@@ -59,7 +63,12 @@ interface PaginatedResponse<T> {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useMyInvoices(params?: { status?: string; page?: number }) {
+export function useMyInvoices(params?: {
+  status?: string;
+  page?: number;
+  /** When true, return ONLY invoices that have a tracking number (shipments list). */
+  shipped?: boolean;
+}) {
   return useQuery<PaginatedResponse<Invoice>>({
     queryKey: ["invoices", "mine", params],
     queryFn: () => apiClient.get("/invoices", { params }).then((r) => r.data),
@@ -102,6 +111,7 @@ export function useRecordInvoicePayment() {
 }
 
 export interface CreateInvoiceItem {
+  /** Free-text label. For an unlisted (non-catalog) line, omit productId. */
   description: string;
   productId?: string;
   qty: number;
@@ -117,6 +127,9 @@ export interface CreateInvoiceDto {
   dueDate?: string;
   terms?: string;
   notes?: string;
+  /** Carrier shipment tracking recorded at creation time. */
+  shippingCarrier?: string;
+  shippingTrackingNumber?: string;
   send?: boolean;
 }
 
@@ -190,6 +203,29 @@ export function useUpdateInvoice() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/**
+ * Record / update / clear the carrier shipment on any non-void invoice. Empty
+ * strings clear the carrier + tracking number. Mirrors web's
+ * `useUpdateInvoiceShipment`.
+ */
+export function useUpdateInvoiceShipment() {
+  const qc = useQueryClient();
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string; shippingCarrier?: string; shippingTrackingNumber?: string }
+  >({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/invoices/${id}/shipment`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
     },
   });
 }

@@ -281,16 +281,26 @@ export class BuyerController {
       if (activeOrder) {
         // Merge: combine existing items with new cart items
         const mergedMap = new Map<string, number>();
+        // Preserve any operator-added unlisted (catalog-free) lines through the merge.
+        const unlisted: Array<{ name?: string; qty: number; unitPrice: number }> = [];
         for (const li of activeOrder.lineItems) {
+          if (!li.productId) {
+            unlisted.push({
+              name: li.name ?? undefined,
+              qty: Number(li.qty),
+              unitPrice: Number(li.unitPrice),
+            });
+            continue;
+          }
           mergedMap.set(li.productId, Number(li.qty));
         }
         for (const item of dto.items) {
           mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
         }
-        const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
-          productId,
-          qty,
-        }));
+        const mergedItems = [
+          ...Array.from(mergedMap.entries()).map(([productId, qty]) => ({ productId, qty })),
+          ...unlisted,
+        ];
 
         // Update existing order items with merged list
         await this.ordersService.updateOrderItems(

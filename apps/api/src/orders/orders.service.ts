@@ -30,6 +30,7 @@ import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { getTierPrice } from "../utils/pricing";
@@ -179,7 +180,10 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         originalPrice: { not: null },
       },
-      orderBy: { createdAt: "desc" },
+      // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
+      // line's price on any order and saving makes it the customer's remembered
+      // price for future orders (and re-editing later supersedes it).
+      orderBy: { updatedAt: "desc" },
       distinct: ["productId"],
       select: {
         productId: true,
@@ -282,9 +286,34 @@ export class OrdersService implements OnApplicationBootstrap {
         notes: string | null;
       }
     >();
+    // Unlisted (catalog-free) loser lines can't be keyed by product — each is
+    // appended to the winner as its own new line.
+    const unlistedNewItems: Array<{
+      name: string | null;
+      qty: number;
+      unitPrice: number;
+      priceType: PriceType;
+      originalPrice: number | null;
+      overrideReason: string | null;
+      overriddenBy: string | null;
+      notes: string | null;
+    }> = [];
 
     for (const loser of losers) {
       for (const li of loser.lineItems) {
+        if (!li.productId) {
+          unlistedNewItems.push({
+            name: li.name,
+            qty: Number(li.qty),
+            unitPrice: Number(li.unitPrice),
+            priceType: li.priceType,
+            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+            overrideReason: li.overrideReason,
+            overriddenBy: li.overriddenBy,
+            notes: li.notes,
+          });
+          continue;
+        }
         if (winnerProductIds.has(li.productId)) {
           qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
         } else {
@@ -309,8 +338,9 @@ export class OrdersService implements OnApplicationBootstrap {
     const taxRate = await this.getTaxRate();
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Bump qty on winner items that overlap with losers.
+      // 1. Bump qty on winner items that overlap with losers (catalog lines only).
       for (const li of winner.lineItems) {
+        if (!li.productId) continue;
         const addQty = qtyAdditions.get(li.productId) ?? 0;
         if (addQty <= 0) continue;
         const newQty = Number(li.qty) + addQty;
@@ -327,6 +357,26 @@ export class OrdersService implements OnApplicationBootstrap {
           data: {
             orderId: winner.id,
             productId,
+            qty: data.qty,
+            unitPrice: data.unitPrice,
+            subtotal: roundMoney(data.qty * data.unitPrice),
+            status: ItemStatus.PENDING,
+            priceType: data.priceType,
+            originalPrice: data.originalPrice,
+            overrideReason: data.overrideReason,
+            overriddenBy: data.overriddenBy,
+            notes: data.notes,
+          },
+        });
+      }
+
+      // 2b. Append unlisted loser lines as fresh winner lines.
+      for (const data of unlistedNewItems) {
+        await tx.orderItem.create({
+          data: {
+            orderId: winner.id,
+            productId: null,
+            name: data.name,
             qty: data.qty,
             unitPrice: data.unitPrice,
             subtotal: roundMoney(data.qty * data.unitPrice),
@@ -403,9 +453,33 @@ export class OrdersService implements OnApplicationBootstrap {
         notes: string | null;
       }
     >();
+    // Unlisted (catalog-free) loser lines are appended as their own winner lines.
+    const unlistedNewItems: Array<{
+      name: string | null;
+      qty: number;
+      unitPrice: number;
+      priceType: PriceType;
+      originalPrice: number | null;
+      overrideReason: string | null;
+      overriddenBy: string | null;
+      notes: string | null;
+    }> = [];
 
     for (const loser of losers) {
       for (const li of loser.lineItems) {
+        if (!li.productId) {
+          unlistedNewItems.push({
+            name: li.name,
+            qty: Number(li.qty),
+            unitPrice: Number(li.unitPrice),
+            priceType: li.priceType,
+            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+            overrideReason: li.overrideReason,
+            overriddenBy: li.overriddenBy,
+            notes: li.notes,
+          });
+          continue;
+        }
         if (winnerProductIds.has(li.productId)) {
           qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
         } else {
@@ -431,6 +505,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     await this.prisma.tenantTransaction(async (tx) => {
       for (const li of winner.lineItems) {
+        if (!li.productId) continue;
         const addQty = qtyAdditions.get(li.productId) ?? 0;
         if (addQty <= 0) continue;
         const newQty = Number(li.qty) + addQty;
@@ -444,6 +519,24 @@ export class OrdersService implements OnApplicationBootstrap {
           data: {
             orderId: winner.id,
             productId,
+            qty: data.qty,
+            unitPrice: data.unitPrice,
+            subtotal: roundMoney(data.qty * data.unitPrice),
+            status: ItemStatus.PENDING,
+            priceType: data.priceType,
+            originalPrice: data.originalPrice,
+            overrideReason: data.overrideReason,
+            overriddenBy: data.overriddenBy,
+            notes: data.notes,
+          },
+        });
+      }
+      for (const data of unlistedNewItems) {
+        await tx.orderItem.create({
+          data: {
+            orderId: winner.id,
+            productId: null,
+            name: data.name,
             qty: data.qty,
             unitPrice: data.unitPrice,
             subtotal: roundMoney(data.qty * data.unitPrice),
@@ -599,22 +692,30 @@ export class OrdersService implements OnApplicationBootstrap {
       .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customerRecord?.pricingTier ?? 1;
 
+    // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
+    // lines that reference a real product.
+    const catalogIds = items.map((i) => i.productId).filter(Boolean) as string[];
     const products =
-      items.length > 0
+      catalogIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: items.map((i) => i.productId) } },
+            where: { id: { in: catalogIds } },
           })
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // Unlisted lines are operator/driver-only corrections — never accept them from a buyer.
+    if (user.role === UserRole.CUSTOMER && items.some((i) => !i.productId)) {
+      throw new BadRequestException("Custom (unlisted) items can only be added by staff");
+    }
+
     // Load any per-product tier overrides for this customer
     const customerPrices =
-      items.length > 0
+      catalogIds.length > 0
         ? await this.prisma.forTenant().customerPrice.findMany({
             where: {
               customerId,
-              productId: { in: items.map((i) => i.productId) },
+              productId: { in: catalogIds },
             },
           })
         : [];
@@ -631,7 +732,7 @@ export class OrdersService implements OnApplicationBootstrap {
         currentPrice: number;
       }> = [];
       for (const item of items) {
-        if (item.unitPrice == null) continue;
+        if (item.unitPrice == null || !item.productId) continue;
         const product = productMap.get(item.productId);
         if (!product) continue; // missing product caught in lineItemsData.map below
         const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
@@ -655,6 +756,31 @@ export class OrdersService implements OnApplicationBootstrap {
 
     let subtotal = 0;
     const lineItemsData = items.map((item) => {
+      // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
+      // free-text name + unitPrice; we store it as a MANUAL-priced line with no
+      // stock impact and no boxed proration.
+      if (!item.productId) {
+        const name = (item.name ?? "").trim();
+        if (!name) throw new BadRequestException("Unlisted item requires a name");
+        if (item.unitPrice == null)
+          throw new BadRequestException("Unlisted item requires a unit price");
+        const itemSubtotal = computeLineSubtotal({ unitPrice: item.unitPrice, qty: item.qty });
+        subtotal += itemSubtotal;
+        return {
+          productId: null as string | null,
+          name,
+          qty: item.qty,
+          boxes: null as number | null,
+          pieces: null as number | null,
+          unitPrice: item.unitPrice,
+          priceType: PriceType.MANUAL,
+          originalPrice: null as number | null,
+          subtotal: itemSubtotal,
+          notes: (item as any).itemNote || item.notes,
+          tenantId: this.prisma.getTenantId(),
+        };
+      }
+
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
@@ -709,7 +835,8 @@ export class OrdersService implements OnApplicationBootstrap {
       });
       subtotal += itemSubtotal;
       return {
-        productId: item.productId,
+        productId: item.productId as string | null,
+        name: null as string | null,
         qty,
         boxes,
         pieces,
@@ -741,8 +868,12 @@ export class OrdersService implements OnApplicationBootstrap {
           // Operators (and TENANT_ADMINs) are explicitly allowed to oversell — they may
           // be backordering or knowingly placing an order that will be fulfilled when
           // restocked. The customer / driver paths still hard-block on insufficient stock.
-          if (!isDraft && lineItemsData.length > 0) {
-            const productIds = lineItemsData.map((li) => li.productId);
+          // Unlisted lines have no productId — they never touch stock.
+          const stockLines = lineItemsData.filter(
+            (li): li is typeof li & { productId: string } => !!li.productId,
+          );
+          if (!isDraft && stockLines.length > 0) {
+            const productIds = stockLines.map((li) => li.productId);
             // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
             await tx.$executeRaw`
               SELECT id FROM "Product"
@@ -756,7 +887,7 @@ export class OrdersService implements OnApplicationBootstrap {
             });
 
             const oosItems: string[] = [];
-            for (const li of lineItemsData) {
+            for (const li of stockLines) {
               const p = lockedProducts.find((lp) => lp.id === li.productId);
               if (p && Number(p.currentStock) < li.qty) {
                 oosItems.push(
@@ -778,7 +909,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // Decrement stock atomically while the lock is held. For operator-initiated
             // overselling, this lets currentStock go negative — the inventory page can
             // surface that and the operator can reconcile after restock.
-            for (const li of lineItemsData) {
+            for (const li of stockLines) {
               await tx.product.update({
                 where: { id: li.productId },
                 data: { currentStock: { decrement: li.qty } },
@@ -1131,7 +1262,29 @@ export class OrdersService implements OnApplicationBootstrap {
 
       await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
       for (const item of dto.items) {
-        if (!item.productId || !item.qty) continue;
+        if (!item.productId) {
+          // Preserve an operator-added unlisted (catalog-free) line carried
+          // through a buyer's cart merge. Buyers can't author these themselves.
+          const name = (item.name ?? "").trim();
+          const qty = item.qty ?? 0;
+          if (!name || qty <= 0 || item.unitPrice == null) continue;
+          const unitPrice = Number(item.unitPrice);
+          await this.prisma.forTenant().orderItem.create({
+            data: {
+              orderId,
+              productId: null,
+              name,
+              qty,
+              unitPrice,
+              subtotal: computeLineSubtotal({ unitPrice, qty }),
+              status: "PENDING",
+              notes: item.notes,
+              priceType: PriceType.MANUAL,
+            },
+          });
+          continue;
+        }
+        if (!item.qty) continue;
         const product = productMap.get(item.productId);
         if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
         const unitPrice = Number(product.pricePerUnit);
@@ -1169,7 +1322,28 @@ export class OrdersService implements OnApplicationBootstrap {
 
         await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
         for (const item of dto.items) {
-          if (!item.productId) continue;
+          if (!item.productId) {
+            // Unlisted (ad-hoc) line — free-text name + unitPrice, no product
+            // lookup, no stock, no boxed proration. Stored as MANUAL-priced.
+            const name = (item.name ?? "").trim();
+            const qty = item.qty ?? 0;
+            if (!name || qty <= 0 || item.unitPrice == null) continue;
+            const unitPrice = Number(item.unitPrice);
+            await this.prisma.forTenant().orderItem.create({
+              data: {
+                orderId,
+                productId: null,
+                name,
+                qty,
+                unitPrice,
+                subtotal: computeLineSubtotal({ unitPrice, qty }),
+                status: "PENDING",
+                notes: item.notes,
+                priceType: PriceType.MANUAL,
+              },
+            });
+            continue;
+          }
           const product = productMap.get(item.productId);
           if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
@@ -1223,6 +1397,27 @@ export class OrdersService implements OnApplicationBootstrap {
       } else {
         // Individual item updates (dispatcher workflow with explicit item IDs)
         for (const item of dto.items) {
+          // New unlisted item (no id, no productId, has name + unitPrice).
+          if (!item.id && !item.productId && (item.name ?? "").trim() && (item.qty ?? 0) > 0) {
+            if (item.unitPrice == null) continue;
+            const name = (item.name as string).trim();
+            const qty = item.qty as number;
+            const unitPrice = Number(item.unitPrice);
+            await this.prisma.forTenant().orderItem.create({
+              data: {
+                orderId,
+                productId: null,
+                name,
+                qty,
+                unitPrice,
+                subtotal: computeLineSubtotal({ unitPrice, qty }),
+                status: "PENDING",
+                notes: item.notes,
+                priceType: PriceType.MANUAL,
+              },
+            });
+            continue;
+          }
           // New item (no id, has productId; qty OR boxes/pieces)
           const newQtyHint = item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
           if (!item.id && item.productId && newQtyHint > 0) {
@@ -1267,7 +1462,23 @@ export class OrdersService implements OnApplicationBootstrap {
             });
             continue;
           }
-          if (item.action === "CANCEL") {
+          if (item.action === "DELETE" && item.id) {
+            // Hard-remove a line added by mistake. Only safe when nothing
+            // downstream references it — a billed or delivered line is struck
+            // off instead so invoice/delivery history stays intact.
+            const li = order.lineItems.find((l) => l.id === item.id);
+            const hasDeliveries = await this.prisma
+              .forTenant()
+              .deliveryMutation.count({ where: { orderItemId: item.id } });
+            if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
+              await this.prisma.forTenant().orderItem.update({
+                where: { id: item.id },
+                data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+              });
+            } else {
+              await this.prisma.forTenant().orderItem.delete({ where: { id: item.id } });
+            }
+          } else if (item.action === "CANCEL") {
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
               data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
@@ -1314,8 +1525,9 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!li) continue;
             // For qty math we need the product's unitsPerBox even if it's not
             // changing — the caller may have edited boxes/pieces only.
+            const isUnlisted = !li.productId;
             let unitsPerBox: number | null = null;
-            if (item.boxes != null || item.pieces != null) {
+            if ((item.boxes != null || item.pieces != null) && li.productId) {
               const product = await this.prisma.forTenant().product.findUnique({
                 where: { id: li.productId },
                 select: { unitsPerBox: true },
@@ -1344,16 +1556,22 @@ export class OrdersService implements OnApplicationBootstrap {
                 qty,
                 ...(item.boxes != null ? { boxes: item.boxes } : {}),
                 ...(item.pieces != null ? { pieces: item.pieces } : {}),
+                // Allow renaming an unlisted line; catalog lines keep name null.
+                ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
                 unitPrice,
                 subtotal,
                 ...(item.notes !== undefined ? { notes: item.notes } : {}),
                 ...(isManualOverride
-                  ? {
-                      priceType: PriceType.MANUAL,
-                      originalPrice: existingUnitPrice,
-                      overrideReason: item.overrideReason ?? null,
-                      overriddenBy: user?.sub ?? null,
-                    }
+                  ? isUnlisted
+                    ? // Unlisted lines have no catalog "list price" — a price change is
+                      // just the new MANUAL price, no struck-through original.
+                      { priceType: PriceType.MANUAL, originalPrice: null }
+                    : {
+                        priceType: PriceType.MANUAL,
+                        originalPrice: existingUnitPrice,
+                        overrideReason: item.overrideReason ?? null,
+                        overriddenBy: user?.sub ?? null,
+                      }
                   : {}),
               },
             });
@@ -1421,6 +1639,38 @@ export class OrdersService implements OnApplicationBootstrap {
         transaction: true,
       },
     });
+  }
+
+  /**
+   * Set or clear carrier shipment tracking on an order (carrier shipped, not
+   * route-delivered). Sending blank values clears the field; clearing the
+   * tracking number also clears `shippedAt`. The values are mirrored onto the
+   * order's non-void invoices so the shipment shows on the customer's invoice.
+   */
+  async updateShipment(orderId: string, dto: UpdateShipmentDto, _user?: JwtPayload) {
+    const order = await this.prisma
+      .forTenant()
+      .order.findUnique({ where: { id: orderId }, select: { id: true, shippedAt: true } });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const carrier = dto.shippingCarrier?.trim() || null;
+    const tracking = dto.shippingTrackingNumber?.trim() || null;
+    // Stamp shippedAt the first time a tracking number is set; clear it when the
+    // tracking number is removed; otherwise keep the original ship date.
+    const shippedAt = tracking ? (order.shippedAt ?? new Date()) : null;
+
+    const updated = await this.prisma.forTenant().order.update({
+      where: { id: orderId },
+      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    });
+
+    // Mirror onto every non-void invoice generated from this order.
+    await this.prisma.forTenant().invoice.updateMany({
+      where: { orderId, status: { not: "VOID" } },
+      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    });
+
+    return updated;
   }
 
   async toggleUrgent(id: string, user: JwtPayload, urgent?: boolean) {
@@ -1798,7 +2048,8 @@ export class OrdersService implements OnApplicationBootstrap {
           where: { id: delivery.orderItemId },
           select: { productId: true },
         });
-        if (item) deliveredProductIds.push(item.productId);
+        // Unlisted lines have no product → nothing to low-stock check.
+        if (item?.productId) deliveredProductIds.push(item.productId);
       }
     }
     if (deliveredProductIds.length > 0) {

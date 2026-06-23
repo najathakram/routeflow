@@ -126,13 +126,16 @@ function CreateReturnModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
     setReturnItems(
-      order.lineItems.map((item) => ({
-        productId: item.productId,
-        productName: item.product?.name ?? item.productId,
-        orderedQty: Number(item.qty),
-        qty: "",
-        notes: "",
-      })),
+      order.lineItems
+        // Unlisted (ad-hoc) lines have no productId and can't be returned.
+        .filter((item): item is typeof item & { productId: string } => !!item.productId)
+        .map((item) => ({
+          productId: item.productId,
+          productName: item.product?.name ?? item.name ?? item.productId,
+          orderedQty: Number(item.qty),
+          qty: "",
+          notes: "",
+        })),
     );
   }, [orderId]);
 

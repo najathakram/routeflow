@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Plus,
+  Pencil,
   Trash2,
   Search,
   Loader2,
@@ -1671,13 +1672,27 @@ export default function NewInvoicePage() {
                   </div>
                 ))}
 
-                <button
-                  onClick={addItem}
-                  className="mt-2 flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Line Item
-                </button>
+                <div className="mt-2 flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Line Item
+                  </button>
+                  {/* Unlisted/custom line: invoice lines accept a free-text description
+                      with no productId, so this just adds a blank row to type into. */}
+                  <button
+                    type="button"
+                    onClick={addItem}
+                    title="Add a free-text line that isn't in your product catalog"
+                    className="flex items-center gap-1.5 text-sm font-medium text-navy/70 hover:text-navy transition-colors"
+                  >
+                    <Pencil className="h-4 w-4" />
+                    Add custom item
+                  </button>
+                </div>
               </div>
 
               {/* Totals section */}

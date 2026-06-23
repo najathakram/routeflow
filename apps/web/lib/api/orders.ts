@@ -25,13 +25,20 @@ export interface Order {
   requestedDeliveryDate?: string;
   templateId?: string;
   lineItems: OrderItem[];
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   createdAt: string;
 }
 
 export interface OrderItem {
   id: string;
-  productId: string;
+  /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */
+  productId: string | null;
   product?: { id: string; name: string; unit: string; unitsPerBox?: number | null };
+  /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
+  name?: string | null;
   qty: number;
   unitPrice: number;
   originalPrice?: number | null;
@@ -85,6 +92,27 @@ export function useOrder(id: string) {
   });
 }
 
+/**
+ * A line item on order creation. EITHER a catalog line (`productId` set,
+ * `unitPrice`/`boxes`/`pieces` optional) OR an unlisted ad-hoc line
+ * (`name` set, NO `productId`, `unitPrice` REQUIRED, no boxes/pieces).
+ */
+export type CreateOrderItem =
+  | {
+      productId: string;
+      qty: number;
+      boxes?: number;
+      pieces?: number;
+      unitPrice?: number;
+      notes?: string;
+    }
+  | {
+      name: string;
+      qty: number;
+      unitPrice: number;
+      notes?: string;
+    };
+
 export function useCreateOrder() {
   const qc = useQueryClient();
   return useMutation<
@@ -92,14 +120,7 @@ export function useCreateOrder() {
     Error,
     {
       customerId: string;
-      items: {
-        productId: string;
-        qty: number;
-        boxes?: number;
-        pieces?: number;
-        unitPrice?: number;
-        notes?: string;
-      }[];
+      items: CreateOrderItem[];
       notes?: string;
       urgent?: boolean;
       requestedDeliveryDate?: string;
@@ -213,8 +234,10 @@ export function useUpdateOrderStatus() {
 
 export interface ItemUpdate {
   id?: string; // omitted for new items — the API creates them
-  productId?: string; // for new items
-  action?: "CANCEL" | "UPDATE";
+  productId?: string; // for new catalog items
+  /** Free-text label for a new unlisted line (no id, no productId) or a rename of one. */
+  name?: string;
+  action?: "CANCEL" | "DELETE" | "UPDATE";
   qty?: number;
   substituteProductId?: string;
   notes?: string;
@@ -278,5 +301,25 @@ export function useBulkDeleteOrders() {
   return useMutation<{ deleted: number; errors: string[] }, Error, string[]>({
     mutationFn: (ids) => apiClient.delete("/orders/bulk", { data: { ids } }).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+  });
+}
+
+/**
+ * Record / update / clear the carrier shipment on an order.
+ * Empty strings clear the carrier + tracking number. Returns the updated order.
+ */
+export function useUpdateOrderShipment() {
+  const qc = useQueryClient();
+  return useMutation<
+    Order,
+    Error,
+    { id: string; shippingCarrier?: string; shippingTrackingNumber?: string }
+  >({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/orders/${id}/shipment`, dto).then((r) => r.data),
+    onSuccess: (data) => {
+      qc.setQueryData(["orders", data.id], data);
+      qc.invalidateQueries({ queryKey: ["orders"] });
+    },
   });
 }

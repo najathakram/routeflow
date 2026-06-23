@@ -1,5 +1,6 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
+import { carrierLabel, getTrackingUrl } from "../common/shipping";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -17,6 +18,8 @@ export interface InvoicePdfData {
   total: DecimalLike;
   notes?: string | null;
   terms?: string | null;
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
   customer: {
     businessName: string;
     contactName?: string | null;
@@ -497,6 +500,32 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   </View>
                 </View>
               ))}
+            </View>
+          ) : null}
+
+          {/* Shipment tracking (carrier delivery) */}
+          {invoice.shippingTrackingNumber ? (
+            <View style={{ marginTop: 16 }}>
+              <Text style={styles.sectionTitle}>Shipment</Text>
+              <Text style={{ fontSize: 9, color: GRAY }}>
+                {invoice.shippingCarrier
+                  ? `Shipped via ${carrierLabel(invoice.shippingCarrier)} — `
+                  : ""}
+                Tracking: {invoice.shippingTrackingNumber}
+              </Text>
+              {getTrackingUrl(invoice.shippingCarrier, invoice.shippingTrackingNumber) ? (
+                <Link
+                  src={
+                    getTrackingUrl(
+                      invoice.shippingCarrier,
+                      invoice.shippingTrackingNumber,
+                    ) as string
+                  }
+                  style={{ fontSize: 9, color: "#2563eb" }}
+                >
+                  Track this package
+                </Link>
+              ) : null}
             </View>
           ) : null}
 

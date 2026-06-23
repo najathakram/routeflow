@@ -141,8 +141,11 @@ export class BuyerDashboardService {
       }),
     ]);
 
-    // Enrich frequently ordered products with product details + buyer pricing
-    const freqProductIds = frequentlyOrderedRaw.map((f) => f.productId);
+    // Enrich frequently ordered products with product details + buyer pricing.
+    // Unlisted (catalog-free) lines have no productId and can't be reordered.
+    const freqProductIds = frequentlyOrderedRaw
+      .map((f) => f.productId)
+      .filter((id): id is string => !!id);
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
@@ -162,10 +165,10 @@ export class BuyerDashboardService {
 
     const frequentlyOrdered = await Promise.all(
       frequentlyOrderedRaw
-        .filter((f) => freqProductMap.has(f.productId))
+        .filter((f) => !!f.productId && freqProductMap.has(f.productId))
         .map(async (f) => {
-          const product = freqProductMap.get(f.productId)!;
-          const effectiveTier = cpMap.get(f.productId) ?? defaultTier;
+          const product = freqProductMap.get(f.productId!)!;
+          const effectiveTier = cpMap.get(f.productId!) ?? defaultTier;
           const thumbnailUrl =
             product.imageKeys.length > 0
               ? await this.storage.presignedUrl(product.imageKeys[0])
@@ -249,7 +252,9 @@ export class BuyerDashboardService {
               select: { productId: true },
               distinct: ["productId"],
             })
-          ).map((oi) => oi.productId);
+          )
+            .map((oi) => oi.productId)
+            .filter((id): id is string => !!id);
 
     // Get categories the buyer has ordered from
     const orderedCategories =

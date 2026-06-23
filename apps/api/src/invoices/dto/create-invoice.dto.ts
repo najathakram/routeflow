@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -42,6 +43,9 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() terms?: string;
   @IsOptional() @IsString() referenceNumber?: string;
   @IsOptional() @IsString() subject?: string;
+  /** Carrier shipment tracking — set when goods ship via a carrier, not our route. */
+  @IsOptional() @IsString() @MaxLength(64) shippingCarrier?: string;
+  @IsOptional() @IsString() @MaxLength(128) shippingTrackingNumber?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
 }

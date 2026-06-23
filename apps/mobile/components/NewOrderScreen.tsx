@@ -20,6 +20,7 @@ import {
   useCreateOrderAsDriver,
   useActiveOrderForCustomer,
   useCustomerPriceHistory,
+  type CreateOrderItemInput,
   type CustomerPriceHistory,
 } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
@@ -92,6 +93,22 @@ type LineState = {
    */
   unitPrice?: number;
 };
+
+/**
+ * An ad-hoc, non-catalog ("unlisted") line. Has a free-text name + a required
+ * per-piece price; never boxed. Serialised as `{ name, qty, unitPrice }` on
+ * submit (no productId). Keyed locally by a synthetic id.
+ */
+type UnlistedLine = {
+  id: string;
+  name: string;
+  unitPrice: number;
+  qty: number;
+};
+
+function newLocalId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 /** Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone. */
 function displayName(p: Product): string {
@@ -298,6 +315,9 @@ function ProductPickView({
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, LineState>>({});
+  // Ad-hoc lines not in the product catalog (productId null on submit).
+  const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
+  const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Fetched once when customer is confirmed — price pre-fill is instant during scanning.
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
   const [scanOpen, setScanOpen] = useState(false);
@@ -468,6 +488,21 @@ function ProductPickView({
       return { ...m, [id]: { ...prev, unitPrice: parsed } };
     });
 
+  // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
+  const addUnlisted = (name: string, unitPrice: number, qty: number) =>
+    setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
+  const updateUnlistedQty = (id: string, qty: number) =>
+    setUnlisted((u) =>
+      qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
+    );
+  const updateUnlistedPrice = (id: string, raw: string) =>
+    setUnlisted((u) => {
+      const parsed = parseFloat(raw);
+      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
+    });
+  const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
+
   const handleBarcodeScanned = async (code: string) => {
     setScanOpen(false);
     const trimmed = code.trim();
@@ -562,8 +597,14 @@ function ProductPickView({
         unitsPerBox: p.unitsPerBox ?? null,
       });
     }
+    // Unlisted lines: never boxed, simple unitPrice × qty.
+    for (const u of unlisted) {
+      if (u.qty <= 0) continue;
+      totalItems += u.qty;
+      total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
+    }
     return { total: roundMoney(total), totalItems };
-  }, [items, productById]);
+  }, [items, productById, unlisted]);
 
   const inc = (id: string) => addOne(id);
   const dec = (id: string) => removeOne(id);
@@ -576,8 +617,8 @@ function ProductPickView({
 
   /** Submit with a specific (or no) merge choice. */
   const submitOrder = (mergeChoice?: "merge" | "separate") => {
-    const itemPayload = Object.entries(items)
-      .map(([productId, line]) => {
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+      .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
         // Only send a unitPrice override when the operator actually discounted
@@ -597,7 +638,12 @@ function ProductPickView({
         }
         return base;
       })
-      .filter((it) => it.qty > 0);
+      .filter((it) => "productId" in it && it.qty > 0);
+    // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
+    const unlistedPayload: CreateOrderItemInput[] = unlisted
+      .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
+      .map((u) => ({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice }));
+    const itemPayload = [...catalogPayload, ...unlistedPayload];
 
     createOrder.mutate(
       {
@@ -731,6 +777,19 @@ function ProductPickView({
             ))}
           </View>
         ) : null}
+
+        {/* Add an ad-hoc line that isn't in the catalog (free-text name + price). */}
+        <View style={styles.unlistedCtaWrap}>
+          <Pressable style={styles.unlistedCta} onPress={() => setUnlistedModalOpen(true)}>
+            <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
+            <Text style={styles.unlistedCtaText}>Add unlisted item</Text>
+          </Pressable>
+          {unlisted.length > 0 ? (
+            <Text style={styles.unlistedCount}>
+              {unlisted.length} custom line{unlisted.length === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </View>
 
         {productsLoading ? (
           <View style={styles.center}>
@@ -926,6 +985,7 @@ function ProductPickView({
         items={items}
         productById={productById}
         priceHistory={priceHistory}
+        unlisted={unlisted}
         total={total}
         totalItems={totalItems}
         saving={createOrder.isPending}
@@ -937,9 +997,23 @@ function ProductPickView({
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
+        onChangeUnlistedQty={updateUnlistedQty}
+        onChangeUnlistedPrice={updateUnlistedPrice}
+        onRemoveUnlisted={removeUnlisted}
+        onAddUnlisted={() => setUnlistedModalOpen(true)}
         onSave={() => {
           setCartOpen(false);
           onSave();
+        }}
+      />
+
+      <UnlistedItemModal
+        open={unlistedModalOpen}
+        onClose={() => setUnlistedModalOpen(false)}
+        onAdd={(name, unitPrice, qty) => {
+          addUnlisted(name, unitPrice, qty);
+          setUnlistedModalOpen(false);
+          showToast(`Added ${name}`);
         }}
       />
     </>
@@ -959,6 +1033,7 @@ function CartModal({
   items,
   productById,
   priceHistory,
+  unlisted,
   total,
   totalItems,
   saving,
@@ -970,12 +1045,17 @@ function CartModal({
   onIncrement,
   onDecrement,
   onRemove,
+  onChangeUnlistedQty,
+  onChangeUnlistedPrice,
+  onRemoveUnlisted,
+  onAddUnlisted,
   onSave,
 }: {
   open: boolean;
   items: Record<string, LineState>;
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
+  unlisted: UnlistedLine[];
   total: number;
   totalItems: number;
   saving: boolean;
@@ -987,6 +1067,10 @@ function CartModal({
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
+  onChangeUnlistedQty: (id: string, n: number) => void;
+  onChangeUnlistedPrice: (id: string, raw: string) => void;
+  onRemoveUnlisted: (id: string) => void;
+  onAddUnlisted: () => void;
   onSave: () => void;
 }) {
   // Stable iteration order: name asc, so the cart doesn't reshuffle as the
@@ -1022,27 +1106,42 @@ function CartModal({
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }}
             showsVerticalScrollIndicator={false}
           >
-            {rows.length === 0 ? (
+            {rows.length === 0 && unlisted.length === 0 ? (
               <View style={[styles.center, { paddingVertical: 40 }]}>
                 <Text style={styles.emptyText}>Cart is empty.</Text>
               </View>
             ) : (
-              rows.map(({ id, product, line }) => (
-                <CartRow
-                  key={id}
-                  product={product}
-                  line={line}
-                  historyPrice={priceHistory?.[id]?.lastPrice}
-                  onChangeBoxes={(n) => onChangeBoxes(id, n)}
-                  onChangePieces={(n) => onChangePieces(id, n)}
-                  onChangeQty={(n) => onChangeQty(id, n)}
-                  onChangePrice={(raw) => onChangePrice(id, raw)}
-                  onIncrement={() => onIncrement(id)}
-                  onDecrement={() => onDecrement(id)}
-                  onRemove={() => onRemove(id)}
-                />
-              ))
+              <>
+                {rows.map(({ id, product, line }) => (
+                  <CartRow
+                    key={id}
+                    product={product}
+                    line={line}
+                    historyPrice={priceHistory?.[id]?.lastPrice}
+                    onChangeBoxes={(n) => onChangeBoxes(id, n)}
+                    onChangePieces={(n) => onChangePieces(id, n)}
+                    onChangeQty={(n) => onChangeQty(id, n)}
+                    onChangePrice={(raw) => onChangePrice(id, raw)}
+                    onIncrement={() => onIncrement(id)}
+                    onDecrement={() => onDecrement(id)}
+                    onRemove={() => onRemove(id)}
+                  />
+                ))}
+                {unlisted.map((u) => (
+                  <UnlistedCartRow
+                    key={u.id}
+                    line={u}
+                    onChangeQty={(n) => onChangeUnlistedQty(u.id, n)}
+                    onChangePrice={(raw) => onChangeUnlistedPrice(u.id, raw)}
+                    onRemove={() => onRemoveUnlisted(u.id)}
+                  />
+                ))}
+              </>
             )}
+            <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
+              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+              <Text style={styles.cartAddUnlistedText}>Add unlisted item</Text>
+            </Pressable>
           </ScrollView>
 
           {/* Sticky footer: total + actions */}
@@ -1261,6 +1360,163 @@ function CartStepperRow({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+/** Cart row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag, no image. */
+function UnlistedCartRow({
+  line,
+  onChangeQty,
+  onChangePrice,
+  onRemove,
+}: {
+  line: UnlistedLine;
+  onChangeQty: (n: number) => void;
+  onChangePrice: (raw: string) => void;
+  onRemove: () => void;
+}) {
+  const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
+  return (
+    <View style={styles.cartRow}>
+      <View style={styles.cartRowHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.unlistedTagRow}>
+            <Text style={styles.cartRowName} numberOfLines={2}>
+              {line.name || "Unlisted item"}
+            </Text>
+            <View style={styles.customTag}>
+              <Text style={styles.customTagText}>Custom</Text>
+            </View>
+          </View>
+        </View>
+        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
+          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
+        </Pressable>
+      </View>
+
+      <View style={styles.cartPriceRow}>
+        <Text style={styles.cartPriceLabel}>Price</Text>
+        <View style={styles.cartPriceInputWrap}>
+          <Text style={styles.cartPriceCurrency}>$</Text>
+          <TextInput
+            style={[styles.cartPriceInput, styles.cartPriceInputActive]}
+            value={line.unitPrice ? String(line.unitPrice) : ""}
+            onChangeText={onChangePrice}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+            selectTextOnFocus
+          />
+        </View>
+      </View>
+
+      <CartStepperRow
+        label="Qty"
+        value={line.qty}
+        onChange={onChangeQty}
+        onIncrement={() => onChangeQty(line.qty + 1)}
+        onDecrement={() => onChangeQty(Math.max(0, line.qty - 1))}
+      />
+
+      <View style={styles.cartRowFooter}>
+        <Text style={styles.cartRowFooterLabel}>Line total</Text>
+        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Small modal to compose a new unlisted line: free-text name, unit price
+ * (required), integer qty. Mirrors the PriceOverrideModal styling.
+ */
+function UnlistedItemModal({
+  open,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (name: string, unitPrice: number, qty: number) => void;
+}) {
+  const [name, setName] = useState("");
+  const [priceText, setPriceText] = useState("");
+  const [qtyText, setQtyText] = useState("1");
+
+  // Reset fields whenever the modal is (re)opened.
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setPriceText("");
+      setQtyText("1");
+    }
+  }, [open]);
+
+  const price = parseFloat(priceText);
+  const qty = parseInt(qtyText || "0", 10);
+  const valid = name.trim() !== "" && Number.isFinite(price) && price > 0 && qty > 0;
+
+  return (
+    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
+        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.unlistedTitle}>Add unlisted item</Text>
+          <Text style={styles.unlistedSub}>A one-off line that isn't in your catalog.</Text>
+
+          <Text style={styles.unlistedFieldLabel}>Item name</Text>
+          <TextInput
+            style={styles.unlistedInput}
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Delivery surcharge"
+            placeholderTextColor={ios.label3}
+            autoFocus
+            returnKeyType="next"
+          />
+
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.unlistedFieldLabel}>Unit price</Text>
+              <TextInput
+                style={styles.unlistedInput}
+                value={priceText}
+                onChangeText={setPriceText}
+                placeholder="0.00"
+                placeholderTextColor={ios.label3}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+              />
+            </View>
+            <View style={{ width: 96 }}>
+              <Text style={styles.unlistedFieldLabel}>Qty</Text>
+              <TextInput
+                style={styles.unlistedInput}
+                value={qtyText}
+                onChangeText={(t) => setQtyText(sanitizeIntInput(t))}
+                placeholder="1"
+                placeholderTextColor={ios.label3}
+                keyboardType="number-pad"
+                maxLength={5}
+                selectTextOnFocus
+              />
+            </View>
+          </View>
+
+          <View style={[styles.modalBtns, { marginTop: 4 }]}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modalBtnFill, !valid && styles.modalBtnDisabled]}
+              onPress={() => valid && onAdd(name.trim(), price, qty)}
+              disabled={!valid}
+            >
+              <Text style={styles.modalBtnFillText}>Add to order</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -1667,4 +1923,112 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
   },
+
+  // ── Unlisted item CTA + cart row + tag ────────────────────────────────────
+  unlistedCtaWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  unlistedCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  unlistedCtaText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  unlistedCount: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  cartAddUnlisted: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 12,
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  cartAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  customTag: {
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  customTagText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.2,
+  },
+
+  // ── Unlisted item modal ───────────────────────────────────────────────────
+  unlistedOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  unlistedCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+  },
+  unlistedTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+    marginBottom: 2,
+  },
+  unlistedSub: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 12,
+  },
+  unlistedFieldLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.3,
+    marginBottom: 6,
+  },
+  unlistedInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    marginBottom: 12,
+  },
+  modalBtns: { flexDirection: "row", gap: 10 },
+  modalBtnGhost: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.fill3,
+  },
+  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  modalBtnFill: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.brand,
+  },
+  modalBtnDisabled: { opacity: 0.4 },
+  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
 });

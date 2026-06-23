@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,10 +10,12 @@ import {
   useChangeOrderStatus,
   useDeleteOrder,
   useToggleOrderUrgent,
+  useUpdateOrderShipment,
   type OrderStatus,
 } from "../../../../lib/api/orders";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
+import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -172,6 +175,8 @@ export default function OrderDetailScreen() {
   const changeMut = useChangeOrderStatus();
   const deleteMut = useDeleteOrder();
   const urgentMut = useToggleOrderUrgent();
+  const shipmentMut = useUpdateOrderShipment();
+  const [shipmentModal, setShipmentModal] = useState(false);
 
   if (isLoading) {
     return (
@@ -255,6 +260,23 @@ export default function OrderDetailScreen() {
       {
         onSuccess: () => {
           showToast(order.urgent ? "Urgent cleared" : "Marked urgent");
+          refetch();
+        },
+        onError: (e: unknown) => {
+          const err = e as { response?: { data?: { message?: string } }; message?: string };
+          showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
+        },
+      },
+    );
+  };
+
+  const handleSaveShipment = (carrier: string, trackingNumber: string) => {
+    shipmentMut.mutate(
+      { id: order.id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      {
+        onSuccess: () => {
+          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          setShipmentModal(false);
           refetch();
         },
         onError: (e: unknown) => {
@@ -358,9 +380,16 @@ export default function OrderDetailScreen() {
                     ]}
                   >
                     <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.itemName} numberOfLines={1}>
-                        {li.product?.name ?? "Item"}
-                      </Text>
+                      <View style={styles.itemNameRow}>
+                        <Text style={styles.itemName} numberOfLines={1}>
+                          {li.product?.name ?? li.name ?? "Item"}
+                        </Text>
+                        {!li.productId ? (
+                          <View style={styles.customTag}>
+                            <Text style={styles.customTagText}>Custom</Text>
+                          </View>
+                        ) : null}
+                      </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
                         {isBoxed ? ` / box of ${upb}` : ""}
@@ -403,6 +432,9 @@ export default function OrderDetailScreen() {
               <Text style={styles.totalValueMain}>{formatCurrency(order.total)}</Text>
             </View>
           </View>
+
+          {/* Carrier shipment */}
+          <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
 
           {/* Status transitions */}
           {actions.length > 0 ? (
@@ -508,6 +540,14 @@ export default function OrderDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      <ShipmentEditModal
+        open={shipmentModal}
+        shipment={order}
+        saving={shipmentMut.isPending}
+        onClose={() => setShipmentModal(false)}
+        onSave={handleSaveShipment}
+      />
     </SafeAreaView>
   );
 }
@@ -534,7 +574,20 @@ const styles = StyleSheet.create({
   },
   empty: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, paddingVertical: 8 },
   itemRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
-  itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  itemNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label, flexShrink: 1 },
+  customTag: {
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  customTagText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.2,
+  },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemTotal: {
     fontSize: 14,

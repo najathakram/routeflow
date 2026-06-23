@@ -44,6 +44,7 @@ import {
   useRevertInvoiceToDraft,
   useUnvoidInvoice,
   useAdjustInvoicePrices,
+  useUpdateInvoiceShipment,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
@@ -51,6 +52,7 @@ import {
 import { useRouter } from "next/navigation";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { TenantLogo } from "@/components/TenantLogo";
+import { ShipmentCard } from "@/components/ShipmentCard";
 import { useTenant } from "@/components/tenant-provider";
 
 function methodLabel(method: string) {
@@ -914,6 +916,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const downloadPdf = useDownloadInvoicePdf();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
+  const updateShipment = useUpdateInvoiceShipment();
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [showAdjustPanel, setShowAdjustPanel] = React.useState(false);
@@ -1704,6 +1707,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               </div>
             </Card>
           )}
+
+          {/* Carrier shipment — operator records carrier + tracking number; editable
+              on any non-void invoice (read-only once void / written off). */}
+          <ShipmentCard
+            carrier={invoice.shippingCarrier}
+            trackingNumber={invoice.shippingTrackingNumber}
+            shippedAt={invoice.shippedAt}
+            isSaving={updateShipment.isPending}
+            readOnly={status === "VOID" || status === "WRITTEN_OFF"}
+            onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
+          />
 
           {/* Payment history */}
           <Card title="Payment History">
