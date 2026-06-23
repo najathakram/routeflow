@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED";
+export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
 
 export interface Order {
   id: string;
@@ -212,18 +212,27 @@ export function useUpdateOrderStatus() {
 }
 
 export interface ItemUpdate {
-  id: string;
+  id?: string; // omitted for new items — the API creates them
+  productId?: string; // for new items
   action?: "CANCEL" | "UPDATE";
   qty?: number;
   substituteProductId?: string;
   notes?: string;
+  unitPrice?: number; // one-time per-line price override (DRAFT only, operator)
+  overrideReason?: string; // optional note explaining the override
 }
 
 export function useUpdateOrderItems() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; items: ItemUpdate[]; orderNotes?: string }>({
-    mutationFn: ({ id, items, orderNotes }) =>
-      apiClient.patch<Order>(`/orders/${id}/items`, { items, orderNotes }).then((r) => r.data),
+  return useMutation<
+    Order,
+    Error,
+    { id: string; items: ItemUpdate[]; orderNotes?: string; replaceAll?: boolean }
+  >({
+    mutationFn: ({ id, items, orderNotes, replaceAll }) =>
+      apiClient
+        .patch<Order>(`/orders/${id}/items`, { items, orderNotes, replaceAll })
+        .then((r) => r.data),
     onSuccess: (data) => {
       qc.setQueryData(["orders", data.id], data);
       qc.invalidateQueries({ queryKey: ["orders"] });

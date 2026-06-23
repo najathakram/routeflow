@@ -34,11 +34,14 @@ import {
   useUpdateOrderItems,
   useReopenOrder,
   useDeleteOrder,
+  useCustomerPriceHistory,
   type OrderItem,
   type ItemUpdate,
+  type CustomerPriceHistory,
 } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
+import { computeLineSubtotal, roundMoney } from "@/lib/pricing";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
@@ -290,6 +293,11 @@ interface EditItemState {
   productName: string;
   qty: number;
   unitPrice: number;
+  /** List/catalog price for this line — the strikethrough baseline and the
+   * amount-off anchor. `originalPrice ?? unitPrice` when loaded from the order. */
+  basePrice: number;
+  /** Optional note explaining a price override (DRAFT only). */
+  overrideReason?: string;
   cancelled: boolean;
   substituteProductId?: string;
   notes?: string;
@@ -429,15 +437,134 @@ function SubstitutePicker({
 
 // ─── Edit mode line items ──────────────────────────────────────────────────────
 
+// ─── Per-line price / discount editor (DRAFT only) ────────────────────────────
+// Single source of truth is the line's `unitPrice`. The "$ off / unit" field is a
+// lens over `basePrice - unitPrice`; both inputs resolve to one net unit price,
+// which is what the server stores (net unitPrice + originalPrice strikethrough).
+function PriceEditRow({
+  basePrice,
+  unitPrice,
+  overrideReason,
+  onPriceChange,
+  onReasonChange,
+}: {
+  basePrice: number;
+  unitPrice: number;
+  overrideReason?: string;
+  onPriceChange: (netPrice: number) => void;
+  onReasonChange: (reason: string) => void;
+}) {
+  const [priceText, setPriceText] = React.useState(unitPrice.toFixed(2));
+  const [offText, setOffText] = React.useState(
+    unitPrice < basePrice ? roundMoney(basePrice - unitPrice).toFixed(2) : "",
+  );
+
+  // Re-sync local text when the line's price changes from elsewhere (e.g. substitute).
+  React.useEffect(() => {
+    setPriceText(unitPrice.toFixed(2));
+    setOffText(unitPrice < basePrice ? roundMoney(basePrice - unitPrice).toFixed(2) : "");
+  }, [unitPrice, basePrice]);
+
+  const commitPrice = (raw: string) => {
+    setPriceText(raw);
+    const parsed = parseFloat(raw);
+    if (raw === "" || isNaN(parsed)) {
+      onPriceChange(basePrice); // empty → clear override
+      setOffText("");
+      return;
+    }
+    const net = roundMoney(Math.max(0, parsed));
+    onPriceChange(net);
+    setOffText(net < basePrice ? roundMoney(basePrice - net).toFixed(2) : "");
+  };
+
+  const commitOff = (raw: string) => {
+    setOffText(raw);
+    const parsed = parseFloat(raw);
+    if (raw === "" || isNaN(parsed) || parsed <= 0) {
+      onPriceChange(basePrice); // no discount → back to list price
+      setPriceText(basePrice.toFixed(2));
+      return;
+    }
+    const net = roundMoney(Math.max(0, basePrice - parsed));
+    onPriceChange(net);
+    setPriceText(net.toFixed(2));
+  };
+
+  const overridden = unitPrice < basePrice - 0.0001;
+
+  return (
+    <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+      <label className="flex items-center gap-1.5 text-navy/70">
+        <span>Unit price</span>
+        <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
+          <span className="text-navy/40">$</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            className="w-16 bg-transparent py-1 text-right text-navy outline-none"
+            value={priceText}
+            onChange={(e) => commitPrice(e.target.value)}
+          />
+        </span>
+      </label>
+      <label className="flex items-center gap-1.5 text-navy/70">
+        <span>$ off / unit</span>
+        <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
+          <span className="text-navy/40">−$</span>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="0.00"
+            className="w-14 bg-transparent py-1 text-right text-navy outline-none placeholder:text-navy/40"
+            value={offText}
+            onChange={(e) => commitOff(e.target.value)}
+          />
+        </span>
+      </label>
+      {overridden && (
+        <>
+          <span className="text-navy/50">
+            was <span className="line-through">${basePrice.toFixed(2)}</span>
+          </span>
+          <input
+            type="text"
+            value={overrideReason ?? ""}
+            onChange={(e) => onReasonChange(e.target.value)}
+            placeholder="reason (optional)"
+            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 function EditableLineItems({
   items,
   onChange,
   onAdd,
+  isDraft,
+  priceHistory,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
   onAdd: (item: EditItemState) => void;
+  /** Per-line price + discount editing is only offered on DRAFT orders. */
+  isDraft: boolean;
+  /** Remembered per-customer prices — pre-fills a scanned line's price. */
+  priceHistory?: CustomerPriceHistory;
 }) {
+  // Scroll the just-scanned/added row into view so rapid scanning stays visible.
+  const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
+  const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!scrollToId) return;
+    rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setScrollToId(null);
+  }, [scrollToId, items]);
   const [substituteOpenId, setSubstituteOpenId] = React.useState<string | null>(null);
   const [addSearch, setAddSearch] = React.useState("");
   const [addOpen, setAddOpen] = React.useState(false);
@@ -472,9 +599,17 @@ function EditableLineItems({
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
     if (existing) {
       onChange(items.map((it) => (it.id === existing.id ? { ...it, qty: it.qty + 1 } : it)));
+      setScrollToId(existing.id);
     } else {
+      // Pre-fill the remembered price for this customer + product (carry a prior
+      // discount forward); fall back to catalog. Only applies a remembered price
+      // below catalog so increases never auto-apply.
+      const catalog = Number(p.pricePerUnit ?? 0);
+      const hist = priceHistory?.[p.id];
+      const startPrice = hist && hist.lastPrice < catalog ? hist.lastPrice : catalog;
+      const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd({
-        id: `new-${Date.now()}-${Math.random()}`,
+        id: newId,
         isNew: true,
         originalProductId: p.id,
         originalProductName: p.name,
@@ -482,9 +617,11 @@ function EditableLineItems({
         productId: p.id,
         productName: p.name,
         qty: 1,
-        unitPrice: Number(p.pricePerUnit ?? 0),
+        unitPrice: startPrice,
+        basePrice: catalog,
         cancelled: false,
       });
+      setScrollToId(newId);
     }
     setAddSearch("");
     setAddOpen(false);
@@ -545,7 +682,13 @@ function EditableLineItems({
   return (
     <div className="space-y-2">
       {items.map((item) => (
-        <div key={item.id}>
+        <div
+          key={item.id}
+          ref={(el) => {
+            if (el) rowRefs.current.set(item.id, el);
+            else rowRefs.current.delete(item.id);
+          }}
+        >
           <div
             className={cn(
               "flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors",
@@ -648,6 +791,17 @@ function EditableLineItems({
             </div>
           </div>
 
+          {/* Per-line price + discount editor (DRAFT only) */}
+          {isDraft && !item.cancelled && (
+            <PriceEditRow
+              basePrice={item.basePrice}
+              unitPrice={item.unitPrice}
+              overrideReason={item.overrideReason}
+              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
+            />
+          )}
+
           {/* Substitute picker */}
           {substituteOpenId === item.id && (
             <SubstitutePicker
@@ -656,7 +810,9 @@ function EditableLineItems({
                   substituteProductId: p.id,
                   productId: p.id,
                   productName: p.name,
-                  unitPrice: p.pricePerUnit,
+                  unitPrice: Number(p.pricePerUnit ?? 0),
+                  basePrice: Number(p.pricePerUnit ?? 0),
+                  overrideReason: undefined,
                 });
                 setSubstituteOpenId(null);
               }}
@@ -747,6 +903,7 @@ function EditableLineItems({
 export default function OrderDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(params.id);
+  const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
@@ -798,6 +955,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               productName: li.product?.name ?? li.productId,
               qty: Math.round(Number(li.qty)),
               unitPrice: Number(li.unitPrice),
+              basePrice: Number(li.originalPrice ?? li.unitPrice),
               cancelled: false,
               notes: li.notes,
             })),
@@ -845,6 +1003,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           productName: li.product?.name ?? li.productId,
           qty: Math.round(Number(li.qty)),
           unitPrice: Number(li.unitPrice),
+          basePrice: Number(li.originalPrice ?? li.unitPrice),
           cancelled: false,
           notes: li.notes,
         })),
@@ -862,13 +1021,24 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     const updates: ItemUpdate[] = [];
 
     for (const edited of editItems) {
+      // A line is "discounted" when its net unit price sits below the list/base price.
+      const overridden = edited.unitPrice < edited.basePrice - 0.0001;
       if (edited.isNew) {
-        // New item: no id — API will create it
-        updates.push({ productId: edited.productId, qty: edited.qty } as any);
+        // New item: no id — API will create it. Carry the override when present.
+        updates.push({
+          productId: edited.productId,
+          qty: edited.qty,
+          ...(overridden
+            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+            : {}),
+        });
         continue;
       }
       const orig = original.find((li) => li.id === edited.id);
       if (!orig) continue;
+
+      const qtyChanged = Math.abs(edited.qty - Number(orig.qty)) > 0.0001;
+      const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
 
       if (edited.cancelled) {
         updates.push({ id: edited.id, action: "CANCEL" });
@@ -878,8 +1048,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           substituteProductId: edited.substituteProductId,
           qty: edited.qty,
         });
-      } else if (Math.abs(edited.qty - Number(orig.qty)) > 0.0001) {
-        updates.push({ id: edited.id, action: "UPDATE", qty: edited.qty });
+      } else if (qtyChanged || priceChanged) {
+        updates.push({
+          id: edited.id,
+          action: "UPDATE",
+          qty: edited.qty,
+          ...(priceChanged
+            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+            : {}),
+        });
       }
     }
 
@@ -888,8 +1065,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       return;
     }
 
+    // replaceAll:false — this screen sends an incremental diff (new items have no
+    // id). Without it the API's legacy heuristic would treat an add-only payload
+    // as a full replace and delete the untouched lines.
     updateItems.mutate(
-      { id: order!.id, items: updates },
+      { id: order!.id, items: updates, replaceAll: false },
       {
         onSuccess: () => {
           setIsEditing(false);
@@ -978,7 +1158,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
   const editSubtotal = isEditing
-    ? editItems.filter((it) => !it.cancelled).reduce((s, it) => s + it.qty * it.unitPrice, 0)
+    ? roundMoney(
+        editItems
+          .filter((it) => !it.cancelled)
+          .reduce((s, it) => s + computeLineSubtotal({ unitPrice: it.unitPrice, qty: it.qty }), 0),
+      )
     : Number(order.subtotal);
 
   const taxRate = order.subtotal > 0 ? Number(order.tax) / Number(order.subtotal) : 0;
@@ -1331,13 +1515,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             {isEditing ? (
               <div className="space-y-4">
                 <p className="text-sm text-navy/70">
-                  Add new items, adjust quantities, substitute or mark as unavailable. Changes are
-                  applied when you save.
+                  Add new items, adjust quantities, substitute or mark as unavailable.
+                  {localStatus === "DRAFT" &&
+                    " Change a line's price or apply a per-item discount."}{" "}
+                  Changes are applied when you save.
                 </p>
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
+                  isDraft={localStatus === "DRAFT"}
+                  priceHistory={priceHistory}
                 />
 
                 {/* Live total preview */}
@@ -1513,7 +1701,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   Special
                                 </span>
                               </>
-                            ) : li.priceType === "DISCOUNTED" ? (
+                            ) : (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
+                              li.originalPrice != null ? (
                               <>
                                 <span className="text-xs text-navy/70 line-through">
                                   ${Number(li.originalPrice).toFixed(2)}
@@ -1522,7 +1711,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   ${Number(li.unitPrice).toFixed(2)}
                                 </span>
                                 <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                  Discounted
+                                  {li.priceType === "MANUAL" ? "Adjusted" : "Discounted"}
                                 </span>
                               </>
                             ) : (

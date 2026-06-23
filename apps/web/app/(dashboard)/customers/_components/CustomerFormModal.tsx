@@ -23,7 +23,7 @@ const customerSchema = z
     // Shared contact
     phone: z.string().min(7, "Enter a valid phone number").optional().or(z.literal("")),
     mobile: z.string().optional().or(z.literal("")),
-    email: z.string().email("Enter a valid email"),
+    email: z.string().email("Enter a valid email").optional().or(z.literal("")),
     // Account
     currency: z.string().optional(),
     creditLimit: z.string().optional().or(z.literal("")),
@@ -144,7 +144,13 @@ function buildDefaultValues(
     lastName: initialData.lastName ?? "",
     phone: initialData.phone ?? "",
     mobile: initialData.mobile ?? "",
-    email: initialData.email ?? initialData.user?.email ?? "",
+    // Don't surface the internal placeholder minted for emailless customers.
+    email:
+      initialData.email ??
+      (initialData.user?.email && !initialData.user.email.endsWith("@placeholder.local")
+        ? initialData.user.email
+        : "") ??
+      "",
     currency: initialData.currency ?? "USD",
     creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
@@ -223,12 +229,18 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       } else setZipError("");
       if (hasAddressError) return;
 
-      const username =
-        data.email.split("@")[0].replace(/[^a-z0-9]/gi, "") + "_" + Date.now().toString(36);
+      // Username no longer depends on email (which is now optional) — derive it
+      // from the email local-part when present, else from the business/contact name.
+      const usernameBase =
+        (data.email ? data.email.split("@")[0] : resolvedBusinessName || resolvedContactName || "")
+          .replace(/[^a-z0-9]/gi, "")
+          .toLowerCase()
+          .slice(0, 24) || "customer";
+      const username = `${usernameBase}_${Date.now().toString(36)}`;
 
       createCustomer.mutate(
         {
-          email: data.email,
+          email: data.email || undefined,
           username,
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
@@ -434,7 +446,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
               />
             </div>
             <Input
-              label="Email"
+              label="Email (optional)"
               type="email"
               placeholder={isBusiness ? "billing@acmeco.com" : "jane.doe@email.com"}
               register={register("email")}

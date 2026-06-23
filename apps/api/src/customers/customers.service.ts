@@ -305,10 +305,18 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
+    const email = dto.email?.trim() || undefined;
+    // Only treat email as a uniqueness key when one was actually provided —
+    // `{ email: undefined }` inside the OR would match every user.
     const existingUser = await this.prisma.forTenant().user.findFirst({
-      where: { OR: [{ email: dto.email }, { username: dto.username }] },
+      where: { OR: [...(email ? [{ email }] : []), { username: dto.username }] },
     });
     if (existingUser) throw new BadRequestException("Email or username already taken");
+
+    // User.email is required + unique per tenant; mint a non-routable internal
+    // placeholder when the customer has no email. Customer.email stays null so
+    // nothing customer-facing ever shows the placeholder.
+    const userEmail = email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
 
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
@@ -316,7 +324,7 @@ export class CustomersService {
     return this.prisma.tenantTransaction(async (tx) => {
       const user = await tx.user.create({
         data: {
-          email: dto.email,
+          email: userEmail,
           username: dto.username,
           password: hashedPassword,
           role: UserRole.CUSTOMER,
@@ -327,6 +335,7 @@ export class CustomersService {
       const customer = await tx.customer.create({
         data: {
           userId: user.id,
+          ...(email && { email }),
           businessName: dto.businessName,
           contactName: dto.contactName,
           phone: dto.phone,
@@ -363,7 +372,9 @@ export class CustomersService {
 
       return {
         customer,
-        user: { id: user.id, email: user.email, username: user.username },
+        // Surface the real email (null when the customer has none) — never the
+        // internal placeholder minted for the User record.
+        user: { id: user.id, email: email ?? null, username: user.username },
         tempPassword,
       };
     });
@@ -1729,8 +1740,12 @@ export class CustomersService {
     });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    // Use override email first, then customer's own email, then User's login email
-    const toEmail = dto.overrideEmail ?? customer.email ?? customer.user?.email ?? null;
+    // Use override email first, then customer's own email, then User's login email.
+    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
+    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
+      ? null
+      : customer.user?.email;
+    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",

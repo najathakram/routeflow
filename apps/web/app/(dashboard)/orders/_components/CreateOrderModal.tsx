@@ -94,6 +94,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
   const productSearchRef = React.useRef<HTMLInputElement>(null);
+  // Scroll the just-scanned line into view so rapid scanning stays visible.
+  const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
+  const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!scrollToId) return;
+    rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setScrollToId(null);
+  }, [scrollToId, lineItems]);
 
   // Create-product modal state
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
@@ -248,15 +256,18 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const addLineItem = (product: any) => {
     // If already in the list, increment qty by 1 (supports repeated scans of the same item)
-    if (lineItems.some((li) => li.productId === product.id)) {
+    const existing = lineItems.find((li) => li.productId === product.id);
+    if (existing) {
       setLineItems((prev) =>
         prev.map((li) => (li.productId === product.id ? { ...li, qty: li.qty + 1 } : li)),
       );
+      setScrollToId(existing.tempId);
       setProductSearch("");
       setDebouncedProductSearch("");
       setTimeout(() => productSearchRef.current?.focus(), 50);
       return;
     }
+    const newTempId = product.id + "-" + Date.now();
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
     const listPrice = Number(product.pricePerUnit ?? 0);
     const customerTier = selectedCustomer?.pricingTier ?? 1;
@@ -275,7 +286,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     setLineItems((prev) => [
       ...prev,
       {
-        tempId: product.id + "-" + Date.now(),
+        tempId: newTempId,
         productId: product.id,
         // Show the full "<Parent> - <Variant>" name on the order line so the
         // customer knows which flavor / variety they ordered. Variants store
@@ -293,6 +304,7 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         pieces: upb ? 0 : undefined,
       },
     ]);
+    setScrollToId(newTempId);
     setProductSearch("");
     setDebouncedProductSearch("");
     setLineItemsError("");
@@ -783,7 +795,14 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
                 {lineItems.map((li) => (
-                  <li key={li.tempId} className="flex items-start gap-3 px-3 py-2.5">
+                  <li
+                    key={li.tempId}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(li.tempId, el);
+                      else rowRefs.current.delete(li.tempId);
+                    }}
+                    className="flex items-start gap-3 px-3 py-2.5"
+                  >
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
                       {/* Price display with special/discount indicators */}

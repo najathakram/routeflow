@@ -621,6 +621,14 @@ export default function NewInvoicePage() {
     return d.toISOString().slice(0, 10);
   });
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
+  // Scroll the just-scanned invoice line into view so rapid scanning stays visible.
+  const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
+  const [scrollToKey, setScrollToKey] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!scrollToKey) return;
+    rowRefs.current.get(scrollToKey)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setScrollToKey(null);
+  }, [scrollToKey, items]);
   const [notes, setNotes] = React.useState("");
   const [termsText, setTermsText] = React.useState("");
   const [adjustment, setAdjustment] = React.useState(0);
@@ -746,6 +754,7 @@ export default function NewInvoicePage() {
       pieces: upb ? 0 : undefined,
     };
 
+    const existing = items.find((it) => it.productId === product.id);
     setItems((prev) => {
       // If product is already on the invoice, increment its qty instead of duplicating.
       const existingIdx = prev.findIndex((it) => it.productId === product.id);
@@ -772,6 +781,7 @@ export default function NewInvoicePage() {
         Number(prev[0].unitPrice) === 0;
       return onlyBlank ? [lineItem] : [...prev, lineItem];
     });
+    setScrollToKey(existing ? existing.key : lineItem.key);
     setErrors((e) => ({ ...e, items: "" }));
     // Refocus the scanner input so a sequence of scans is uninterrupted.
     setTimeout(() => scanInputRef.current?.focus(), 30);
@@ -1469,6 +1479,10 @@ export default function NewInvoicePage() {
                 {items.map((item) => (
                   <div
                     key={item.key}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(item.key, el);
+                      else rowRefs.current.delete(item.key);
+                    }}
                     className={cn(
                       "items-center gap-2 border-b border-surface-border pb-2",
                       showAvgCost

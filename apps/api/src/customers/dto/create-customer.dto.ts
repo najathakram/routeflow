@@ -21,7 +21,10 @@ export class CreateCustomerDto {
   // 4000-char businessName and the API stored it; both display and DB
   // index performance suffer with unbounded TEXT. Limits chosen to match
   // typical UI affordances and column widths.
-  @IsEmail() @MaxLength(254) email: string;
+  // Email is OPTIONAL — operator-managed customers may have no email on file.
+  // When absent, the service generates an internal placeholder for the linked
+  // User record (User.email is required + unique) and leaves Customer.email null.
+  @IsOptional() @IsEmail() @MaxLength(254) email?: string;
   @IsString() @MinLength(3) @MaxLength(64) username: string;
   // RF-110: strip HTML to prevent stored XSS via businessName
   @StripHtml() @IsString() @MaxLength(200) businessName: string;

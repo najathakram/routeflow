@@ -91,7 +91,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `customers/`
 
 - **controller** `customers` — export, tags CRUD, merge, pending-portal-approvals; `me`/`me/statement`/`@Patch me`; per-id: status, routes, orders, statement, advance-payments, prices CRUD, addresses, contacts, comments, tax-documents, documents, portal invite/approve/disconnect.
-- **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `getStatement`, `merge`, `add{Tag,Address,Contact,Price}`, `exportCSV`, portal flows. side effects: Customer + related writes; portal-invite email; presigned doc URLs; ledger updates on price/advance changes.
+- **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `getStatement`, `merge`, `add{Tag,Address,Contact,Price}`, `exportCSV`, portal flows. side effects: Customer + related writes; portal-invite email; presigned doc URLs; ledger updates on price/advance changes. **`email` is OPTIONAL** (DTO `@IsOptional`): `create` mints a unique `no-email+<uuid>@placeholder.local` for the required `User.email` and leaves `Customer.email` null; `sendPortalInvite` ignores `@placeholder.local` fallbacks. Spec: `customers.service.spec.ts`.
 
 ### `drivers/`
 
@@ -106,7 +106,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `orders/`
 
 - **controller** `orders` (+ `route-runs`) — `active`, `price-history` (GET, OPERATOR, ?customerId → last-given price per product), `@Get/:id`, `:id/tracking`, `@Patch :id/status|items|urgent`, `:id/reopen`, `sweep-pending`, `force-consolidate/:customerId`, bulk/single delete; RouteRun stop complete.
-- **service** — `findAll`, `findOne`, `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`, **`getCustomerPriceHistory(tenantId,customerId)`** (returns `Record<productId,{lastPrice,listPriceAtTime}>` — only lines with `originalPrice` set; used to pre-fill the price field when scanning). side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED (per-batch lines use `computeLineSubtotal` for boxed proration + `discount: 0` for overrides — never `qty*unitPrice`); delivery-mutation tracking.
+- **service** — `findAll`, `findOne` (lineItems `orderBy createdAt asc` ⇒ new items render at bottom), `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateOrderItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`, **`getCustomerPriceHistory(tenantId,customerId)`** (returns `Record<productId,{lastPrice,listPriceAtTime}>` — only lines with `originalPrice` set; used to pre-fill the price field when scanning). side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED (per-batch lines use `computeLineSubtotal` for boxed proration + `discount: 0` for overrides — never `qty*unitPrice`); delivery-mutation tracking.
+  - **`updateOrderItems` replace vs merge (gotcha):** operator path picks `replaceAll = dto.replaceAll ?? allNewItems` (`allNewItems = items.every(no id)`). `replaceAll` ⇒ deleteMany + recreate (mobile full-list pattern); else merge — id-less items are CREATED (appended), absent items left untouched. **Web edit UI sends `replaceAll: false`** so an add-only diff doesn't wipe untouched lines (was the data-loss bug). Mobile omits the flag ⇒ legacy heuristic ⇒ replace-all. Customer/DRIVER use a separate always-replace branch.
 
 ### `routes/` & `route-optimization/`
 

@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -43,6 +44,7 @@ class UpdateOrderItemDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(1_000_000)
   unitPrice?: number;
 
   @IsOptional()
@@ -71,6 +73,19 @@ export class UpdateOrderItemsDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateOrderItemDto)
   items: UpdateOrderItemDto[];
+
+  /**
+   * When true, the operator path treats `items` as the FULL line set: it deletes
+   * existing items and recreates from the payload (the mobile "replace-all"
+   * pattern). When false, items are merged incrementally — id-less entries are
+   * appended, existing items not present are left untouched. When omitted, the
+   * server falls back to the legacy heuristic ("every item lacks an id" ⇒ replace)
+   * so older mobile clients keep working. The web edit UI sends `false` so adding
+   * a new item never wipes the untouched lines.
+   */
+  @IsOptional()
+  @IsBoolean()
+  replaceAll?: boolean;
 
   // RF-110: strip HTML to prevent stored XSS via order notes
   @IsOptional()
