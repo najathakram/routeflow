@@ -147,6 +147,41 @@ describe("CustomersService", () => {
         } as any),
       ).rejects.toThrow(BadRequestException);
     });
+
+    const baseDto = { username: "acme", businessName: "Acme", contactName: "Jane" } as any;
+
+    it("mints an internal placeholder email and leaves Customer.email null when none given", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "placeholder" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+
+      const res: any = await service.create({ ...baseDto });
+
+      // User.email (required + unique) gets a non-routable internal placeholder…
+      expect(prisma.user.create.mock.calls[0][0].data.email).toMatch(/@placeholder\.local$/);
+      // …while Customer.email is never set to it.
+      expect(prisma.customer.create.mock.calls[0][0].data).not.toHaveProperty("email");
+      // Uniqueness check skips the email clause (an undefined email would match all users).
+      expect(prisma.user.findFirst.mock.calls[0][0].where.OR).toEqual([{ username: "acme" }]);
+      // Response surfaces the real (absent) email, not the placeholder.
+      expect(res.user.email).toBeNull();
+    });
+
+    it("uses the real email on both User and Customer when provided", async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u1", username: "acme", email: "a@b.com" });
+      prisma.customer.create.mockResolvedValue({ id: "c1" });
+
+      const res: any = await service.create({ ...baseDto, email: "a@b.com" });
+
+      expect(prisma.user.create.mock.calls[0][0].data.email).toBe("a@b.com");
+      expect(prisma.customer.create.mock.calls[0][0].data.email).toBe("a@b.com");
+      expect(prisma.user.findFirst.mock.calls[0][0].where.OR).toEqual([
+        { email: "a@b.com" },
+        { username: "acme" },
+      ]);
+      expect(res.user.email).toBe("a@b.com");
+    });
   });
 
   // ─── update ───────────────────────────────────────────────────────────────

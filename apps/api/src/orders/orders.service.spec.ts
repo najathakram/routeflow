@@ -415,4 +415,144 @@ describe("OrdersService", () => {
       );
     });
   });
+
+  // ─── updateOrderItems — per-line price override (DRAFT) ─────────────────────
+
+  describe("updateOrderItems — per-line price override", () => {
+    const draftOrder = {
+      ...MOCK_ORDER,
+      status: "DRAFT" as const,
+      orderNumber: "ORD-DRAFT",
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 3,
+          unitPrice: 4.99,
+          subtotal: 14.97,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ],
+    };
+
+    it("flags a lowered unit price as a MANUAL override and records audit fields", async () => {
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4, overrideReason: "promo" }],
+        },
+        operatorPayload,
+      );
+
+      // Override is stored as net unitPrice + originalPrice (strikethrough) — never a
+      // re-derived discount field (commit #101 convention). Subtotal goes through
+      // computeLineSubtotal → 4 × 3 = 12, money-rounded.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 4,
+            subtotal: 12,
+            priceType: "MANUAL",
+            originalPrice: 4.99,
+            overrideReason: "promo",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+      // Order totals recomputed from the discounted line subtotal.
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ subtotal: 12 }) }),
+      );
+    });
+
+    it("does not flag an override when the price is unchanged", async () => {
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4.99 }] },
+        operatorPayload,
+      );
+
+      const updateArg = prisma.orderItem.update.mock.calls[0][0] as any;
+      expect(updateArg.data).not.toHaveProperty("priceType");
+      expect(updateArg.data).not.toHaveProperty("originalPrice");
+      expect(updateArg.data.unitPrice).toBe(4.99);
+    });
+  });
+
+  // ─── updateOrderItems — incremental add vs replace-all ──────────────────────
+
+  describe("updateOrderItems — incremental vs replace-all", () => {
+    const orderWithItems = {
+      ...MOCK_ORDER,
+      status: "DRAFT" as const,
+      lineItems: [
+        {
+          id: "li-A",
+          orderId: "ord-1",
+          productId: "prod-A",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    };
+
+    it("replaceAll:false — adding an id-less item appends without deleting existing lines", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-B",
+        pricePerUnit: 7,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-B", qty: 1 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      // The untouched existing line must survive — no wholesale delete.
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ productId: "prod-B", unitPrice: 7 }),
+        }),
+      );
+    });
+
+    it("legacy heuristic — an all-id-less payload with no flag still replaces all (mobile)", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-B", pricePerUnit: 7, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 7, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-B", qty: 1 }] },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+    });
+  });
 });

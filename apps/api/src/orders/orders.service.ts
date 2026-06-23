@@ -141,6 +141,8 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             },
           },
+          // Stable creation order so newly scanned items append at the bottom.
+          orderBy: { createdAt: "asc" },
         },
         transaction: true,
         invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
@@ -1146,13 +1148,19 @@ export class OrdersService implements OnApplicationBootstrap {
         });
       }
     } else {
-      // Operator/admin path
+      // Operator/admin path.
+      // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
+      // Explicit `replaceAll` wins; otherwise fall back to the legacy heuristic so
+      // existing mobile clients (which omit the flag and send a full id-less list)
+      // keep working. The web edit UI sends `replaceAll: false`, so adding a new
+      // item there merges/appends instead of deleting the untouched lines.
       const allNewItems = dto.items.every((i) => !i.id);
+      const replaceAll = dto.replaceAll ?? allNewItems;
 
-      if (allNewItems) {
-        // Mobile "replace-all" pattern: client sends full item list without IDs.
-        // Delete existing items then re-create, honoring any per-line price override
-        // and any boxes/pieces split (boxed products use BOX-price proration).
+      if (replaceAll) {
+        // Replace-all: client sends the full item list. Delete existing items then
+        // re-create, honoring any per-line price override and any boxes/pieces
+        // split (boxed products use BOX-price proration).
         const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
         const products = await this.prisma
           .forTenant()
@@ -1405,7 +1413,11 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id: orderId },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
-        lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        lineItems: {
+          include: { product: { select: { id: true, name: true, unit: true } } },
+          // Stable creation order so newly added items appear at the bottom.
+          orderBy: { createdAt: "asc" },
+        },
         transaction: true,
       },
     });

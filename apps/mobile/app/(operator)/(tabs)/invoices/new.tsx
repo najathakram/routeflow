@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -228,6 +228,18 @@ function InvoiceComposer({
   const [search, setSearch] = useState("");
   const [items, setItems] = useState<Record<string, LineState>>({});
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
+  // Scroll the just-scanned product row into view as the operator scans.
+  const scrollRef = useRef<ScrollView>(null);
+  const listTopRef = useRef(0);
+  const rowYRef = useRef<Map<string, number>>(new Map());
+  const [scrollToId, setScrollToId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!scrollToId) return;
+    const y = rowYRef.current.get(scrollToId);
+    if (y != null)
+      scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
+    setScrollToId(null);
+  }, [scrollToId, items]);
   const [terms, setTerms] = useState(DEFAULT_TERMS);
   const [dueDate, setDueDate] = useState(() => todayPlusDays(TERM_DAYS[DEFAULT_TERMS] ?? 30));
   const [send, setSend] = useState(false);
@@ -320,6 +332,7 @@ function InvoiceComposer({
     );
     if (local) {
       addOne(local.id, local);
+      setScrollToId(local.id);
       showToast(`Added ${displayName(local)}`);
       return;
     }
@@ -327,6 +340,7 @@ function InvoiceComposer({
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
         addOne(result.product.id, result.product);
+        setScrollToId(result.product.id);
         showToast(`Added ${displayName(result.product)}`);
         return;
       }
@@ -446,7 +460,7 @@ function InvoiceComposer({
         </Pressable>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
         <SearchBar placeholder="Search items…" value={search} onChangeText={setSearch} />
 
         {productsLoading ? (
@@ -458,7 +472,12 @@ function InvoiceComposer({
             <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
           </View>
         ) : (
-          <View style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}>
+          <View
+            style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}
+            onLayout={(e) => {
+              listTopRef.current = e.nativeEvent.layout.y;
+            }}
+          >
             {filtered.map((p) => {
               const line = items[p.id];
               const q = line ? effectiveQty(line, p.unitsPerBox) : 0;
@@ -469,7 +488,11 @@ function InvoiceComposer({
                 ? `${line?.boxes ?? 0}b${(line?.pieces ?? 0) > 0 ? ` + ${line?.pieces ?? 0}` : ""}`
                 : `${q}`;
               return (
-                <View key={p.id} style={styles.productRow}>
+                <View
+                  key={p.id}
+                  onLayout={(e) => rowYRef.current.set(p.id, e.nativeEvent.layout.y)}
+                  style={styles.productRow}
+                >
                   <View style={styles.productImg} />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.productName} numberOfLines={1}>

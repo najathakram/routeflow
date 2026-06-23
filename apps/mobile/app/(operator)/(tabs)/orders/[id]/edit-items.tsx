@@ -15,11 +15,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
-import { useUpdateOrderItems } from "../../../../../lib/api/orders";
+import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty } from "../../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../../lib/pricing";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
@@ -55,6 +55,9 @@ export default function EditOrderItemsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading } = useAdminOrder(id ?? "");
+  // Remembered per-customer prices — pre-fill a newly added line's price so a
+  // prior discount carries forward (operator can still change it).
+  const { data: priceHistory } = useCustomerPriceHistory((order as any)?.customerId);
   const userRole = useAuthStore((s) => s.user?.role);
   // Customer accounts shouldn't reach this screen, but defend anyway —
   // box-splitting is operator/driver-only by product policy.
@@ -305,7 +308,12 @@ export default function EditOrderItemsScreen() {
                   }
                   return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
                 }
-                // Fresh add: 1 box for boxed, 1 piece for non-boxed.
+                // Fresh add: pre-fill the remembered price for this customer +
+                // product (only when below catalog), else catalog.
+                const hist = priceHistory?.[p.id];
+                const startPrice =
+                  hist && hist.lastPrice < catalogPrice ? hist.lastPrice : catalogPrice;
+                // 1 box for boxed, 1 piece for non-boxed.
                 if (Number(unitsPerBox ?? 0) > 1) {
                   const upb = Number(unitsPerBox ?? 0);
                   return {
@@ -316,7 +324,7 @@ export default function EditOrderItemsScreen() {
                       boxes: 1,
                       pieces: 0,
                       unitsPerBox,
-                      unitPrice: catalogPrice,
+                      unitPrice: startPrice,
                       catalogPrice,
                       name: p.name,
                       unit: p.unit,
@@ -329,7 +337,7 @@ export default function EditOrderItemsScreen() {
                     productId: p.id,
                     qty: 1,
                     unitsPerBox,
-                    unitPrice: catalogPrice,
+                    unitPrice: startPrice,
                     catalogPrice,
                     name: p.name,
                     unit: p.unit,
@@ -356,6 +364,7 @@ export default function EditOrderItemsScreen() {
                     key={it.productId}
                     item={it}
                     canSplitBoxes={canSplitBoxes}
+                    isDraft={order.status === "DRAFT"}
                     onIncQty={() => incQty(it.productId)}
                     onDecQty={() => decQty(it.productId)}
                     onSetQty={(n) => setQty(it.productId, n)}
@@ -428,6 +437,7 @@ export default function EditOrderItemsScreen() {
 function DraftItemCard({
   item,
   canSplitBoxes,
+  isDraft,
   onIncQty,
   onDecQty,
   onSetQty,
@@ -439,6 +449,8 @@ function DraftItemCard({
 }: {
   item: DraftItem;
   canSplitBoxes: boolean;
+  /** Price / discount editing is only offered while the order is a DRAFT. */
+  isDraft: boolean;
   onIncQty: () => void;
   onDecQty: () => void;
   onSetQty: (n: number) => void;
@@ -468,22 +480,35 @@ function DraftItemCard({
           <Text style={styles.cardName} numberOfLines={2}>
             {item.name}
           </Text>
-          {/* Meta line: unit price + box hint + override badge */}
+          {/* Meta line: unit price + box hint + override badge.
+              Editable (tappable) only on DRAFT; read-only otherwise. */}
           <View style={styles.cardMetaRow}>
-            <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
-              {isOverridden ? (
-                <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
-              ) : null}
-              <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
-                ${item.unitPrice.toFixed(2)}
-                {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
-              </Text>
-              <Ionicons
-                name="pencil-outline"
-                size={11}
-                color={isOverridden ? ios.system.orangeInk : ios.label3}
-              />
-            </Pressable>
+            {isDraft ? (
+              <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
+                {isOverridden ? (
+                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                ) : null}
+                <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
+                  ${item.unitPrice.toFixed(2)}
+                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                </Text>
+                <Ionicons
+                  name="pencil-outline"
+                  size={11}
+                  color={isOverridden ? ios.system.orangeInk : ios.label3}
+                />
+              </Pressable>
+            ) : (
+              <View style={styles.priceTap}>
+                {isOverridden ? (
+                  <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
+                ) : null}
+                <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
+                  ${item.unitPrice.toFixed(2)}
+                  {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
         <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
@@ -517,20 +542,22 @@ function DraftItemCard({
           <Ionicons name="swap-horizontal-outline" size={14} color={ios.brand} />
           <Text style={styles.actionChipText}>Substitute</Text>
         </Pressable>
-        <Pressable
-          style={[styles.actionChip, isOverridden && styles.actionChipActive]}
-          onPress={onPressPrice}
-          hitSlop={4}
-        >
-          <Ionicons
-            name="pricetag-outline"
-            size={14}
-            color={isOverridden ? ios.system.orangeInk : ios.brand}
-          />
-          <Text style={[styles.actionChipText, isOverridden && { color: ios.system.orangeInk }]}>
-            {isOverridden ? "Price overridden" : "Override price"}
-          </Text>
-        </Pressable>
+        {isDraft ? (
+          <Pressable
+            style={[styles.actionChip, isOverridden && styles.actionChipActive]}
+            onPress={onPressPrice}
+            hitSlop={4}
+          >
+            <Ionicons
+              name="pricetag-outline"
+              size={14}
+              color={isOverridden ? ios.system.orangeInk : ios.brand}
+            />
+            <Text style={[styles.actionChipText, isOverridden && { color: ios.system.orangeInk }]}>
+              {isOverridden ? "Price overridden" : "Override price"}
+            </Text>
+          </Pressable>
+        ) : null}
         <View style={{ flex: 1 }} />
         <Pressable style={styles.deleteBtn} onPress={onRemove} hitSlop={6}>
           <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
@@ -631,9 +658,35 @@ function PriceOverrideModal({
   onCancel: () => void;
 }) {
   const [priceText, setPriceText] = useState(item.unitPrice.toFixed(2));
+  // "$ off / unit" is a lens over (catalogPrice - newPrice); the two inputs stay in sync.
+  const [offText, setOffText] = useState(
+    item.unitPrice < item.catalogPrice
+      ? roundMoney(item.catalogPrice - item.unitPrice).toFixed(2)
+      : "",
+  );
   const [reason, setReason] = useState(item.overrideReason ?? "");
   const newPrice = toNumber(priceText);
   const valid = newPrice > 0;
+
+  const onChangePrice = (raw: string) => {
+    setPriceText(raw);
+    const parsed = parseFloat(raw);
+    if (raw.trim() === "" || isNaN(parsed)) {
+      setOffText("");
+      return;
+    }
+    setOffText(parsed < item.catalogPrice ? roundMoney(item.catalogPrice - parsed).toFixed(2) : "");
+  };
+
+  const onChangeOff = (raw: string) => {
+    setOffText(raw);
+    const off = parseFloat(raw);
+    if (raw.trim() === "" || isNaN(off) || off <= 0) {
+      setPriceText(item.catalogPrice.toFixed(2));
+      return;
+    }
+    setPriceText(roundMoney(Math.max(0, item.catalogPrice - off)).toFixed(2));
+  };
 
   return (
     <Modal transparent animationType="fade" onRequestClose={onCancel}>
@@ -647,10 +700,21 @@ function PriceOverrideModal({
           <TextInput
             style={styles.modalInput}
             value={priceText}
-            onChangeText={setPriceText}
+            onChangeText={onChangePrice}
             keyboardType="decimal-pad"
             selectTextOnFocus
             autoFocus
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+          />
+
+          <Text style={styles.modalFieldLabel}>Amount off / unit</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={offText}
+            onChangeText={onChangeOff}
+            keyboardType="decimal-pad"
+            selectTextOnFocus
             placeholder="0.00"
             placeholderTextColor={ios.label3}
           />
