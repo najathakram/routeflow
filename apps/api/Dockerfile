@@ -64,5 +64,4 @@ WORKDIR /app/apps/api
 
 EXPOSE 3000
 
-# TEMP emergency: apply pending migration before starting; revert to ["node","dist/main.js"] after confirmed
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+CMD ["node", "dist/main.js"]
