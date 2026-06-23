@@ -57,7 +57,7 @@ function assertSecrets() {
   }
 }
 
-/** One-time idempotent migration: add invoiceNotes/invoiceTerms to TenantConfig. */
+/** Idempotent startup migrations — runs before NestJS boots. */
 async function runStartupMigration() {
   const url = process.env.DATABASE_URL;
   if (!url) return;
@@ -68,10 +68,29 @@ async function runStartupMigration() {
          ADD COLUMN IF NOT EXISTS "invoiceNotes" TEXT,
          ADD COLUMN IF NOT EXISTS "invoiceTerms" TEXT`,
     );
-    console.log("✅ TenantConfig migration: invoiceNotes/invoiceTerms ready");
+    // Emergency 20260623: unlisted items + shipment tracking columns
+    await pool.query(`
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'OrderItem' AND column_name = 'productId' AND is_nullable = 'NO'
+        ) THEN
+          ALTER TABLE "OrderItem" ALTER COLUMN "productId" DROP NOT NULL;
+        END IF;
+      END $$;
+      ALTER TABLE "OrderItem" ADD COLUMN IF NOT EXISTS "name" TEXT;
+      ALTER TABLE "Order"
+        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
+        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
+        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3);
+      ALTER TABLE "Invoice"
+        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
+        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
+        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3)
+    `);
+    console.log("✅ Startup migrations applied");
   } catch (err) {
-    // Table may not exist yet in non-multi-tenant envs — safe to ignore
-    console.warn("⚠️  TenantConfig migration skipped:", (err as Error).message);
+    console.warn("⚠️  Startup migration error:", (err as Error).message);
   } finally {
     await pool.end();
   }
