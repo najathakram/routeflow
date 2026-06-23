@@ -471,7 +471,7 @@ describe("OrdersService", () => {
     });
   });
 
-  // ─── updateOrderItems — per-line price override (DRAFT) ─────────────────────
+  // ─── updateOrderItems — per-line price override (DRAFT / PENDING / CONFIRMED) ─
 
   describe("updateOrderItems — per-line price override", () => {
     const draftOrder = {
@@ -543,6 +543,47 @@ describe("OrdersService", () => {
       expect(updateArg.data).not.toHaveProperty("priceType");
       expect(updateArg.data).not.toHaveProperty("originalPrice");
       expect(updateArg.data.unitPrice).toBe(4.99);
+    });
+
+    it("applies a price override on a PENDING order (not just DRAFT)", async () => {
+      // The web + mobile UIs now expose price/discount editing on PENDING and
+      // CONFIRMED orders, not only DRAFT. The service must honor the override on
+      // those statuses exactly as it does on DRAFT.
+      const pendingOrder = {
+        ...draftOrder,
+        status: "PENDING" as const,
+        orderNumber: "ORD-PENDING",
+      };
+      prisma.order.findUnique.mockResolvedValue(pendingOrder);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 9, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { id: "li-1", action: "UPDATE", qty: 3, unitPrice: 3, overrideReason: "loyalty" },
+          ],
+        },
+        operatorPayload,
+      );
+
+      // Net unitPrice + originalPrice (strikethrough); subtotal via computeLineSubtotal → 3 × 3 = 9.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 3,
+            subtotal: 9,
+            priceType: "MANUAL",
+            originalPrice: 4.99,
+            overrideReason: "loyalty",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ subtotal: 9 }) }),
+      );
     });
   });
 
