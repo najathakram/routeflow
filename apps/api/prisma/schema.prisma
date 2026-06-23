@@ -806,29 +806,34 @@ model RouteRunStop {
 }
 
 model Order {
-  id                    String      @id @default(uuid())
-  customerId            String
-  routeRunId            String?
-  routeRunStopId        String?
-  templateId            String?
-  orderNumber           String?
-  status                OrderStatus @default(PENDING)
-  source                OrderSource @default(APP)
-  urgent                Boolean     @default(false)
-  notes                 String?
-  driverNote            String?
-  subtotal              Decimal     @default(0) @db.Decimal(10, 2)
-  tax                   Decimal     @default(0) @db.Decimal(10, 2)
-  total                 Decimal     @default(0) @db.Decimal(10, 2)
-  discountAmount        Decimal     @default(0) @db.Decimal(10, 2)
-  requestedDeliveryDate DateTime?
-  deliveredAt           DateTime?
+  id                     String      @id @default(uuid())
+  customerId             String
+  routeRunId             String?
+  routeRunStopId         String?
+  templateId             String?
+  orderNumber            String?
+  status                 OrderStatus @default(PENDING)
+  source                 OrderSource @default(APP)
+  urgent                 Boolean     @default(false)
+  notes                  String?
+  driverNote             String?
+  subtotal               Decimal     @default(0) @db.Decimal(10, 2)
+  tax                    Decimal     @default(0) @db.Decimal(10, 2)
+  total                  Decimal     @default(0) @db.Decimal(10, 2)
+  discountAmount         Decimal     @default(0) @db.Decimal(10, 2)
+  requestedDeliveryDate  DateTime?
+  deliveredAt            DateTime?
+  // Carrier shipment tracking — set when goods ship via a carrier instead of being
+  // delivered on our own route. Copied onto the Invoice(s) generated from this order.
+  shippingCarrier        String?
+  shippingTrackingNumber String?
+  shippedAt              DateTime?
   // When true, the auto-merge cron + on-create merge will skip this order entirely.
   // Set when an operator explicitly chose "Create as separate order" despite an active draft existing.
-  skipAutoMerge         Boolean     @default(false)
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
-  tenantId              String?
+  skipAutoMerge          Boolean     @default(false)
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+  tenantId               String?
 
   customer          Customer           @relation(fields: [customerId], references: [id])
   tenant            Tenant?            @relation(fields: [tenantId], references: [id])
@@ -859,7 +864,12 @@ model Order {
 model OrderItem {
   id             String     @id @default(uuid())
   orderId        String
-  productId      String
+  // Nullable so an order can carry "unlisted" ad-hoc lines that are not in the
+  // product catalog. When null, `name` holds the free-text item label.
+  productId      String?
+  // Free-text label for unlisted items (productId == null). Catalog lines leave
+  // this null and read the name from the related product.
+  name           String?
   status         ItemStatus @default(PENDING)
   qty            Decimal    @db.Decimal(10, 3)
   deliveredQty   Decimal    @default(0) @db.Decimal(10, 3)
@@ -880,7 +890,7 @@ model OrderItem {
 
   order             Order              @relation(fields: [orderId], references: [id])
   tenant            Tenant?            @relation(fields: [tenantId], references: [id])
-  product           Product            @relation(fields: [productId], references: [id])
+  product           Product?           @relation(fields: [productId], references: [id])
   deliveryMutations DeliveryMutation[]
   transactionItems  TransactionItem[]
 
@@ -1206,34 +1216,40 @@ model StockMovement {
 // ─── Sprint 1: Standalone Invoicing ──────────────────────────────────────────
 
 model Invoice {
-  id                 String        @id @default(uuid())
-  invoiceNumber      String
-  customerId         String
-  status             InvoiceStatus @default(DRAFT)
-  subtotal           Decimal       @db.Decimal(10, 2)
-  taxAmount          Decimal       @default(0) @db.Decimal(10, 2)
-  discount           Decimal       @default(0) @db.Decimal(10, 2)
-  shippingFee        Decimal       @default(0) @db.Decimal(10, 2)
-  total              Decimal       @db.Decimal(10, 2)
-  dueDate            DateTime?
-  sentAt             DateTime?
-  viewedAt           DateTime?
-  paidAt             DateTime?
-  notes              String?
-  internalNotes      String?
-  referenceNumber    String?
-  subject            String?
-  terms              String?
-  issueDate          DateTime      @default(now())
-  pdfUrl             String?
-  writeOffReason     String?
-  writtenOffAt       DateTime?
-  orderId            String?
-  deliveryBatchId    String?
-  recurringInvoiceId String?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  tenantId           String?
+  id                     String        @id @default(uuid())
+  invoiceNumber          String
+  customerId             String
+  status                 InvoiceStatus @default(DRAFT)
+  subtotal               Decimal       @db.Decimal(10, 2)
+  taxAmount              Decimal       @default(0) @db.Decimal(10, 2)
+  discount               Decimal       @default(0) @db.Decimal(10, 2)
+  shippingFee            Decimal       @default(0) @db.Decimal(10, 2)
+  total                  Decimal       @db.Decimal(10, 2)
+  dueDate                DateTime?
+  sentAt                 DateTime?
+  viewedAt               DateTime?
+  paidAt                 DateTime?
+  notes                  String?
+  internalNotes          String?
+  referenceNumber        String?
+  subject                String?
+  terms                  String?
+  issueDate              DateTime      @default(now())
+  pdfUrl                 String?
+  // Carrier shipment tracking — copied from the linked order on invoice generation,
+  // and editable on the invoice itself. Carrier is a label (UPS/FedEx/USPS/DHL/Other);
+  // the clickable tracking URL is derived from carrier + number, never stored.
+  shippingCarrier        String?
+  shippingTrackingNumber String?
+  shippedAt              DateTime?
+  writeOffReason         String?
+  writtenOffAt           DateTime?
+  orderId                String?
+  deliveryBatchId        String?
+  recurringInvoiceId     String?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  tenantId               String?
 
   customer         Customer          @relation(fields: [customerId], references: [id])
   tenant           Tenant?           @relation(fields: [tenantId], references: [id])

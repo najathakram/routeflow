@@ -84,6 +84,10 @@ export interface Invoice {
   balanceDue?: number;
   /** Server-computed total amount paid across all InvoicePayment records */
   paidAmount?: number;
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   sentAt?: string;
@@ -116,6 +120,8 @@ export function useInvoices(
     sortOrder?: "asc" | "desc";
     page?: number;
     limit?: number;
+    /** When true, return ONLY invoices that have a tracking number (shipments list). */
+    shipped?: boolean;
   },
   options?: { refetchInterval?: number },
 ) {
@@ -204,6 +210,9 @@ export interface CreateInvoiceDto {
   terms?: string;
   referenceNumber?: string;
   subject?: string;
+  /** Carrier shipment tracking recorded at creation time. */
+  shippingCarrier?: string;
+  shippingTrackingNumber?: string;
   /** If true, invoice transitions DRAFT → SENT immediately after creation. */
   send?: boolean;
 }
@@ -220,6 +229,26 @@ export function useUpdateInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+    },
+  });
+}
+
+/**
+ * Record / update / clear the carrier shipment on any non-void invoice.
+ * Empty strings clear the carrier + tracking number. Returns the updated invoice.
+ */
+export function useUpdateInvoiceShipment() {
+  const qc = useQueryClient();
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string; shippingCarrier?: string; shippingTrackingNumber?: string }
+  >({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/invoices/${id}/shipment`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });

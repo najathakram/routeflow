@@ -6,12 +6,14 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
@@ -23,7 +25,17 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 // (qty <= 100,000 units, unitPrice <= $1,000,000) keep the math under
 // the Decimal(10,2) precision the schema reserves for totals.
 export class OrderItemDto {
-  @IsString() @MaxLength(64) productId: string;
+  // Catalog items carry a productId. "Unlisted" ad-hoc items (not in the catalog)
+  // omit it and instead supply `name` + `unitPrice`; OrdersService validates that
+  // an unlisted line has a unitPrice and rejects unlisted lines from buyers.
+  @IsOptional() @IsString() @MaxLength(64) productId?: string;
+  /** Free-text label for an unlisted item — required when productId is absent. */
+  @ValidateIf((o) => !o.productId)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(256)
+  @StripHtml()
+  name?: string;
   @IsInt() @Min(1) @Max(100_000) qty: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;

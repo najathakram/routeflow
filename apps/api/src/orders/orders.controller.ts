@@ -23,6 +23,7 @@ import { CreateOrderDto } from "./dto/create-order.dto";
 import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 
 @ApiTags("orders")
@@ -68,16 +69,31 @@ export class OrdersController {
         }
         if (choice === "merge") {
           const mergedMap = new Map<string, number>();
+          // Unlisted lines (no productId) can't be keyed by product — pass them
+          // through as their own line items so a merge never drops them.
+          const unlisted: Array<{ name?: string; qty: number; unitPrice: number }> = [];
           for (const li of activeOrder.lineItems) {
+            if (!li.productId) {
+              unlisted.push({
+                name: li.name ?? undefined,
+                qty: Number(li.qty),
+                unitPrice: Number(li.unitPrice),
+              });
+              continue;
+            }
             mergedMap.set(li.productId, Number(li.qty));
           }
           for (const item of dto.items ?? []) {
+            if (!item.productId) {
+              unlisted.push({ name: item.name, qty: item.qty, unitPrice: item.unitPrice ?? 0 });
+              continue;
+            }
             mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
           }
-          const mergedItems = Array.from(mergedMap.entries()).map(([productId, qty]) => ({
-            productId,
-            qty,
-          }));
+          const mergedItems = [
+            ...Array.from(mergedMap.entries()).map(([productId, qty]) => ({ productId, qty })),
+            ...unlisted,
+          ];
           await this.ordersService.updateOrderItems(
             activeOrder.id,
             { items: mergedItems } as any,
@@ -185,6 +201,19 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.ordersService.updateOrderItems(id, dto, user);
+  }
+
+  // Set/clear carrier shipment tracking on an order shipped via a carrier (not
+  // delivered on our own route). Mirrors the values onto its non-void invoices.
+  @Patch(":id/shipment")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  updateShipment(
+    @Param("id") id: string,
+    @Body() dto: UpdateShipmentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.updateShipment(id, dto, user);
   }
 
   @Patch(":id/urgent")

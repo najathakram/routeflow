@@ -40,6 +40,7 @@ interface SelectedCustomer {
 
 interface LineItem {
   tempId: string;
+  /** Empty string for unlisted (ad-hoc) lines — `isUnlisted` is the real flag. */
   productId: string;
   productName: string;
   unit: string;
@@ -52,6 +53,8 @@ interface LineItem {
   unitsPerBox?: number; // set when product has box packaging
   boxes?: number; // whole boxes (only when unitsPerBox is set)
   pieces?: number; // extra loose pieces (only when unitsPerBox is set)
+  /** True for a free-text, non-catalog line (sent as { name, qty, unitPrice }). */
+  isUnlisted?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -93,6 +96,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   const [lineItems, setLineItems] = React.useState<LineItem[]>([]);
   const [lineItemsError, setLineItemsError] = React.useState("");
   const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
+
+  // ── Custom (unlisted) item inline form ──
+  const [customFormOpen, setCustomFormOpen] = React.useState(false);
+  const [customName, setCustomName] = React.useState("");
+  const [customPrice, setCustomPrice] = React.useState("");
+  const [customQty, setCustomQty] = React.useState("1");
+  const [customError, setCustomError] = React.useState("");
   const productSearchRef = React.useRef<HTMLInputElement>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
@@ -219,6 +229,11 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setDebouncedProductSearch("");
       setLineItems([]);
       setLineItemsError("");
+      setCustomFormOpen(false);
+      setCustomName("");
+      setCustomPrice("");
+      setCustomQty("1");
+      setCustomError("");
       setRequestedDeliveryDate("");
       setOrderDiscount("");
       setCreateProductOpen(false);
@@ -316,6 +331,65 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     setLineItems((prev) => prev.filter((li) => li.tempId !== tempId));
   };
 
+  // Append a free-text "custom" line (not in the product catalog). Stored locally
+  // like a normal line but flagged isUnlisted; submitted as { name, qty, unitPrice }.
+  const addUnlistedItem = () => {
+    const name = customName.trim();
+    const price = parseFloat(customPrice);
+    const qty = parseInt(customQty, 10);
+    if (!name) {
+      setCustomError("Enter an item name");
+      return;
+    }
+    if (isNaN(price) || price < 0) {
+      setCustomError("Enter a valid unit price");
+      return;
+    }
+    if (isNaN(qty) || qty < 1) {
+      setCustomError("Enter a quantity of at least 1");
+      return;
+    }
+    const newTempId = `custom-${Date.now()}`;
+    setLineItems((prev) => [
+      ...prev,
+      {
+        tempId: newTempId,
+        productId: "",
+        productName: name,
+        unit: "each",
+        listPrice: price,
+        unitPrice: price,
+        priceType: "STANDARD" as const,
+        qty,
+        isUnlisted: true,
+      },
+    ]);
+    setScrollToId(newTempId);
+    setLineItemsError("");
+    setCustomFormOpen(false);
+    setCustomName("");
+    setCustomPrice("");
+    setCustomQty("1");
+    setCustomError("");
+  };
+
+  // Inline edit of an unlisted line's name / unit price.
+  const updateUnlistedName = (tempId: string, name: string) => {
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, productName: name } : li)),
+    );
+  };
+  const updateUnlistedPrice = (tempId: string, rawValue: string) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const parsed = parseFloat(rawValue);
+        const price = rawValue === "" || isNaN(parsed) || parsed < 0 ? 0 : parsed;
+        return { ...li, unitPrice: price, listPrice: price };
+      }),
+    );
+  };
+
   const updateQty = (tempId: string, delta: number) => {
     setLineItems((prev) =>
       prev.map((li) => {
@@ -400,16 +474,25 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   ) => {
     const { mergeChoice, asDraft } = options;
     const itemsForSubmit = (
-      asDraft ? lineItems.filter((li) => li.productId && li.qty > 0) : lineItems
-    ).map((li) => ({
-      productId: li.productId,
-      qty: li.qty,
-      ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-      // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
-      ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
-        ? { unitPrice: li.discountedPrice }
-        : {}),
-    }));
+      asDraft
+        ? lineItems.filter(
+            (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
+          )
+        : lineItems
+    ).map((li) =>
+      li.isUnlisted
+        ? // Unlisted (ad-hoc) line — no productId; unitPrice required.
+          { name: li.productName.trim(), qty: li.qty, unitPrice: li.unitPrice }
+        : {
+            productId: li.productId,
+            qty: li.qty,
+            ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
+            // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
+            ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
+              ? { unitPrice: li.discountedPrice }
+              : {}),
+          },
+    );
     createOrder.mutate(
       {
         customerId: selectedCustomer!.id,
@@ -791,6 +874,92 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
               <p className="text-xs text-danger">{lineItemsError}</p>
             )}
 
+            {/* ── Add custom (unlisted) item ── */}
+            {customFormOpen ? (
+              <div className="space-y-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-navy">Custom item</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomFormOpen(false);
+                      setCustomError("");
+                    }}
+                    className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+                    title="Cancel"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[140px] flex-1 space-y-1">
+                    <label className="block text-[10px] font-medium text-navy/70">Name</label>
+                    <input
+                      type="text"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      placeholder="e.g. Pallet delivery surcharge"
+                      className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addUnlistedItem();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="w-24 space-y-1">
+                    <label className="block text-[10px] font-medium text-navy/70">Unit price</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={customPrice}
+                      onChange={(e) => setCustomPrice(e.target.value)}
+                      placeholder="0.00"
+                      className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addUnlistedItem();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="w-16 space-y-1">
+                    <label className="block text-[10px] font-medium text-navy/70">Qty</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={customQty}
+                      onChange={(e) => setCustomQty(e.target.value)}
+                      className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addUnlistedItem();
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button type="button" size="sm" onClick={addUnlistedItem}>
+                    Add
+                  </Button>
+                </div>
+                {customError && <p className="text-xs text-danger">{customError}</p>}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCustomFormOpen(true)}
+                className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+                Add custom item
+              </button>
+            )}
+
             {/* Line items list */}
             {lineItems.length > 0 ? (
               <ul className="divide-y divide-surface-border overflow-hidden rounded-lg border border-surface-border">
@@ -803,68 +972,101 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                     }}
                     className="flex items-start gap-3 px-3 py-2.5"
                   >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
-                      {/* Price display with special/discount indicators */}
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                        {li.priceType === "SPECIAL" ? (
-                          <>
-                            <span className="text-xs text-navy/70 line-through">
-                              ${li.listPrice.toFixed(2)}
-                            </span>
-                            <span className="text-xs font-medium text-emerald-600">
-                              ${li.unitPrice.toFixed(2)} / {li.unit}
-                            </span>
-                            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                              Special price
-                            </span>
-                          </>
-                        ) : li.priceType === "DISCOUNTED" ? (
-                          <>
-                            <span className="text-xs text-navy/70 line-through">
-                              ${li.listPrice.toFixed(2)}
-                            </span>
-                            <span className="text-xs font-medium text-amber-600">
-                              ${li.unitPrice.toFixed(2)} / {li.unit}
-                            </span>
-                            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                              Discounted
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-xs text-navy/70">
-                            ${li.unitPrice.toFixed(2)} / {li.unit}
+                    {li.isUnlisted ? (
+                      // ── Unlisted (custom) line — editable name + price, no catalog data ──
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={li.productName}
+                            onChange={(e) => updateUnlistedName(li.tempId, e.target.value)}
+                            placeholder="Item name"
+                            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                          <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+                            Custom
                           </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-navy/70">Price:</span>
+                          <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
+                            <span className="text-navy/40 text-xs">$</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={li.unitPrice}
+                              onChange={(e) => updateUnlistedPrice(li.tempId, e.target.value)}
+                              className="w-16 bg-transparent py-0.5 text-right text-xs text-navy outline-none"
+                            />
+                          </span>
+                          <span className="text-[10px] text-navy/70">/ {li.unit}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
+                        {/* Price display with special/discount indicators */}
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                          {li.priceType === "SPECIAL" ? (
+                            <>
+                              <span className="text-xs text-navy/70 line-through">
+                                ${li.listPrice.toFixed(2)}
+                              </span>
+                              <span className="text-xs font-medium text-emerald-600">
+                                ${li.unitPrice.toFixed(2)} / {li.unit}
+                              </span>
+                              <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                                Special price
+                              </span>
+                            </>
+                          ) : li.priceType === "DISCOUNTED" ? (
+                            <>
+                              <span className="text-xs text-navy/70 line-through">
+                                ${li.listPrice.toFixed(2)}
+                              </span>
+                              <span className="text-xs font-medium text-amber-600">
+                                ${li.unitPrice.toFixed(2)} / {li.unit}
+                              </span>
+                              <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                                Discounted
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-navy/70">
+                              ${li.unitPrice.toFixed(2)} / {li.unit}
+                            </span>
+                          )}
+                        </div>
+                        {/* Price per piece (when product has box packaging) */}
+                        {li.unitsPerBox && li.unitsPerBox > 1 && (
+                          <div className="mt-0.5 text-[10px] text-navy/70">
+                            ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
+                          </div>
+                        )}
+                        {/* One-time discount input (only when no special price already applied) */}
+                        {li.priceType !== "SPECIAL" && (
+                          <div className="mt-1 flex items-center gap-1 flex-wrap">
+                            <span className="text-[10px] text-navy/70">Price:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              placeholder={li.listPrice.toFixed(2)}
+                              value={li.discountedPrice != null ? li.discountedPrice : ""}
+                              onChange={(e) => setDiscountedPrice(li.tempId, e.target.value)}
+                              className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            />
+                            {priceHistory?.[li.productId] &&
+                              priceHistory[li.productId].lastPrice < li.listPrice && (
+                                <span className="text-[10px] text-navy/50">
+                                  Last: ${priceHistory[li.productId].lastPrice.toFixed(2)}
+                                </span>
+                              )}
+                          </div>
                         )}
                       </div>
-                      {/* Price per piece (when product has box packaging) */}
-                      {li.unitsPerBox && li.unitsPerBox > 1 && (
-                        <div className="mt-0.5 text-[10px] text-navy/70">
-                          ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
-                        </div>
-                      )}
-                      {/* One-time discount input (only when no special price already applied) */}
-                      {li.priceType !== "SPECIAL" && (
-                        <div className="mt-1 flex items-center gap-1 flex-wrap">
-                          <span className="text-[10px] text-navy/70">Price:</span>
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            placeholder={li.listPrice.toFixed(2)}
-                            value={li.discountedPrice != null ? li.discountedPrice : ""}
-                            onChange={(e) => setDiscountedPrice(li.tempId, e.target.value)}
-                            className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                          />
-                          {priceHistory?.[li.productId] &&
-                            priceHistory[li.productId].lastPrice < li.listPrice && (
-                              <span className="text-[10px] text-navy/50">
-                                Last: ${priceHistory[li.productId].lastPrice.toFixed(2)}
-                              </span>
-                            )}
-                        </div>
-                      )}
-                    </div>
+                    )}
                     {/* Qty controls */}
                     {li.unitsPerBox ? (
                       <div className="flex flex-col gap-0.5 min-w-[190px]">

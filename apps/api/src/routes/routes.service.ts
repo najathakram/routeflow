@@ -361,21 +361,24 @@ export class RoutesService {
 
     for (const order of orders) {
       for (const li of order.lineItems) {
-        if (!map[li.productId]) {
-          map[li.productId] = {
-            productId: li.productId,
-            productName: li.product?.name ?? li.productId,
+        // Unlisted lines have no productId — key them by name so they still show
+        // on the warehouse packing list.
+        const key = li.productId ?? `unlisted:${li.name ?? li.id}`;
+        if (!map[key]) {
+          map[key] = {
+            productId: li.productId ?? "",
+            productName: li.product?.name ?? li.name ?? "Item",
             sku: li.product?.sku ?? null,
             totalQty: 0,
             customers: [],
           };
         }
         const qty = Number(li.qty);
-        map[li.productId].totalQty += qty;
+        map[key].totalQty += qty;
         const cName = order.customer?.businessName ?? "Unknown";
-        const existing = map[li.productId].customers.find((c) => c.name === cName);
+        const existing = map[key].customers.find((c) => c.name === cName);
         if (existing) existing.qty += qty;
-        else map[li.productId].customers.push({ name: cName, qty });
+        else map[key].customers.push({ name: cName, qty });
       }
     }
 

@@ -29,6 +29,7 @@ import {
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
+import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -121,6 +122,15 @@ export class InvoicesController {
 
   @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) {
     return this.invoicesService.update(id, dto);
+  }
+
+  /**
+   * Set/clear carrier shipment tracking on an invoice. Works on any non-void
+   * invoice (you usually ship AFTER billing, so this is not gated to DRAFT like
+   * the line-item edit). Mirrors the order's `PATCH /orders/:id/shipment`.
+   */
+  @Patch(":id/shipment") updateShipment(@Param("id") id: string, @Body() dto: UpdateShipmentDto) {
+    return this.invoicesService.updateInvoiceShipment(id, dto);
   }
   @Post(":id/send") send(@Param("id") id: string) {
     return this.invoicesService.send(id);

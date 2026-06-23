@@ -114,6 +114,10 @@ export interface AdminOrder {
   notes?: string;
   requestedDeliveryDate?: string;
   deliveredAt?: string;
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   createdAt: string;
   customer?: {
     id: string;
@@ -123,7 +127,10 @@ export interface AdminOrder {
   };
   lineItems: Array<{
     id: string;
-    productId: string;
+    /** Null for an unlisted (ad-hoc, non-catalog) line — `name` carries the label. */
+    productId: string | null;
+    /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
+    name?: string | null;
     qty: number;
     /**
      * Total pieces already invoiced across all partial invoices for this
@@ -252,6 +259,10 @@ export interface AdminInvoice {
   balanceDue?: number;
   paidAmount?: number;
   isOverdue?: boolean;
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   createdAt: string;
   customer?: { id: string; businessName: string; email?: string };
   payments?: Array<{
@@ -282,6 +293,8 @@ export function useAdminInvoices(params?: {
   limit?: number;
   customerId?: string;
   isOverdue?: boolean;
+  /** When true, return ONLY invoices that have a tracking number (shipments list). */
+  shipped?: boolean;
 }) {
   return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
     queryKey: ["admin", "invoices", params],

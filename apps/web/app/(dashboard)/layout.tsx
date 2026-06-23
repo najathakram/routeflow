@@ -96,6 +96,7 @@ const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
       { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
+      { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
       { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
       { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },

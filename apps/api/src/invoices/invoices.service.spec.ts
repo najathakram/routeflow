@@ -475,4 +475,101 @@ describe("InvoicesService", () => {
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
     });
   });
+
+  // ─── Unlisted lines + carrier shipment ──────────────────────────────────────
+
+  describe("createInvoiceFromOrder — unlisted lines + shipment copy", () => {
+    it("uses the line name as description for unlisted items and copies order shipment", async () => {
+      jest
+        .spyOn(service as any, "resolveDefaultTerms")
+        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
+      jest
+        .spyOn(service as any, "resolveTenantInvoiceDefaults")
+        .mockResolvedValue({ notes: null, terms: null });
+      jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
+
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-1",
+        customerId: "cust-1",
+        orderNumber: "ORD-9",
+        subtotal: 30,
+        tax: 0,
+        shippingCarrier: "UPS",
+        shippingTrackingNumber: "1Z999",
+        shippedAt: new Date("2026-06-20"),
+        lineItems: [
+          {
+            id: "li-cat",
+            productId: "p1",
+            name: null,
+            qty: 2,
+            invoicedQty: 0,
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "STANDARD",
+            product: { name: "Widget", unitsPerBox: 0 },
+          },
+          {
+            id: "li-unl",
+            productId: null,
+            name: "Rush fee",
+            qty: 1,
+            invoicedQty: 0,
+            unitPrice: 10,
+            originalPrice: null,
+            priceType: "MANUAL",
+            product: null,
+          },
+        ],
+      });
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-1",
+        items: [],
+        payments: [],
+        customer: {},
+      });
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      const createCall = prisma.invoice.create.mock.calls[0][0] as any;
+      // Shipment is carried from the order onto the invoice.
+      expect(createCall.data.shippingCarrier).toBe("UPS");
+      expect(createCall.data.shippingTrackingNumber).toBe("1Z999");
+      // Unlisted line uses its free-text name as the invoice line description.
+      const descriptions = createCall.data.items.create.map((i: any) => i.description);
+      expect(descriptions).toContain("Rush fee");
+      expect(descriptions).toContain("Widget");
+    });
+  });
+
+  describe("updateInvoiceShipment", () => {
+    it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });
+      prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+
+      await service.updateInvoiceShipment("inv-1", {
+        shippingCarrier: "FedEx",
+        shippingTrackingNumber: "123456789012",
+      });
+
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-1" },
+          data: expect.objectContaining({
+            shippingCarrier: "FedEx",
+            shippingTrackingNumber: "123456789012",
+            shippedAt: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it("refuses to update a voided invoice", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "VOID", shippedAt: null });
+      await expect(
+        service.updateInvoiceShipment("inv-1", { shippingTrackingNumber: "X" }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });

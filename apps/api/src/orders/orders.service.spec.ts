@@ -284,6 +284,61 @@ describe("OrdersService", () => {
         }),
       );
     });
+
+    it("creates an unlisted (catalog-free) line as a MANUAL-priced item with no stock movement", async () => {
+      // Operator resolves the customer (with user.status) then the pricing tier —
+      // both via customer.findUnique, so one object satisfies both reads.
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        user: { status: "ACTIVE" },
+        pricingTier: 1,
+      });
+      prisma.product.findMany.mockResolvedValue([]); // no catalog ids for an unlisted line
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockImplementation((key: string) =>
+        key === "settings.taxRate" ? "0" : null,
+      );
+
+      await service.create(
+        {
+          customerId: "cust-1",
+          items: [{ name: "Rush delivery fee", qty: 2, unitPrice: 10 }] as any,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  productId: null,
+                  name: "Rush delivery fee",
+                  unitPrice: 10,
+                  subtotal: 20,
+                  priceType: "MANUAL",
+                }),
+              ]),
+            },
+          }),
+        }),
+      );
+      // No catalog product behind the line → stock is never touched.
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unlisted line from a buyer (CUSTOMER role)", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.create(
+          { items: [{ name: "Sneaky fee", qty: 1, unitPrice: 5 }] as any },
+          customerPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -553,6 +608,127 @@ describe("OrdersService", () => {
       );
 
       expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+    });
+
+    it("appends a new unlisted line (no productId) as a MANUAL item, without deleting", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 15, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ name: "Custom crate", qty: 3, unitPrice: 5 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: null,
+            name: "Custom crate",
+            unitPrice: 5,
+            subtotal: 15,
+            priceType: "MANUAL",
+          }),
+        }),
+      );
+    });
+
+    it("action DELETE hard-removes a clean (un-invoiced, undelivered) line", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.deliveryMutation.count.mockResolvedValue(0);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", action: "DELETE" }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+    });
+
+    it("action DELETE falls back to strike-off when the line was already invoiced", async () => {
+      const billed = {
+        ...orderWithItems,
+        lineItems: [{ ...orderWithItems.lineItems[0], invoicedQty: 2 }],
+      };
+      prisma.order.findUnique.mockResolvedValue(billed);
+      prisma.deliveryMutation.count.mockResolvedValue(0);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", action: "DELETE" }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.delete).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({ status: "CANCELLED" }),
+        }),
+      );
+    });
+  });
+
+  // ─── updateShipment (carrier tracking on the order + its invoices) ──────────
+
+  describe("updateShipment", () => {
+    it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
+      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: null });
+      prisma.order.update.mockResolvedValue({ id: "ord-1" });
+
+      await service.updateShipment(
+        "ord-1",
+        { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999AA10123456784" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ord-1" },
+          data: expect.objectContaining({
+            shippingCarrier: "UPS",
+            shippingTrackingNumber: "1Z999AA10123456784",
+            shippedAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(prisma.invoice.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { orderId: "ord-1", status: { not: "VOID" } },
+          data: expect.objectContaining({
+            shippingCarrier: "UPS",
+            shippingTrackingNumber: "1Z999AA10123456784",
+          }),
+        }),
+      );
+    });
+
+    it("clears carrier, tracking and shippedAt when the tracking number is blank", async () => {
+      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
+      prisma.order.update.mockResolvedValue({ id: "ord-1" });
+
+      await service.updateShipment(
+        "ord-1",
+        { shippingCarrier: "", shippingTrackingNumber: "" },
+        operatorPayload,
+      );
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            shippingCarrier: null,
+            shippingTrackingNumber: null,
+            shippedAt: null,
+          }),
+        }),
+      );
     });
   });
 });

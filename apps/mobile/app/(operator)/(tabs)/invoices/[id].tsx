@@ -20,11 +20,13 @@ import {
   useInvoicePdf,
   useSendInvoice,
   useUpdateInvoice,
+  useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
 import { sharePdf } from "../../../../lib/share-pdf";
+import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -68,8 +70,10 @@ export default function InvoiceDetailScreen() {
   const deleteMut = useDeleteInvoice();
   const pdfMut = useInvoicePdf();
   const updateMut = useUpdateInvoice();
+  const shipmentMut = useUpdateInvoiceShipment();
   const [dueDateModal, setDueDateModal] = useState(false);
   const [dueDateInput, setDueDateInput] = useState("");
+  const [shipmentModal, setShipmentModal] = useState(false);
 
   if (isLoading || !invoice) {
     return (
@@ -168,6 +172,21 @@ export default function InvoiceDetailScreen() {
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
         }),
       { confirmText: "Delete", destructive: true },
+    );
+  };
+
+  const handleSaveShipment = (carrier: string, trackingNumber: string) => {
+    if (!id) return;
+    shipmentMut.mutate(
+      { id, shippingCarrier: carrier, shippingTrackingNumber: trackingNumber },
+      {
+        onSuccess: () => {
+          showToast(carrier || trackingNumber ? "Shipment saved" : "Shipment cleared");
+          setShipmentModal(false);
+          refetch();
+        },
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
     );
   };
 
@@ -313,6 +332,11 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
+          {/* Carrier shipment — editable on any non-void invoice. */}
+          {!isVoid ? (
+            <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
+          ) : null}
+
           {/* Payments */}
           {invoice.payments && invoice.payments.length > 0 ? (
             <View style={styles.card}>
@@ -405,6 +429,14 @@ export default function InvoiceDetailScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ShipmentEditModal
+        open={shipmentModal}
+        shipment={invoice}
+        saving={shipmentMut.isPending}
+        onClose={() => setShipmentModal(false)}
+        onSave={handleSaveShipment}
+      />
     </SafeAreaView>
   );
 }

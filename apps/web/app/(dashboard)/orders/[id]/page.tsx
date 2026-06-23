@@ -34,6 +34,7 @@ import {
   useUpdateOrderItems,
   useReopenOrder,
   useDeleteOrder,
+  useUpdateOrderShipment,
   useCustomerPriceHistory,
   type OrderItem,
   type ItemUpdate,
@@ -44,6 +45,7 @@ import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal, roundMoney } from "@/lib/pricing";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { apiClient } from "@/lib/api-client";
 
@@ -286,6 +288,8 @@ type ApiOrderStatus =
 interface EditItemState {
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
+  /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
+  isUnlisted?: boolean;
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
@@ -546,12 +550,16 @@ function EditableLineItems({
   items,
   onChange,
   onAdd,
+  onDelete,
   isDraft,
   priceHistory,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
   onAdd: (item: EditItemState) => void;
+  /** Remove a line entirely. New (unsaved) items vanish immediately; existing ones
+   *  are queued for a DELETE action on save (hard-delete if uninvoiced, else CANCEL). */
+  onDelete: (id: string) => void;
   /** Per-line price + discount editing is only offered on DRAFT orders. */
   isDraft: boolean;
   /** Remembered per-customer prices — pre-fills a scanned line's price. */
@@ -571,6 +579,12 @@ function EditableLineItems({
   const [addLoading, setAddLoading] = React.useState(false);
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductInitialSku, setCreateProductInitialSku] = React.useState("");
+  // Custom (unlisted) item inline form
+  const [customFormOpen, setCustomFormOpen] = React.useState(false);
+  const [customName, setCustomName] = React.useState("");
+  const [customPrice, setCustomPrice] = React.useState("");
+  const [customQty, setCustomQty] = React.useState("1");
+  const [customError, setCustomError] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
   const { data: productsData } = useProducts({
@@ -679,6 +693,45 @@ function EditableLineItems({
     onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
 
+  function addCustom() {
+    const name = customName.trim();
+    const price = parseFloat(customPrice);
+    const qty = parseInt(customQty, 10);
+    if (!name) {
+      setCustomError("Enter an item name");
+      return;
+    }
+    if (isNaN(price) || price < 0) {
+      setCustomError("Enter a valid unit price");
+      return;
+    }
+    if (isNaN(qty) || qty < 1) {
+      setCustomError("Enter a quantity of at least 1");
+      return;
+    }
+    const newId = `new-${Date.now()}-${Math.random()}`;
+    onAdd({
+      id: newId,
+      isNew: true,
+      isUnlisted: true,
+      originalProductId: "",
+      originalProductName: name,
+      originalQty: qty,
+      productId: "",
+      productName: name,
+      qty,
+      unitPrice: price,
+      basePrice: price,
+      cancelled: false,
+    });
+    setScrollToId(newId);
+    setCustomFormOpen(false);
+    setCustomName("");
+    setCustomPrice("");
+    setCustomQty("1");
+    setCustomError("");
+  }
+
   return (
     <div className="space-y-2">
       {items.map((item) => (
@@ -711,11 +764,29 @@ function EditableLineItems({
                   </span>
                   <span className="text-sm font-medium text-navy">→ {item.productName}</span>
                 </div>
+              ) : item.isUnlisted && !item.cancelled ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={item.productName}
+                    onChange={(e) => update(item.id, { productName: e.target.value })}
+                    placeholder="Item name"
+                    className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-sm font-medium text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                  <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+                    Custom
+                  </span>
+                </div>
               ) : (
                 <span
                   className={cn("text-sm font-medium text-navy", item.cancelled && "line-through")}
                 >
                   {item.productName}
+                  {item.isUnlisted && (
+                    <span className="ml-1.5 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+                      Custom
+                    </span>
+                  )}
                 </span>
               )}
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
@@ -756,7 +827,7 @@ function EditableLineItems({
                 </button>
               ) : (
                 <>
-                  {!item.substituteProductId && (
+                  {!item.substituteProductId && !item.isUnlisted && (
                     <button
                       className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
@@ -786,13 +857,21 @@ function EditableLineItems({
                   >
                     Not available
                   </button>
+                  <button
+                    className="rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors"
+                    title="Delete item"
+                    onClick={() => onDelete(item.id)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </>
               )}
             </div>
           </div>
 
-          {/* Per-line price + discount editor (DRAFT only) */}
-          {isDraft && !item.cancelled && (
+          {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
+              line (its price is intrinsic, so always editable in edit mode). */}
+          {(isDraft || item.isUnlisted) && !item.cancelled && (
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
@@ -876,6 +955,92 @@ function EditableLineItems({
         )}
       </div>
 
+      {/* ── Add custom (unlisted) item ── */}
+      {customFormOpen ? (
+        <div className="space-y-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-navy">Custom item</span>
+            <button
+              type="button"
+              onClick={() => {
+                setCustomFormOpen(false);
+                setCustomError("");
+              }}
+              className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+              title="Cancel"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[140px] flex-1 space-y-1">
+              <label className="block text-[10px] font-medium text-navy/70">Name</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                placeholder="e.g. Pallet delivery surcharge"
+                className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustom();
+                  }
+                }}
+              />
+            </div>
+            <div className="w-24 space-y-1">
+              <label className="block text-[10px] font-medium text-navy/70">Unit price</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={customPrice}
+                onChange={(e) => setCustomPrice(e.target.value)}
+                placeholder="0.00"
+                className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustom();
+                  }
+                }}
+              />
+            </div>
+            <div className="w-16 space-y-1">
+              <label className="block text-[10px] font-medium text-navy/70">Qty</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={customQty}
+                onChange={(e) => setCustomQty(e.target.value)}
+                className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addCustom();
+                  }
+                }}
+              />
+            </div>
+            <Button type="button" size="sm" onClick={addCustom}>
+              Add
+            </Button>
+          </div>
+          {customError && <p className="text-xs text-danger">{customError}</p>}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setCustomFormOpen(true)}
+          className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+        >
+          <Pencil className="h-4 w-4" />
+          Add custom item
+        </button>
+      )}
+
       <InlineCreateProductModal
         isOpen={createProductOpen}
         onClose={() => {
@@ -909,6 +1074,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
   const deleteOrder = useDeleteOrder();
+  const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
 
   // Status tracking — use actual API status directly
@@ -917,6 +1083,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // Item editing
   const [isEditing, setIsEditing] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
+  const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
 
   // Demotion modal
@@ -946,20 +1113,26 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         setEditItems(
           order.lineItems
             .filter((li) => li.status !== "CANCELLED")
-            .map((li) => ({
-              id: li.id,
-              originalProductId: li.productId,
-              originalProductName: li.product?.name ?? li.productId,
-              originalQty: Math.round(Number(li.qty)),
-              productId: li.productId,
-              productName: li.product?.name ?? li.productId,
-              qty: Math.round(Number(li.qty)),
-              unitPrice: Number(li.unitPrice),
-              basePrice: Number(li.originalPrice ?? li.unitPrice),
-              cancelled: false,
-              notes: li.notes,
-            })),
+            .map((li) => {
+              const isUnlisted = !li.productId;
+              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+              return {
+                id: li.id,
+                isUnlisted,
+                originalProductId: li.productId ?? "",
+                originalProductName: label,
+                originalQty: Math.round(Number(li.qty)),
+                productId: li.productId ?? "",
+                productName: label,
+                qty: Math.round(Number(li.qty)),
+                unitPrice: Number(li.unitPrice),
+                basePrice: Number(li.originalPrice ?? li.unitPrice),
+                cancelled: false,
+                notes: li.notes,
+              };
+            }),
         );
+        setPendingDeletes([]);
         setIsEditing(true);
       }
     }
@@ -994,44 +1167,75 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     setEditItems(
       order!.lineItems
         .filter((li) => li.status !== "CANCELLED")
-        .map((li) => ({
-          id: li.id,
-          originalProductId: li.productId,
-          originalProductName: li.product?.name ?? li.productId,
-          originalQty: Math.round(Number(li.qty)),
-          productId: li.productId,
-          productName: li.product?.name ?? li.productId,
-          qty: Math.round(Number(li.qty)),
-          unitPrice: Number(li.unitPrice),
-          basePrice: Number(li.originalPrice ?? li.unitPrice),
-          cancelled: false,
-          notes: li.notes,
-        })),
+        .map((li) => {
+          const isUnlisted = !li.productId;
+          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
+          return {
+            id: li.id,
+            isUnlisted,
+            originalProductId: li.productId ?? "",
+            originalProductName: label,
+            originalQty: Math.round(Number(li.qty)),
+            productId: li.productId ?? "",
+            productName: label,
+            qty: Math.round(Number(li.qty)),
+            unitPrice: Number(li.unitPrice),
+            basePrice: Number(li.originalPrice ?? li.unitPrice),
+            cancelled: false,
+            notes: li.notes,
+          };
+        }),
     );
+    setPendingDeletes([]);
     setIsEditing(true);
   }
 
   function cancelEditMode() {
     setIsEditing(false);
     setEditItems([]);
+    setPendingDeletes([]);
+  }
+
+  function handleDeleteItem(id: string) {
+    const item = editItems.find((it) => it.id === id);
+    if (!item) return;
+    setEditItems((prev) => prev.filter((it) => it.id !== id));
+    if (!item.isNew) {
+      // Existing saved line — queue a DELETE action on save (falls back to CANCEL if invoiced).
+      setPendingDeletes((prev) => [...prev, id]);
+    }
   }
 
   function handleSaveItems() {
     const original = order!.lineItems;
     const updates: ItemUpdate[] = [];
 
+    // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
+    for (const id of pendingDeletes) {
+      updates.push({ id, action: "DELETE" });
+    }
+
     for (const edited of editItems) {
       // A line is "discounted" when its net unit price sits below the list/base price.
       const overridden = edited.unitPrice < edited.basePrice - 0.0001;
       if (edited.isNew) {
-        // New item: no id — API will create it. Carry the override when present.
-        updates.push({
-          productId: edited.productId,
-          qty: edited.qty,
-          ...(overridden
-            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
-            : {}),
-        });
+        if (edited.isUnlisted) {
+          // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
+          updates.push({
+            name: edited.productName.trim(),
+            qty: edited.qty,
+            unitPrice: edited.unitPrice,
+          });
+        } else {
+          // New catalog item: no id — API will create it. Carry the override when present.
+          updates.push({
+            productId: edited.productId,
+            qty: edited.qty,
+            ...(overridden
+              ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+              : {}),
+          });
+        }
         continue;
       }
       const orig = original.find((li) => li.id === edited.id);
@@ -1039,6 +1243,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
       const qtyChanged = Math.abs(edited.qty - Number(orig.qty)) > 0.0001;
       const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
+      const nameChanged =
+        edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
 
       if (edited.cancelled) {
         updates.push({ id: edited.id, action: "CANCEL" });
@@ -1047,6 +1253,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           id: edited.id,
           substituteProductId: edited.substituteProductId,
           qty: edited.qty,
+        });
+      } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged)) {
+        // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
+        updates.push({
+          id: edited.id,
+          qty: edited.qty,
+          ...(nameChanged ? { name: edited.productName.trim() } : {}),
+          ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
         });
       } else if (qtyChanged || priceChanged) {
         updates.push({
@@ -1524,6 +1738,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
+                  onDelete={handleDeleteItem}
                   isDraft={localStatus === "DRAFT"}
                   priceHistory={priceHistory}
                 />
@@ -1673,8 +1888,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                 li.status === "CANCELLED" && "line-through",
                               )}
                             >
-                              {li.product?.name ?? li.productId}
+                              {li.product?.name ?? li.name ?? "Custom item"}
                             </span>
+                            {!li.productId && (
+                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
+                                Custom
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right text-navy/70">
@@ -1724,7 +1944,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         <td className="px-4 py-3 text-right font-medium text-navy">
                           {li.status === "CANCELLED"
                             ? "—"
-                            : `$${(Number(li.qty) * Number(li.unitPrice)).toFixed(2)}`}
+                            : `$${computeLineSubtotal({
+                                unitPrice: Number(li.unitPrice),
+                                qty: Number(li.qty),
+                                boxes: li.boxes ?? null,
+                                pieces: li.pieces ?? null,
+                                unitsPerBox: li.product?.unitsPerBox ?? null,
+                              }).toFixed(2)}`}
                         </td>
                         <td className="px-6 py-3">
                           <Badge status={li.status as BadgeStatus} />
@@ -1838,6 +2064,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             </dl>
           </Card>
 
+          {/* Carrier shipment — operator records carrier + tracking when goods ship
+              via a carrier instead of our own route. */}
+          <ShipmentCard
+            carrier={order.shippingCarrier}
+            trackingNumber={order.shippingTrackingNumber}
+            shippedAt={order.shippedAt}
+            isSaving={updateShipment.isPending}
+            onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
+          />
+
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
           {localStatus !== "DRAFT" && localStatus !== "CANCELLED" && (
@@ -1914,7 +2150,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? "Item",
+          productName: li.product?.name ?? li.name ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),

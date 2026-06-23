@@ -5,7 +5,10 @@ import { apiClient } from "../api-client";
 
 export interface OrderItem {
   id: string;
-  productId: string;
+  /** Null for an unlisted (ad-hoc, non-catalog) line — `name` carries the label instead. */
+  productId: string | null;
+  /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
+  name?: string | null;
   product?: { id: string; name: string; unit: string };
   qty: number;
   unitPrice: number;
@@ -33,6 +36,10 @@ export interface Order {
   driverNote?: string;
   requestedDeliveryDate?: string;
   deliveredAt?: string;
+  /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
+  shippingCarrier?: string | null;
+  shippingTrackingNumber?: string | null;
+  shippedAt?: string | null;
   lineItems: OrderItem[];
   createdAt: string;
 }
@@ -44,21 +51,37 @@ export interface CreateOrderDto {
   requestedDeliveryDate?: string;
 }
 
+/**
+ * A line on a create-order request. EITHER a catalog line (productId set,
+ * unitPrice optional) OR an unlisted ad-hoc line (`name` set, NO productId,
+ * unitPrice REQUIRED, never boxed). Mirrors the API contract.
+ */
+export type CreateOrderItemInput =
+  | {
+      productId: string;
+      qty: number;
+      boxes?: number;
+      pieces?: number;
+      /** One-time discounted price override (per catalog unit; box price for boxed). */
+      unitPrice?: number;
+    }
+  | {
+      /** Free-text label for an unlisted (non-catalog) line. */
+      name: string;
+      qty: number;
+      /** Required for unlisted lines — there is no catalog price to fall back to. */
+      unitPrice: number;
+    };
+
 export interface CreateOrderAsDriverDto {
   customerId: string;
   /**
    * `qty` is total pieces. When the operator splits a boxed product into
    * boxes+pieces, also include those — the server recomputes `qty` from
    * them and uses them for line-subtotal proration (BOX price × box-equivalent).
+   * An unlisted line is `{ name, qty, unitPrice }` (no productId/boxes/pieces).
    */
-  items: {
-    productId: string;
-    qty: number;
-    boxes?: number;
-    pieces?: number;
-    /** One-time discounted price override (per catalog unit; box price for boxed). */
-    unitPrice?: number;
-  }[];
+  items: CreateOrderItemInput[];
   notes?: string;
   routeRunId?: string;
   routeRunStopId?: string;
@@ -141,6 +164,29 @@ export function useCancelOrder() {
   });
 }
 
+/**
+ * One entry in the replace-all edit-items payload. EITHER a catalog line
+ * (productId set) OR a NEW unlisted line (`name` set, no productId). The
+ * existing mobile edit-items flow sends the full id-less list (legacy
+ * replace-all); unlisted lines slot in as `{ name, qty, unitPrice }`.
+ */
+export type UpdateOrderItemInput =
+  | {
+      productId: string;
+      qty: number;
+      /** Optional box/piece split for boxed products (server recomputes qty) */
+      boxes?: number;
+      pieces?: number;
+      unitPrice: number;
+      overrideReason?: string;
+    }
+  | {
+      /** Free-text label for an unlisted (non-catalog) line. */
+      name: string;
+      qty: number;
+      unitPrice: number;
+    };
+
 export function useUpdateOrderItems() {
   const qc = useQueryClient();
   return useMutation<
@@ -148,15 +194,7 @@ export function useUpdateOrderItems() {
     Error,
     {
       orderId: string;
-      items: Array<{
-        productId: string;
-        qty: number;
-        /** Optional box/piece split for boxed products (server recomputes qty) */
-        boxes?: number;
-        pieces?: number;
-        unitPrice: number;
-        overrideReason?: string;
-      }>;
+      items: UpdateOrderItemInput[];
     }
   >({
     mutationFn: ({ orderId, items }) =>
@@ -165,6 +203,28 @@ export function useUpdateOrderItems() {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders", orderId] });
+    },
+  });
+}
+
+/**
+ * Record / update / clear the carrier shipment on an order. Empty strings
+ * clear the carrier + tracking number. Mirrors web's `useUpdateOrderShipment`.
+ */
+export function useUpdateOrderShipment() {
+  const qc = useQueryClient();
+  return useMutation<
+    Order,
+    Error,
+    { id: string; shippingCarrier?: string; shippingTrackingNumber?: string }
+  >({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/orders/${id}/shipment`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders", id] });
     },
   });
 }

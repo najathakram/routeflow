@@ -19,6 +19,7 @@ import {
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
@@ -220,6 +221,9 @@ export class InvoicesService {
           terms: dto.terms ?? tenantDefaults.terms,
           referenceNumber: dto.referenceNumber ?? null,
           subject: dto.subject ?? null,
+          shippingCarrier: dto.shippingCarrier?.trim() || null,
+          shippingTrackingNumber: dto.shippingTrackingNumber?.trim() || null,
+          shippedAt: dto.shippingTrackingNumber?.trim() ? new Date() : null,
           items: { create: itemsData },
         },
         include: {
@@ -335,6 +339,15 @@ export class InvoicesService {
           terms: tenantDefaults.terms ?? defaultTerms,
           issueDate: new Date(),
           notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+          // Carry carrier shipment tracking from the order onto the invoice so the
+          // shipment shows on the customer's invoice + PDF.
+          ...(order.shippingCarrier || order.shippingTrackingNumber
+            ? {
+                shippingCarrier: order.shippingCarrier ?? null,
+                shippingTrackingNumber: order.shippingTrackingNumber ?? null,
+                shippedAt: order.shippedAt ?? null,
+              }
+            : {}),
           items: { create: itemsData },
           // RF-147: propagate tenantId onto the Invoice row.  Previously omitted,
           // leaving auto-generated invoices with tenantId=null.
@@ -382,7 +395,8 @@ export class InvoicesService {
     const split = normalizeBoxesPieces({ qty, unitsPerBox });
     const unitPrice = Number(li.unitPrice);
     return {
-      description: li.product?.name ?? `Product`,
+      // Catalog lines use the product name; unlisted lines carry a free-text `name`.
+      description: li.product?.name ?? li.name ?? `Product`,
       productId: li.productId,
       qty: split.qty,
       boxes: split.boxes,
@@ -905,11 +919,14 @@ export class InvoicesService {
       dateTo,
       sortBy,
       sortOrder,
+      shipped,
       page = 1,
       limit = 20,
     } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
+    // Shipments view: only invoices that carry a carrier tracking number.
+    if (shipped) where.shippingTrackingNumber = { not: null };
     if (isOverdue) {
       // Derived overdue: unpaid invoices (SENT/VIEWED/PARTIAL) past their due date
       where.status = {
@@ -949,6 +966,7 @@ export class InvoicesService {
       where.OR = [
         { customer: { businessName: { contains: search, mode: "insensitive" } } },
         { invoiceNumber: { contains: search, mode: "insensitive" } },
+        { shippingTrackingNumber: { contains: search, mode: "insensitive" } },
       ];
     }
     if (dateFrom || dateTo) {
@@ -1220,6 +1238,30 @@ export class InvoicesService {
     // Backward sync: discount/shipping changes alter the order total too.
     if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
     return updated;
+  }
+
+  /**
+   * Set or clear carrier shipment tracking on an invoice. Unlike line-item edits
+   * (DRAFT-only), this is allowed on any non-void invoice because goods are
+   * usually shipped AFTER the invoice is sent. Clearing the tracking number also
+   * clears `shippedAt`; the first time a number is set we stamp `shippedAt`.
+   */
+  async updateInvoiceShipment(id: string, dto: UpdateShipmentDto) {
+    const inv = await this.prisma
+      .forTenant()
+      .invoice.findUnique({ where: { id }, select: { id: true, status: true, shippedAt: true } });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    if (inv.status === InvoiceStatus.VOID)
+      throw new BadRequestException("Cannot update tracking on a voided invoice");
+
+    const carrier = dto.shippingCarrier?.trim() || null;
+    const tracking = dto.shippingTrackingNumber?.trim() || null;
+    const shippedAt = tracking ? (inv.shippedAt ?? new Date()) : null;
+
+    return this.prisma.forTenant().invoice.update({
+      where: { id },
+      data: { shippingCarrier: carrier, shippingTrackingNumber: tracking, shippedAt },
+    });
   }
 
   /**
