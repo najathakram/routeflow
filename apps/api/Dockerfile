@@ -64,5 +64,5 @@ WORKDIR /app/apps/api
 
 EXPOSE 3000
 
-# Start the NestJS API — schema/migrations are managed manually, NOT on container start
-CMD ["node", "dist/main.js"]
+# TEMP emergency: apply pending migration before starting; revert to ["node","dist/main.js"] after confirmed
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
