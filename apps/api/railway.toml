@@ -6,7 +6,7 @@ dockerfilePath = "apps/api/Dockerfile"
 watchPatterns = ["apps/api/**", "packages/**"]
 
 [deploy]
-# CMD in Dockerfile handles db push + server start
+startCommand = "npx prisma migrate deploy && node dist/main.js"
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"
