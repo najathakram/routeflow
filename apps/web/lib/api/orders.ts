@@ -43,6 +43,7 @@ export interface OrderItem {
   unitPrice: number;
   originalPrice?: number | null;
   priceType?: PriceType;
+  overrideReason?: string | null;
   boxes?: number | null;
   pieces?: number | null;
   status: string;

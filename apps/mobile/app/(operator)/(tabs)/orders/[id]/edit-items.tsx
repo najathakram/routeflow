@@ -438,7 +438,7 @@ export default function EditOrderItemsScreen() {
                     key={it.productId}
                     item={it}
                     canSplitBoxes={canSplitBoxes}
-                    isDraft={order.status === "DRAFT"}
+                    canEditPrice={["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)}
                     onIncQty={() => incQty(it.productId)}
                     onDecQty={() => decQty(it.productId)}
                     onSetQty={(n) => setQty(it.productId, n)}
@@ -530,7 +530,7 @@ export default function EditOrderItemsScreen() {
 function DraftItemCard({
   item,
   canSplitBoxes,
-  isDraft,
+  canEditPrice,
   onIncQty,
   onDecQty,
   onSetQty,
@@ -542,8 +542,8 @@ function DraftItemCard({
 }: {
   item: DraftItem;
   canSplitBoxes: boolean;
-  /** Price / discount editing is only offered while the order is a DRAFT. */
-  isDraft: boolean;
+  /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
+  canEditPrice: boolean;
   onIncQty: () => void;
   onDecQty: () => void;
   onSetQty: (n: number) => void;
@@ -574,9 +574,9 @@ function DraftItemCard({
             {item.name}
           </Text>
           {/* Meta line: unit price + box hint + override badge.
-              Editable (tappable) only on DRAFT; read-only otherwise. */}
+              Editable (tappable) on DRAFT/PENDING/CONFIRMED; read-only otherwise. */}
           <View style={styles.cardMetaRow}>
-            {isDraft ? (
+            {canEditPrice ? (
               <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
                 {isOverridden ? (
                   <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
@@ -635,7 +635,7 @@ function DraftItemCard({
           <Ionicons name="swap-horizontal-outline" size={14} color={ios.brand} />
           <Text style={styles.actionChipText}>Substitute</Text>
         </Pressable>
-        {isDraft ? (
+        {canEditPrice ? (
           <Pressable
             style={[styles.actionChip, isOverridden && styles.actionChipActive]}
             onPress={onPressPrice}

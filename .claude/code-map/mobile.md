@@ -69,7 +69,7 @@ real-time sync; offline queue for driver route completions.
 
 - root `_layout.tsx` — Stack, `useSocket()`, OfflineBanner. tabs `(tabs)/_layout.tsx` (popTabToRoot on re-press).
 - `(tabs)/home.tsx` (KPIs), `dispatch.tsx` (routes calendar, driver assign), `warehouse.tsx`, `finance.tsx`, `more.tsx`.
-- `(tabs)/orders/` → index (status filter), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit DRAFT-gated** — read-only on PENDING/CONFIRMED; fresh adds pre-fill remembered price via `useCustomerPriceHistory`), `[id]/split-invoice.tsx`.
+- `(tabs)/orders/` → index (status filter), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`), `[id]/split-invoice.tsx`.
 - `(tabs)/invoices/` → index (status), `[id].tsx` (payments, write-off, **Share PDF → `sharePdf()` direct share**), `[id]/record-payment.tsx`, `create.tsx`, `new.tsx`.
 - `customers/` → index, `[id].tsx`, `[id]/edit.tsx`, `[id]/addresses.tsx`, `[id]/catalog.tsx` (per-customer tier pricing), `new.tsx`/`create.tsx`.
 - `drivers/` → index, `[id].tsx`, `[id]/edit.tsx`, `new.tsx`/`add.tsx`.

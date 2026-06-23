@@ -551,7 +551,7 @@ function EditableLineItems({
   onChange,
   onAdd,
   onDelete,
-  isDraft,
+  canEditPrice,
   priceHistory,
 }: {
   items: EditItemState[];
@@ -560,8 +560,8 @@ function EditableLineItems({
   /** Remove a line entirely. New (unsaved) items vanish immediately; existing ones
    *  are queued for a DELETE action on save (hard-delete if uninvoiced, else CANCEL). */
   onDelete: (id: string) => void;
-  /** Per-line price + discount editing is only offered on DRAFT orders. */
-  isDraft: boolean;
+  /** Per-line price + discount editing is offered on editable orders (DRAFT/PENDING/CONFIRMED). */
+  canEditPrice: boolean;
   /** Remembered per-customer prices — pre-fills a scanned line's price. */
   priceHistory?: CustomerPriceHistory;
 }) {
@@ -871,7 +871,7 @@ function EditableLineItems({
 
           {/* Per-line price + discount editor — DRAFT catalog lines, or any unlisted
               line (its price is intrinsic, so always editable in edit mode). */}
-          {(isDraft || item.isUnlisted) && !item.cancelled && (
+          {(canEditPrice || item.isUnlisted) && !item.cancelled && (
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
@@ -1129,6 +1129,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 basePrice: Number(li.originalPrice ?? li.unitPrice),
                 cancelled: false,
                 notes: li.notes,
+                overrideReason: li.overrideReason ?? undefined,
               };
             }),
         );
@@ -1183,6 +1184,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             basePrice: Number(li.originalPrice ?? li.unitPrice),
             cancelled: false,
             notes: li.notes,
+            overrideReason: li.overrideReason ?? undefined,
           };
         }),
     );
@@ -1730,16 +1732,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               <div className="space-y-4">
                 <p className="text-sm text-navy/70">
                   Add new items, adjust quantities, substitute or mark as unavailable.
-                  {localStatus === "DRAFT" &&
-                    " Change a line's price or apply a per-item discount."}{" "}
-                  Changes are applied when you save.
+                  {canEdit && " Change a line's price or apply a per-item discount."} Changes are
+                  applied when you save.
                 </p>
                 <EditableLineItems
                   items={editItems}
                   onChange={setEditItems}
                   onAdd={(item) => setEditItems((prev) => [...prev, item])}
                   onDelete={handleDeleteItem}
-                  isDraft={localStatus === "DRAFT"}
+                  canEditPrice={canEdit}
                   priceHistory={priceHistory}
                 />
 
