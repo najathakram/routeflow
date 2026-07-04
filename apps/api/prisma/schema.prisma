@@ -127,6 +127,7 @@ enum MovementType {
   ADJUSTMENT
   RETURN
   WRITE_OFF
+  COST_BASIS
 }
 
 enum CostingMethod {
@@ -1194,6 +1195,10 @@ model StockMovement {
   type          MovementType
   quantity      Decimal      @db.Decimal(10, 3)
   unitCost      Decimal?     @db.Decimal(10, 4)
+  // Running snapshots: product state AFTER this movement was applied.
+  // Point-in-time average cost = avgCostAfter of the latest movement <= T.
+  avgCostAfter  Decimal?     @db.Decimal(10, 4)
+  stockAfter    Decimal?     @db.Decimal(10, 3)
   supplierId    String?
   reference     String?
   notes         String?
