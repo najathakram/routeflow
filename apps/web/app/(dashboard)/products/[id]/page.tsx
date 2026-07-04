@@ -17,7 +17,18 @@ import {
   Plus,
   Power,
 } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { useQuery } from "@tanstack/react-query";
 import { Badge, Button, Card, Modal, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
@@ -113,6 +124,79 @@ function EditableNumber({ value, onChange }: { value: number; onChange: (v: numb
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+function CostHistoryCard({ productId }: { productId: string }) {
+  const { data: history = [] } = useQuery<
+    { date: string; unitCost: number; avgCostAfter: number | null; type: string }[]
+  >({
+    queryKey: ["products", productId, "cost-history"],
+    queryFn: () => apiClient.get(`/analytics/cost-history/${productId}`).then((r) => r.data),
+  });
+
+  if (history.length === 0) return null;
+
+  const chartData = history.map((h) => ({
+    date: new Date(h.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+    purchaseCost: h.unitCost,
+    avgCost: h.avgCostAfter,
+    type: h.type,
+  }));
+
+  return (
+    <Card title="Purchase Cost History">
+      <p className="mb-3 text-xs text-navy/70">
+        Unit cost of each purchase (and manual cost-basis entries) with the running average cost.
+      </p>
+      <ResponsiveContainer width="100%" height={200}>
+        <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+          <XAxis
+            dataKey="date"
+            tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+            tickLine={false}
+            axisLine={false}
+          />
+          <YAxis
+            tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={(v: number) => `$${v}`}
+          />
+          <Tooltip
+            contentStyle={{
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+              fontSize: 12,
+              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+            }}
+            labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
+            formatter={
+              ((v: number, name: string) => [
+                `$${Number(v).toFixed(4)}`,
+                name === "purchaseCost" ? "Purchase cost" : "Avg cost after",
+              ]) as any
+            }
+          />
+          <Line
+            type="stepAfter"
+            dataKey="avgCost"
+            stroke="#3b82f6"
+            strokeWidth={2}
+            dot={false}
+            connectNulls
+          />
+          <Line
+            type="monotone"
+            dataKey="purchaseCost"
+            stroke="#f59e0b"
+            strokeWidth={0}
+            dot={{ r: 3, fill: "#f59e0b" }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </Card>
+  );
+}
 
 export default function ProductDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
@@ -978,14 +1062,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     {currentStock.toFixed(2)} {product.unit}
                   </span>
                 </div>
-                {product.averageCost && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-navy/70">Avg cost</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-navy/70">Avg cost</span>
+                  {product.averageCost != null ? (
                     <span className="font-medium text-navy">
                       ${parseFloat(String(product.averageCost)).toFixed(2)}
                     </span>
-                  </div>
-                )}
+                  ) : (
+                    <span
+                      title="No cost basis recorded — set one from Inventory → Set Costs, or receive a purchase"
+                      className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                    >
+                      No cost set
+                    </span>
+                  )}
+                </div>
                 <Link
                   href={`/inventory/movements?product=${product.id}`}
                   className="block text-xs text-brand-500 hover:underline"
@@ -1410,6 +1501,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 <div className="h-[200px] animate-pulse rounded-lg bg-surface-raised" />
               )}
             </Card>
+
+            {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
+            <CostHistoryCard productId={product.id} />
 
             {/* Variants section — only for non-variant (parent) products */}
             {!product.parentProductId && (

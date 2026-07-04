@@ -682,6 +682,7 @@ function InventoryPurchasesTab() {
   const [search, setSearch] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+  const [needsMappingOnly, setNeedsMappingOnly] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [sortCol, setSortCol] = React.useState("billDate");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
@@ -746,12 +747,14 @@ function InventoryPurchasesTab() {
     search: search || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    needsMapping: needsMappingOnly || undefined,
     page,
     limit: LIMIT,
   });
 
   const bills = data?.data ?? [];
   const meta = data?.meta;
+  const needsMappingCount = meta?.needsMappingCount ?? 0;
 
   const { data: allData } = useVendorBills({ limit: 999 });
   const all = allData?.data ?? [];
@@ -822,6 +825,28 @@ function InventoryPurchasesTab() {
           value={String(kpis.dueThisWeekCount)}
           sub="bills due in 7 days"
         />
+        {needsMappingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              setNeedsMappingOnly((v) => !v);
+              setPage(1);
+            }}
+            title="Draft bills with no items or unmapped lines — their costs won't reach inventory until items are mapped and the bill is received"
+            className={cn(
+              "rounded-xl border px-4 py-2.5 text-left transition-colors",
+              needsMappingOnly
+                ? "border-amber-500 bg-amber-100"
+                : "border-amber-300 bg-amber-50 hover:bg-amber-100",
+            )}
+          >
+            <p className="text-[11px] font-medium text-amber-800/80">
+              Needs Item Mapping{needsMappingOnly ? " ✕" : ""}
+            </p>
+            <p className="text-lg font-bold text-amber-900">{needsMappingCount}</p>
+            <p className="text-[11px] text-amber-800/80">bills not updating costs</p>
+          </button>
+        )}
       </div>
 
       {/* Filter bar */}
@@ -1014,6 +1039,16 @@ function InventoryPurchasesTab() {
                     </td>
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
                       {bill.billNumber}
+                      {bill.status === "DRAFT" &&
+                        ((bill.items ?? []).length === 0 ||
+                          (bill.items ?? []).some((i) => !i.productId)) && (
+                          <span
+                            title="No items or unmapped lines — receiving won't update inventory costs"
+                            className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                          >
+                            needs items
+                          </span>
+                        )}
                     </td>
                     <td className="px-4 py-3 font-medium text-navy">
                       {bill.supplier?.name ?? "—"}

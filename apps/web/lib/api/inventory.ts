@@ -50,6 +50,84 @@ export function useRecordAdjustment() {
   });
 }
 
+// ─── Cost basis & valuation ───────────────────────────────────────────────────
+
+export interface InventoryValuation {
+  totalValue: number;
+  productCount: number;
+  missingCostCount: number;
+  missingCostProducts: { id: string; name: string }[];
+}
+
+export function useInventoryValuation() {
+  return useQuery<InventoryValuation>({
+    queryKey: ["inventory", "valuation"],
+    queryFn: () => apiClient.get("/inventory/valuation").then((r) => r.data),
+  });
+}
+
+export function useSetCostBasis() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      productId,
+      ...data
+    }: {
+      productId: string;
+      unitCost: number;
+      notes?: string;
+      applyToLots?: boolean;
+    }) => apiClient.patch(`/inventory/products/${productId}/cost-basis`, data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+export function useBulkSetCostBasis() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      items: { productId: string; unitCost: number }[];
+      notes?: string;
+      applyToLots?: boolean;
+    }) => apiClient.post("/inventory/cost-basis/bulk", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+export interface RecomputeCostsResult {
+  dryRun: boolean;
+  processed: number;
+  updated: number;
+  noHistory: { productId: string; name: string }[];
+  results: {
+    productId: string;
+    name: string;
+    oldAvgCost: number | null;
+    newAvgCost: number | null;
+    stockDrift: number;
+    movementsBackfilled: number;
+  }[];
+}
+
+export function useRecomputeCosts() {
+  const qc = useQueryClient();
+  return useMutation<RecomputeCostsResult, unknown, { productIds?: string[]; dryRun?: boolean }>({
+    mutationFn: (data) => apiClient.post("/inventory/recompute-costs", data).then((r) => r.data),
+    onSuccess: (_result, variables) => {
+      if (!variables.dryRun) {
+        qc.invalidateQueries({ queryKey: ["inventory"] });
+        qc.invalidateQueries({ queryKey: ["products"] });
+      }
+    },
+  });
+}
+
 // ─── Suppliers ────────────────────────────────────────────────────────────────
 
 export function useSuppliers() {

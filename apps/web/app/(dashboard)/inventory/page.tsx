@@ -15,8 +15,10 @@ import {
   Sparkles,
   Search,
   SlidersHorizontal,
+  DollarSign,
+  RefreshCcw,
 } from "lucide-react";
-import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useStockOverview,
@@ -33,6 +35,11 @@ import {
   useClosePurchaseOrder,
   useForecasting,
   useUpdateReorderSettings,
+  useInventoryValuation,
+  useSetCostBasis,
+  useBulkSetCostBasis,
+  useRecomputeCosts,
+  type RecomputeCostsResult,
 } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { useVendorBills } from "@/lib/api/vendor-bills";
@@ -388,25 +395,32 @@ function QuickRestockModal({
 function StockTable({
   stockItems,
   stockSearch,
+  missingCostOnly,
   setAdjustPreselectId,
   setShowAdjustModal,
+  onSetCost,
 }: {
   stockItems: StockItem[];
   stockSearch: string;
+  /** Show only products with no cost basis (toggled from the valuation card chip) */
+  missingCostOnly: boolean;
   setAdjustPreselectId: (id: string | undefined) => void;
   setShowAdjustModal: (v: boolean) => void;
+  onSetCost: (item: StockItem) => void;
 }) {
   // 1) Filter by search first so sort only operates on visible rows.
   const filtered = React.useMemo(() => {
     const q = stockSearch.trim().toLowerCase();
-    if (!q) return stockItems;
-    return stockItems.filter(
+    let rows = stockItems;
+    if (missingCostOnly) rows = rows.filter((i) => i.averageCost == null);
+    if (!q) return rows;
+    return rows.filter(
       (i) =>
         i.name.toLowerCase().includes(q) ||
         (i.sku ?? "").toLowerCase().includes(q) ||
         (i.category ?? "").toLowerCase().includes(q),
     );
-  }, [stockItems, stockSearch]);
+  }, [stockItems, stockSearch, missingCostOnly]);
 
   // 2) Sort. Numeric columns get explicit comparators so "100" sorts after
   // "20" (string compare would put it first).
@@ -425,7 +439,11 @@ function StockTable({
     const q = stockSearch.trim();
     return (
       <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
-        {q ? `No products match "${q}"` : "No products found."}
+        {q
+          ? `No products match "${q}"`
+          : missingCostOnly
+            ? "Every product has a cost basis — nothing to fix here."
+            : "No products found."}
       </div>
     );
   }
@@ -539,13 +557,31 @@ function StockTable({
                 {item.unitsPerBox != null ? item.unitsPerBox : "—"}
               </td>
               <td className="px-4 py-3 text-navy/70">
-                {item.averageCost != null ? `$${Number(item.averageCost).toFixed(2)}` : "—"}
+                {item.averageCost != null ? (
+                  `$${Number(item.averageCost).toFixed(2)}`
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSetCost(item)}
+                    title="No cost basis recorded — click to set one"
+                    className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
+                  >
+                    No cost set
+                  </button>
+                )}
               </td>
               <td className="px-4 py-3 text-navy/70">
                 {item.totalValue != null ? `$${Number(item.totalValue).toFixed(2)}` : "—"}
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onSetCost(item)}
+                    className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                  >
+                    Set cost
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -1824,6 +1860,317 @@ function ForecastingTab({
   );
 }
 
+// ─── Set Cost Basis Modal ─────────────────────────────────────────────────────
+
+function SetCostModal({ item, onClose }: { item: StockItem; onClose: () => void }) {
+  const setCostBasis = useSetCostBasis();
+  const { toast } = useToast();
+  const [unitCost, setUnitCost] = React.useState(
+    item.averageCost != null ? String(item.averageCost) : "",
+  );
+  const [notes, setNotes] = React.useState("");
+  const [applyToLots, setApplyToLots] = React.useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCostBasis.mutate(
+      {
+        productId: item.id,
+        unitCost: Number(unitCost),
+        notes: notes || undefined,
+        applyToLots: applyToLots || undefined,
+      },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Cost basis set",
+            description: `${item.name} now carries a unit cost of $${Number(unitCost).toFixed(4)}.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: () =>
+          toast({
+            title: "Failed to set cost",
+            description: "Please try again.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Set cost basis — ${item.name}`}
+      description="Manually sets the average cost. Recorded as an audited COST_BASIS movement; future purchases keep updating the average from here."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
+          <input
+            required
+            autoFocus
+            type="number"
+            min={0}
+            step={0.0001}
+            value={unitCost}
+            onChange={(e) => setUnitCost(e.target.value)}
+            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            placeholder="0.0000"
+          />
+          <p className="mt-1 text-xs text-navy/70">
+            Current: {item.averageCost != null ? `$${Number(item.averageCost).toFixed(4)}` : "none"}{" "}
+            · Stock: {item.currentStock} {item.unit}
+          </p>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-navy">Notes</label>
+          <textarea
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. opening cost basis from supplier price list"
+            className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-navy/70">
+          <input
+            type="checkbox"
+            checked={applyToLots}
+            onChange={(e) => setApplyToLots(e.target.checked)}
+          />
+          Also rewrite open stock lots (FIFO/LIFO products)
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={setCostBasis.isPending}>
+            Set Cost
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Bulk Set Costs Modal (products with no cost basis) ───────────────────────
+
+function BulkSetCostModal({
+  products,
+  onClose,
+}: {
+  products: { id: string; name: string }[];
+  onClose: () => void;
+}) {
+  const bulkSet = useBulkSetCostBasis();
+  const { toast } = useToast();
+  const [costs, setCosts] = React.useState<Record<string, string>>({});
+
+  const filledCount = Object.values(costs).filter((v) => v.trim() !== "").length;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const items = products
+      .filter((p) => (costs[p.id] ?? "").trim() !== "")
+      .map((p) => ({ productId: p.id, unitCost: Number(costs[p.id]) }));
+    if (items.length === 0) return;
+    bulkSet.mutate(
+      { items, notes: "Bulk cost basis entry" },
+      {
+        onSuccess: (result: { updated: number }) => {
+          toast({
+            title: "Cost bases set",
+            description: `${result.updated} product${result.updated === 1 ? "" : "s"} updated.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: () =>
+          toast({
+            title: "Failed to set costs",
+            description: "Please try again.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Set missing cost bases"
+      description="These products have no purchase history and no cost — enter what a unit costs you. Leave rows blank to skip them."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+          {products.map((p) => (
+            <div key={p.id} className="flex items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 truncate text-sm text-navy" title={p.name}>
+                {p.name}
+              </span>
+              <div className="relative w-32 shrink-0">
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-navy/50">
+                  $
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.0001}
+                  value={costs[p.id] ?? ""}
+                  onChange={(e) => setCosts((c) => ({ ...c, [p.id]: e.target.value }))}
+                  className="w-full rounded border border-surface-border py-1.5 pl-6 pr-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+          ))}
+          {products.length === 0 && (
+            <p className="py-6 text-center text-sm text-navy/70">
+              Every product already has a cost basis.
+            </p>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-surface-border pt-3">
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={bulkSet.isPending} disabled={filledCount === 0}>
+            Set {filledCount > 0 ? `${filledCount} ` : ""}Cost{filledCount === 1 ? "" : "s"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── Recompute Costs Modal (dry-run preview → apply) ──────────────────────────
+
+function RecomputeModal({ onClose }: { onClose: () => void }) {
+  const recompute = useRecomputeCosts();
+  const { toast } = useToast();
+  const [preview, setPreview] = React.useState<RecomputeCostsResult | null>(null);
+
+  // Dry-run on open so the operator always reviews before writing
+  React.useEffect(() => {
+    recompute.mutate(
+      { dryRun: true },
+      {
+        onSuccess: (result) => setPreview(result),
+        onError: () =>
+          toast({
+            title: "Recompute preview failed",
+            description: "Please try again.",
+            variant: "error",
+          }),
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const changed = (preview?.results ?? []).filter(
+    (r) => (r.oldAvgCost ?? null) !== (r.newAvgCost ?? null),
+  );
+
+  const handleApply = () => {
+    recompute.mutate(
+      { dryRun: false },
+      {
+        onSuccess: (result) => {
+          toast({
+            title: "Costs recomputed",
+            description: `${result.updated} product${result.updated === 1 ? "" : "s"} rebuilt from purchase history.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: () =>
+          toast({ title: "Recompute failed", description: "Please try again.", variant: "error" }),
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Recompute costs from history"
+      description="Replays every product's purchase movements to rebuild its average cost and repair historical snapshots. Preview below — nothing is written until you apply."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={recompute.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleApply} loading={recompute.isPending} disabled={!preview}>
+            Apply Recompute
+          </Button>
+        </>
+      }
+    >
+      {!preview ? (
+        <p className="py-6 text-center text-sm text-navy/70">Computing preview…</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="rounded-lg bg-surface-raised p-2">
+              <p className="text-lg font-bold text-navy">{preview.processed}</p>
+              <p className="text-[11px] text-navy/70">products scanned</p>
+            </div>
+            <div className="rounded-lg bg-surface-raised p-2">
+              <p className="text-lg font-bold text-navy">{changed.length}</p>
+              <p className="text-[11px] text-navy/70">costs will change</p>
+            </div>
+            <div className="rounded-lg bg-amber-50 p-2">
+              <p className="text-lg font-bold text-amber-800">{preview.noHistory.length}</p>
+              <p className="text-[11px] text-amber-800/80">no purchase history</p>
+            </div>
+          </div>
+
+          {changed.length > 0 && (
+            <div className="max-h-56 overflow-y-auto rounded-lg border border-surface-border">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-surface-raised text-navy/70">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Product</th>
+                    <th className="px-3 py-2 text-right font-medium">Current</th>
+                    <th className="px-3 py-2 text-right font-medium">Recomputed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {changed.map((r) => (
+                    <tr key={r.productId}>
+                      <td className="max-w-[180px] truncate px-3 py-1.5 text-navy" title={r.name}>
+                        {r.name}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-navy/70">
+                        {r.oldAvgCost != null ? `$${r.oldAvgCost.toFixed(4)}` : "—"}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-medium tabular-nums text-navy">
+                        {r.newAvgCost != null ? `$${r.newAvgCost.toFixed(4)}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {preview.noHistory.length > 0 && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {preview.noHistory.length} product{preview.noHistory.length === 1 ? " has" : "s have"}{" "}
+              no recorded purchases — recompute leaves them untouched. Use{" "}
+              <span className="font-semibold">Set Costs</span> to enter their cost basis manually.
+            </p>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function InventoryPage() {
@@ -1851,11 +2198,18 @@ export default function InventoryPage() {
   const stockSearchContainerRef = React.useRef<HTMLDivElement>(null);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
+  // Cost-basis tooling
+  const [costTarget, setCostTarget] = React.useState<StockItem | null>(null);
+  const [showBulkCostModal, setShowBulkCostModal] = React.useState(false);
+  const [showRecomputeModal, setShowRecomputeModal] = React.useState(false);
+  const [missingCostOnly, setMissingCostOnly] = React.useState(false);
 
-  const totalInventoryValue = (stockItems as StockItem[]).reduce(
-    (sum, item) => sum + (item.totalValue ?? 0),
-    0,
-  );
+  const { data: valuation } = useInventoryValuation();
+
+  const totalInventoryValue =
+    valuation?.totalValue ??
+    (stockItems as StockItem[]).reduce((sum, item) => sum + (item.totalValue ?? 0), 0);
+  const missingCostCount = valuation?.missingCostCount ?? 0;
   const outOfStockCount = (stockItems as StockItem[]).filter((i) => i.currentStock <= 0).length;
 
   // Close the typeahead when clicking outside, and reset the highlight whenever
@@ -1932,10 +2286,26 @@ export default function InventoryPage() {
             )}
           </div>
           <p className="mt-1 text-2xl font-bold text-navy">${totalInventoryValue.toFixed(2)}</p>
-          {totalInventoryValue === 0 && (
-            <p className="mt-0.5 text-[10px] text-navy/70">
-              Based on average cost — record purchases to update
-            </p>
+          {missingCostCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setMissingCostOnly((v) => !v)}
+              className={cn(
+                "mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition-colors",
+                missingCostOnly
+                  ? "bg-amber-500 text-white hover:bg-amber-600"
+                  : "bg-amber-100 text-amber-800 hover:bg-amber-200",
+              )}
+              title="These products have no cost basis and are excluded from the total — click to filter the table to them"
+            >
+              {missingCostCount} missing cost{missingCostOnly ? " ✕" : ""}
+            </button>
+          ) : (
+            totalInventoryValue === 0 && (
+              <p className="mt-0.5 text-[10px] text-navy/70">
+                Based on average cost — record purchases to update
+              </p>
+            )
           )}
         </Card>
         <Card>
@@ -2129,6 +2499,30 @@ export default function InventoryPage() {
               <Button
                 size="sm"
                 variant="secondary"
+                leftIcon={<DollarSign className="h-4 w-4" />}
+                onClick={() =>
+                  missingCostCount > 0 ? setShowBulkCostModal(true) : setShowRecomputeModal(true)
+                }
+                title={
+                  missingCostCount > 0
+                    ? `Set a cost basis for the ${missingCostCount} product(s) without one`
+                    : "Rebuild average costs from purchase history"
+                }
+              >
+                {missingCostCount > 0 ? `Set Costs (${missingCostCount})` : "Costs"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<RefreshCcw className="h-4 w-4" />}
+                onClick={() => setShowRecomputeModal(true)}
+                title="Replay purchase history to rebuild average costs (dry-run preview first)"
+              >
+                Recompute
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
                 leftIcon={<SlidersHorizontal className="h-4 w-4" />}
                 onClick={() => {
                   setAdjustPreselectId(undefined);
@@ -2173,8 +2567,10 @@ export default function InventoryPage() {
             <StockTable
               stockItems={stockItems as StockItem[]}
               stockSearch={stockSearch}
+              missingCostOnly={missingCostOnly}
               setAdjustPreselectId={setAdjustPreselectId}
               setShowAdjustModal={setShowAdjustModal}
+              onSetCost={setCostTarget}
             />
           )}
         </Tabs.Content>
@@ -2300,6 +2696,14 @@ export default function InventoryPage() {
         onClose={() => setShowScanModal(false)}
         onCreated={() => setShowScanModal(false)}
       />
+      {costTarget && <SetCostModal item={costTarget} onClose={() => setCostTarget(null)} />}
+      {showBulkCostModal && (
+        <BulkSetCostModal
+          products={valuation?.missingCostProducts ?? []}
+          onClose={() => setShowBulkCostModal(false)}
+        />
+      )}
+      {showRecomputeModal && <RecomputeModal onClose={() => setShowRecomputeModal(false)} />}
     </div>
   );
 }
