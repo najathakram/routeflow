@@ -43,6 +43,7 @@ import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
 import { BuyerModule } from "./buyer/buyer.module";
+import { TobaccoModule } from "./tobacco/tobacco.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -140,6 +141,8 @@ import { AppService } from "./app.service";
     BillingModule,
     // ─── Buyer Portal (multi-tenant customer identity) ─────────────────────────
     BuyerModule,
+    // ─── Tobacco compliance (tobacco_dealer addon) ─────────────────────────────
+    TobaccoModule,
   ],
   controllers: [AppController],
   providers: [
