@@ -8,11 +8,13 @@ import { PublicPlacesController } from "./public-places.controller";
 import { TenantGoogleOAuthService } from "./tenant-google-oauth.service";
 import { EmailModule } from "../email/email.module";
 import { StorageModule } from "../storage/storage.module";
+import { BillingModule } from "../billing/billing.module";
 
 @Module({
   imports: [
     EmailModule,
     StorageModule,
+    BillingModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
