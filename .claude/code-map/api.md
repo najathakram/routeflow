@@ -106,13 +106,13 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `orders/`
 
 - **controller** `orders` (+ `route-runs`) — `active`, `price-history` (GET, OPERATOR, ?customerId → last-given price per product), `@Get/:id`, `:id/tracking`, `@Patch :id/status|items|urgent`, `:id/reopen`, `sweep-pending`, `force-consolidate/:customerId`, bulk/single delete; RouteRun stop complete.
-- **service** — `findAll`, `findOne` (lineItems `orderBy createdAt asc` ⇒ new items render at bottom), `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateOrderItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`, **`getCustomerPriceHistory(tenantId,customerId)`** (returns `Record<productId,{lastPrice,listPriceAtTime}>` — only lines with `originalPrice` set; used to pre-fill the price field when scanning). side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED (per-batch lines use `computeLineSubtotal` for boxed proration + `discount: 0` for overrides — never `qty*unitPrice`); delivery-mutation tracking.
+- **service** — `findAll`, `findOne` (lineItems `orderBy createdAt asc` ⇒ new items render at bottom), `create`, `changeStatus(id,status,role)` (CUSTOMER can cancel PENDING), `updateOrderItems`, `markUrgent`, `reopen`, `sweepPending`, `forceConsolidate`, `getTracking`, `completeStop` (SALE recording **delegates to `InventoryService.recordSale`** in-tx — no inline SALE writes; OrdersModule imports InventoryModule), **`getCustomerPriceHistory(tenantId,customerId)`** (returns `Record<productId,{lastPrice,listPriceAtTime}>` — only lines with `originalPrice` set; used to pre-fill the price field when scanning). side effects: Order/OrderItem writes; Transaction ledger; notifications; invoice auto-create on DELIVERED (per-batch lines use `computeLineSubtotal` for boxed proration + `discount: 0` for overrides — never `qty*unitPrice`); delivery-mutation tracking.
   - **`updateOrderItems` replace vs merge (gotcha):** operator path picks `replaceAll = dto.replaceAll ?? allNewItems` (`allNewItems = items.every(no id)`). `replaceAll` ⇒ deleteMany + recreate (mobile full-list pattern); else merge — id-less items are CREATED (appended), absent items left untouched. **Web edit UI sends `replaceAll: false`** so an add-only diff doesn't wipe untouched lines (was the data-loss bug). Mobile omits the flag ⇒ legacy heuristic ⇒ replace-all. Customer/DRIVER use a separate always-replace branch.
 
 ### `routes/` & `route-optimization/`
 
 - **routes controller** `routes` (+ `route-runs`) — customer-assignments, live, route get/patch/delete, stops add/reorder/remove; runs: `my-runs`, `my-stats` (declared before `:id`), get, stop complete / complete-with-payment, stop patch, run patch/status/delete.
-- **service** — `findAll`, `findOne`, `create`, `updateRoute`, `addStop`, `reorderStops`, `deleteStop`, `createRun` (passes `podPhotoUrls: []`), `completeStop(runId,stopId,mutations,podPhotos)`, `completeWithPayment`, `updateRunStop`, `getMyRuns`, `getMyStats`, `updateRunStatus`.
+- **service** — `findAll`, `findOne`, `create`, `updateRoute`, `addStop`, `reorderStops`, `deleteStop`, `createRun` (passes `podPhotoUrls: []`), `completeStop(runId,stopId,mutations,podPhotos)`, `completeWithPayment`, `updateRunStop`, `getMyRuns`, `getMyStats`, `updateRunStatus`, `reopenStop` — reverses deliveries with a **compensating positive-qty SALE carrying the original sale's unitCost** (so signed COGS nets to 0; NOT an un-costed ADJUSTMENT).
 - **route-optimization controller** `route-optimization` — `:id/optimize`, `:id/analyze` (external optimizer suggests stop order).
 - side effects: Route/RouteStop/RouteCustomer/RouteRun/RouteRunStop/DeliveryMutation writes; Socket.io broadcast; payment recording; inventory adjust on mutations.
 
@@ -129,7 +129,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `returns/`
 
 - **controller** `returns` — `@Get/:id`, approve, reject, in-transit, receive, refund, cancel.
-- **service** — `findAll`/`findAllForUser(userId,role)` (CUSTOMER filtered), `findOne`, `create`, `approve`, `reject`, `markInTransit`, `receive`, `refund`, `cancel`. side effects: Return/ReturnItem writes; inventory PURCHASE on receive; credit-note auto-gen on refund; email.
+- **service** — `findAll`/`findAllForUser(userId,role)` (CUSTOMER filtered), `findOne`, `create`, `approve`, `reject`, `markInTransit`, `receive` (RETURN movement restocks at current averageCost with unitCost+snapshots stamped), `refund`, `cancel`. side effects: Return/ReturnItem writes; RETURN movement on receive; credit-note auto-gen on refund; email.
 
 ### `order-templates/`
 
@@ -138,8 +138,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `inventory/`
 
-- **controller** `inventory` — overview, movements (+purchase/adjustment), stock-count/commit, suppliers CRUD, purchase-orders CRUD + send/receive/close, forecasting.
-- **service** — `getOverview`, `getMovements`, `recordPurchaseMovement`, `recordAdjustment`, `commitStockCount`, PO CRUD + `sendPO`/`receivePO`/`closePO`, `getForecasting`. side effects: StockLot/StockMovement/PurchaseOrder(+Item) writes; ledger.
+- **controller** `inventory` — overview, movements (+purchase/adjustment), stock-count/commit, **valuation**, **`@Patch products/:id/cost-basis`**, **`@Post cost-basis/bulk`**, **`@Post recompute-costs`**, suppliers CRUD, purchase-orders CRUD + send/receive/close, forecasting.
+- **service** — `getStockOverview`, `listMovements`, `recordPurchase`, `recordAdjustment`, `commitStockCount`, **`recordSale(productId,qty,ref,userId,tx)` — THE single sale-costing path** (per-method unitCost: AVCO=avg, FIFO/LIFO=lot blend w/ avg fallback, STANDARD=standardCost; writes SALE movement WITH unitCost + snapshots, decrements stock, consumes lots, returns `{unitCost, stockAfter}`; never throws on negative stock), PO CRUD + receive (Decimal AVCO), `getForecasting` (signed SALE sums), **`setCostBasis`/`bulkSetCostBasis`** (COST_BASIS movement qty 0 + product.averageCost; optional applyToLots), **`recomputeCosts({productIds?,dryRun?})`** (replays movement history → rebuilds averageCost + backfills avgCostAfter/stockAfter snapshots; reports noHistory + stockDrift), **`getValuation`**. Backdated purchase/adjustment auto-replays the product in-tx.
+- **`costing.ts`** — pure Decimal helpers (mirror of common/pricing.ts discipline, 4dp): `costDecimal`, `nextAverageCost` (stock≤0 ⇒ reset to unitCost), `reverseAverageCost` (**null = KEEP previous avg** when reversal empties stock — never zero the basis), `planLotConsumption`. Spec: `costing.spec.ts`. ALL inventory writers must go through these.
+- **StockMovement snapshots**: every movement now stamps `avgCostAfter`/`stockAfter` (product state AFTER) — point-in-time avg cost = latest movement ≤ T. `MovementType.COST_BASIS` = audited manual cost set (qty 0). Migration `20260704000000_inventory_cost_accounting`.
+- side effects: StockLot/StockMovement/PurchaseOrder(+Item)/Product.averageCost writes; ledger. Specs: `inventory.service.spec.ts`.
 
 ### `billing/`
 
@@ -153,8 +156,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `vendor-bills/`
 
-- **controller** `vendor-bills` — create, list, scan-invoice, product-mappings CRUD, per-id get/patch/receive/revert-to-draft/void/payments/delete, bulk delete.
-- **service** — `create`, `findAll`, `findOne`, `update`, `receive`, `recordPayment`, `revertToDraft`, `void`, `delete`, `scanInvoice` (OCR), product-mapping CRUD. side effects: VendorBill(+Item)/BillPayment writes; inventory PURCHASE on receive; expense entries.
+- **controller** `vendor-bills` — create, list (`?needsMapping=true` filter), scan-invoice, product-mappings CRUD, per-id get/patch/receive (body `{acknowledgeUnlinked?}` + @CurrentUser)/revert-to-draft/void/payments/delete, bulk delete.
+- **service** — `create`, `findAll` (needsMapping filter = DRAFT + items none|some productId null; meta always carries `needsMappingCount`), `findOne`, `update`, **`receive(id,dto?,userId?)`** — throws `ConflictException({code:"UNLINKED_ITEMS", unlinkedItems})` for empty/unmapped bills unless `acknowledgeUnlinked` (warn-and-confirm, not silent skip); per linked item: `nextAverageCost` + **StockLot create** (reference=billNumber) + snapshot-stamped PURCHASE movement (fresh in-tx product read so multi-line same-product compounds), `recordPayment`, `revertToDraft`/`voidBill` — `reverseAverageCost` (**keeps avg when stock empties**, no more zeroing) + `reverseBillLots` (delete untouched / zero partially-consumed lots), `delete`, `scanInvoice` (OCR), product-mapping CRUD. side effects: VendorBill(+Item)/BillPayment/StockLot writes; inventory PURCHASE on receive; expense entries. Specs: `vendor-bills.service.spec.ts`.
 
 ### `recurring-invoices/`
 
@@ -169,7 +172,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `analytics/`
 
 - **controller** `analytics` — overview, revenue, top products/customers, route/driver performance, inventory turnover/dead-stock/margin-alerts, dso, sales-by-category, gross-margin, aov, price/cost history.
-- **service** — corresponding read aggregates. side effects: read-only (caching recommended).
+- **service** — corresponding read aggregates. **COGS/units are SIGNED sums of SALE rows (`-quantity`), never abs()** — reopen-reversals are positive SALE rows that must net out (same in bookkeeping P&L + inventory forecasting). `getCostHistory` includes COST_BASIS + returns `{unitCost, avgCostAfter, type}`. side effects: read-only. Specs: `analytics.service.spec.ts`.
 
 ### `suppliers/`
 
