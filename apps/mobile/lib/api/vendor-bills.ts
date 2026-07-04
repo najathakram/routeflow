@@ -51,6 +51,27 @@ export interface ScanResult {
   supplierId?: string;
 }
 
+/** Payload of the 409 thrown when receiving a bill with unmapped lines. */
+export interface UnlinkedItemsError {
+  code: "UNLINKED_ITEMS";
+  message: string;
+  unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
+}
+
+/** Extract the UNLINKED_ITEMS payload from an axios error, if that's what it is. */
+export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
+}
+
+/** A DRAFT bill whose receive would skip inventory/cost updates. */
+export function billNeedsMapping(bill: VendorBill): boolean {
+  return (
+    bill.status === "DRAFT" &&
+    ((bill.items ?? []).length === 0 || (bill.items ?? []).some((i) => !i.productId))
+  );
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useVendorBills(params?: {
@@ -58,6 +79,7 @@ export function useVendorBills(params?: {
   status?: VendorBillStatus;
   page?: number;
   limit?: number;
+  needsMapping?: boolean;
 }) {
   return useQuery<{ data: VendorBill[]; meta: any }>({
     queryKey: ["vendor-bills", params],
@@ -87,11 +109,16 @@ export function useCreateVendorBill() {
 
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, string>({
-    mutationFn: (id) => apiClient.post(`/vendor-bills/${id}/receive`).then((r) => r.data),
-    onSuccess: (_, id) => {
+  return useMutation<VendorBill, Error, { id: string; acknowledgeUnlinked?: boolean }>({
+    mutationFn: ({ id, acknowledgeUnlinked }) =>
+      apiClient
+        .post(`/vendor-bills/${id}/receive`, acknowledgeUnlinked ? { acknowledgeUnlinked } : {})
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
     },
   });
 }

@@ -405,8 +405,18 @@ function makeTableColumns(
       header: "Avg Cost",
       cell: ({ row }) => {
         const p = row.original;
-        const cost = p.averageCost ? parseFloat(String(p.averageCost)) : null;
-        return <span className="text-navy/70">{cost != null ? `$${cost.toFixed(2)}` : "—"}</span>;
+        const cost = p.averageCost != null ? parseFloat(String(p.averageCost)) : null;
+        if (cost == null) {
+          return (
+            <span
+              title="No cost basis recorded — set one from Inventory → Set Costs, or receive a purchase"
+              className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+            >
+              No cost set
+            </span>
+          );
+        }
+        return <span className="text-navy/70">{`$${cost.toFixed(2)}`}</span>;
       },
     },
     {

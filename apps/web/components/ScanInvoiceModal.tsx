@@ -563,7 +563,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         const matchedItems = billItems.filter((it) => it.productId).length;
         if (billId) {
           try {
-            await receiveBill.mutateAsync(billId);
+            // The operator just reviewed every line's product mapping in this
+            // modal, so unmapped lines are an informed choice — acknowledge.
+            await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             results.push(
               matchedItems > 0
                 ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`

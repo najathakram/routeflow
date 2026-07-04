@@ -20,7 +20,6 @@ import {
   ItemStatus,
   TxnStatus,
   MutationType,
-  MovementType,
   InvoiceStatus,
   PriceType,
   Prisma,
@@ -37,6 +36,7 @@ import { getTierPrice } from "../utils/pricing";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { InventoryService } from "../inventory/inventory.service";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -49,6 +49,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly notifications: NotificationsService,
     private readonly invoicesService: InvoicesService,
     private readonly systemConfig: SystemConfigService,
+    private readonly inventoryService: InventoryService,
   ) {}
 
   /**
@@ -1764,25 +1765,20 @@ export class OrdersService implements OnApplicationBootstrap {
         }
         if (saleQty !== null && saleQty.gt(0)) {
           const order = stop.orders.find((o) => o.id === orderItem.orderId);
-          await tx.stockMovement.create({
-            data: {
-              productId: orderItem.productId,
-              type: MovementType.SALE,
-              quantity: saleQty.neg(),
-              reference: order?.orderNumber ?? null,
-              performedById: user.sub,
-            },
-          });
-          const updatedProduct = await tx.product.update({
-            where: { id: orderItem.productId },
-            data: { currentStock: { decrement: saleQty } },
-            select: { id: true, name: true, currentStock: true },
-          });
+          // Single sale-costing path: writes the SALE movement WITH unit cost
+          // (COGS), snapshots, stock decrement, and FIFO/LIFO lot consumption
+          const { stockAfter } = await this.inventoryService.recordSale(
+            orderItem.productId,
+            saleQty,
+            order?.orderNumber ?? null,
+            user.sub,
+            tx,
+          );
           // Warn if stock went negative — log for operator review but don't block delivery
-          if (Number(updatedProduct.currentStock) < 0) {
+          if (stockAfter.lt(0)) {
             this.logger.warn(
-              `Stock went negative for product "${updatedProduct.name}" (${updatedProduct.id}): ` +
-                `currentStock=${String(updatedProduct.currentStock)} after delivery of ${String(saleQty)}`,
+              `Stock went negative for product ${orderItem.productId}: ` +
+                `currentStock=${stockAfter.toString()} after delivery of ${String(saleQty)}`,
             );
           }
         }

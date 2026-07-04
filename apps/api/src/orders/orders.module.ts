@@ -7,6 +7,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { InventoryModule } from "../inventory/inventory.module";
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SystemConfigModule } from "../system-config/system-config.module";
     NotificationsModule,
     InvoicesModule,
     SystemConfigModule,
+    InventoryModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],

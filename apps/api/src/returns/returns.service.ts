@@ -12,6 +12,7 @@ const VALID_RETURN_REASONS = [
   "QUALITY_ISSUE",
   "EXCESS_ORDER",
 ] as const;
+import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -206,18 +207,28 @@ export class ReturnsService {
     return this.prisma.tenantTransaction(async (tx) => {
       for (const item of ret.items) {
         if (item.restock) {
+          // Restock at the current average — leaves the average unchanged but
+          // records the cost so COGS/valuation reporting stays complete
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { currentStock: true, averageCost: true },
+          });
+          const qty = new Prisma.Decimal(item.qty);
           await tx.stockMovement.create({
             data: {
               productId: item.productId,
               type: "RETURN",
-              quantity: Number(item.qty),
+              quantity: qty,
+              unitCost: product?.averageCost ?? null,
+              avgCostAfter: product?.averageCost ?? null,
+              stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
               performedById: userId,
               reference: `RET-${ret.id.slice(0, 8)}`,
             },
           });
           await tx.product.update({
             where: { id: item.productId },
-            data: { currentStock: { increment: Number(item.qty) } },
+            data: { currentStock: { increment: qty } },
           });
         }
       }

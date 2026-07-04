@@ -68,7 +68,8 @@ real-time sync; offline queue for driver route completions.
 ### `(operator)/` — tabs: Home, Dispatch, Orders, Warehouse, Finance, More
 
 - root `_layout.tsx` — Stack, `useSocket()`, OfflineBanner. tabs `(tabs)/_layout.tsx` (popTabToRoot on re-press).
-- `(tabs)/home.tsx` (KPIs), `dispatch.tsx` (routes calendar, driver assign), `warehouse.tsx`, `finance.tsx`, `more.tsx`.
+- `(tabs)/home.tsx` (KPIs), `dispatch.tsx` (routes calendar, driver assign), `warehouse.tsx` (+ inventory-value KPI w/ missing-cost count via `useInventoryValuation`), `finance.tsx`, `more.tsx`.
+- **Cost basis (mirrors web):** `products/[id]/set-cost.tsx` (audited COST_BASIS via PATCH /inventory/products/:id/cost-basis); product detail shows effective cost (standardCost ?? averageCost) w/ "No cost set" chip; vendor-bill receive sends `{id, acknowledgeUnlinked?}` + native confirm on UNLINKED_ITEMS 409 (`getUnlinkedItemsError`/`billNeedsMapping` in `lib/api/vendor-bills.ts`); `movements.tsx` renders COST_BASIS rows (shows set cost, not qty).
 - `(tabs)/orders/` → index (status filter), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`), `[id]/split-invoice.tsx`.
 - `(tabs)/invoices/` → index (status), `[id].tsx` (payments, write-off, **Share PDF → `sharePdf()` direct share**), `[id]/record-payment.tsx`, `create.tsx`, `new.tsx`.
 - `customers/` → index, `[id].tsx`, `[id]/edit.tsx`, `[id]/addresses.tsx`, `[id]/catalog.tsx` (per-customer tier pricing), `new.tsx`/`create.tsx`.

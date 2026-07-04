@@ -750,8 +750,10 @@ export class BookkeepingService implements OnModuleInit {
     ]);
 
     const revenue = Number(revenueAgg._sum.total ?? 0);
+    // Signed COGS: SALE quantities are negative (-qty × unitCost adds cost);
+    // reopen-reversals are positive SALE rows and net their cost back out
     const cogs = cogsMovements.reduce(
-      (s, m) => s + Math.abs(Number(m.quantity)) * Number(m.unitCost ?? 0),
+      (s, m) => s + -Number(m.quantity) * Number(m.unitCost ?? 0),
       0,
     );
     const grossProfit = revenue - cogs;

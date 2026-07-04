@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { roundMoney } from "../common/pricing";
 
 @Injectable()
 export class AnalyticsService {
@@ -65,7 +66,9 @@ export class AnalyticsService {
     const map: Record<string, { name: string; value: number }> = {};
     for (const m of movements) {
       if (!map[m.productId]) map[m.productId] = { name: m.product.name, value: 0 };
-      map[m.productId].value += Math.abs(Number(m.quantity));
+      // SALE rows are negative; positive SALE rows are reopen-reversals that
+      // must net out — signed sum, not abs
+      map[m.productId].value += -Number(m.quantity);
     }
     return Object.entries(map)
       .map(([id, v]) => ({ id, name: v.name, value: v.value }))
@@ -163,8 +166,9 @@ export class AnalyticsService {
       select: { productId: true, quantity: true },
     });
     const salesMap: Record<string, number> = {};
+    // Signed: reopen-reversals (positive SALE rows) net out of units sold
     for (const s of sales)
-      salesMap[s.productId] = (salesMap[s.productId] ?? 0) + Math.abs(Number(s.quantity));
+      salesMap[s.productId] = (salesMap[s.productId] ?? 0) + -Number(s.quantity);
     return products.map((p) => ({
       id: p.id,
       name: p.name,
@@ -256,11 +260,16 @@ export class AnalyticsService {
 
   async getCostHistory(productId: string) {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { productId, type: "PURCHASE" },
+      where: { productId, type: { in: ["PURCHASE", "COST_BASIS"] } },
       orderBy: { createdAt: "asc" },
       take: 100,
     });
-    return movements.map((m) => ({ date: m.createdAt, unitCost: Number(m.unitCost ?? 0) }));
+    return movements.map((m) => ({
+      date: m.createdAt,
+      unitCost: Number(m.unitCost ?? 0),
+      avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
+      type: m.type,
+    }));
   }
 
   async getSalesByCategory(from?: string, to?: string) {
@@ -292,12 +301,13 @@ export class AnalyticsService {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
     });
-    const revenue = invoices.reduce((s, inv) => s + Number(inv.total), 0);
-    const cogs = movements.reduce(
-      (s, m) => s + Math.abs(Number(m.quantity)) * Number(m.unitCost ?? 0),
-      0,
+    const revenue = roundMoney(invoices.reduce((s, inv) => s + Number(inv.total), 0));
+    // Signed COGS: SALE quantities are negative, so -qty × unitCost adds cost;
+    // reopen-reversals are positive SALE rows and subtract their cost back out
+    const cogs = roundMoney(
+      movements.reduce((s, m) => s + -Number(m.quantity) * Number(m.unitCost ?? 0), 0),
     );
-    const grossProfit = revenue - cogs;
+    const grossProfit = roundMoney(revenue - cogs);
     return {
       revenue,
       cogs,

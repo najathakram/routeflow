@@ -11,6 +11,9 @@ import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
+import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
+import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
+import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 
 @Controller("inventory")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -46,6 +49,31 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR)
   commitStockCount(@Body() dto: CommitStockCountDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.commitStockCount(dto, user.id);
+  }
+
+  // ── Cost basis & valuation ──
+  @Get("valuation")
+  getValuation() {
+    return this.inventoryService.getValuation();
+  }
+
+  @Patch("products/:id/cost-basis")
+  setCostBasis(
+    @Param("id") id: string,
+    @Body() dto: SetCostBasisDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.inventoryService.setCostBasis(id, dto, user.id);
+  }
+
+  @Post("cost-basis/bulk")
+  bulkSetCostBasis(@Body() dto: BulkSetCostBasisDto, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.bulkSetCostBasis(dto, user.id);
+  }
+
+  @Post("recompute-costs")
+  recomputeCosts(@Body() dto: RecomputeCostsDto) {
+    return this.inventoryService.recomputeCosts(dto);
   }
 
   @Get("suppliers")

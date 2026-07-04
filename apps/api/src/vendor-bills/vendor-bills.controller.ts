@@ -17,6 +17,7 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { VendorBillsService } from "./vendor-bills.service";
 
 @Controller("vendor-bills")
@@ -37,6 +38,7 @@ export class VendorBillsController {
     @Query("search") search?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
+    @Query("needsMapping") needsMapping?: string,
   ) {
     return this.vendorBillsService.findAll(
       supplierId,
@@ -46,6 +48,7 @@ export class VendorBillsController {
       search,
       page ? +page : 1,
       limit ? +limit : 20,
+      needsMapping === "true",
     );
   }
 
@@ -108,16 +111,20 @@ export class VendorBillsController {
     return this.vendorBillsService.update(id, dto);
   }
 
-  @Post(":id/receive") receive(@Param("id") id: string) {
-    return this.vendorBillsService.receive(id);
+  @Post(":id/receive") receive(
+    @Param("id") id: string,
+    @Body() dto: { acknowledgeUnlinked?: boolean } | undefined,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.vendorBillsService.receive(id, dto, user.id);
   }
 
   @Post(":id/revert-to-draft") revertToDraft(@Param("id") id: string) {
     return this.vendorBillsService.revertToDraft(id);
   }
 
-  @Post(":id/void") voidBill(@Param("id") id: string) {
-    return this.vendorBillsService.voidBill(id);
+  @Post(":id/void") voidBill(@Param("id") id: string, @CurrentUser() user: { id: string }) {
+    return this.vendorBillsService.voidBill(id, user.id);
   }
 
   @Post(":id/payments") recordPayment(@Param("id") id: string, @Body() dto: any) {

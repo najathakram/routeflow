@@ -10,6 +10,10 @@ export interface StockItem {
   currentStock: number;
   reorderPoint?: number;
   reorderQty?: number;
+  /** Effective unit cost (standard cost for STANDARD products, else weighted average); null = no cost set */
+  averageCost: number | null;
+  totalValue: number | null;
+  costingMethod?: string;
 }
 
 export interface StockAdjustmentDto {
@@ -42,9 +46,60 @@ export function useStockOverview() {
           currentStock: p.currentStock ?? 0,
           reorderPoint: p.reorderPoint ?? undefined,
           reorderQty: p.reorderQty ?? undefined,
+          averageCost: p.averageCost ?? null,
+          totalValue: p.totalValue ?? null,
+          costingMethod: p.costingMethod ?? undefined,
         })),
       ),
     staleTime: 30_000,
+  });
+}
+
+// ─── Cost basis & valuation ───────────────────────────────────────────────────
+
+export interface InventoryValuation {
+  totalValue: number;
+  productCount: number;
+  missingCostCount: number;
+  missingCostProducts: { id: string; name: string }[];
+}
+
+export function useInventoryValuation() {
+  return useQuery<InventoryValuation>({
+    queryKey: ["inventory", "valuation"],
+    queryFn: () => apiClient.get("/inventory/valuation").then((r) => r.data),
+    staleTime: 30_000,
+  });
+}
+
+export function useSetCostBasis() {
+  const qc = useQueryClient();
+  return useMutation<
+    unknown,
+    Error,
+    { productId: string; unitCost: number; notes?: string; applyToLots?: boolean }
+  >({
+    mutationFn: ({ productId, ...data }) =>
+      apiClient.patch(`/inventory/products/${productId}/cost-basis`, data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
+}
+
+export function useBulkSetCostBasis() {
+  const qc = useQueryClient();
+  return useMutation<
+    { updated: number },
+    Error,
+    { items: { productId: string; unitCost: number }[]; notes?: string; applyToLots?: boolean }
+  >({
+    mutationFn: (data) => apiClient.post("/inventory/cost-basis/bulk", data).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
   });
 }
 
@@ -68,7 +123,13 @@ export function useRecordPurchase() {
 
 // ─── Movements / history ──────────────────────────────────────────────────────
 
-export type MovementType = "PURCHASE" | "SALE" | "ADJUSTMENT" | "RETURN";
+export type MovementType =
+  | "PURCHASE"
+  | "SALE"
+  | "ADJUSTMENT"
+  | "RETURN"
+  | "WRITE_OFF"
+  | "COST_BASIS";
 
 export interface InventoryMovement {
   id: string;

@@ -25,6 +25,8 @@ import {
   useRecordVendorBillPayment,
   useRevertVendorBillToDraft,
   useUpdateVendorBill,
+  getUnlinkedItemsError,
+  type UnlinkedItemsError,
   type VendorBill,
   type VendorBillStatus,
   type VendorBillPayment,
@@ -207,6 +209,63 @@ function VoidConfirmModal({
       <p className="text-sm text-navy/70">
         Voiding this bill will mark it as cancelled. No further payments can be recorded on it.
       </p>
+    </Modal>
+  );
+}
+
+// ─── Unlinked Items Confirm Modal ─────────────────────────────────────────────
+
+function UnlinkedItemsModal({
+  payload,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  payload: UnlinkedItemsError | null;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={!!payload}
+      onClose={onClose}
+      title="Some lines won't update costs"
+      description={payload?.message ?? ""}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Go back and map items
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Receive anyway
+          </Button>
+        </>
+      }
+    >
+      {payload && payload.unlinkedItems.length > 0 ? (
+        <div className="space-y-2">
+          <p className="text-sm text-navy/70">
+            These lines are not linked to a product, so they will NOT update inventory quantities or
+            average costs:
+          </p>
+          <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md bg-amber-50 p-3 text-sm text-navy">
+            {payload.unlinkedItems.map((item) => (
+              <li key={item.id} className="flex justify-between gap-3">
+                <span className="truncate">{item.description || "(no description)"}</span>
+                <span className="shrink-0 tabular-nums text-navy/70">
+                  {item.qty} × {fmt(item.unitCost)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="text-sm text-navy/70">
+          This bill has no line items at all — receiving it records the expense but changes no
+          inventory quantities or costs. Add items (or scan the invoice) to keep costs accurate.
+        </p>
+      )}
     </Modal>
   );
 }
@@ -396,6 +455,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
+  const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
 
   // Edit mode state
   const [isEditing, setIsEditing] = React.useState(false);
@@ -460,23 +520,33 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
-  const handleReceive = () => {
-    receiveBill.mutate(bill.id, {
-      onSuccess: () => {
-        toast({
-          title: "Bill marked as received",
-          description: `Bill ${bill.billNumber} is now in Received status.`,
-          variant: "success",
-        });
+  const handleReceive = (acknowledgeUnlinked = false) => {
+    receiveBill.mutate(
+      { id: bill.id, acknowledgeUnlinked },
+      {
+        onSuccess: () => {
+          setUnlinkedConfirm(null);
+          toast({
+            title: "Bill marked as received",
+            description: `Bill ${bill.billNumber} is now in Received status.`,
+            variant: "success",
+          });
+        },
+        onError: (err) => {
+          // Unmapped lines → show the confirm dialog listing what gets skipped
+          const unlinked = getUnlinkedItemsError(err);
+          if (unlinked) {
+            setUnlinkedConfirm(unlinked);
+            return;
+          }
+          toast({
+            title: "Failed to mark received",
+            description: "Please try again.",
+            variant: "error",
+          });
+        },
       },
-      onError: () => {
-        toast({
-          title: "Failed to mark received",
-          description: "Please try again.",
-          variant: "error",
-        });
-      },
-    });
+    );
   };
 
   const handleVoid = () => {
@@ -625,7 +695,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <Button
                 size="sm"
                 leftIcon={<PackageCheck className="h-4 w-4" />}
-                onClick={handleReceive}
+                onClick={() => handleReceive()}
                 loading={receiveBill.isPending}
               >
                 Mark Received
@@ -693,6 +763,21 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           )}
         </div>
       </div>
+
+      {/* Unmapped-items warning: costs only sync for product-linked lines */}
+      {status === "DRAFT" &&
+        ((bill.items ?? []).length === 0 || (bill.items ?? []).some((i) => !i.productId)) && (
+          <div className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <PackageCheck className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              {(bill.items ?? []).length === 0
+                ? "This bill has no line items — receiving it will not update any inventory or product costs. "
+                : "Some line items are not linked to a product and will not update inventory or costs when received. "}
+              Use <span className="font-semibold">Edit</span> to map items to products so average
+              costs stay accurate.
+            </p>
+          </div>
+        )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ── Bill detail (2/3) ── */}
@@ -988,6 +1073,13 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onConfirm={handleRevertToDraft}
         billNumber={bill.billNumber}
         isPending={revertToDraft.isPending}
+      />
+
+      <UnlinkedItemsModal
+        payload={unlinkedConfirm}
+        onClose={() => setUnlinkedConfirm(null)}
+        onConfirm={() => handleReceive(true)}
+        isPending={receiveBill.isPending}
       />
     </div>
   );

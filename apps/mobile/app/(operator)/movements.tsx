@@ -21,6 +21,7 @@ const FILTERS: { id: "ALL" | MovementType; label: string }[] = [
   { id: "SALE", label: "Sold" },
   { id: "ADJUSTMENT", label: "Adjusted" },
   { id: "RETURN", label: "Returned" },
+  { id: "COST_BASIS", label: "Cost set" },
 ];
 
 function pillForType(t: MovementType): {
@@ -36,6 +37,8 @@ function pillForType(t: MovementType): {
       return { variant: "orange", label: "Adjusted" };
     case "RETURN":
       return { variant: "red", label: "Returned" };
+    case "COST_BASIS":
+      return { variant: "gray", label: "Cost set" };
     default:
       return { variant: "gray", label: t };
   }
@@ -166,10 +169,17 @@ function MovementRow({ m }: { m: InventoryMovement }) {
           {m.notes ? ` · ${m.notes}` : ""}
         </Text>
       </View>
-      <Text style={[styles.qty, { color: positive ? ios.system.greenInk : ios.system.redInk }]}>
-        {positive ? "+" : ""}
-        {m.quantity}
-      </Text>
+      {m.type === "COST_BASIS" ? (
+        // Cost-basis entries move no stock — show the cost that was set instead
+        <Text style={[styles.qty, { color: ios.label2 }]}>
+          {m.unitCost != null ? `$${Number(m.unitCost).toFixed(2)}` : "—"}
+        </Text>
+      ) : (
+        <Text style={[styles.qty, { color: positive ? ios.system.greenInk : ios.system.redInk }]}>
+          {positive ? "+" : ""}
+          {m.quantity}
+        </Text>
+      )}
       <Pill variant={p.variant} dot>
         {p.label}
       </Pill>
