@@ -14,6 +14,9 @@ export class ListProductsDto {
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isTobacco?: boolean;
   @IsOptional() @IsEnum(StockStatusFilter) stockStatus?: StockStatusFilter;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
+  // limit=0 is the "fetch-all" sentinel (service caps it at 10_000); web
+  // product pickers rely on it and on larger page sizes (500/1000). The old
+  // @Min(1)@Max(200) rejected all of those with 400, leaving pickers empty.
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10000) limit?: number;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() includeVariants?: boolean;
 }
