@@ -102,6 +102,12 @@ const AVAILABLE_ADDONS = [
     name: "Advanced Reporting",
     description: "Custom report builder with export and scheduling",
   },
+  {
+    key: "tobacco_dealer",
+    name: "Tobacco Dealer Compliance",
+    description:
+      "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
+  },
 ];
 
 const TABS = [
