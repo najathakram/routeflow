@@ -6,11 +6,13 @@ import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../../lib/auth-store";
 import { useTenantStore } from "../../../lib/tenant-store";
+import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
   const { user, logout } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
+  const hasTobacco = useHasAddon(TOBACCO_ADDON);
 
   const initials =
     user?.username
@@ -154,6 +156,16 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/analytics")}
             chevron
           />
+          {hasTobacco ? (
+            <ListRow
+              icon={<Ionicons name="leaf-outline" size={16} color={ios.system.orangeInk} />}
+              iconBg={ios.system.orangeWash}
+              title="Tobacco"
+              subtitle="Compliance tracking & monthly reports"
+              onPress={() => router.push("/(operator)/tobacco")}
+              chevron
+            />
+          ) : null}
           <ListRow
             icon={<Ionicons name="settings-outline" size={16} color={ios.gray[1]} />}
             iconBg={ios.fill3}

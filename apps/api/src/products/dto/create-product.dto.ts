@@ -21,6 +21,8 @@ export class CreateProductDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  /** Requires the tenant's "tobacco_dealer" addon to set true. */
+  @IsOptional() @IsBoolean() isTobacco?: boolean;
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
   @IsOptional() @IsDecimal() standardCost?: string;
   @IsOptional() @IsInt() unitsPerBox?: number;

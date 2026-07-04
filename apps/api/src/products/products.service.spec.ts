@@ -1,8 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException, BadRequestException } from "@nestjs/common";
+import { NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { ProductsService } from "./products.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { AddonService } from "../billing/addon.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_PRODUCT = {
@@ -22,6 +23,7 @@ const MOCK_PRODUCT = {
 describe("ProductsService", () => {
   let service: ProductsService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let addonService: { hasAddon: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -39,10 +41,15 @@ describe("ProductsService", () => {
             delete: jest.fn(),
           },
         },
+        {
+          provide: AddonService,
+          useValue: { hasAddon: jest.fn().mockResolvedValue(false) },
+        },
       ],
     }).compile();
 
     service = module.get<ProductsService>(ProductsService);
+    addonService = module.get(AddonService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -182,6 +189,58 @@ describe("ProductsService", () => {
       await expect(service.update("prod-1", { sku: "DUP-SKU" } as any)).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  // ─── isTobacco flag (tobacco_dealer addon) ──────────────────────────────────
+
+  describe("isTobacco flag", () => {
+    it("filters findAll by isTobacco", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ isTobacco: true } as any);
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ isTobacco: true }) }),
+      );
+    });
+
+    it("rejects flagging a product as tobacco without the addon", async () => {
+      addonService.hasAddon.mockResolvedValue(false);
+
+      await expect(
+        service.create({ name: "Marlboro Red", unit: "pack", isTobacco: true } as any),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("allows flagging with the addon active", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await service.create({
+        name: "Marlboro Red",
+        unit: "pack",
+        pricePerUnit: "10.00",
+        isTobacco: true,
+      } as any);
+
+      expect(addonService.hasAddon).toHaveBeenCalledWith("test-tenant", "tobacco_dealer");
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ isTobacco: true }) }),
+      );
+    });
+
+    it("always allows CLEARING the flag (addon revoked)", async () => {
+      addonService.hasAddon.mockResolvedValue(false);
+      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await service.update("prod-1", { isTobacco: false } as any);
+
+      expect(addonService.hasAddon).not.toHaveBeenCalled();
+      expect(prisma.product.update).toHaveBeenCalled();
     });
   });
 });

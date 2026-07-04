@@ -2,6 +2,8 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
 import { AnalyticsService } from "./analytics.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { AddonService } from "../billing/addon.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
@@ -9,12 +11,21 @@ const D = (n: number | string) => new Prisma.Decimal(n);
 describe("AnalyticsService — signed COGS", () => {
   let service: AnalyticsService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let addonService: { hasAddon: jest.Mock };
+  let systemConfig: { get: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    addonService = { hasAddon: jest.fn().mockResolvedValue(false) };
+    systemConfig = { get: jest.fn().mockResolvedValue(null) };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AnalyticsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        AnalyticsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: AddonService, useValue: addonService },
+        { provide: SystemConfigService, useValue: systemConfig },
+      ],
     }).compile();
 
     service = module.get<AnalyticsService>(AnalyticsService);
@@ -73,6 +84,81 @@ describe("AnalyticsService — signed COGS", () => {
         { id: "p1", name: "Flour", value: 6 },
         { id: "p2", name: "Sugar", value: 3 },
       ]);
+    });
+  });
+
+  describe("tobacco exclusion toggle", () => {
+    const tobaccoInvoice = {
+      total: D(110),
+      items: [
+        { subtotal: D(60), taxRate: D(0), product: { isTobacco: true } },
+        { subtotal: D(50), taxRate: D(0), product: { isTobacco: false } },
+      ],
+    };
+
+    it("subtracts tobacco line revenue when addon + toggle are active", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const result = await service.getGrossMarginTrend();
+
+      expect(result.revenue).toBe(50);
+      // COGS query filters tobacco products out
+      expect(prisma.stockMovement.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ product: { isTobacco: false } }),
+        }),
+      );
+    });
+
+    it("is inert when the addon is inactive even if the config key is set", async () => {
+      addonService.hasAddon.mockResolvedValue(false);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const result = await service.getGrossMarginTrend();
+
+      expect(result.revenue).toBe(110);
+      expect(systemConfig.get).not.toHaveBeenCalled();
+    });
+
+    it("is inert when the toggle is off", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("false");
+      prisma.invoice.findMany.mockResolvedValue([{ total: D(110) }]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const result = await service.getGrossMarginTrend();
+
+      expect(result.revenue).toBe(110);
+    });
+
+    it("keeps the invoice COUNT in AOV while removing tobacco value", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice, { total: D(50), items: [] }]);
+
+      const result = await service.getAverageOrderValue();
+
+      expect(result.count).toBe(2);
+      expect(result.total).toBe(100); // 110-60 + 50
+      expect(result.aov).toBe(50);
+    });
+
+    it("skips tobacco categories in sales-by-category", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: D(60), product: { category: "Tobacco", isTobacco: true } },
+        { subtotal: D(50), product: { category: "Bakery", isTobacco: false } },
+      ]);
+
+      const result = await service.getSalesByCategory();
+
+      expect(result).toEqual([{ category: "Bakery", revenue: 50 }]);
     });
   });
 

@@ -270,7 +270,19 @@ function makeTableColumns(
     {
       accessorKey: "name",
       header: "Product",
-      cell: ({ row }) => <p className="font-medium text-navy">{row.original.name}</p>,
+      cell: ({ row }) => (
+        <p className="font-medium text-navy">
+          {row.original.name}
+          {(row.original as any).isTobacco && (
+            <span
+              title="Tobacco product — tracked separately for monthly tax reports"
+              className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+            >
+              tobacco
+            </span>
+          )}
+        </p>
+      ),
     },
     {
       accessorKey: "sku",

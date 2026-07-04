@@ -49,6 +49,8 @@ export interface CreateProductDto {
   standardCost?: number;
   currentStock?: number;
   isActive?: boolean;
+  /** Requires the tenant's "tobacco_dealer" addon to set true. */
+  isTobacco?: boolean;
 }
 
 export function useUpdateReorderSettings() {

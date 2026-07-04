@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { AddonService } from "../billing/addon.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
@@ -32,7 +34,24 @@ export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly addonService: AddonService,
   ) {}
+
+  /**
+   * Flagging a product as tobacco requires the tenant's "tobacco_dealer"
+   * addon. Clearing the flag is always allowed so a tenant whose addon was
+   * revoked can still un-flag products.
+   */
+  private async assertCanFlagTobacco(isTobacco?: boolean) {
+    if (isTobacco !== true) return;
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // SUPER_ADMIN context
+    if (!(await this.addonService.hasAddon(tenantId, "tobacco_dealer"))) {
+      throw new ForbiddenException(
+        'Marking products as tobacco requires the "tobacco_dealer" add-on.',
+      );
+    }
+  }
 
   async findAll(query: ListProductsDto) {
     const page = Number(query.page ?? 1);
@@ -55,6 +74,7 @@ export class ProductsService {
     }
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;
+    if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
 
     // Server-side stock-status filtering so pagination counts are accurate
     if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
@@ -187,6 +207,7 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto) {
+    await this.assertCanFlagTobacco(dto.isTobacco);
     // Name uniqueness is scoped by parent, matching the partial unique
     // indexes in the DB (see prisma/migrations/.../variant_name_per_parent).
     //   - Standalone product → unique among other STANDALONE products.
@@ -248,6 +269,7 @@ export class ProductsService {
         category: dto.category,
         description: dto.description,
         isActive: dto.isActive,
+        isTobacco: dto.isTobacco ?? false,
         costingMethod: dto.costingMethod,
         standardCost: dto.standardCost,
         unitsPerBox: dto.unitsPerBox,
@@ -259,6 +281,7 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
+    await this.assertCanFlagTobacco(dto.isTobacco);
     const existing = await this.findOne(id);
     if (dto.name || dto.parentProductId !== undefined) {
       // The product's effective parent is the dto value if provided (could be

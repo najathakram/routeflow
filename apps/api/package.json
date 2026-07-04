@@ -127,7 +127,9 @@
       "^expo-server-sdk$": "<rootDir>/../test/__mocks__/expo-server-sdk.js",
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",
       "^../invoices/invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
-      "^./invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js"
+      "^./invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
+      "^../tobacco/tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js",
+      "^./tobacco-report-pdf$": "<rootDir>/../test/__mocks__/tobacco-report-pdf.js"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

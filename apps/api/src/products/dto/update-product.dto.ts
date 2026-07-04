@@ -19,6 +19,8 @@ export class UpdateProductDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  /** Requires the tenant's "tobacco_dealer" addon to set true. */
+  @IsOptional() @IsBoolean() isTobacco?: boolean;
   /** Full replacement of the imageKeys array — used to reorder or set the default image. */
   @IsOptional() @IsArray() @IsString({ each: true }) imageKeys?: string[];
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;

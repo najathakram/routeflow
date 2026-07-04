@@ -18,6 +18,7 @@ import type { Request } from "express";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes, ApiBody } from "@nestjs/swagger";
 import { TenantsService } from "./tenants.service";
 import { EmailService } from "../email/email.service";
+import { AddonService } from "../billing/addon.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -34,7 +35,20 @@ export class TenantsController {
   constructor(
     private readonly tenantsService: TenantsService,
     private readonly emailService: EmailService,
+    private readonly addonService: AddonService,
   ) {}
+
+  // ─── Me: Addons ──────────────────────────────────────────────────────────────
+
+  @Get("me/addons")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Active add-on keys for the current tenant (feature flags)" })
+  async getMyAddons(@CurrentUser() user: JwtPayload) {
+    const addons = user.tenantId ? await this.addonService.getActiveAddons(user.tenantId) : [];
+    return { addons };
+  }
 
   // ─── Me/Config: Email ──────────────────────────────────────────────────────
 

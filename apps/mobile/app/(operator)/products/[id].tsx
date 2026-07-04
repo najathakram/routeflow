@@ -5,8 +5,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useProduct, useDeleteProduct } from "../../../lib/api/products";
+import { useProduct, useDeleteProduct, useUpdateProduct } from "../../../lib/api/products";
 import { useInventoryMovements } from "../../../lib/api/inventory";
+import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -37,6 +38,8 @@ export default function ProductDetailScreen() {
     limit: 20,
   });
   const deleteMut = useDeleteProduct();
+  const updateMut = useUpdateProduct();
+  const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
 
   if (isLoading || !product) {
     return (
@@ -207,6 +210,31 @@ export default function ProductDetailScreen() {
             </View>
           ) : null}
 
+          {hasTobaccoAddon ? (
+            <Pressable
+              style={styles.tobaccoBtn}
+              onPress={() =>
+                updateMut.mutate(
+                  { id: id!, isTobacco: !product.isTobacco },
+                  {
+                    onSuccess: () =>
+                      showToast(
+                        product.isTobacco ? "Removed tobacco flag" : "Marked as tobacco product",
+                      ),
+                    onError: (e: any) =>
+                      showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+                  },
+                )
+              }
+              disabled={updateMut.isPending}
+            >
+              <Ionicons name="leaf-outline" size={18} color={ios.system.orangeInk} />
+              <Text style={styles.tobaccoBtnText}>
+                {product.isTobacco ? "Unmark tobacco product" : "Mark as tobacco product"}
+              </Text>
+            </Pressable>
+          ) : null}
+
           <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>
             <Ionicons name="trash-outline" size={18} color={ios.system.red} />
             <Text style={styles.deleteBtnText}>Delete product</Text>
@@ -234,6 +262,16 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginBottom: 8 },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  tobaccoBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 14,
+    paddingVertical: 13,
+  },
+  tobaccoBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.system.orangeInk },
   name: { fontSize: 22, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.4 },
   desc: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 4 },
   detailRow: {
