@@ -37,6 +37,7 @@ import {
   Search,
   Menu,
   X,
+  Cigarette,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -49,6 +50,7 @@ import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -657,7 +659,15 @@ function ImpersonationBanner() {
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
-  const navStructure = getNavForRole(user?.role, (user as any)?.canActAsDriver);
+  const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  const navStructure = React.useMemo(() => {
+    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver);
+    // Tobacco compliance section only for tenants with the addon
+    if (!hasTobacco || user?.role === "CUSTOMER" || user?.role === "DRIVER") return nav;
+    const idx = nav.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
+    const leaf: NavEntry = { kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette };
+    return idx === -1 ? [...nav, leaf] : [...nav.slice(0, idx + 1), leaf, ...nav.slice(idx + 1)];
+  }, [user, hasTobacco]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference

@@ -45,6 +45,7 @@ import {
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useAuth } from "@/lib/auth-context";
+import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -250,6 +251,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   // ── Auth ──────────────────────────────────────────────────────────────────
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
+  const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
@@ -1178,10 +1180,39 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       >
                         {product.isActive ? "Deactivate" : "Activate"}
                       </Button>
+                      {hasTobaccoAddon && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() =>
+                            updateProduct.mutate({
+                              id: params.id,
+                              isTobacco: !(product as any).isTobacco,
+                            } as any)
+                          }
+                          loading={updateProduct.isPending}
+                          title="Tobacco products are tracked separately for monthly tax reports"
+                        >
+                          {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
               </div>
+
+              {/* Tobacco compliance banner */}
+              {(product as any).isTobacco && (
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2">
+                  <p className="text-sm text-amber-900">
+                    <span className="font-semibold">Tobacco product</span> — purchases and sales are
+                    tracked separately for monthly tax reports.
+                  </p>
+                  <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
+                    Tobacco section →
+                  </Link>
+                </div>
+              )}
 
               {/* Parent link banner for variants */}
               {product.parentProductId && product.parent && (
