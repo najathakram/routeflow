@@ -37,12 +37,21 @@ export function useProductByBarcode(barcode: string | null) {
   });
 }
 
+/** Invalidate every query whose data depends on the set of products. */
+function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["products"] });
+  // Inventory overview + valuation are derived from products but keyed
+  // separately — refresh them so a newly created/deleted product shows up
+  // in the stock table, valuation card, and modal pickers immediately.
+  qc.invalidateQueries({ queryKey: ["inventory"] });
+}
+
 export function useCreateProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/products", data).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -62,7 +71,7 @@ export function useDeleteProduct() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiClient.delete(`/products/${id}`).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -115,7 +124,7 @@ export function useImportProducts() {
   return useMutation({
     mutationFn: (items: ZohoImportItem[]): Promise<ImportResult> =>
       apiClient.post("/products/import", { items }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -124,7 +133,7 @@ export function useClearAllProducts() {
   return useMutation({
     mutationFn: (): Promise<{ deleted: number }> =>
       apiClient.delete("/products/clear-all").then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
@@ -133,7 +142,7 @@ export function useBulkDeleteProducts() {
   return useMutation({
     mutationFn: (ids: string[]): Promise<{ deleted: number }> =>
       apiClient.delete("/products/bulk", { data: { ids } }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+    onSuccess: () => invalidateProductSet(qc),
   });
 }
 
