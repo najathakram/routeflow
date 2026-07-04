@@ -1621,6 +1621,7 @@ export class RoutesService {
     // Load delivery mutations for this stop
     const mutations = await this.prisma.forTenant().deliveryMutation.findMany({
       where: { routeRunStopId: stopId },
+      include: { order: { select: { orderNumber: true } } },
     });
     const orderIds = [...new Set(stop.orders.map((o) => o.id))];
 
@@ -1640,7 +1641,10 @@ export class RoutesService {
     }
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Reverse stock movements for each SALE created by this stop's mutations
+      // 1. Reverse stock movements for each SALE created by this stop's mutations.
+      // Written as a compensating SALE with POSITIVE quantity carrying the
+      // original sale's unit cost, so signed COGS aggregations net to zero —
+      // an un-costed ADJUSTMENT would leave the original cost in COGS forever.
       for (const mutation of mutations) {
         const qty = Number(mutation.quantityDelivered ?? 0);
         if (
@@ -1648,11 +1652,32 @@ export class RoutesService {
           mutation.productId &&
           (mutation.type === "DELIVERED" || mutation.type === "PARTIAL")
         ) {
+          const product = await tx.product.findUnique({
+            where: { id: mutation.productId },
+            select: { currentStock: true, averageCost: true },
+          });
+          // Cost of the original SALE for this order, else current average
+          const originalSale = await tx.stockMovement.findFirst({
+            where: {
+              productId: mutation.productId,
+              type: "SALE",
+              quantity: { lt: 0 },
+              reference: mutation.order?.orderNumber ?? undefined,
+            },
+            orderBy: { createdAt: "desc" },
+            select: { unitCost: true },
+          });
+          const unitCost = originalSale?.unitCost ?? product?.averageCost ?? null;
+          const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).add(qty);
+
           await tx.stockMovement.create({
             data: {
               productId: mutation.productId,
-              type: "ADJUSTMENT",
+              type: "SALE",
               quantity: new Prisma.Decimal(qty),
+              unitCost,
+              avgCostAfter: product?.averageCost ?? null,
+              stockAfter,
               reference: `Reopen stop ${stopId}`,
               performedById: user.sub,
             },

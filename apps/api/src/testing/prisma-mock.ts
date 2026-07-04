@@ -62,6 +62,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     order: modelProxy(),
     orderItem: modelProxy(),
     deliveryMutation: modelProxy(),
+    deliveryBatch: modelProxy(),
     route: modelProxy(),
     routeStop: modelProxy(),
     routeCustomer: modelProxy(),
@@ -95,6 +96,10 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     return: modelProxy(),
     returnItem: modelProxy(),
     stockMovement: modelProxy(),
+    stockLot: modelProxy(),
+    supplier: modelProxy(),
+    purchaseOrder: modelProxy(),
+    purchaseOrderItem: modelProxy(),
     idempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
   });

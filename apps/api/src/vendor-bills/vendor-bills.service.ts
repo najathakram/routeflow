@@ -9,6 +9,7 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { Prisma, MovementType } from "@prisma/client";
+import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 
@@ -145,7 +146,7 @@ export class VendorBillsService {
     });
   }
 
-  async receive(id: string) {
+  async receive(id: string, dto?: { acknowledgeUnlinked?: boolean }, performedById?: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
@@ -156,6 +157,27 @@ export class VendorBillsService {
     if (!bill) throw new NotFoundException("Bill not found");
     // RF-084: idempotency guard — prevent double-receive doubling stock
     if (bill.status === "RECEIVED") throw new ConflictException("Bill already received");
+
+    // Cost-integrity guard: unmapped lines don't update inventory or costs.
+    // Warn-and-confirm rather than hard block — bills legitimately carry
+    // non-inventory lines (freight, deposits). Clients catch code
+    // UNLINKED_ITEMS, show the skipped lines, and retry acknowledged.
+    const unlinkedItems = bill.items.filter((i) => !i.productId);
+    if (!dto?.acknowledgeUnlinked && (bill.items.length === 0 || unlinkedItems.length > 0)) {
+      throw new ConflictException({
+        code: "UNLINKED_ITEMS",
+        message:
+          bill.items.length === 0
+            ? "This bill has no line items, so receiving it will not update any inventory or costs."
+            : "Some line items are not linked to a product and will not update inventory or costs.",
+        unlinkedItems: unlinkedItems.map((i) => ({
+          id: i.id,
+          description: i.description,
+          qty: Number(i.qty),
+          unitCost: Number(i.unitCost),
+        })),
+      });
+    }
 
     // Update bill status
     const updated = await this.prisma.tenantTransaction(async (tx) => {
@@ -174,22 +196,36 @@ export class VendorBillsService {
       for (const item of bill.items) {
         if (!item.productId || !item.product) continue;
 
-        const product = item.product;
         const qty = new Prisma.Decimal(item.qty);
-        const unitCost = new Prisma.Decimal(item.unitCost);
-        const currentStock = product.currentStock;
-        const currentAvgCost = product.averageCost ?? new Prisma.Decimal(0);
+        const unitCost = costDecimal(item.unitCost);
 
-        // Weighted average cost
-        let newAvgCost: Prisma.Decimal;
-        if (currentStock.lte(0)) {
-          newAvgCost = unitCost;
-        } else {
-          newAvgCost = currentStock
-            .mul(currentAvgCost)
-            .add(qty.mul(unitCost))
-            .div(currentStock.add(qty));
-        }
+        // Read fresh state inside the tx so multi-line bills of the same
+        // product compound correctly instead of using the pre-tx snapshot
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+          select: { currentStock: true, averageCost: true },
+        });
+        if (!product) continue;
+
+        const newAvgCost = nextAverageCost(
+          product.currentStock,
+          product.averageCost,
+          qty,
+          unitCost,
+        );
+        const stockAfter = product.currentStock.add(qty);
+
+        // StockLot keeps FIFO/LIFO parity with manual purchases and PO receive
+        await tx.stockLot.create({
+          data: {
+            productId: item.productId,
+            purchaseDate: bill.billDate ?? new Date(),
+            qty,
+            remainingQty: qty,
+            unitCost,
+            reference: bill.billNumber,
+          },
+        });
 
         await tx.stockMovement.create({
           data: {
@@ -197,9 +233,12 @@ export class VendorBillsService {
             type: MovementType.PURCHASE,
             quantity: qty,
             unitCost,
+            avgCostAfter: newAvgCost,
+            stockAfter,
             supplierId: bill.supplierId,
             reference: bill.billNumber,
             notes: `Auto-synced from vendor bill ${bill.billNumber}`,
+            performedById: performedById ?? null,
           },
         });
 
@@ -239,7 +278,7 @@ export class VendorBillsService {
         if (!item.productId) continue;
 
         const qty = new Prisma.Decimal(item.qty);
-        const unitCost = new Prisma.Decimal(item.unitCost);
+        const unitCost = costDecimal(item.unitCost);
 
         // Delete the stock movement created when this bill was received
         await tx.stockMovement.deleteMany({
@@ -257,25 +296,24 @@ export class VendorBillsService {
         });
         if (!product) continue;
 
-        const currentStock = new Prisma.Decimal(product.currentStock);
-        const currentAvgCost = new Prisma.Decimal(product.averageCost ?? 0);
-        const stockAfterRevert = currentStock.sub(qty);
-
-        // Reverse AVCO: prevAvg = (currentAvg * currentStock - qty * unitCost) / (currentStock - qty)
-        let newAvgCost: Prisma.Decimal;
-        if (stockAfterRevert.lte(0)) {
-          newAvgCost = new Prisma.Decimal(0);
-        } else {
-          const numerator = currentStock.mul(currentAvgCost).sub(qty.mul(unitCost));
-          newAvgCost = numerator.div(stockAfterRevert);
-          if (newAvgCost.lt(0)) newAvgCost = new Prisma.Decimal(0);
-        }
+        // Exact AVCO reversal; null ⇒ reversal empties stock — KEEP the
+        // previous average so the product's cost basis survives the revert
+        const reversedAvg =
+          product.averageCost != null
+            ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
+            : null;
 
         await tx.product.update({
           where: { id: item.productId },
-          data: { currentStock: { decrement: qty }, averageCost: newAvgCost },
+          data: {
+            currentStock: { decrement: qty },
+            ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
+          },
         });
       }
+
+      // Reverse the lots this bill created (one per received line)
+      await this.reverseBillLots(tx, bill.billNumber);
 
       // Revert bill status to DRAFT
       return tx.vendorBill.update({
@@ -292,7 +330,31 @@ export class VendorBillsService {
     });
   }
 
-  async voidBill(id: string) {
+  /**
+   * Remove the StockLots a bill's receive created (reference = billNumber).
+   * Untouched lots are deleted outright; partially-consumed lots can only
+   * surrender what remains, so they are zeroed and annotated.
+   */
+  private async reverseBillLots(tx: Prisma.TransactionClient, billNumber: string) {
+    const lots = await tx.stockLot.findMany({ where: { reference: billNumber } });
+    for (const lot of lots) {
+      const remaining = new Prisma.Decimal(lot.remainingQty);
+      if (remaining.gte(new Prisma.Decimal(lot.qty))) {
+        await tx.stockLot.delete({ where: { id: lot.id } });
+      } else {
+        const consumed = new Prisma.Decimal(lot.qty).sub(remaining);
+        await tx.stockLot.update({
+          where: { id: lot.id },
+          data: {
+            remainingQty: 0,
+            notes: `${lot.notes ? `${lot.notes} ` : ""}(bill reversed; ${consumed.toString()} already consumed)`,
+          },
+        });
+      }
+    }
+  }
+
+  async voidBill(id: string, performedById?: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: { items: { include: { product: true } } },
@@ -307,7 +369,21 @@ export class VendorBillsService {
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
           const qty = new Prisma.Decimal(item.qty);
-          const unitCost = new Prisma.Decimal(item.unitCost);
+          const unitCost = costDecimal(item.unitCost);
+
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { currentStock: true, averageCost: true },
+          });
+          if (!product) continue;
+
+          // Exact AVCO reversal; null ⇒ keep the previous average (never zero
+          // the cost basis just because the void drains stock)
+          const reversedAvg =
+            product.averageCost != null
+              ? reverseAverageCost(product.currentStock, product.averageCost, qty, unitCost)
+              : null;
+          const stockAfter = product.currentStock.sub(qty);
 
           // Compensating stock movement with negative quantity
           await tx.stockMovement.create({
@@ -316,35 +392,26 @@ export class VendorBillsService {
               type: MovementType.ADJUSTMENT,
               quantity: qty.negated(),
               unitCost,
+              avgCostAfter: reversedAvg ?? product.averageCost,
+              stockAfter,
               supplierId: bill.supplierId,
               reference: bill.billNumber,
               notes: `Void reversal for vendor bill ${bill.billNumber}`,
+              performedById: performedById ?? null,
             },
           });
 
-          const product = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          if (!product) continue;
-
-          const currentStock = new Prisma.Decimal(product.currentStock);
-          const stockAfterVoid = currentStock.sub(qty);
-          const currentAvgCost = new Prisma.Decimal(product.averageCost ?? 0);
-          let newAvgCost: Prisma.Decimal;
-          if (stockAfterVoid.lte(0)) {
-            newAvgCost = new Prisma.Decimal(0);
-          } else {
-            const numerator = currentStock.mul(currentAvgCost).sub(qty.mul(unitCost));
-            newAvgCost = numerator.div(stockAfterVoid);
-            if (newAvgCost.lt(0)) newAvgCost = new Prisma.Decimal(0);
-          }
-
           await tx.product.update({
             where: { id: item.productId },
-            data: { currentStock: { decrement: qty }, averageCost: newAvgCost },
+            data: {
+              currentStock: { decrement: qty },
+              ...(reversedAvg !== null ? { averageCost: reversedAvg } : {}),
+            },
           });
         }
+
+        // Reverse the lots this bill created
+        await this.reverseBillLots(tx, bill.billNumber);
 
         return tx.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
       });
@@ -363,8 +430,13 @@ export class VendorBillsService {
     search?: string,
     page = 1,
     limit = 20,
+    needsMapping?: boolean,
   ) {
     const skip = (page - 1) * limit;
+    // A DRAFT bill "needs mapping" when it has no line items at all (imported
+    // bills) or any line not linked to a product — receiving it would skip
+    // inventory/cost updates.
+    const needsMappingOr = [{ items: { none: {} } }, { items: { some: { productId: null } } }];
     const where: any = {};
     if (supplierId) where.supplierId = supplierId;
     if (status) where.status = status;
@@ -380,7 +452,11 @@ export class VendorBillsService {
         { notes: { contains: search, mode: "insensitive" } },
       ];
     }
-    const [data, total] = await Promise.all([
+    if (needsMapping) {
+      where.status = "DRAFT";
+      where.AND = [...(where.AND ?? []), { OR: needsMappingOr }];
+    }
+    const [data, total, needsMappingCount] = await Promise.all([
       this.prisma.forTenant().vendorBill.findMany({
         where,
         include: {
@@ -395,8 +471,12 @@ export class VendorBillsService {
         take: limit,
       }),
       this.prisma.forTenant().vendorBill.count({ where }),
+      this.prisma.forTenant().vendorBill.count({ where: { status: "DRAFT", OR: needsMappingOr } }),
     ]);
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit), needsMappingCount },
+    };
   }
 
   async findOne(id: string) {

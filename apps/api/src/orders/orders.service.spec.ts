@@ -28,7 +28,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
-import { OrderStatus, UserRole } from "@prisma/client";
+import { InventoryService } from "../inventory/inventory.service";
+import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
   id: "prod-1",
@@ -76,6 +77,7 @@ const customerPayload = {
 describe("OrdersService", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let inventoryService: { recordSale: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -135,10 +137,20 @@ describe("OrdersService", () => {
             sendToDriver: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: InventoryService,
+          useValue: {
+            recordSale: jest.fn().mockResolvedValue({
+              unitCost: new Prisma.Decimal(0),
+              stockAfter: new Prisma.Decimal(0),
+            }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<OrdersService>(OrdersService);
+    inventoryService = module.get(InventoryService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────

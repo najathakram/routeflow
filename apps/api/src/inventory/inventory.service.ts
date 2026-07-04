@@ -1,12 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { roundMoney } from "../common/pricing";
+import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
+import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
+import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
+import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 
 @Injectable()
 export class InventoryService {
@@ -104,21 +109,15 @@ export class InventoryService {
     }
 
     const qty = new Prisma.Decimal(dto.quantity);
-    const unitCost = new Prisma.Decimal(dto.unitCost);
+    const unitCost = costDecimal(dto.unitCost);
     const currentStock = product.currentStock;
-    const currentAvgCost = product.averageCost ?? new Prisma.Decimal(0);
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
 
-    // Calculate new average cost (used for AVCO; FIFO/LIFO still update for display)
-    let newAvgCost: Prisma.Decimal;
-    if (currentStock.lte(0)) {
-      newAvgCost = unitCost;
-    } else {
-      newAvgCost = currentStock
-        .mul(currentAvgCost)
-        .add(qty.mul(unitCost))
-        .div(currentStock.add(qty));
-    }
+    // New weighted average (used for AVCO; FIFO/LIFO still update for display)
+    const newAvgCost = nextAverageCost(currentStock, product.averageCost, qty, unitCost);
+    const stockAfter = currentStock.add(qty);
+    const updatesAverage = product.costingMethod !== CostingMethod.STANDARD;
+    const avgCostAfter = updatesAverage ? newAvgCost : (product.averageCost ?? null);
 
     return this.prisma.tenantTransaction(async (tx) => {
       // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
@@ -140,6 +139,8 @@ export class InventoryService {
           type: MovementType.PURCHASE,
           quantity: qty,
           unitCost,
+          avgCostAfter,
+          stockAfter,
           supplierId: dto.supplierId,
           reference: dto.reference,
           notes: dto.notes,
@@ -150,11 +151,7 @@ export class InventoryService {
 
       // Update stock and cost based on costing method
       const costUpdate: any = { currentStock: { increment: qty } };
-      if (
-        product.costingMethod === CostingMethod.AVCO ||
-        product.costingMethod === CostingMethod.FIFO ||
-        product.costingMethod === CostingMethod.LIFO
-      ) {
+      if (updatesAverage) {
         // For FIFO/LIFO we still store the running average in averageCost for reference
         costUpdate.averageCost = newAvgCost;
       }
@@ -164,6 +161,13 @@ export class InventoryService {
         where: { id: dto.productId },
         data: costUpdate,
       });
+
+      // A backdated purchase invalidates the snapshots (and possibly the
+      // average) of every later movement — replay the product to repair them.
+      const newer = await tx.stockMovement.count({
+        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+      });
+      if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
       return movement;
     });
@@ -184,6 +188,9 @@ export class InventoryService {
           productId: dto.productId,
           type: MovementType.ADJUSTMENT,
           quantity: qty,
+          // Quantity-only adjustments never move the average
+          avgCostAfter: product.averageCost ?? null,
+          stockAfter: product.currentStock.add(qty),
           reference: dto.reference,
           notes: dto.notes,
           performedById,
@@ -210,6 +217,12 @@ export class InventoryService {
           },
         });
       }
+
+      // Backdated adjustment: repair later snapshots
+      const newer = await tx.stockMovement.count({
+        where: { productId: dto.productId, createdAt: { gt: effectiveDate } },
+      });
+      if (newer > 0) await this.recomputeProductInTx(tx, dto.productId);
 
       return movement;
     });
@@ -238,16 +251,22 @@ export class InventoryService {
     return this.prisma.tenantTransaction(async (tx) => {
       const movementIds: string[] = [];
       let skipped = 0;
+      // Running stock per product so repeated items in one count session
+      // produce truthful stockAfter snapshots.
+      const runningStock = new Map<string, Prisma.Decimal>();
 
       for (const item of dto.items) {
         const product = productMap.get(item.productId)!;
+        const stockBefore = runningStock.get(item.productId) ?? product.currentStock;
         const counted = new Prisma.Decimal(item.quantity);
-        const delta = item.mode === "REPLACE" ? counted.minus(product.currentStock) : counted;
+        const delta = item.mode === "REPLACE" ? counted.minus(stockBefore) : counted;
 
         if (delta.eq(0)) {
           skipped += 1;
           continue;
         }
+        const stockAfter = stockBefore.add(delta);
+        runningStock.set(item.productId, stockAfter);
 
         const itemNotes = dto.notes
           ? `${dto.notes} (mode=${item.mode} counted=${counted.toString()})`
@@ -258,6 +277,8 @@ export class InventoryService {
             productId: item.productId,
             type: MovementType.ADJUSTMENT,
             quantity: delta,
+            avgCostAfter: product.averageCost ?? null,
+            stockAfter,
             reference,
             notes: itemNotes,
             performedById,
@@ -297,8 +318,10 @@ export class InventoryService {
   }
 
   /**
-   * Internal — called from orders service inside an existing transaction.
-   * Consumes stock lots per the product's costing method.
+   * Internal — the single sale-costing path, called from the orders service
+   * inside an existing transaction. Writes the SALE movement WITH its unit
+   * cost (COGS), stamps snapshots, decrements stock, and consumes lots per
+   * the product's costing method.
    * Stock can go negative; never throws for insufficient stock.
    */
   async recordSale(
@@ -307,14 +330,49 @@ export class InventoryService {
     reference: string | null,
     performedById: string | null,
     tx: Prisma.TransactionClient,
-  ) {
-    const negativeQty = quantity.neg();
+  ): Promise<{ unitCost: Prisma.Decimal; stockAfter: Prisma.Decimal }> {
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { costingMethod: true, averageCost: true, standardCost: true, currentStock: true },
+    });
+
+    const avgCost = product?.averageCost ?? null;
+    const fallback = costDecimal(avgCost ?? 0);
+    let unitCost = fallback;
+    let lotConsumptions: { id: string; take: Prisma.Decimal }[] = [];
+
+    if (
+      product?.costingMethod === CostingMethod.FIFO ||
+      product?.costingMethod === CostingMethod.LIFO
+    ) {
+      const orderBy =
+        product.costingMethod === CostingMethod.FIFO
+          ? { purchaseDate: "asc" as const }
+          : { purchaseDate: "desc" as const };
+      const lots = await tx.stockLot.findMany({
+        where: { productId, remainingQty: { gt: 0 } },
+        orderBy,
+      });
+      // Blend the consumed lots' costs; any uncovered remainder (negative
+      // stock / pre-fix data without lots) is priced at the average cost.
+      const plan = planLotConsumption(lots, quantity, fallback);
+      unitCost = plan.weightedUnitCost;
+      lotConsumptions = plan.consumptions;
+    } else if (product?.costingMethod === CostingMethod.STANDARD) {
+      unitCost = costDecimal(product.standardCost ?? avgCost ?? 0);
+    }
+
+    const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).sub(quantity);
 
     await tx.stockMovement.create({
       data: {
         productId,
         type: MovementType.SALE,
-        quantity: negativeQty,
+        quantity: quantity.neg(),
+        unitCost,
+        // Sales never move the average — snapshot carries it forward
+        avgCostAfter: avgCost,
+        stockAfter,
         reference,
         performedById,
       },
@@ -325,38 +383,14 @@ export class InventoryService {
       data: { currentStock: { decrement: quantity } },
     });
 
-    // Consume lots for FIFO/LIFO costing
-    const product = await tx.product.findUnique({
-      where: { id: productId },
-      select: { costingMethod: true },
-    });
-
-    if (
-      product?.costingMethod === CostingMethod.FIFO ||
-      product?.costingMethod === CostingMethod.LIFO
-    ) {
-      const orderBy =
-        product.costingMethod === CostingMethod.FIFO
-          ? { purchaseDate: "asc" as const }
-          : { purchaseDate: "desc" as const };
-
-      const lots = await tx.stockLot.findMany({
-        where: { productId, remainingQty: { gt: 0 } },
-        orderBy,
+    for (const consumption of lotConsumptions) {
+      await tx.stockLot.update({
+        where: { id: consumption.id },
+        data: { remainingQty: { decrement: consumption.take } },
       });
-
-      let remaining = quantity;
-      for (const lot of lots) {
-        if (remaining.lte(0)) break;
-        const lotRemaining = new Prisma.Decimal(lot.remainingQty);
-        const consume = remaining.lte(lotRemaining) ? remaining : lotRemaining;
-        await tx.stockLot.update({
-          where: { id: lot.id },
-          data: { remainingQty: { decrement: consume } },
-        });
-        remaining = remaining.sub(consume);
-      }
     }
+
+    return { unitCost, stockAfter };
   }
 
   // ─── Suppliers ───────────────────────────────────────────────────────────────
@@ -499,12 +533,23 @@ export class InventoryService {
           data: { qtyReceived: newQtyReceived },
         });
 
+        const qtyReceived = new Prisma.Decimal(actualQty);
+        const itemUnitCost = costDecimal(item.unitCost);
+
+        const prod = await tx.product.findUnique({ where: { id: item.productId } });
+        const newAvgCost = prod
+          ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
+          : itemUnitCost;
+        const stockAfter = (prod?.currentStock ?? new Prisma.Decimal(0)).add(qtyReceived);
+
         await tx.stockMovement.create({
           data: {
             productId: item.productId,
             type: "PURCHASE",
-            quantity: actualQty,
-            unitCost: item.unitCost,
+            quantity: qtyReceived,
+            unitCost: itemUnitCost,
+            avgCostAfter: newAvgCost,
+            stockAfter,
             supplierId: po.supplierId,
             reference: po.poNumber,
             performedById: userId,
@@ -516,25 +561,17 @@ export class InventoryService {
           data: {
             productId: item.productId,
             purchaseDate: new Date(),
-            qty: new Prisma.Decimal(actualQty),
-            remainingQty: new Prisma.Decimal(actualQty),
-            unitCost: item.unitCost,
+            qty: qtyReceived,
+            remainingQty: qtyReceived,
+            unitCost: itemUnitCost,
             reference: po.poNumber,
           },
         });
 
-        const prod = await tx.product.findUnique({ where: { id: item.productId } });
         if (prod) {
-          const curStock = Number(prod.currentStock);
-          const curCost = Number(prod.averageCost ?? item.unitCost);
-          const newStock = curStock + actualQty;
-          const newCost =
-            newStock > 0
-              ? (curStock * curCost + actualQty * Number(item.unitCost)) / newStock
-              : Number(item.unitCost);
           await tx.product.update({
             where: { id: item.productId },
-            data: { currentStock: newStock, averageCost: newCost },
+            data: { currentStock: stockAfter, averageCost: newAvgCost },
           });
         }
       }
@@ -577,7 +614,9 @@ export class InventoryService {
 
     const usageMap = new Map<string, number>();
     for (const m of movements) {
-      usageMap.set(m.productId, (usageMap.get(m.productId) ?? 0) + Math.abs(Number(m.quantity)));
+      // SALE rows are negative; compensating reversals (reopened stops) are
+      // positive SALE rows — signed sum nets them out of usage.
+      usageMap.set(m.productId, (usageMap.get(m.productId) ?? 0) + -Number(m.quantity));
     }
 
     return products.map((p) => {
@@ -606,5 +645,270 @@ export class InventoryService {
       where: { id: productId },
       data: { reorderPoint, reorderQty },
     });
+  }
+
+  // ─── Cost basis & valuation ─────────────────────────────────────────────────
+
+  /** Total inventory value at effective cost, plus which products have no cost set. */
+  async getValuation() {
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        currentStock: true,
+        averageCost: true,
+        standardCost: true,
+        costingMethod: true,
+      },
+    });
+
+    let totalValue = 0;
+    const missingCostProducts: { id: string; name: string }[] = [];
+    for (const p of products) {
+      const effectiveCost =
+        p.costingMethod === CostingMethod.STANDARD
+          ? (p.standardCost ?? p.averageCost)
+          : p.averageCost;
+      if (effectiveCost == null) {
+        missingCostProducts.push({ id: p.id, name: p.name });
+        continue;
+      }
+      totalValue += Number(p.currentStock) * Number(effectiveCost);
+    }
+
+    return {
+      totalValue: roundMoney(totalValue),
+      productCount: products.length,
+      missingCostCount: missingCostProducts.length,
+      missingCostProducts,
+    };
+  }
+
+  /** Manually set a product's average cost. Audited via a COST_BASIS movement (qty 0). */
+  async setCostBasis(productId: string, dto: SetCostBasisDto, performedById: string) {
+    const product = await this.prisma.forTenant().product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException("Product not found");
+
+    return this.prisma.tenantTransaction((tx) =>
+      this.setCostBasisInTx(tx, product, dto, performedById),
+    );
+  }
+
+  async bulkSetCostBasis(dto: BulkSetCostBasisDto, performedById: string) {
+    const productIds = Array.from(new Set(dto.items.map((i) => i.productId)));
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: productIds } } });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const missing = productIds.filter((id) => !productMap.has(id));
+    if (missing.length > 0) {
+      throw new NotFoundException({
+        message: "One or more products could not be found",
+        missingProductIds: missing,
+      });
+    }
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      const movementIds: string[] = [];
+      for (const item of dto.items) {
+        const movement = await this.setCostBasisInTx(
+          tx,
+          productMap.get(item.productId)!,
+          { unitCost: item.unitCost, notes: dto.notes, applyToLots: dto.applyToLots },
+          performedById,
+        );
+        movementIds.push(movement.id);
+      }
+      return { updated: movementIds.length, movementIds };
+    });
+  }
+
+  private async setCostBasisInTx(
+    tx: Prisma.TransactionClient,
+    product: { id: string; currentStock: Prisma.Decimal },
+    dto: SetCostBasisDto,
+    performedById: string,
+  ) {
+    const unitCost = costDecimal(dto.unitCost);
+
+    const movement = await tx.stockMovement.create({
+      data: {
+        productId: product.id,
+        type: MovementType.COST_BASIS,
+        quantity: 0,
+        unitCost,
+        avgCostAfter: unitCost,
+        stockAfter: product.currentStock,
+        notes: dto.notes,
+        performedById,
+      },
+    });
+
+    await tx.product.update({
+      where: { id: product.id },
+      data: { averageCost: unitCost },
+    });
+
+    if (dto.applyToLots) {
+      await tx.stockLot.updateMany({
+        where: { productId: product.id, remainingQty: { gt: 0 } },
+        data: { unitCost },
+      });
+    }
+
+    return movement;
+  }
+
+  // ─── Cost recompute (repair) ────────────────────────────────────────────────
+
+  /**
+   * Rebuild averageCost + movement snapshots by replaying each product's
+   * movement history. Products with no costful history (no PURCHASE with a
+   * unit cost, no COST_BASIS) are left untouched and reported under
+   * `noHistory` so the operator can set a cost basis manually.
+   */
+  async recomputeCosts(dto: RecomputeCostsDto) {
+    const where: Prisma.ProductWhereInput = {};
+    if (dto.productIds?.length) where.id = { in: dto.productIds };
+    const products = await this.prisma.forTenant().product.findMany({
+      where,
+      select: { id: true, name: true, currentStock: true, averageCost: true },
+      orderBy: { name: "asc" },
+    });
+
+    const results: {
+      productId: string;
+      name: string;
+      oldAvgCost: number | null;
+      newAvgCost: number | null;
+      stockDrift: number;
+      movementsBackfilled: number;
+    }[] = [];
+    const noHistory: { productId: string; name: string }[] = [];
+
+    for (const product of products) {
+      // One transaction per product to bound lock time on big tenants
+      const replay = dto.dryRun
+        ? await this.replayProduct(product, null)
+        : await this.prisma.tenantTransaction((tx) => this.replayProduct(product, tx));
+
+      if (!replay.hasCostfulHistory) {
+        noHistory.push({ productId: product.id, name: product.name });
+      } else {
+        results.push({
+          productId: product.id,
+          name: product.name,
+          oldAvgCost: replay.oldAvgCost,
+          newAvgCost: replay.newAvgCost,
+          stockDrift: replay.stockDrift,
+          movementsBackfilled: replay.movementsBackfilled,
+        });
+      }
+    }
+
+    return {
+      dryRun: !!dto.dryRun,
+      processed: products.length,
+      updated: results.length,
+      noHistory,
+      results,
+    };
+  }
+
+  /** Repair a single product's snapshots/average inside an existing transaction. */
+  private async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
+    const product = await tx.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, currentStock: true, averageCost: true },
+    });
+    if (!product) return;
+    await this.replayProduct(product, tx);
+  }
+
+  /**
+   * Replay a product's movements oldest-first with a running (stock, avg):
+   * - COST_BASIS ⇒ avg := unitCost
+   * - PURCHASE with unitCost ⇒ weighted average update
+   * - ADJUSTMENT with unitCost ⇒ weighted forward (qty>0) / exact reverse (qty<0)
+   * - everything else ⇒ quantity only, average unchanged
+   * With a tx, snapshots are backfilled on every movement and the product's
+   * averageCost is updated when costful history exists. Never mutates stock.
+   */
+  private async replayProduct(
+    product: {
+      id: string;
+      name: string;
+      currentStock: Prisma.Decimal;
+      averageCost: Prisma.Decimal | null;
+    },
+    tx: Prisma.TransactionClient | null,
+  ) {
+    const client = tx ?? this.prisma.forTenant();
+    const movements = await client.stockMovement.findMany({
+      where: { productId: product.id },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, type: true, quantity: true, unitCost: true },
+    });
+
+    let stock = new Prisma.Decimal(0);
+    let avg: Prisma.Decimal | null = null;
+    let hasCostfulHistory = false;
+    let movementsBackfilled = 0;
+
+    for (const m of movements) {
+      const qty = new Prisma.Decimal(m.quantity);
+      const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
+
+      switch (m.type) {
+        case MovementType.COST_BASIS:
+          if (unitCost != null) {
+            avg = costDecimal(unitCost);
+            hasCostfulHistory = true;
+          }
+          break;
+        case MovementType.PURCHASE:
+          if (unitCost != null) {
+            avg = nextAverageCost(stock, avg, qty, unitCost);
+            hasCostfulHistory = true;
+          }
+          break;
+        case MovementType.ADJUSTMENT:
+          // Costed adjustments are bill-void compensations: reverse the average
+          if (unitCost != null && avg != null) {
+            if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
+            else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
+          }
+          break;
+        default:
+          // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
+          break;
+      }
+
+      stock = stock.add(qty);
+
+      if (tx) {
+        await tx.stockMovement.update({
+          where: { id: m.id },
+          data: { avgCostAfter: avg, stockAfter: stock },
+        });
+        movementsBackfilled += 1;
+      }
+    }
+
+    if (tx && hasCostfulHistory && avg != null) {
+      await tx.product.update({
+        where: { id: product.id },
+        data: { averageCost: avg },
+      });
+    }
+
+    return {
+      hasCostfulHistory,
+      oldAvgCost: product.averageCost != null ? Number(product.averageCost) : null,
+      newAvgCost: avg != null ? Number(avg) : null,
+      stockDrift: Number(new Prisma.Decimal(product.currentStock).sub(stock)),
+      movementsBackfilled,
+    };
   }
 }
