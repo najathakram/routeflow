@@ -9,6 +9,8 @@ import {
   useVendorBill,
   useReceiveVendorBill,
   useVoidVendorBill,
+  getUnlinkedItemsError,
+  billNeedsMapping,
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
 import { showToast } from "../../../lib/toast";
@@ -57,11 +59,36 @@ export default function VendorBillDetailScreen() {
 
   const p = billPill(bill.status);
 
-  const onReceive = () =>
-    receiveMut.mutate(bill.id, {
-      onSuccess: () => showToast("Bill marked as received"),
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-    });
+  const onReceive = (acknowledgeUnlinked = false) =>
+    receiveMut.mutate(
+      { id: bill.id, acknowledgeUnlinked },
+      {
+        onSuccess: () => showToast("Bill marked as received"),
+        onError: (e: any) => {
+          // Unmapped lines: confirm they'll be skipped, then retry acknowledged
+          const unlinked = getUnlinkedItemsError(e);
+          if (unlinked) {
+            const lines =
+              unlinked.unlinkedItems.length > 0
+                ? `\n\n${unlinked.unlinkedItems
+                    .slice(0, 5)
+                    .map((i) => `• ${i.description || "(no description)"}`)
+                    .join(
+                      "\n",
+                    )}${unlinked.unlinkedItems.length > 5 ? `\n…and ${unlinked.unlinkedItems.length - 5} more` : ""}`
+                : "";
+            confirm(
+              "Some lines won't update costs",
+              `${unlinked.message}${lines}`,
+              () => onReceive(true),
+              { confirmText: "Receive anyway" },
+            );
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
+      },
+    );
 
   const onVoid = () =>
     confirm(
@@ -117,6 +144,16 @@ export default function VendorBillDetailScreen() {
           </View>
           <Text style={styles.totalAmount}>{formatCurrency(bill.totalOwed)}</Text>
           {bill.notes ? <Text style={styles.notes}>{bill.notes}</Text> : null}
+          {billNeedsMapping(bill) ? (
+            <View style={styles.warnBanner}>
+              <Ionicons name="alert-circle" size={14} color="#92400E" />
+              <Text style={styles.warnText}>
+                {(bill.items?.length ?? 0) === 0
+                  ? "No line items — receiving won't update inventory or costs."
+                  : "Some lines aren't linked to products and won't update costs."}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Items */}
@@ -160,7 +197,7 @@ export default function VendorBillDetailScreen() {
             {bill.status === "DRAFT" || bill.status === "RECEIVED" ? (
               <Pressable
                 style={styles.primaryBtn}
-                onPress={onReceive}
+                onPress={() => onReceive()}
                 disabled={receiveMut.isPending}
               >
                 <Ionicons name="checkmark" size={16} color="#fff" />
@@ -207,6 +244,17 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   notes: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 4 },
+  warnBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    backgroundColor: "#FEF3C7",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  warnText: { flex: 1, fontSize: 12, fontFamily: "Inter_500Medium", color: "#92400E" },
   sectionRow: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
   sectionTitle: {
     fontSize: 17,

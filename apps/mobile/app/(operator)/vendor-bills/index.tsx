@@ -15,6 +15,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
   useVendorBills,
+  billNeedsMapping,
   type VendorBill,
   type VendorBillStatus,
 } from "../../../lib/api/vendor-bills";
@@ -132,6 +133,11 @@ function BillRow({ bill, onPress }: { bill: VendorBill; onPress: () => void }) {
             {bill.supplier?.name ?? "Unknown supplier"}
             {bill.billNumber ? ` · ${bill.billNumber}` : ""}
           </Text>
+          {billNeedsMapping(bill) ? (
+            <Text style={styles.needsItems} numberOfLines={1}>
+              Needs items — won’t update costs
+            </Text>
+          ) : null}
           <Text style={styles.rowSub} numberOfLines={1}>
             {bill.billDate
               ? new Date(bill.billDate).toLocaleDateString(undefined, {
@@ -161,6 +167,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center", gap: 14 },
   empty: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label2 },
+  needsItems: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#B45309", marginTop: 2 },
   primaryBtn: {
     backgroundColor: ios.brand,
     flexDirection: "row",

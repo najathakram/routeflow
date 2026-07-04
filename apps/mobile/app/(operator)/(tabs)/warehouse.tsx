@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { KpiCard, NavAction, NavBar, ProgressTrack, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
+import { useInventoryValuation } from "../../../lib/api/inventory";
 
 type StockFilter = "ALL" | "LOW" | "LOW_ACTIVE" | "OUT_OF_STOCK" | "OOS_ACTIVE";
 
@@ -40,6 +41,7 @@ export default function WarehouseScreen() {
         ? "LOW"
         : undefined;
 
+  const { data: valuation } = useInventoryValuation();
   const lowQuery = useAdminProducts({
     stockStatus: "LOW",
     limit: 100,
@@ -181,11 +183,23 @@ export default function WarehouseScreen() {
             </View>
             <View style={[styles.kpiRow, { marginTop: 12 }]}>
               <KpiCard
+                icon={<Ionicons name="cash-outline" size={18} color={ios.system.greenInk} />}
+                iconBg={ios.system.greenWash}
+                value={`$${(valuation?.totalValue ?? 0).toFixed(0)}`}
+                label={
+                  valuation && valuation.missingCostCount > 0
+                    ? `Value · ${valuation.missingCostCount} no cost`
+                    : "Inventory value"
+                }
+              />
+              <KpiCard
                 icon={<Ionicons name="checkmark" size={18} color={ios.brand} />}
                 iconBg={ios.brandWash}
                 value={String(allTotal)}
                 label="SKUs tracked"
               />
+            </View>
+            <View style={[styles.kpiRow, { marginTop: 12 }]}>
               <Pressable
                 style={{ flex: 1 }}
                 onPress={() => {

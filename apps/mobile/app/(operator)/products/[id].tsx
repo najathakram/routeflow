@@ -102,45 +102,58 @@ export default function ProductDetailScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Details</Text>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Details</Text>
+              <Pressable onPress={() => router.push(`/(operator)/products/${id}/set-cost`)}>
+                <Text style={styles.linkText}>Set cost</Text>
+              </Pressable>
+            </View>
             <Row label="SKU" value={product.sku ?? "—"} />
             <Row label="Barcode" value={product.barcode ?? "—"} />
             <Row label="Unit" value={product.unit ?? "ea"} />
             <Row label="Price" value={`$${toNumber(product.pricePerUnit).toFixed(2)}`} />
-            {(product.standardCost ?? product.costPerUnit) != null ? (
-              <>
-                <Row
-                  label="Cost"
-                  value={`$${toNumber(product.standardCost ?? product.costPerUnit).toFixed(2)}`}
-                />
-                {(() => {
-                  const price = toNumber(product.pricePerUnit);
-                  const cost = toNumber(product.standardCost ?? product.costPerUnit);
-                  if (price <= 0) return null;
-                  const marginPct = Math.round(((price - cost) / price) * 100);
-                  const color =
-                    marginPct >= 25
-                      ? ios.system.greenInk
-                      : marginPct >= 10
-                        ? ios.system.orangeInk
-                        : ios.system.redInk;
-                  const bg =
-                    marginPct >= 25
-                      ? ios.system.greenWash
-                      : marginPct >= 10
-                        ? ios.system.orangeWash
-                        : ios.system.redWash;
-                  return (
+            {(() => {
+              // Effective cost: standard cost for STANDARD products, else weighted average
+              const effectiveCost = product.standardCost ?? product.averageCost;
+              if (effectiveCost == null) {
+                return (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Cost</Text>
+                    <View style={[styles.marginChip, { backgroundColor: "#FEF3C7" }]}>
+                      <Text style={[styles.marginChipText, { color: "#92400E" }]}>No cost set</Text>
+                    </View>
+                  </View>
+                );
+              }
+              const price = toNumber(product.pricePerUnit);
+              const cost = toNumber(effectiveCost);
+              const marginPct = price > 0 ? Math.round(((price - cost) / price) * 100) : null;
+              const color =
+                marginPct == null || marginPct >= 25
+                  ? ios.system.greenInk
+                  : marginPct >= 10
+                    ? ios.system.orangeInk
+                    : ios.system.redInk;
+              const bg =
+                marginPct == null || marginPct >= 25
+                  ? ios.system.greenWash
+                  : marginPct >= 10
+                    ? ios.system.orangeWash
+                    : ios.system.redWash;
+              return (
+                <>
+                  <Row label="Cost" value={`$${cost.toFixed(2)}`} />
+                  {marginPct != null ? (
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Margin</Text>
                       <View style={[styles.marginChip, { backgroundColor: bg }]}>
                         <Text style={[styles.marginChipText, { color }]}>{marginPct}%</Text>
                       </View>
                     </View>
-                  );
-                })()}
-              </>
-            ) : null}
+                  ) : null}
+                </>
+              );
+            })()}
           </View>
 
           <View style={styles.card}>
