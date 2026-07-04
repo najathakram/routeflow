@@ -147,7 +147,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `billing/`
 
 - **controller** `billing` (+ `billing/webhook`) — tenant billing get, checkout, portal, ensure-customer; Stripe webhook.
-- **service** — `initializeCheckout`, `createCustomerPortal`, `ensureStripeCustomer`, `handleWebhook`. side effects: TenantSubscription/Invoice writes on payment; Stripe API; guard cache invalidation.
+- **service** — `initializeCheckout`, `createCustomerPortal`, `ensureStripeCustomer`, `handleWebhook`. `AddonService.hasAddon/getActiveAddons/enable/disable` = tenant feature flags (TenantAddon).
+- **`addon.guard.ts` + `require-addon.decorator.ts`** — `@RequireAddon(key)` + AddonGuard. **GOTCHA: guards run BEFORE TenantInterceptor — AddonGuard must read `req.user.tenantId`, never `prisma.getTenantId()`** (ALS empty). Order: `@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)`. SUPER_ADMIN (null tenantId) passes. Tenant-facing flag read: `GET /tenants/me/addons`.
+- side effects: TenantSubscription/Invoice writes on payment; Stripe API; guard cache invalidation. Specs: `addon.guard.spec.ts`.
 
 ### `estimates/`
 
@@ -158,6 +160,12 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 - **controller** `vendor-bills` — create, list (`?needsMapping=true` filter), scan-invoice, product-mappings CRUD, per-id get/patch/receive (body `{acknowledgeUnlinked?}` + @CurrentUser)/revert-to-draft/void/payments/delete, bulk delete.
 - **service** — `create`, `findAll` (needsMapping filter = DRAFT + items none|some productId null; meta always carries `needsMappingCount`), `findOne`, `update`, **`receive(id,dto?,userId?)`** — throws `ConflictException({code:"UNLINKED_ITEMS", unlinkedItems})` for empty/unmapped bills unless `acknowledgeUnlinked` (warn-and-confirm, not silent skip); per linked item: `nextAverageCost` + **StockLot create** (reference=billNumber) + snapshot-stamped PURCHASE movement (fresh in-tx product read so multi-line same-product compounds), `recordPayment`, `revertToDraft`/`voidBill` — `reverseAverageCost` (**keeps avg when stock empties**, no more zeroing) + `reverseBillLots` (delete untouched / zero partially-consumed lots), `delete`, `scanInvoice` (OCR), product-mapping CRUD. side effects: VendorBill(+Item)/BillPayment/StockLot writes; inventory PURCHASE on receive; expense entries. Specs: `vendor-bills.service.spec.ts`.
+
+### `tobacco/` (tobacco_dealer addon)
+
+- **controller** `tobacco` — class-level `@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)` + `@RequireAddon("tobacco_dealer")`: overview, inventory, purchases (PURCHASE movements of `isTobacco` products w/ supplier `tobaccoLicenseNo`), sales (InvoiceItems on non-DRAFT/VOID/WRITTEN_OFF invoices w/ customer license, tax = subtotal×taxRate), monthly, reports list/generate/:id/{csv,pdf}, settings (GET; PATCH = TENANT_ADMIN, writes SystemConfig `tobacco.excludeFromMainAnalytics`, audit-logged).
+- **`tobacco-report.service.ts`** — `generateForPeriod(year,month,{userId?})` (past months only): per-product rows + totals, ending stock = `currentStock − Σ(movements after periodEnd)` (SALE rows negative), ending value at CURRENT averageCost (disclosed); CSV + react-pdf PDF at deterministic keys `tobacco-reports/<tenantId>/<yyyy-MM>.{csv,pdf}`; upsert per (tenant,period) via findFirst+create/update (forTenant can't composite-upsert), `generationCount` bump + audit on regen. `@Cron("0 2 1 * *")`: active tenants ∩ active addons, per-tenant `tenantCtx.run`, idempotent skip, FAILED rows on error. Template `tobacco-report-pdf.tsx` (jest-mocked via moduleNameMapper like the invoice template).
+- **Analytics exclusion** — see `analytics/` note; helper `tobaccoExclusionActive()` = addon active AND config key true. Schema: `Product.isTobacco`, `TobaccoReport`, `Supplier.tobaccoLicenseNo`, `Customer.tobaccoLicenseNo/Expiry` (migration `20260704100000_tobacco_compliance`).
 
 ### `recurring-invoices/`
 
@@ -172,7 +180,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `analytics/`
 
 - **controller** `analytics` — overview, revenue, top products/customers, route/driver performance, inventory turnover/dead-stock/margin-alerts, dso, sales-by-category, gross-margin, aov, price/cost history.
-- **service** — corresponding read aggregates. **COGS/units are SIGNED sums of SALE rows (`-quantity`), never abs()** — reopen-reversals are positive SALE rows that must net out (same in bookkeeping P&L + inventory forecasting). `getCostHistory` includes COST_BASIS + returns `{unitCost, avgCostAfter, type}`. side effects: read-only. Specs: `analytics.service.spec.ts`.
+- **service** — corresponding read aggregates. **COGS/units are SIGNED sums of SALE rows (`-quantity`), never abs()** — reopen-reversals are positive SALE rows that must net out (same in bookkeeping P&L + inventory forecasting). `getCostHistory` includes COST_BASIS + returns `{unitCost, avgCostAfter, type}`. **Tobacco exclusion toggle** (`tobaccoExclusionActive()` = tobacco_dealer addon + SystemConfig `tobacco.excludeFromMainAnalytics`): excludes tobacco items from revenue/top-products/top-customers/sales-by-category/gross-margin/aov/turnover/dead-stock/margin-alerts — NOT bookkeeping/P&L/DSO/route-driver perf. side effects: read-only. Specs: `analytics.service.spec.ts`.
 
 ### `suppliers/`
 
