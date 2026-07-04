@@ -1,10 +1,58 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
+import { AddonService } from "../billing/addon.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+
+export const TOBACCO_ADDON_KEY = "tobacco_dealer";
+export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
+
+/** Invoice line slice needed to subtract tobacco revenue from an invoice total. */
+const TOBACCO_LINE_SELECT = {
+  items: {
+    select: {
+      subtotal: true,
+      taxRate: true,
+      product: { select: { isTobacco: true } },
+    },
+  },
+} as const;
 
 @Injectable()
 export class AnalyticsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly addonService: AddonService,
+    private readonly systemConfig: SystemConfigService,
+  ) {}
+
+  /**
+   * Tenant-choosable presentation toggle: when the tobacco_dealer addon is
+   * active AND the tenant enabled tobacco.excludeFromMainAnalytics, tobacco
+   * items are excluded from the MAIN analytics surfaces (they still appear in
+   * the dedicated Tobacco section). Deliberately NOT applied to bookkeeping /
+   * P&L — accounting records always reflect real financials — nor to
+   * routes/driver performance, DSO, cost history, or list pages.
+   */
+  private async tobaccoExclusionActive(): Promise<boolean> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return false;
+    if (!(await this.addonService.hasAddon(tenantId, TOBACCO_ADDON_KEY))) return false;
+    return (await this.systemConfig.get(TOBACCO_EXCLUDE_KEY)) === "true";
+  }
+
+  /** Tobacco portion (subtotal + line tax) of an invoice's items, for subtraction. */
+  private tobaccoPortion(
+    items: { subtotal: unknown; taxRate: unknown; product: { isTobacco: boolean } | null }[],
+  ): number {
+    let portion = 0;
+    for (const item of items) {
+      if (item.product?.isTobacco) {
+        portion += Number(item.subtotal) * (1 + Number(item.taxRate));
+      }
+    }
+    return portion;
+  }
 
   private dateRange(from?: string, to?: string) {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
@@ -20,13 +68,14 @@ export class AnalyticsService {
 
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
     const { fromDate, toDate } = this.dateRange(from, to);
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
       },
       orderBy: { issueDate: "asc" },
-      select: { issueDate: true, total: true },
+      select: { issueDate: true, total: true, ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}) },
     });
     const grouped: Record<string, number> = {};
     for (const inv of invoices) {
@@ -34,22 +83,32 @@ export class AnalyticsService {
         groupBy === "month"
           ? `${inv.issueDate.getFullYear()}-${String(inv.issueDate.getMonth() + 1).padStart(2, "0")}`
           : inv.issueDate.toISOString().split("T")[0];
-      grouped[key] = (grouped[key] ?? 0) + Number(inv.total);
+      // Invoice-level discount/shippingFee stay attributed to the remainder
+      const total = excludeTobacco
+        ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
+        : Number(inv.total);
+      grouped[key] = (grouped[key] ?? 0) + total;
     }
     return Object.entries(grouped)
-      .map(([period, revenue]) => ({ period, revenue }))
+      .map(([period, revenue]) => ({ period, revenue: roundMoney(revenue) }))
       .sort((a, b) => a.period.localeCompare(b.period));
   }
 
   async getTopProducts(metric = "revenue", limit = 10) {
+    const excludeTobacco = await this.tobaccoExclusionActive();
     if (metric === "revenue") {
       const items = await this.prisma.forTenant().transactionItem.findMany({
-        include: { orderItem: { include: { product: { select: { id: true, name: true } } } } },
+        include: {
+          orderItem: {
+            include: { product: { select: { id: true, name: true, isTobacco: true } } },
+          },
+        },
       });
       const map: Record<string, { name: string; value: number }> = {};
       for (const i of items) {
         const prod = i.orderItem?.product;
         if (!prod) continue;
+        if (excludeTobacco && prod.isTobacco) continue;
         if (!map[prod.id]) map[prod.id] = { name: prod.name, value: 0 };
         map[prod.id].value += Number(i.subtotal);
       }
@@ -60,7 +119,7 @@ export class AnalyticsService {
     }
     // units sold
     const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE" },
+      where: { type: "SALE", ...(excludeTobacco ? { product: { isTobacco: false } } : {}) },
       include: { product: { select: { id: true, name: true } } },
     });
     const map: Record<string, { name: string; value: number }> = {};
@@ -77,6 +136,7 @@ export class AnalyticsService {
   }
 
   async getTopCustomers(metric = "revenue", limit = 10, from?: string, to?: string) {
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const where: any = { status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] } };
     if (from || to) {
       where.createdAt = {};
@@ -85,13 +145,19 @@ export class AnalyticsService {
     }
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where,
-      include: { customer: { select: { id: true, businessName: true } } },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}),
+      },
     });
     const map: Record<string, { name: string; totalRevenue: number; orderCount: number }> = {};
     for (const inv of invoices) {
       const id = inv.customerId;
       if (!map[id]) map[id] = { name: inv.customer.businessName, totalRevenue: 0, orderCount: 0 };
-      map[id].totalRevenue += Number(inv.total);
+      const total = excludeTobacco
+        ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
+        : Number(inv.total);
+      map[id].totalRevenue += total;
       map[id].orderCount += 1;
     }
     const arr = Object.entries(map).map(([id, v]) => ({ id, ...v }));
@@ -160,9 +226,16 @@ export class AnalyticsService {
 
   async getInventoryTurnover(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
-    const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
+    const excludeTobacco = await this.tobaccoExclusionActive();
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { isActive: true, ...(excludeTobacco ? { isTobacco: false } : {}) },
+    });
     const sales = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
+      where: {
+        type: "SALE",
+        createdAt: { gte: fromDate, lte: toDate },
+        ...(excludeTobacco ? { product: { isTobacco: false } } : {}),
+      },
       select: { productId: true, quantity: true },
     });
     const salesMap: Record<string, number> = {};
@@ -181,8 +254,13 @@ export class AnalyticsService {
   async getDeadStock(daysInactive = 30) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysInactive);
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const activeProducts = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, currentStock: { gt: 0 } },
+      where: {
+        isActive: true,
+        currentStock: { gt: 0 },
+        ...(excludeTobacco ? { isTobacco: false } : {}),
+      },
     });
     const result: {
       id: string;
@@ -212,7 +290,10 @@ export class AnalyticsService {
   }
 
   async getMarginAlerts() {
-    const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
+    const excludeTobacco = await this.tobaccoExclusionActive();
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { isActive: true, ...(excludeTobacco ? { isTobacco: false } : {}) },
+    });
     const alerts: { id: string; name: string; price: number; cost: number; marginPct: number }[] =
       [];
     for (const p of products) {
@@ -274,12 +355,14 @@ export class AnalyticsService {
 
   async getSalesByCategory(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const items = await this.prisma.forTenant().orderItem.findMany({
       where: { order: { createdAt: { gte: fromDate, lte: toDate }, status: "DELIVERED" } },
-      include: { product: { select: { category: true } } },
+      include: { product: { select: { category: true, isTobacco: true } } },
     });
     const map: Record<string, number> = {};
     for (const i of items) {
+      if (excludeTobacco && i.product?.isTobacco) continue;
       // Unlisted lines have no product → bucket under Uncategorized.
       const cat = i.product?.category ?? "Uncategorized";
       map[cat] = (map[cat] ?? 0) + Number(i.subtotal);
@@ -291,17 +374,31 @@ export class AnalyticsService {
 
   async getGrossMarginTrend(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
       },
-      select: { total: true },
+      select: { total: true, ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}) },
     });
     const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
+      where: {
+        type: "SALE",
+        createdAt: { gte: fromDate, lte: toDate },
+        ...(excludeTobacco ? { product: { isTobacco: false } } : {}),
+      },
     });
-    const revenue = roundMoney(invoices.reduce((s, inv) => s + Number(inv.total), 0));
+    const revenue = roundMoney(
+      invoices.reduce(
+        (s, inv) =>
+          s +
+          (excludeTobacco
+            ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
+            : Number(inv.total)),
+        0,
+      ),
+    );
     // Signed COGS: SALE quantities are negative, so -qty × unitCost adds cost;
     // reopen-reversals are positive SALE rows and subtract their cost back out
     const cogs = roundMoney(
@@ -319,14 +416,26 @@ export class AnalyticsService {
 
   async getAverageOrderValue(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
+    const excludeTobacco = await this.tobaccoExclusionActive();
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
         status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
       },
-      select: { total: true },
+      select: { total: true, ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}) },
     });
-    const total = invoices.reduce((s, inv) => s + Number(inv.total), 0);
+    // Invoice COUNT stays unchanged under exclusion — only the tobacco value
+    // portion is removed, so AOV = non-tobacco revenue / all invoices
+    const total = roundMoney(
+      invoices.reduce(
+        (s, inv) =>
+          s +
+          (excludeTobacco
+            ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
+            : Number(inv.total)),
+        0,
+      ),
+    );
     return {
       count: invoices.length,
       total,
