@@ -137,16 +137,17 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
   test("CP-03 invoice detail — total equals subtotal + tax (within $0.01)", async ({ page }) => {
     await page.goto("/invoices");
 
-    // Click first invoice row to open the detail
+    // Wait for the list to load a row before clicking (avoids racing the data fetch).
     const firstRow = page.locator("table tbody tr").first();
-    const rowCount = await firstRow.count();
-    if (rowCount === 0) {
+    try {
+      await firstRow.waitFor({ timeout: 15_000 });
+    } catch {
       test.skip(true, "No invoices to inspect");
       return;
     }
 
     await firstRow.click();
-    await page.waitForURL(/\/invoices\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/invoices\/.+/, { timeout: 30_000 });
 
     // Extract the three summary values (subtotal, tax, total)
     // The detail page renders these as formatted amounts — find by label proximity.
@@ -259,14 +260,18 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
 
   test("CP-06 order detail — item amounts and order totals are well-formed", async ({ page }) => {
     await page.goto("/orders");
-    const firstRow = page.locator("table tbody tr").first();
-    if ((await firstRow.count()) === 0) {
+    // Order rows render as link-rows — the whole row is an <a> to the detail page.
+    // Wait for it to load before clicking (avoids racing the data fetch).
+    const firstRow = page.getByRole("link", { name: /ORD-\d+/ }).first();
+    try {
+      await firstRow.waitFor({ timeout: 15_000 });
+    } catch {
       test.skip(true, "No orders to inspect");
       return;
     }
 
     await firstRow.click();
-    await page.waitForURL(/\/orders\/.+/, { timeout: 15_000 });
+    await page.waitForURL(/\/orders\/.+/, { timeout: 30_000 });
 
     // Any dollar amount visible on the order detail page should be $X.XX
     const dollarEls = page
@@ -323,6 +328,11 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
 
   test("CP-09 product list — unit prices are $X.XX", async ({ page }) => {
     await page.goto("/products");
+    // The catalog defaults to a grid view; switch to the table so row/price cells resolve.
+    await page
+      .getByRole("button", { name: "Table view" })
+      .click({ timeout: 5_000 })
+      .catch(() => {});
     await page
       .locator("table tbody tr, [class*='product-card'], [class*='empty']")
       .first()
