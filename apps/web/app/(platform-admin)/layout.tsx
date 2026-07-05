@@ -143,7 +143,7 @@ function Sidebar() {
 export default function PlatformAdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <SuperAdminGuard>
-      <div className="flex h-screen overflow-hidden bg-slate-950">
+      <div className="surface-admin flex h-screen overflow-hidden bg-slate-950">
         <Sidebar />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>

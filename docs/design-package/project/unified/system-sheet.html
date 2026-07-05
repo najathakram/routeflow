@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Visual System</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1240px}
+  body{margin:0;padding:36px 40px;background:var(--canvas)}
+  .sect{margin-bottom:26px}
+  .sect > .overline{display:block;margin-bottom:12px;color:var(--accent-deep)}
+  .panel{background:var(--paper);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--sh-card);padding:22px}
+  .cols{display:grid;gap:16px}
+  .sw{border-radius:8px;height:56px;display:flex;align-items:flex-end;padding:8px}
+  .sw span{font-family:var(--font-mono);font-size:10.5px}
+  .swl{font-size:11.5px;font-weight:600;color:var(--ink-700);margin-top:6px}
+  .swm{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-400)}
+  .trow{display:flex;align-items:baseline;gap:20px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .trow:last-child{border-bottom:none}
+  .trow .spec{width:220px;flex:none;font-family:var(--font-mono);font-size:11px;color:var(--ink-400)}
+  .lab{font-size:11px;font-weight:600;color:var(--ink-400);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
+  .kit{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .demo-cell{display:flex;flex-direction:column;gap:10px}
+  .accent-tile{border-radius:var(--r-card);border:1px solid var(--line);overflow:hidden}
+  .accent-tile .top{height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;color:#fff}
+  .accent-tile .bot{padding:10px 16px;background:var(--paper)}
+  .accent-tile .bot b{font-size:12.5px;color:var(--ink-900);display:block}
+  .accent-tile .bot span{font-size:11px;color:var(--ink-500)}
+  .drow{display:flex;align-items:center;border-bottom:1px solid var(--line);padding:0 14px;gap:14px;font-size:13px}
+</style>
+</head>
+<body data-screen-label="Visual System">
+
+  <!-- ================= header ================= -->
+  <div class="sect" style="display:flex;justify-content:space-between;align-items:flex-end;gap:40px;margin-bottom:34px">
+    <div>
+      <div class="overline" style="color:var(--accent-deep)">RouteFlow Web, Unified Visual System</div>
+      <h1 class="display" style="font-size:44px;margin-top:8px;line-height:1.05">One ledger, every surface.</h1>
+      <p style="max-width:620px;margin-top:12px;font-size:14px;line-height:1.55;color:var(--ink-500)">
+        A hairline-first, print-ledger language for a money-and-logistics product: dark-ink chrome, paper surfaces,
+        a 2px ledger rule over every table, and all figures in tabular mono. Surfaces differ <b style="color:var(--ink-900)">only</b> by
+        an accent (teal / emerald / indigo / rust) and a density (compact / comfortable / spacious), never by being a different app.
+        Tenant branding overrides <span class="mono" style="font-size:12px">--primary</span> at runtime.
+      </p>
+    </div>
+    <div style="text-align:right;flex:none">
+      <div class="swm">Type: Spline Sans · Spline Sans Mono · Instrument Serif</div>
+      <div class="swm">Shape: 6px controls · 10px surfaces · pill chips</div>
+      <div class="swm">Elevation: hairline + 3 shadow steps</div>
+    </div>
+  </div>
+
+  <!-- ================= color ================= -->
+  <div class="sect">
+    <span class="overline">01 · Color</span>
+    <div class="cols" style="grid-template-columns:1.2fr 1fr">
+      <div class="panel">
+        <div class="lab">Neutrals, shared by every surface</div>
+        <div class="cols" style="grid-template-columns:repeat(5,1fr);gap:10px">
+          <div><div class="sw" style="background:#0F1B2D"><span style="color:#fff">900</span></div><div class="swl">ink-900</div><div class="swm">headings · rail</div></div>
+          <div><div class="sw" style="background:#33425B"><span style="color:#fff">700</span></div><div class="swl">ink-700</div><div class="swm">body</div></div>
+          <div><div class="sw" style="background:#5C6B82"><span style="color:#fff">500</span></div><div class="swl">ink-500</div><div class="swm">secondary</div></div>
+          <div><div class="sw" style="background:#EDF1F6;border:1px solid var(--line)"><span>sunken</span></div><div class="swl">sunken</div><div class="swm">wells · zebra</div></div>
+          <div><div class="sw" style="background:#F7F9FC;border:1px solid var(--line)"><span>canvas</span></div><div class="swl">canvas</div><div class="swm">app bg</div></div>
+        </div>
+        <div class="lab" style="margin-top:18px">Brand teal (static) → <span class="mono" style="text-transform:none;letter-spacing:0">--primary</span> (tenant-overridable)</div>
+        <div class="cols" style="grid-template-columns:repeat(5,1fr);gap:10px">
+          <div><div class="sw" style="background:var(--brand-700)"><span style="color:#fff">700</span></div></div>
+          <div><div class="sw" style="background:var(--brand-600)"><span style="color:#fff">600</span></div><div class="swm">buttons</div></div>
+          <div><div class="sw" style="background:var(--brand-500)"><span style="color:#fff">500</span></div><div class="swm">accent base</div></div>
+          <div><div class="sw" style="background:var(--brand-300)"><span>300</span></div><div class="swm">rail active</div></div>
+          <div><div class="sw" style="background:var(--brand-50);border:1px solid var(--line)"><span>50</span></div><div class="swm">soft fills</div></div>
+        </div>
+        <div class="lab" style="margin-top:18px">Status, one set, everywhere (all domain pills map here)</div>
+        <div class="kit">
+          <span class="badge b-success"><span class="dot"></span>Success</span>
+          <span class="badge b-warning"><span class="dot"></span>Warning</span>
+          <span class="badge b-danger"><span class="dot"></span>Danger</span>
+          <span class="badge b-info"><span class="dot"></span>Info</span>
+          <span class="badge b-accent"><span class="dot"></span>Accent</span>
+          <span class="badge b-neutral"><span class="dot"></span>Neutral</span>
+        </div>
+        <div class="swm" style="margin-top:10px">Delivered→success · Pending→warning · Overdue/Urgent→danger · Confirmed/Scheduled→info · Out&nbsp;for&nbsp;Delivery→accent · Draft/Cancelled→neutral</div>
+      </div>
+      <div class="panel">
+        <div class="lab">Context accents, the only per-surface color change</div>
+        <div class="cols" style="grid-template-columns:1fr 1fr;gap:12px">
+          <div class="accent-tile"><div class="top" style="background:linear-gradient(120deg,#0B6E6B,#14A39F)"><b style="font-size:13px">Operator</b><span class="mono" style="font-size:10.5px">#14A39F</span></div><div class="bot"><b>Brand teal</b><span>tenant --primary overrides</span></div></div>
+          <div class="accent-tile"><div class="top" style="background:linear-gradient(120deg,#047857,#059669)"><b style="font-size:13px">Buyer</b><span class="mono" style="font-size:10.5px">#059669</span></div><div class="bot"><b>Emerald</b><span>comfortable density</span></div></div>
+          <div class="accent-tile"><div class="top" style="background:linear-gradient(120deg,#312E81,#4F46E5)"><b style="font-size:13px">Platform</b><span class="mono" style="font-size:10.5px">#4F46E5</span></div><div class="bot"><b>Indigo on slate chrome</b><span>"not a tenant" signal</span></div></div>
+          <div class="accent-tile"><div class="top" style="background:linear-gradient(120deg,#A34630,#C75A3D)"><b style="font-size:13px">Retailers</b><span class="mono" style="font-size:10.5px">#C75A3D</span></div><div class="bot"><b>Rust</b><span>marketing sub-theme</span></div></div>
+        </div>
+        <div class="lab" style="margin-top:18px">Density, the second per-surface knob</div>
+        <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">
+          <div class="drow" style="height:44px"><span class="mono" style="font-size:11px;color:var(--ink-400);width:110px">44px · 13.5px</span><b style="color:var(--ink-900)">Compact</b><span class="muted">Operator · Platform admin</span><span class="money" style="margin-left:auto">$1,008.02</span></div>
+          <div class="drow" style="height:56px;font-size:15px"><span class="mono" style="font-size:11px;color:var(--ink-400);width:110px">56px · 15px</span><b style="color:var(--ink-900)">Comfortable</b><span class="muted">Buyer portal</span><span class="money" style="margin-left:auto">$1,008.02</span></div>
+          <div class="drow" style="height:68px;font-size:16px;border-bottom:none"><span class="mono" style="font-size:11px;color:var(--ink-400);width:110px">16px+ · airy</span><b style="color:var(--ink-900)">Spacious</b><span class="muted">Marketing</span><span class="money" style="margin-left:auto">$1,008.02</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= type ================= -->
+  <div class="sect">
+    <span class="overline">02 · Typography</span>
+    <div class="panel">
+      <div class="trow"><span class="spec">Instrument Serif 400 · display</span><span class="display" style="font-size:34px">Good morning, Maria. <i>Routes are rolling.</i></span></div>
+      <div class="trow"><span class="spec">Spline Sans 600 · 20px · page title</span><span style="font-size:20px;font-weight:600;color:var(--ink-900)">Orders</span></div>
+      <div class="trow"><span class="spec">Spline Sans 600 · 13px · card title</span><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Scheduled Route Runs</span></div>
+      <div class="trow"><span class="spec">Spline Sans 400 · 13.5px · body</span><span>Only PENDING or CANCELLED orders can be deleted. Partial results are reported.</span></div>
+      <div class="trow"><span class="spec">Spline Sans 600 · 11px · overline</span><span class="overline">Today's Revenue</span></div>
+      <div class="trow"><span class="spec">Spline Sans Mono · money & IDs, tabular-nums, always $X.XX</span><span class="money" style="font-size:17px;color:var(--ink-900)">$28,412.66&nbsp;&nbsp;&nbsp;$76.82&nbsp;&nbsp;&nbsp;<span class="strike">$21.00</span> $18.50&nbsp;&nbsp;&nbsp;ORD-2417 · INV-1892</span></div>
+      <div class="swm" style="margin-top:12px">Serif voice is reserved for outward moments, marketing, auth heroes, greetings, empty-state headlines. It never appears inside dense tables.</div>
+    </div>
+  </div>
+
+  <!-- ================= components ================= -->
+  <div class="sect">
+    <span class="overline">03 · Core Kit</span>
+    <div class="cols" style="grid-template-columns:1fr 1fr">
+      <div class="panel demo-cell">
+        <div class="lab">Buttons</div>
+        <div class="kit">
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Order</button>
+          <button class="btn btn-secondary">Export</button>
+          <button class="btn btn-ghost">Cancel</button>
+          <button class="btn btn-danger">Delete</button>
+          <a class="btn-link" style="font-size:13px">View all</a>
+          <button class="btn sm btn-secondary">Small</button>
+          <button class="btn btn-primary" disabled>Saving…</button>
+        </div>
+        <div class="lab" style="margin-top:8px">Fields</div>
+        <div class="kit" style="align-items:flex-start">
+          <div class="field" style="width:200px"><label>Customer <span style="color:var(--danger)">*</span></label><div class="input"><input value="Sunrise Market"></div></div>
+          <div class="field" style="width:170px"><label>Status</label><div class="select">All statuses<i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div></div>
+          <div class="field" style="width:170px"><label>Unit price</label><div class="input focus"><span class="faint">$</span><input value="18.50" class="mono"></div></div>
+          <div class="field" style="width:190px"><label>Email</label><div class="input invalid"><input value="rosa@sunrise"></div><span class="err">Enter a valid email address</span></div>
+        </div>
+        <div class="lab" style="margin-top:8px">Scan-to-add (USB + webcam) · unit combobox</div>
+        <div class="kit">
+          <div style="display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border:1.5px dashed var(--line-strong);border-radius:var(--r-ctl);color:var(--ink-400);font-size:13px;background:var(--canvas);width:290px"><i data-ic="barcode" data-sz="17"></i>Scan barcode or type name…</div>
+          <button class="btn btn-secondary"><i data-ic="camera" data-sz="16"></i></button>
+          <div class="select" style="width:130px">case (24)<i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+        </div>
+        <div class="lab" style="margin-top:8px">Saved-view chips · tabs · kbd</div>
+        <div class="kit">
+          <button class="chip active">Pending <span class="n">9</span></button>
+          <button class="chip">Urgent <span class="n">2</span></button>
+          <div class="tabs" style="border-bottom:none"><span class="tab active">Stock</span><span class="tab">Suppliers</span><span class="tab">Purchase Orders</span></div>
+          <span class="kbd">⌘K</span><span class="kbd">g</span><span class="kbd">o</span><span class="kbd">?</span>
+        </div>
+      </div>
+
+      <div class="panel demo-cell">
+        <div class="lab">Ledger table, 2px ink rule · hover chevron sort · skeleton · empty baked in</div>
+        <table class="tbl">
+          <thead><tr><th><span class="th-sort on">Invoice #<i data-ic="chevdown" data-sz="13"></i></span></th><th>Customer</th><th class="r">Balance</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="mono primary-cell">INV-1892</td><td>Lucky Corner Deli</td><td class="r">$1,824.40</td><td><span class="badge b-danger">Overdue</span></td></tr>
+            <tr class="row"><td class="mono primary-cell">INV-1920</td><td>Sunrise Market</td><td class="r">$1,008.02</td><td><span class="badge b-warning">Sent</span></td></tr>
+            <tr><td><div class="skel" style="width:64px"></div></td><td><div class="skel" style="width:130px"></div></td><td><div class="skel" style="width:56px;margin-left:auto"></div></td><td><div class="skel" style="width:64px"></div></td></tr>
+          </tbody>
+        </table>
+        <div class="empty" style="padding:18px">
+          <div class="art"><i data-ic="package" data-sz="20"></i></div>
+          <b>No orders yet</b>
+          <p>Take your first order and it will land here.</p>
+          <button class="btn sm btn-primary">New Order</button>
+        </div>
+      </div>
+
+      <div class="panel demo-cell">
+        <div class="lab">Toasts, bottom-right · swipe-right · 4s</div>
+        <div class="kit" style="gap:8px">
+          <div class="toast" style="width:300px"><div class="ic" style="background:var(--success-bg);color:var(--success)"><i data-ic="check" data-sz="14"></i></div><div><b>Order created</b><p>ORD-2418 · Sunrise Market</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+          <div class="toast" style="width:300px"><div class="ic" style="background:var(--danger-bg);color:var(--danger)"><i data-ic="alert" data-sz="14"></i></div><div><b>Urgent order placed</b><p>Casa Verde Foods, ORD-2415</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+          <div class="toast" style="width:300px"><div class="ic" style="background:var(--warning-bg);color:var(--warning)"><i data-ic="package" data-sz="14"></i></div><div><b>Low stock alert</b><p>Agua Mineral 355ml, 6 units left</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+          <div class="toast" style="width:300px"><div class="ic" style="background:var(--info-bg);color:var(--info)"><i data-ic="truck" data-sz="14"></i></div><div><b>Driver status changed</b><p>Daniel Okafor is now active</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+        </div>
+        <div class="lab" style="margin-top:8px">Bulk action bar, contextual · partial-success reporting</div>
+        <div class="bulkbar"><b>3 selected</b><a class="bb-link">Deselect all</a><span class="sep"></span><a class="bb-link">Cancel 3</a><a class="bb-link bb-danger">Delete 3</a></div>
+      </div>
+
+      <div class="panel demo-cell">
+        <div class="lab">Command palette (⌘K), role-filtered nav + live entity search</div>
+        <div style="border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--sh-drop);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)"><i data-ic="search" data-sz="16" style="color:var(--ink-400)"></i><span style="font-size:14px;color:var(--ink-900)">sunrise</span><span style="width:1.5px;height:16px;background:var(--accent)"></span></div>
+          <div style="padding:8px 6px">
+            <div class="overline" style="padding:4px 10px;font-size:10px">Customers</div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;background:var(--primary-mist)"><i data-ic="users" data-sz="15" style="color:var(--accent-deep)"></i><span style="font-weight:600;color:var(--ink-900)">Sunrise Market</span><span class="faint" style="font-size:12px">2214 Mission St</span><span class="kbd" style="margin-left:auto">↵</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px"><i data-ic="package" data-sz="15" style="color:var(--ink-400)"></i><span style="color:var(--ink-700)">ORD-2417, Sunrise Market</span><span class="money" style="margin-left:auto;font-size:12px">$1,008.02</span></div>
+            <div class="overline" style="padding:8px 10px 4px;font-size:10px">Actions</div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 10px"><i data-ic="plus" data-sz="15" style="color:var(--ink-400)"></i><span style="color:var(--ink-700)">New Order</span></div>
+          </div>
+          <div style="display:flex;gap:12px;padding:8px 14px;border-top:1px solid var(--line);background:var(--canvas)"><span class="swm"><span class="kbd">↑↓</span> navigate</span><span class="swm"><span class="kbd">↵</span> open</span><span class="swm"><span class="kbd">esc</span> close</span></div>
+        </div>
+        <div class="lab" style="margin-top:8px">Confirm dialog</div>
+        <div style="border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--sh-modal);padding:18px;display:flex;gap:12px;max-width:380px">
+          <div style="width:34px;height:34px;border-radius:9px;background:var(--danger-bg);color:var(--danger);display:grid;place-items:center;flex:none"><i data-ic="alert" data-sz="17"></i></div>
+          <div style="flex:1"><b style="font-size:14px;color:var(--ink-900)">Cancel order ORD-2415?</b><p style="font-size:12.5px;color:var(--ink-500);margin:4px 0 12px">The customer will not be notified. This action cannot be undone.</p>
+            <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn sm btn-ghost">Keep order</button><button class="btn sm btn-danger">Cancel Order</button></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= motion ================= -->
+  <div class="sect">
+    <span class="overline">04 · Motion &amp; Delight</span>
+    <div class="panel">
+      <div class="cols" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div>
+          <div class="lab">The rules</div>
+          <p style="font-size:13px;line-height:1.6;color:var(--ink-700);max-width:480px">
+            Three speeds, one spring. <b>120ms press</b> (every button, chip and checkbox squishes on tap) ·
+            <b>240ms enter</b> (cards rise in with a 36ms stagger, toasts slide from the right) ·
+            <b>400ms celebrate</b> (confetti burst on the moments that matter: order delivered, run completed,
+            payment received, never on routine clicks). Numbers <b>count up</b> on dashboards; the bell
+            <b>shakes</b> on new notifications; a scan <b>sweeps green</b> across the input and flashes the
+            touched row so the operator trusts it landed. All of it collapses to zero under
+            <span class="mono" style="font-size:11.5px">prefers-reduced-motion</span>.
+          </p>
+          <div class="swm" style="margin-top:10px">Spring: cubic-bezier(.3, 1.4, .5, 1) · Ease-out: cubic-bezier(.2, .9, .3, 1) · No infinite loops except the 2.2s urgent pulse.</div>
+        </div>
+        <div>
+          <div class="lab">Try it</div>
+          <div class="kit" style="margin-bottom:14px">
+            <button class="btn btn-primary" data-celebrate><i data-ic="check" data-sz="15"></i>Mark as Delivered</button>
+            <button class="iconbtn" style="border:1px solid var(--line-strong);border-radius:8px"><i data-ic="bell" data-sz="18"></i><span class="nbadge">3</span></button>
+            <span class="cb"></span>
+            <button class="chip">Pending <span class="n">9</span></button>
+            <button class="chip active">Urgent <span class="n">2</span></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="scaninput" style="display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border:1.5px dashed var(--line-strong);border-radius:var(--r-ctl);color:var(--ink-400);font-size:13px;background:var(--canvas);flex:1;cursor:pointer"><i data-ic="barcode" data-sz="17"></i>Click to simulate a scan…</div>
+            <button class="btn btn-secondary"><i data-ic="camera" data-sz="16"></i></button>
+          </div>
+          <div class="lirow" style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-top:10px;font-size:13px">
+            <span style="font-weight:600;color:var(--ink-900)">Agua Mineral Sparkling 355ml</span>
+            <span class="money">$18.50</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="delight.js"></script>
+</body>
+</html>

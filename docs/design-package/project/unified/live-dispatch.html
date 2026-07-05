@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Live Dispatch</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .row21{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start}
+  .stop{display:flex;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);position:relative}
+  .stop:last-child{border-bottom:none}
+  .stop .node{width:26px;height:26px;border-radius:99px;display:grid;place-items:center;flex:none;font-size:11.5px;font-weight:700;font-family:var(--font-mono);position:relative;z-index:1}
+  .stop .spine{position:absolute;left:12.5px;top:40px;bottom:-14px;width:1.5px;background:var(--line-strong)}
+  .stop:last-child .spine{display:none}
+  .n-done{background:var(--success);color:#fff}
+  .n-now{background:var(--accent-strong);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
+  .n-next{background:var(--sunken);color:var(--ink-500);border:1.5px solid var(--line-strong)}
+  .stop .grow{flex:1;min-width:0}
+  .stop b{color:var(--ink-900);font-size:13.5px}
+  .stop .sub{font-size:12px;color:var(--ink-400);margin-top:1px}
+  .pod{display:flex;gap:8px;margin-top:9px}
+  .podshot{width:66px;height:50px;border-radius:7px;border:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 5px,#F4F7FB 5px,#F4F7FB 10px);
+    display:grid;place-items:center;font-family:var(--font-mono);font-size:9px;color:var(--ink-400);text-align:center;line-height:1.3}
+  .manline{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .manline:last-child{border-bottom:none}
+  .manline .cb{flex:none}
+  .mapph{height:214px;border-radius:var(--r-card);border:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 8px,#F4F7FB 8px,#F4F7FB 16px);
+    display:grid;place-items:center}
+  .mapph span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-400)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Live Dispatch">
+  <script>document.write(RFShell.operatorRail('dispatch.overview'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Live Dispatch'))</script>
+    <div class="content">
+      <div class="ph-row">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2>East Bay Corridor, Run #0705</h2>
+            <span class="badge b-success"><span class="dot"></span>Live</span>
+          </div>
+          <div class="sub">Julia Reyes · VAN-02 · started 7:00 AM · read-only view, driver owns stop state</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="phone" data-sz="15"></i>Call driver</button>
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Print manifest</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Stops, 5 of 14 delivered</h3><span class="mono" style="font-size:12px;color:var(--ink-500)">ETA back: 2:40 PM</span></div>
+          <div class="card-b" style="padding-top:4px">
+            <div class="stop"><span class="spine"></span><span class="node n-done"><i data-ic="check" data-sz="13"></i></span>
+              <div class="grow"><b>Golden Gate Grocery</b><div class="sub">Stop 4 · delivered 9:52 AM · signed M. Chen</div>
+                <div class="pod"><div class="podshot">POD<br>photo</div><div class="podshot">signature</div></div>
+              </div><span class="money" style="color:var(--ink-900)">$1,731.25</span><span class="badge b-success">Delivered</span></div>
+            <div class="stop"><span class="spine"></span><span class="node n-done"><i data-ic="check" data-sz="13"></i></span>
+              <div class="grow"><b>Lucky Corner Deli</b><div class="sub">Stop 5 · delivered 10:07 AM · left at door, photo attached</div></div>
+              <span class="money" style="color:var(--ink-900)">$862.40</span><span class="badge b-success">Delivered</span></div>
+            <div class="stop"><span class="spine"></span><span class="node n-now">6</span>
+              <div class="grow"><b>Casa Verde Foods</b><div class="sub">Stop 6 · arriving ~10:20 AM · 6 items · gate code #2214</div></div>
+              <span class="money" style="color:var(--ink-900)">$644.90</span><span class="badge b-accent"><span class="dot"></span>En Route</span></div>
+            <div class="stop"><span class="spine"></span><span class="node n-next">7</span>
+              <div class="grow"><b>Hillside Mini Mart</b><div class="sub">Stop 7 · window 10:30 to 11:30 AM</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding:7px 10px;border:1px solid #FCD34D;border-radius:8px;background:#FFFDF5;font-size:11.5px">
+                  <i data-ic="plus" data-sz="12" style="color:#B45309"></i><span style="flex:1"><b style="color:var(--ink-900)">Buyer change request:</b> +2 cases Cold Brew ($6.20), on the truck ✓</span>
+                  <button class="btn sm btn-primary" style="height:24px;font-size:11px">Approve</button>
+                  <button class="btn sm btn-ghost" style="height:24px;font-size:11px">Decline</button>
+                </div>
+              </div>
+              <span class="money" style="color:var(--ink-900)">$412.80</span><span class="badge b-neutral">Pending</span></div>
+            <div class="stop"><span class="spine"></span><span class="node n-next">8</span>
+              <div class="grow"><b>Bright Mart #2</b><div class="sub">Stop 8 · window 11:00 AM to 12:00 PM · 11 items</div></div>
+              <span class="money" style="color:var(--ink-900)">$2,394.60</span><span class="badge b-neutral">Pending</span></div>
+            <div class="stop"><span class="node n-next">…</span>
+              <div class="grow"><b class="muted" style="font-weight:500">6 more stops</b><div class="sub">Fruitvale → San Leandro → return to warehouse</div></div></div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Position</h3><span class="mono" style="font-size:11.5px;color:var(--ink-400)">updated 20s ago</span></div>
+            <div class="card-b"><div class="mapph"><span>map, van position · remaining stops</span></div></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Loading Manifest</h3><span class="badge b-success">Verified at depot</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="manline"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Agua Mineral 355ml, <span class="mono">12 boxes</span></span></div>
+              <div class="manline"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Sunburst Orange Soda 2L, <span class="mono">9 boxes</span></span></div>
+              <div class="manline"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Cloud Chips BBQ 1.5oz, <span class="mono">14 boxes</span></span></div>
+              <div class="manline"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Roast House Cold Brew 8oz, <span class="mono">4 boxes + 8 pcs</span></span></div>
+              <div class="manline"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Valle Tortilla Chips 11oz, <span class="mono">6 boxes</span></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

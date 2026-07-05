@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Admin Billing</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:940px}
+  body{margin:0;overflow:hidden}
+  .screen{height:940px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Admin Billing">
+  <script>document.write(RFShell.adminRail('billing'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>Billing</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Billing</h2><div class="sub">Subscription revenue across all tenants.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export</button></div>
+      </div>
+
+      <div class="grid4">
+        <div class="stat"><span class="overline">Est. MRR</span><span class="v money">$61,240.00</span><span class="hint" style="color:var(--success)">▲ $3,120 this month</span></div>
+        <div class="stat"><span class="overline">Paying Tenants</span><span class="v">112</span><span class="hint">+ 19 in trial</span></div>
+        <div class="stat"><span class="overline">Addon Revenue</span><span class="v money">$4,312.00</span><span class="hint">Regulated · OCR · 61 subscriptions</span></div>
+        <div class="stat ring-danger"><span class="overline">Failed Payments</span><span class="v" style="color:var(--danger)">3</span><span class="hint">$1,247.00 at risk</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>Subscriptions</h3>
+          <div style="display:flex;gap:8px">
+            <div class="select sm" style="width:120px"><span>All plans</span><i data-ic="chevdown" data-sz="13"></i></div>
+            <div class="select sm" style="width:130px"><span>All statuses</span><i data-ic="chevdown" data-sz="13"></i></div>
+          </div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Tenant</th><th>Plan</th><th>Cycle</th><th class="r">Base</th><th class="r">Addons</th><th class="r">MRR</th><th>Next Charge</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="primary-cell">Sierra Distributors</span> <span class="mono faint" style="font-size:11px">sierradist</span></td><td><span class="badge b-accent">Enterprise</span></td><td>Annual</td><td class="r">$1,249.00</td><td class="r">$78.00</td><td class="r" style="font-weight:600">$1,327.00</td><td class="muted">Aug 30</td><td><span class="badge b-success">Current</span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Golden State Distribution</span> <span class="mono faint" style="font-size:11px">goldenstate</span></td><td><span class="badge b-accent">Business</span></td><td>Annual</td><td class="r">$349.00</td><td class="r">$39.00</td><td class="r" style="font-weight:600">$388.00</td><td class="muted">Mar 12, 2027</td><td><span class="badge b-success">Current</span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Metro Beverage Co.</span> <span class="mono faint" style="font-size:11px">metrobev</span></td><td><span class="badge b-neutral">Trial</span></td><td class="muted">, </td><td class="r muted">$0.00</td><td class="r muted">$0.00</td><td class="r muted">$0.00</td><td class="muted">converts Jul 7</td><td><span class="badge b-warning">Trial · 2d</span></td></tr>
+            <tr class="row urgent"><td><span class="primary-cell">Redwood Provisions</span> <span class="mono faint" style="font-size:11px">redwoodprov</span></td><td><span class="badge b-neutral">Starter</span></td><td>Monthly</td><td class="r">$149.00</td><td class="r">$29.00</td><td class="r" style="font-weight:600">$178.00</td><td style="color:var(--danger);font-weight:600">Failed ×2</td><td><span class="badge b-danger">Past due</span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Bayview Trading</span> <span class="mono faint" style="font-size:11px">bayviewtr</span></td><td><span class="badge b-neutral">Starter</span></td><td>Monthly</td><td class="r">$149.00</td><td class="r muted">$0.00</td><td class="r" style="font-weight:600">$149.00</td><td class="muted">Aug 2</td><td><span class="badge b-success">Current</span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Harbor Foods Distribution</span> <span class="mono faint" style="font-size:11px">harborfoods</span></td><td><span class="badge b-neutral">Trial</span></td><td class="muted">, </td><td class="r muted">$0.00</td><td class="r muted">$0.00</td><td class="r muted">$0.00</td><td class="muted">converts Jul 10</td><td><span class="badge b-warning">Trial · 5d</span></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:12.5px">Showing 6 of 131 subscriptions</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

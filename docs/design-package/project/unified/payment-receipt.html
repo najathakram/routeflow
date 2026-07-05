@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Payment Receipt</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .row21{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start}
+  .doc{padding:30px 34px}
+  .doc h3{font-family:var(--font-display);font-size:26px;font-weight:400}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+  .mathline{display:flex;justify-content:space-between;font-size:13.5px;padding:7px 0}
+  .mathline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:12px;font-weight:600;font-size:16px;color:var(--ink-900)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Payment Receipt">
+  <script>document.write(RFShell.operatorRail('fin.payments'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Payments'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><h2 class="mono" style="font-family:var(--font-mono)">PMT-0644</h2><span class="badge b-success">Completed</span></div>
+          <div class="sub">Payment received · Golden Gate Grocery · Jul 3, 2026</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary btn-danger-ghost" style="border:1px solid #FECACA">Void Payment</button>
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Print receipt</button>
+          <button class="btn btn-primary"><i data-ic="download" data-sz="15"></i>PDF</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card doc">
+          <div style="display:flex;justify-content:space-between;margin-bottom:26px">
+            <div><h3>Payment Receipt</h3><div class="mono" style="font-size:12.5px;color:var(--ink-500);margin-top:4px">PMT-0644 · Jul 3, 2026</div></div>
+            <div style="text-align:right;font-size:12.5px;color:var(--ink-500);line-height:1.6">
+              <b style="color:var(--ink-900);font-size:13.5px">Golden State Distribution</b><br>2200 Jerrold Ave, San Francisco, CA<br><span class="mono">billing@goldenstate.co</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 40px">
+            <div class="kv"><span class="k">Received from</span><span class="v">Golden Gate Grocery</span></div>
+            <div class="kv"><span class="k">Payment date</span><span class="v">Jul 3, 2026</span></div>
+            <div class="kv"><span class="k">Payment mode</span><span class="v">Check · #4471</span></div>
+            <div class="kv"><span class="k">Reference</span><span class="v mono">DEP-0703-02</span></div>
+            <div class="kv"><span class="k">Applied to</span><span class="v"><a class="btn-link" style="font-size:13px">INV-1913</a></span></div>
+            <div class="kv"><span class="k">Recorded by</span><span class="v">Maria L.</span></div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:26px">
+            <div style="width:300px">
+              <div class="mathline"><span class="muted">Amount received</span><span class="money" style="color:var(--ink-900)">$1,392.05</span></div>
+              <div class="mathline"><span class="muted">Bank charges</span><span class="money" style="color:var(--ink-900)">−$4.00</span></div>
+              <div class="mathline total"><span>Total applied</span><span class="money">$1,388.05</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Applied Invoice</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Invoice</span><span class="v mono">INV-1913</span></div>
+              <div class="kv"><span class="k">Invoice total</span><span class="v money">$1,388.05</span></div>
+              <div class="kv"><span class="k">Applied</span><span class="v money" style="color:var(--success)">$1,388.05</span></div>
+              <div class="kv"><span class="k">Remaining balance</span><span class="v money">$0.00</span></div>
+              <div class="kv"><span class="k">Invoice status</span><span class="v"><span class="badge b-success">Paid</span></span></div>
+            </div>
+          </div>
+          <div class="card" style="border-color:#FCA5A5">
+            <div class="card-h" style="border-bottom-color:#FECACA"><h3 style="color:#B91C1C">Void</h3></div>
+            <div class="card-b">
+              <p style="font-size:12.5px;line-height:1.6;color:var(--ink-500)">Voiding reverses the application, INV-1913 returns to <b>Sent</b> with its full balance, and this receipt is kept for the audit trail.</p>
+              <button class="btn btn-danger-ghost" style="width:100%;justify-content:center;border:1px solid #FECACA;border-radius:var(--r-ctl);margin-top:12px">Void Payment…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

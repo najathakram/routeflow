@@ -351,6 +351,15 @@ export class CustomersController {
     return this.customersService.deleteCustomer(id, force === "true");
   }
 
+  // Restore a soft-deleted customer (the server side of the 8-second Undo).
+  // `status` is the user's pre-delete status so the undo restores exactly.
+  @Post(":id/restore")
+  @Roles(UserRole.OPERATOR)
+  @HttpCode(200)
+  restore(@Param("id") id: string, @Body() body?: { status?: string }) {
+    return this.customersService.restoreCustomer(id, body?.status);
+  }
+
   // ─── Suggest buyer account merge ──────────────────────────────────────────
 
   @Post("suggest-merge")

@@ -1,4 +1,12 @@
-import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "./pricing";
+import {
+  computeLineSubtotal,
+  roundMoney,
+  normalizeBoxesPieces,
+  costPerSellingUnit,
+  computeMarginFraction,
+  priceForMarginFloor,
+  classifyMargin,
+} from "./pricing";
 
 /**
  * Money-math regression suite. These lock the fixes for the reported
@@ -134,6 +142,46 @@ describe("pricing — money discipline", () => {
     it("non-boxed invoice line is qty x unitPrice", () => {
       expect(billLine(220, 2, 0)).toBe(440);
       expect(billLine(3.5, 4, 1)).toBe(14);
+    });
+  });
+
+  // ─── Margin (negotiation floor) ─────────────────────────────────────────────
+  describe("margin helpers", () => {
+    it("costPerSellingUnit scales piece cost to the box for boxed products", () => {
+      expect(costPerSellingUnit(0.58, 24)).toBeCloseTo(13.92, 5); // 24-pack @ $0.58/pc
+      expect(costPerSellingUnit(0.58, 1)).toBe(0.58); // non-boxed = piece cost
+      expect(costPerSellingUnit(0.58, null)).toBe(0.58);
+    });
+
+    it("computeMarginFraction uses box-basis cost vs box price", () => {
+      // Design example: box price $21.60, piece cost $0.58, 24/case → cost $13.92, 35.6%
+      const m = computeMarginFraction(21.6, 0.58, 24);
+      expect(m).not.toBeNull();
+      expect((m as number) * 100).toBeCloseTo(35.6, 1);
+    });
+
+    it("computeMarginFraction is negative below cost and null without cost/price", () => {
+      expect(computeMarginFraction(10, 8, 1)! * 100).toBeCloseTo(20, 5);
+      expect(computeMarginFraction(5, 8, 1)).toBeLessThan(0); // below cost
+      expect(computeMarginFraction(10, null, 1)).toBeNull();
+      expect(computeMarginFraction(0, 8, 1)).toBeNull();
+    });
+
+    it("priceForMarginFloor yields exactly the floor margin (round-trip)", () => {
+      const price = priceForMarginFloor(0.58, 0.2, 24); // 20% floor on a 24-pack
+      const m = computeMarginFraction(price, 0.58, 24)!;
+      expect(m).toBeCloseTo(0.2, 4);
+      // non-boxed: cost 8, 25% floor → 8 / 0.75 = 10.67
+      expect(priceForMarginFloor(8, 0.25, 1)).toBe(10.67);
+    });
+
+    it("classifyMargin buckets below-cost / below-floor / warn / ok", () => {
+      const floor = 0.15;
+      expect(classifyMargin(-0.05, floor)).toBe("belowCost");
+      expect(classifyMargin(0.1, floor)).toBe("belowFloor");
+      expect(classifyMargin(0.17, floor)).toBe("warn"); // within 5 pts above floor
+      expect(classifyMargin(0.3, floor)).toBe("ok");
+      expect(classifyMargin(null, floor)).toBeNull();
     });
   });
 });

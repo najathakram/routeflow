@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Payments &amp; Credits</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;align-items:start}
+  .chk{display:flex;align-items:center;gap:4px}
+  .chk .st{display:flex;align-items:center;gap:4px;font-size:10.5px;font-weight:600;color:var(--ink-400)}
+  .chk .st.done{color:var(--success)}
+  .chk .sep{width:14px;height:1.5px;background:var(--line-strong)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Payments &amp; Credits">
+  <script>document.write(RFShell.buyerRail('finances'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Payments &amp; Credits</h2><div class="sub">Every dollar between you and Golden State, checks in flight, credits waiting, statements.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>June statement (PDF)</button></div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:18px">
+        <div class="stat ring-success"><span class="overline">Credit Available</span><span class="v money" style="color:var(--success)">$136.40</span><span class="hint">Applies to your next invoice automatically</span></div>
+        <div class="stat"><span class="overline">Checks in Flight</span><span class="v money">$1,388.05</span><span class="hint">1 check awaiting clearance</span></div>
+        <div class="stat ring-danger"><span class="overline">Outstanding</span><span class="v money" style="color:var(--danger)">$2,685.02</span><span class="hint">$1,647.05 overdue, INV-1919</span></div>
+        <div class="stat"><span class="overline">Next Due</span><span class="v">Jul 12</span><span class="hint">INV-1926 · $1,037.97 · Net 15</span></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Checks in Flight</h3><span class="muted" style="font-size:12px">handed to driver or mailed, tracked until cleared</span></div>
+            <table class="tbl" style="--row-h:48px">
+              <thead><tr><th>Check</th><th>For</th><th class="r">Amount</th><th>Progress</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="mono primary-cell">#1207</td><td>INV-1913 · given to Julia, Jul 3</td><td class="r">$1,388.05</td><td><div class="chk"><span class="st done"><i data-ic="check" data-sz="11"></i>Recorded</span><span class="sep"></span><span class="st done"><i data-ic="check" data-sz="11"></i>Deposited</span><span class="sep"></span><span class="st">Cleared</span></div></td></tr>
+                <tr class="row"><td class="mono primary-cell">#1204</td><td>INV-1884 · Jun 21</td><td class="r">$1,402.80</td><td><div class="chk"><span class="st done"><i data-ic="check" data-sz="11"></i>Recorded</span><span class="sep"></span><span class="st done"><i data-ic="check" data-sz="11"></i>Deposited</span><span class="sep"></span><span class="st done"><i data-ic="check" data-sz="11"></i>Cleared</span></div></td></tr>
+                <tr class="row urgent"><td class="mono primary-cell">#1198</td><td>INV-1861 · Jun 14 · <b style="color:var(--danger)">returned NSF</b>, re-pay by check or cash on next delivery</td><td class="r">$1,088.90</td><td><span class="badge b-danger">Bounced · fee $25.00</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Credits</h3><span class="badge b-success">$136.40 available</span></div>
+            <table class="tbl" style="--row-h:46px">
+              <thead><tr><th>Credit</th><th>From</th><th class="r">Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="mono primary-cell">CN-0144</td><td>Crushed boxes · ORD-2398 (photo)</td><td class="r">$88.20</td><td><span class="badge b-info">Applies to next invoice</span></td></tr>
+                <tr class="row"><td class="mono primary-cell">CN-0143</td><td>Price adjustment · INV-1919</td><td class="r">$48.20</td><td><span class="badge b-info">Applies to next invoice</span></td></tr>
+                <tr class="row"><td class="mono primary-cell">CN-0141</td><td>Over-delivery · ORD-2310</td><td class="r">$36.80</td><td><span class="badge b-success">Applied · INV-1921</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>How to Pay</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Cash / check</span><b style="color:var(--ink-900)">To your driver at delivery</b></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Checks payable to</span><b style="color:var(--ink-900)">Golden State Distribution</b></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13px"><span class="muted">ACH</span><b class="mono" style="color:var(--ink-900);font-size:12px">Routing 121000358 · Acct ••6604</b></div>
+              <div style="display:flex;gap:10px;padding:11px 13px;border-radius:9px;background:var(--sunken);font-size:11.5px;color:var(--ink-500);line-height:1.55;margin-top:10px">
+                <i data-ic="check" data-sz="13" style="flex:none;margin-top:1px"></i>
+                <span>Every payment you make shows here within minutes of the driver or office recording it, receipts downloadable per payment.</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Statements</h3></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px"><i data-ic="filetext" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">June 2026, opening $2,204.10 · closing $2,685.02</span><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px"><i data-ic="filetext" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">May 2026</span><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;font-size:13px"><i data-ic="filetext" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">April 2026</span><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Question about a charge?</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px">
+              <button class="btn btn-secondary" style="justify-content:center"><i data-ic="chat" data-sz="15"></i>Dispute a line, opens in Messages</button>
+              <span class="faint" style="font-size:11.5px;text-align:center">Approved disputes become credits here automatically.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

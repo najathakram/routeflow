@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Admin AI Settings</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:860px}
+  body{margin:0;overflow:hidden}
+  .screen{height:860px}
+  .row21{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;align-items:start}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Admin AI Settings">
+  <script>document.write(RFShell.adminRail('ai'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>AI Settings</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>AI Settings</h2><div class="sub">Platform-wide AI configuration, powers OCR invoice scanning and forecasting.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="check" data-sz="15"></i>Save</button></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Anthropic Configuration</h3><span class="badge b-success"><span class="dot"></span>Key active</span></div>
+          <div class="card-b" style="display:flex;flex-direction:column;gap:14px">
+            <div class="field">
+              <label>API key</label>
+              <div class="input"><input type="password" value="••••••••••••••••••••1a2b" class="mono"><i data-ic="eye" data-sz="15" style="color:var(--ink-400)"></i></div>
+              <span class="faint" style="font-size:11.5px">Verified 12 min ago · stored encrypted, never shown in full.</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+              <div class="field">
+                <label>Default model</label>
+                <div class="select"><span class="mono" style="font-size:12.5px">claude-sonnet-4-5</span><i data-ic="chevdown" data-sz="14"></i></div>
+              </div>
+              <div class="field">
+                <label>Max output tokens</label>
+                <div class="input"><input value="4096" class="mono" style="text-align:right"></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:9px">
+              <button class="btn btn-secondary"><i data-ic="zap" data-sz="15"></i>Test connection</button>
+              <button class="btn btn-secondary" style="color:var(--danger)">Revoke key</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h3>Usage, 30 days</h3></div>
+          <div class="card-b" style="padding-top:6px">
+            <div class="kv"><span class="k">OCR bill scans</span><span class="v mono">1,842</span></div>
+            <div class="kv"><span class="k">Forecast runs</span><span class="v mono">388</span></div>
+            <div class="kv"><span class="k">Tokens in / out</span><span class="v mono">48.2M / 6.4M</span></div>
+            <div class="kv"><span class="k">Est. spend</span><span class="v money">$212.40</span></div>
+            <div class="kv"><span class="k">Error rate</span><span class="v mono" style="color:var(--success)">0.3%</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

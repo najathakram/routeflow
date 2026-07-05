@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Guardrails &amp; Edge Flows</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1300px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden;width:480px}
+  .mh{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .mh h4{font-size:14.5px;font-weight:600;color:var(--ink-900)}
+  .mh .x{margin-left:auto;color:var(--ink-400)}
+  .mb{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+  .mf{display:flex;gap:9px;justify-content:flex-end;padding:13px 20px;border-top:1px solid var(--line);background:var(--canvas)}
+  .warnbox{display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--warning-bg);font-size:12.5px;color:#92400E;line-height:1.55}
+  .qrow{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .qrow:last-child{border-bottom:none}
+  .qic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;flex:none}
+  .offbar{display:flex;align-items:center;gap:10px;width:480px;padding:9px 14px;border-radius:10px;background:var(--ink-900);color:#fff;font-size:12.5px;box-shadow:var(--sh-drop)}
+  .prog{flex:1;height:6px;border-radius:99px;background:var(--sunken);overflow:hidden}
+  .prog i{display:block;height:100%;border-radius:99px;background:var(--accent-strong)}
+  .stopcard{width:480px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh-card);padding:14px 16px}
+  .reason{display:inline-flex;height:30px;align-items:center;padding:0 13px;border-radius:999px;border:1px solid var(--line-strong);font-size:12.5px;font-weight:600;color:var(--ink-700)}
+  .reason.on{background:var(--ink-900);border-color:var(--ink-900);color:#fff}
+</style>
+</head>
+<body data-screen-label="Guardrails &amp; Edge Flows">
+  <div class="g">
+
+    <div class="cell">
+      <div class="lbl">offline mode, scans, POD, payments queue locally · auto-sync on reconnect</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="offbar"><i data-ic="live" data-sz="15" style="opacity:.6"></i><b>You're offline.</b><span style="color:rgba(255,255,255,.65)">Keep working, 6 actions queued.</span><span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:rgba(255,255,255,.5)">retrying…</span></div>
+        <div class="modal">
+          <div class="mh"><h4>Sync queue</h4><span class="badge b-warning">6 pending</span><i class="x" data-ic="x" data-sz="15"></i></div>
+          <div class="mb" style="gap:0;padding-top:8px;padding-bottom:8px">
+            <div class="qrow"><span class="qic" style="background:var(--primary-soft);color:var(--accent-deep)"><i data-ic="barcode" data-sz="13"></i></span><span style="flex:1">3 scanned lines, ORD draft (Sunrise Market)</span><span class="faint mono" style="font-size:11px">10:42 AM</span></div>
+            <div class="qrow"><span class="qic" style="background:var(--success-bg);color:#15803D"><i data-ic="check" data-sz="13"></i></span><span style="flex:1">POD photo + signature, stop 6, Casa Verde</span><span class="faint mono" style="font-size:11px">10:38 AM</span></div>
+            <div class="qrow"><span class="qic" style="background:var(--info-bg);color:var(--info)"><i data-ic="dollar" data-sz="13"></i></span><span style="flex:1">Cash payment $412.80, Hillside Mini Mart</span><span class="faint mono" style="font-size:11px">10:31 AM</span></div>
+            <div style="display:flex;gap:9px;padding:11px 0 4px;align-items:center">
+              <span class="faint" style="font-size:11.5px;flex:1">Everything is timestamped locally; conflicts (e.g. stock counts) surface for review after sync instead of overwriting.</span>
+              <button class="btn sm btn-secondary"><i data-ic="refresh" data-sz="13"></i>Retry now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">credit-limit guard, warn at order time · same responsibility pattern as licenses</div>
+      <div class="modal">
+        <div class="mh"><h4>Credit limit reached</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="warnbox"><i data-ic="alert" data-sz="15" style="flex:none;margin-top:1px"></i><span><b>Sunrise Market</b> owes <b class="money">$2,685.02</b>, this $280.69 order puts them <b class="money">$312.71</b> over their $3,000.00 limit ($1,647.05 is 2d overdue).</span></div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span class="qic" style="background:var(--success-bg);color:#15803D"><i data-ic="dollar" data-sz="13"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Collect a payment first</b><br><span class="faint" style="font-size:11.5px">Record against INV-1919, order proceeds under the limit</span></span><i data-ic="chevright" data-sz="14" style="color:var(--ink-400)"></i></div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span class="qic" style="background:var(--warning-bg);color:#B45309"><i data-ic="shield" data-sz="13"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Proceed over limit</b><br><span class="faint" style="font-size:11.5px">Logged to audit trail · flags the account for follow-up</span></span><i data-ic="chevright" data-sz="14" style="color:var(--ink-400)"></i></div>
+          <span class="faint" style="font-size:11.5px">Limits and warn/hold behavior are per-customer (Customer → Edit). Buyer portal shows "confirm with seller" instead of blocking checkout.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel order</button><button class="btn btn-primary">Collect payment first</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">short pick, stock is short at loading · invoice auto-adjusts · buyer auto-notified</div>
+      <div class="modal">
+        <div class="mh"><h4>Loading check for ORD-2416</h4><span class="badge b-warning">1 short</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb" style="gap:0;padding-top:8px;padding-bottom:8px">
+          <div class="qrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Agua Mineral 355ml</span><span class="mono">10 / 10</span></div>
+          <div class="qrow" style="background:#FFFBEB;margin:0 -20px;padding:9px 20px"><span class="cb ind"><i data-ic="minus" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Cloud Chips BBQ 1.5oz</b><br><span class="faint" style="font-size:11.5px">only 7 on shelf, short 3 boxes</span></span><span class="mono" style="color:#B45309;font-weight:600">7 / 10</span></div>
+          <div class="qrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1">Valle Tortilla Chips 11oz</span><span class="mono">16 / 16</span></div>
+          <div style="padding:11px 0 4px"><span class="faint" style="font-size:11.5px">Delivering short adjusts the invoice to 7 boxes (−$42.75), notifies Bright Mart with the reason, and offers the 3 boxes on their next delivery. No credit-note paperwork needed.</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Substitute item…</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Deliver 7 &amp; adjust invoice</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">failed delivery, driver marks reason · reschedule or restock · buyer notified</div>
+      <div class="stopcard">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <b style="font-size:14px;color:var(--ink-900)">Couldn't deliver, Hillside Mini Mart</b>
+          <span class="badge b-danger" style="margin-left:auto">Stop 7</span>
+        </div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">
+          <span class="reason on">Store closed</span><span class="reason">Refused delivery</span><span class="reason">No access</span><span class="reason">Can't pay (COD)</span>
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+          <div style="width:76px;height:56px;border-radius:8px;border:1px dashed var(--line-strong);background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 5px,#F4F7FB 5px,#F4F7FB 10px);display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:9px;color:var(--ink-400)">photo</div>
+          <span class="faint" style="font-size:11.5px;align-self:center">Photo required, timestamped + geotagged, attached to the order timeline.</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <button class="btn btn-primary" style="justify-content:center"><i data-ic="clock" data-sz="14"></i>Retry later on this run</button>
+          <div style="display:flex;gap:7px">
+            <button class="btn btn-secondary" style="flex:1;justify-content:center">Move to Friday's route</button>
+            <button class="btn btn-secondary" style="flex:1;justify-content:center">Return &amp; restock</button>
+          </div>
+          <span class="faint" style="font-size:11.5px;text-align:center">Restocking reverses inventory + voids the draft invoice; the buyer gets the reason + new ETA automatically.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">buyer cart, order cutoff + minimum order · never a hard block</div>
+      <div class="modal" style="width:480px">
+        <div class="mb" style="padding:16px 20px">
+          <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--info-bg);font-size:12.5px;color:#0369A1;line-height:1.55">
+            <i data-ic="clock" data-sz="15" style="flex:none;margin-top:1px"></i>
+            <span><b>Order by 6:00 PM today</b> for Tuesday delivery, after that this cart rolls to Friday, Jul 10. <span class="mono" style="font-size:11.5px">4h 12m left</span></span>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span class="muted">Golden State's minimum order</span><b style="color:var(--ink-900)" class="money">$88.00 of $150.00</b></div>
+            <div class="prog"><i style="width:59%"></i></div>
+            <div class="faint" style="font-size:11.5px;margin-top:6px">$62.00 to go, from your usuals:</div>
+          </div>
+          <div class="qrow"><span style="flex:1">Agua Mineral 355ml · Case 24 <span class="faint">· you order weekly</span></span><span class="money" style="color:var(--ink-900)">$21.60</span><button class="btn sm btn-primary">Add</button></div>
+          <div class="qrow"><span style="flex:1">Valle Tortilla Chips 11oz · Case 9</span><span class="money" style="color:var(--ink-900)">$44.10</span><button class="btn sm btn-primary">Add</button></div>
+          <span class="faint" style="font-size:11.5px">Below-minimum carts can still be submitted as a <b>request</b>, the seller approves or merges it into your next delivery.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">reorder price review, standing orders &amp; reorders never change price silently</div>
+      <div class="modal">
+        <div class="mh"><h4>Prices changed since last time</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb" style="gap:0;padding-top:8px;padding-bottom:8px">
+          <div class="qrow"><span style="flex:1">Sunburst Orange Soda 2L</span><span class="mono"><span class="strike">$18.40</span> → <b style="color:var(--danger)">$19.20</b></span></div>
+          <div class="qrow"><span style="flex:1">Roast House Cold Brew 8oz</span><span class="mono"><span class="strike">$3.10</span> → <b style="color:var(--success)">$2.95</b></span></div>
+          <div class="qrow"><span style="flex:1;color:var(--ink-400)">6 items unchanged</span><span class="faint mono" style="font-size:11.5px">new total $419.80 (+$7.20)</span></div>
+          <div style="padding:10px 0 4px"><span class="faint" style="font-size:11.5px">Applies to one-tap reorders and scheduled standing orders, scheduled runs pause for approval only when the total moves more than your threshold (default 5%).</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Remove changed items</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Accept &amp; place order</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">report an issue, buyer-side dispute becomes a seller-side task · no phone tag</div>
+      <div class="modal">
+        <div class="mh"><h4>Report an issue, ORD-2398</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div style="display:flex;gap:7px;flex-wrap:wrap">
+            <span class="reason on">Damaged</span><span class="reason">Missing items</span><span class="reason">Wrong item</span><span class="reason">Price wrong</span>
+          </div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:9px 13px"><span style="flex:1">Valle Tortilla Chips 11oz, <b style="color:var(--ink-900)">2 of 16 boxes</b> crushed</span><div style="width:56px;height:42px;border-radius:7px;border:1px dashed var(--line-strong);background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 5px,#F4F7FB 5px,#F4F7FB 10px);display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:8.5px;color:var(--ink-400)">photo</div></div>
+          <span class="faint" style="font-size:11.5px">Lands on Golden State's Returns queue with the photo. Approved issues credit your next invoice automatically, you'll see the credit note here.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="send" data-sz="14"></i>Send to Golden State</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">failed payment, bounced check reopens the invoice cleanly · dunning schedule</div>
+      <div class="modal">
+        <div class="mh"><h4>Mark payment failed, PMT-0644</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="warnbox"><i data-ic="alert" data-sz="15" style="flex:none;margin-top:1px"></i><span>Check #4471 from <b>Golden Gate Grocery</b> was returned (NSF). Reversing re-opens <b class="mono">INV-1913</b> with its full <span class="money">$1,388.05</span> balance.</span></div>
+          <div class="qrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1;font-size:12.5px">Add returned-check fee <b class="money">$25.00</b> to the invoice</span></div>
+          <div class="qrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1;font-size:12.5px">Start reminder schedule (day 0 · 3 · 7) + flag account "check-verify"</span></div>
+          <span class="faint" style="font-size:11.5px">The original receipt stays in the audit trail marked <b>Reversed</b>, nothing is deleted.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-danger">Reverse payment</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">duplicate detection, on create &amp; import · merge instead of fork</div>
+      <div class="modal">
+        <div class="mh"><h4>New Customer</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="field"><label>Business name</label><div class="input focus"><input value="Sunrise Market SF"></div></div>
+          <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;border:1px solid #FCD34D;background:#FFFDF5;font-size:12.5px;color:var(--ink-700);line-height:1.55">
+            <i data-ic="users" data-sz="15" style="color:#B45309;flex:none;margin-top:1px"></i>
+            <span style="flex:1"><b style="color:var(--ink-900)">Looks like a duplicate.</b> "Sunrise Market" (CUST-0114, same phone) already exists with 86 orders.</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" style="flex:1;justify-content:center">Open existing</button>
+            <button class="btn btn-ghost" style="flex:1;justify-content:center">Create anyway</button>
+          </div>
+          <span class="faint" style="font-size:11.5px">Same check runs on imports (fuzzy name + phone + address), matches land in a review list with one-click merge that keeps both histories.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">run settlement, driver cash/checks reconciled at day end · nothing goes missing</div>
+      <div class="modal">
+        <div class="mh"><h4>Settle run: East Bay Corridor</h4><span class="badge b-accent">J. Reyes</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb" style="gap:0;padding-top:8px;padding-bottom:8px">
+          <div class="qrow"><span style="flex:1">Expected from 3 COD stops</span><span class="money" style="color:var(--ink-900);font-weight:600">$2,788.95</span></div>
+          <div class="qrow"><span style="flex:1">Cash counted</span><span class="money">$1,400.90</span></div>
+          <div class="qrow"><span style="flex:1">Checks (2)</span><span class="money">$1,388.05</span></div>
+          <div class="qrow"><span style="flex:1"><b style="color:var(--ink-900)">Difference</b></span><span class="money" style="color:var(--success);font-weight:600">$0.00 ✓</span></div>
+          <div style="padding:10px 0 4px"><span class="faint" style="font-size:11.5px">Shortages create a variance record tied to the run, visible in Reports, never silently absorbed. Payments post to AR the moment the driver records them.</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-primary" style="width:100%;justify-content:center"><i data-ic="check" data-sz="14"></i>Close run: all reconciled</button></div>
+      </div>
+    </div>
+
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

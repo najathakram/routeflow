@@ -7,10 +7,26 @@
 
 import axios from "axios";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
+import { hasReauthHandler, requestReauth } from "./session-expiry";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
 export const apiClient = axios.create({ baseURL: BASE_URL });
+
+/** Read the username from the operator access token payload, even if expired
+ *  (used to label the re-auth sheet). Returns null if unreadable. */
+function usernameFromOpToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem(OP_KEYS.accessToken);
+  if (!token) return null;
+  try {
+    const part = token.split(".")[1];
+    const payload = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
+    return (payload?.username as string) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -40,6 +56,17 @@ const MARKETING_ROUTES = new Set([
 function isOnMarketingRoute(): boolean {
   if (typeof window === "undefined") return false;
   return MARKETING_ROUTES.has(window.location.pathname);
+}
+
+/** Operator surfaces only — the in-place re-auth sheet must never appear over
+ *  the buyer portal or the auth pages (a stale operator token can coexist with
+ *  a buyer session, RF-220). Buyer/marketing keep the redirect fallback. */
+function isOperatorSurface(): boolean {
+  if (typeof window === "undefined") return false;
+  const path = window.location.pathname;
+  if (isOnMarketingRoute()) return false;
+  if (path.startsWith("/buyer") || path === "/login" || path === "/admin-login") return false;
+  return true;
 }
 
 // ─── Request interceptor: attach access token + tenant slug ──────────────────
@@ -125,6 +152,26 @@ apiClient.interceptors.response.use(
       processQueue(null, data.accessToken);
       return apiClient(original);
     } catch (refreshError) {
+      // Refresh failed. Before bouncing to /login (which discards drafts),
+      // offer an in-place re-auth sheet when one is mounted (operator surfaces).
+      // The failed request stays queued until the user unlocks or declines.
+      const username = usernameFromOpToken();
+      if (isOperatorSurface() && username && hasReauthHandler()) {
+        try {
+          const unlocked = await requestReauth({ username });
+          if (unlocked) {
+            const fresh = localStorage.getItem(OP_KEYS.accessToken);
+            if (fresh) {
+              original.headers.Authorization = `Bearer ${fresh}`;
+              processQueue(null, fresh);
+              return apiClient(original);
+            }
+          }
+        } catch {
+          // fall through to the redirect below
+        }
+      }
+      // Gave up (declined / no sheet mounted): clear tokens and redirect.
       processQueue(refreshError, null);
       const buyerToken = localStorage.getItem(BUYER_KEYS.accessToken);
       const opToken = localStorage.getItem(OP_KEYS.accessToken);

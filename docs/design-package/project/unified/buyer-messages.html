@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Messages</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .convo{max-width:860px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--paper);box-shadow:var(--sh-card);display:flex;flex-direction:column;height:770px}
+  .chead{display:flex;align-items:center;gap:11px;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .cbody{flex:1;padding:20px;display:flex;flex-direction:column;gap:12px;background:var(--canvas);overflow:hidden}
+  .bub{max-width:460px;padding:11px 14px;border-radius:12px;font-size:13.5px;line-height:1.5}
+  .bub .t{font-size:10.5px;color:var(--ink-400);margin-top:4px;font-family:var(--font-mono)}
+  .bub.in{background:var(--paper);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+  .bub.out{background:var(--accent-strong);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+  .bub.out .t{color:rgba(255,255,255,.6)}
+  .ctx{align-self:center;display:flex;gap:9px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:99px;padding:6px 14px;font-size:11.5px;color:var(--ink-500)}
+  .cfoot{display:flex;gap:9px;padding:14px 16px;border-top:1px solid var(--line);align-items:center}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Messages">
+  <script>document.write(RFShell.buyerRail('messages'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Messages</h2><div class="sub">Chat with Golden State Distribution, replies also reach you by WhatsApp if you're not in the portal.</div></div>
+      </div>
+
+      <div class="convo">
+        <div class="chead">
+          <div style="width:34px;height:34px;border-radius:9px;background:#0E8480;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700">GS</div>
+          <div style="flex:1"><b style="font-size:14px;color:var(--ink-900)">Golden State Distribution</b><div class="faint" style="font-size:11.5px">Usually replies within 15 minutes on delivery days</div></div>
+          <span class="badge b-success"><span class="dot"></span>Online</span>
+        </div>
+        <div class="cbody">
+          <div class="ctx"><i data-ic="alert" data-sz="12"></i>Issue report attached, ORD-2398 · 2 boxes crushed · photo</div>
+          <div class="bub out">Hi, two boxes of tortilla chips arrived crushed on today's delivery. Photo attached. Can we get credit?<div class="t">11:02 AM · seen</div></div>
+          <div class="bub in">Sorry about that, Rosa, approved. Credit note CN-0144 for $88.20 will apply to your next invoice automatically. The photo made it easy, thank you!<div class="t">11:09 AM · Maria at Golden State</div></div>
+          <div class="ctx"><i data-ic="check" data-sz="12"></i>Credit note CN-0144 · $88.20 · applies to your next invoice</div>
+          <div class="bub out">Great, thanks! Also, can we move Friday's delivery to before 10 AM this week?<div class="t">11:12 AM · sent</div></div>
+          <div class="bub in">Done, you're now stop 2 on Friday's run, ETA 8:40 AM. It'll show on your tracking page.<div class="t">11:15 AM · Maria at Golden State</div></div>
+        </div>
+        <div class="cfoot">
+          <button class="iconbtn"><i data-ic="camera" data-sz="17"></i></button>
+          <div class="input" style="flex:1"><span class="ph">Write a message…</span></div>
+          <button class="btn btn-primary"><i data-ic="send" data-sz="15"></i>Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

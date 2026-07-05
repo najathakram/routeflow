@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Invoice Detail</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1050px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1050px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .doc{padding:26px 30px}
+  .doc .dochead{display:flex;justify-content:space-between;margin-bottom:24px}
+  .doc h3{font-family:var(--font-display);font-size:26px;font-weight:400}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+  .sumline{display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:11px;font-weight:600;font-size:16px;color:var(--ink-900)}
+  .tl{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .tl:last-child{border-bottom:none}
+  .tl .d{width:8px;height:8px;border-radius:99px;margin-top:4px;flex:none}
+  .tl b{color:var(--ink-900);font-weight:600}
+  .tl .t{color:var(--ink-400);font-size:11.5px;margin-top:1px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Invoice Detail">
+  <script>document.write(RFShell.operatorRail('fin.invoices'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Invoices'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><h2 class="mono" style="font-family:var(--font-mono)">INV-1919</h2><span class="badge b-danger">Overdue · 2d</span><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">Paired · INV-1919-R (tobacco)</span></div>
+          <div class="sub">Sunrise Market · from ORD-2389 · issued Jun 18, 2026 · due Jul 3, 2026 · standard items only, the order's tobacco lines are on <a class="btn-link" style="font-size:13px">INV-1919-R</a></div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Print</button>
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>PDF</button>
+          <button class="btn btn-secondary"><i data-ic="mail" data-sz="15"></i>Send email</button>
+          <button class="btn btn-primary"><i data-ic="dollar" data-sz="15"></i>Record Payment</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card doc">
+          <div class="dochead">
+            <div>
+              <h3>Invoice</h3>
+              <div class="mono" style="font-size:12.5px;color:var(--ink-500);margin-top:4px">INV-1919 · Jun 18, 2026</div>
+            </div>
+            <div style="text-align:right;font-size:12.5px;color:var(--ink-500);line-height:1.6">
+              <b style="color:var(--ink-900);font-size:13.5px">Golden State Distribution</b><br>2200 Jerrold Ave, San Francisco, CA<br><span class="mono">billing@goldenstate.co</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;font-size:12.5px;line-height:1.6">
+            <div><span class="overline">Bill To</span><br><b style="color:var(--ink-900);font-size:13.5px">Sunrise Market</b><br>1180 Valencia St<br>San Francisco, CA 94110</div>
+            <div style="text-align:right"><span class="overline">Terms</span><br>Net 15 · due <b style="color:var(--danger)">Jul 3, 2026</b><br>Reference ORD-2389</div>
+          </div>
+          <table class="tbl" style="--row-h:40px">
+            <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="r">Amount</th></tr></thead>
+            <tbody>
+              <tr><td><span class="primary-cell">Agua Mineral 355ml · Case 24</span></td><td class="r">6 boxes</td><td class="r">$21.60 <span class="strike" style="font-size:11px">$24.00</span></td><td class="r">$129.60</td></tr>
+              <tr><td><span class="primary-cell">Sunburst Orange Soda 2L · Case 8</span></td><td class="r">12 boxes</td><td class="r">$18.40</td><td class="r">$220.80</td></tr>
+              <tr><td><span class="primary-cell">Valle Tortilla Chips 11oz · Case 9</span></td><td class="r">18 boxes</td><td class="r">$44.10</td><td class="r">$793.80</td></tr>
+              <tr><td><span class="primary-cell">Roast House Cold Brew 8oz</span></td><td class="r">120 pcs</td><td class="r">$3.10 <span class="strike" style="font-size:11px">$3.45</span></td><td class="r">$372.00</td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <div style="width:280px">
+              <div class="sumline"><span class="muted">Subtotal</span><span class="money" style="color:var(--ink-900)">$1,516.20</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$130.85</span></div>
+              <div class="sumline"><span class="muted">Paid to date</span><span class="money" style="color:var(--ink-900)">$0.00</span></div>
+              <div class="sumline total"><span>Balance due</span><span class="money">$1,647.05</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Send</h3><span class="muted" style="font-size:12px">email + mark-as-sent</span></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px">
+              <button class="btn btn-primary" style="justify-content:center"><i data-ic="mail" data-sz="15"></i>Email to rosa@sunrisemkt.com</button>
+              <div style="display:flex;gap:9px">
+                <button class="btn btn-secondary" style="flex:1;justify-content:center"><i data-ic="check" data-sz="14"></i>Mark as Sent</button>
+                <button class="btn btn-secondary" style="flex:1;justify-content:center"><i data-ic="printer" data-sz="14"></i>Print</button>
+              </div>
+              <span class="faint" style="font-size:11.5px">Invoices send by email only, orders offer WhatsApp / SMS.</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Payment History</h3></div>
+            <div class="card-b">
+              <div class="empty" style="padding:22px 16px">
+                <div class="art"><i data-ic="dollar" data-sz="18"></i></div>
+                <b>No payments yet</b>
+                <p>Record a payment to apply it against this balance.</p>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Activity</h3></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:6px">
+              <div class="tl"><span class="d" style="background:var(--danger)"></span><div><b>Became overdue</b><div class="t">Jul 4, 12:00 AM · auto</div></div></div>
+              <div class="tl"><span class="d" style="background:var(--info)"></span><div><b>Reminder emailed</b> to rosa@sunrisemkt.com<div class="t">Jul 1, 9:02 AM · Maria L.</div></div></div>
+              <div class="tl"><span class="d" style="background:var(--info)"></span><div><b>Invoice emailed</b> · opened Jun 18, 2:11 PM<div class="t">Jun 18, 11:34 AM · Maria L.</div></div></div>
+              <div class="tl"><span class="d" style="background:var(--success)"></span><div><b>Created from order</b> ORD-2389<div class="t">Jun 18, 11:30 AM · Maria L.</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

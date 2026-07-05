@@ -90,3 +90,53 @@ export function computeLineSubtotal({
   }
   return roundMoney(unitPrice * qty);
 }
+
+// ─── Margin: the "negotiation floor" (pos-cost-roles-spec §1) ─────────────────
+// Mirror of `apps/api/src/common/pricing.ts`. `unitCost` (Product.averageCost) is
+// per PIECE; `unitPrice` is per SELLING UNIT (a BOX when unitsPerBox > 1). Bring
+// cost onto the selling-unit basis before comparing. Keep all three in sync.
+
+/** Cost of one selling unit: piece cost × unitsPerBox for boxed products, else the piece cost. */
+export function costPerSellingUnit(unitCost: number, unitsPerBox?: number | null): number {
+  const upb = Number(unitsPerBox ?? 0);
+  return upb > 1 ? Number(unitCost) * upb : Number(unitCost);
+}
+
+/** Gross margin fraction on a line: (price − cost) / price. null when price ≤ 0 or cost unknown. */
+export function computeMarginFraction(
+  unitPrice: number,
+  unitCost: number | null | undefined,
+  unitsPerBox?: number | null,
+): number | null {
+  if (unitCost == null || !Number.isFinite(Number(unitCost))) return null;
+  const price = Number(unitPrice);
+  if (!(price > 0)) return null;
+  const cost = costPerSellingUnit(Number(unitCost), unitsPerBox);
+  return (price - cost) / price;
+}
+
+/** The selling-unit price that yields exactly `floor` margin for the given piece cost. */
+export function priceForMarginFloor(
+  unitCost: number,
+  floor: number,
+  unitsPerBox?: number | null,
+): number {
+  const cost = costPerSellingUnit(Number(unitCost), unitsPerBox);
+  const f = Math.min(Math.max(Number(floor) || 0, 0), 0.99); // margin must stay < 1
+  return roundMoney(cost / (1 - f));
+}
+
+export type MarginClass = "ok" | "warn" | "belowFloor" | "belowCost";
+
+/**
+ * Classify a margin fraction against a floor:
+ * `belowCost` (< 0) · `belowFloor` (< floor) · `warn` (within 5 points above floor) · `ok`.
+ * Returns null when margin is unknown (no cost).
+ */
+export function classifyMargin(margin: number | null, floor: number): MarginClass | null {
+  if (margin == null) return null;
+  if (margin < 0) return "belowCost";
+  if (margin < floor) return "belowFloor";
+  if (margin < floor + 0.05) return "warn";
+  return "ok";
+}

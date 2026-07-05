@@ -1228,6 +1228,41 @@ export class CustomersService {
     );
   }
 
+  // ─── Restore ───────────────────────────────────────────────────────────────
+
+  /**
+   * Restore a soft-deleted customer — the server side of the 8-second Undo
+   * (unified/ux-standards.html). Clears `deletedAt` and reactivates the
+   * customer's user account to `restoreStatus` (the caller passes the user's
+   * pre-delete status so the undo restores exactly — e.g. a SUSPENDED customer
+   * comes back SUSPENDED, not ACTIVE). Idempotent: restoring a live customer is
+   * a no-op.
+   *
+   * `tenantId` is selected so `forTenant()`'s findUnique post-filter can reject
+   * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
+   * oracle.
+   */
+  async restoreCustomer(id: string, restoreStatus?: string) {
+    const customer = await this.prisma.forTenant().customer.findUnique({
+      where: { id },
+      select: { id: true, userId: true, deletedAt: true, tenantId: true },
+    });
+    if (!customer) throw new NotFoundException("Customer not found");
+    if (!customer.deletedAt) return { success: true, restored: false };
+
+    // Only ACTIVE/SUSPENDED are valid restore targets (INACTIVE = the removed
+    // state); default to ACTIVE when the caller does not specify.
+    const status = restoreStatus === "SUSPENDED" ? "SUSPENDED" : "ACTIVE";
+
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+      if (customer.userId) {
+        await tx.user.update({ where: { id: customer.userId }, data: { status } });
+      }
+    });
+    return { success: true, restored: true };
+  }
+
   // ─── Delete ────────────────────────────────────────────────────────────────
 
   /**

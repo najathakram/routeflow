@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, My Routes (Driver)</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:900px}
+  body{margin:0;overflow:hidden}
+  .screen{height:900px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
+  .stop{display:flex;align-items:center;gap:13px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px}
+  .stop:last-child{border-bottom:none}
+  .stop .num{width:24px;height:24px;border-radius:99px;display:grid;place-items:center;font-size:11px;font-weight:700;font-family:var(--font-mono);flex:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="My Routes, Driver Self View">
+  <!-- reduced DRIVER nav: Dashboard / My Routes / Settings -->
+  <aside class="rail">
+    <div class="rail-brand"><div class="rail-logo">GS</div><div><div class="t">Golden State Dist.</div><div class="s">RouteFlow</div></div></div>
+    <nav>
+      <a class="nl"><i data-ic="grid"></i>Dashboard</a>
+      <a class="nl active"><i data-ic="truck"></i>My Routes</a>
+      <a class="nl"><i data-ic="sliders"></i>Settings</a>
+    </nav>
+    <div class="rail-foot"><a class="nl"><i data-ic="chevleft"></i>Collapse</a></div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <h1>My Routes</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search or jump to…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i><span class="nbadge">1</span></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">JR</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Julia</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Today, East Bay Corridor</h2><div class="sub">Started 7:00 AM · VAN-02 · reduced driver view: dashboard, routes and settings only.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Manifest</button>
+          <button class="btn btn-primary"><i data-ic="pin" data-sz="15"></i>Navigate to next stop</button>
+        </div>
+      </div>
+
+      <div class="grid3">
+        <div class="stat"><span class="overline">Progress</span><span class="v">5 <span class="faint" style="font-size:15px;font-weight:500">/ 14 stops</span></span><span class="hint">On pace · ETA back 2:40 PM</span></div>
+        <div class="stat"><span class="overline">Next Stop</span><span class="v" style="font-size:18px">Casa Verde Foods</span><span class="hint">830 Fruitvale Ave · gate #2214 · ~10:20 AM</span></div>
+        <div class="stat"><span class="overline">Collected Today</span><span class="v money">$1,731.25</span><span class="hint">1 cash-on-delivery stop remaining</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>Stops</h3><span class="badge b-accent"><span class="dot"></span>Run in progress</span></div>
+        <div class="stop"><span class="num" style="background:var(--success);color:#fff"><i data-ic="check" data-sz="12"></i></span><div style="flex:1"><b style="color:var(--ink-900)">Golden Gate Grocery</b><div class="faint" style="font-size:11.5px">delivered 9:52 AM · signed M. Chen · payment collected</div></div><span class="money">$1,731.25</span><span class="badge b-success">Done</span></div>
+        <div class="stop"><span class="num" style="background:var(--success);color:#fff"><i data-ic="check" data-sz="12"></i></span><div style="flex:1"><b style="color:var(--ink-900)">Lucky Corner Deli</b><div class="faint" style="font-size:11.5px">delivered 10:07 AM · left at door · photo POD</div></div><span class="money">$862.40</span><span class="badge b-success">Done</span></div>
+        <div class="stop" style="background:var(--primary-mist)"><span class="num" style="background:var(--accent-strong);color:#fff">6</span><div style="flex:1"><b style="color:var(--ink-900)">Casa Verde Foods</b><div class="faint" style="font-size:11.5px">6 items · gate code #2214 · window 10 to 11 AM</div></div><span class="money">$644.90</span><button class="btn sm btn-primary"><i data-ic="check" data-sz="13"></i>Arrived, start delivery</button></div>
+        <div class="stop"><span class="num" style="background:var(--sunken);color:var(--ink-500);border:1.5px solid var(--line-strong)">7</span><div style="flex:1"><b style="color:var(--ink-900)">Hillside Mini Mart</b><div class="faint" style="font-size:11.5px">3 items · window 10:30 to 11:30 AM · collect payment (cash)</div></div><span class="money">$412.80</span><span class="badge b-neutral">Pending</span></div>
+        <div class="stop"><span class="num" style="background:var(--sunken);color:var(--ink-500);border:1.5px solid var(--line-strong)">8</span><div style="flex:1"><b style="color:var(--ink-900)">Bright Mart #2</b><div class="faint" style="font-size:11.5px">11 items · window 11 AM to 12 PM</div></div><span class="money">$2,394.60</span><span class="badge b-neutral">Pending</span></div>
+        <div class="stop"><span class="num" style="background:var(--sunken);color:var(--ink-400);border:1.5px solid var(--line-strong)">…</span><div style="flex:1"><span class="muted">6 more stops, Fruitvale → San Leandro → warehouse</span></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

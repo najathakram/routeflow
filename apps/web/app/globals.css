@@ -2,46 +2,172 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Semantic design tokens ─────────────────────────────────────────────────── */
+/* ============================================================================
+   RouteFlow Unified — "Ledger" design tokens
+   One foundation; surfaces differ only by --accent + density.
+   Mirrors docs/design-package/project/unified/rf.css. Tailwind semantic tokens
+   (packages/config/tailwind.config.ts) resolve against these variables, so the
+   whole app adopts the Ledger palette without per-screen edits.
+   ============================================================================ */
 :root {
-  /* Surface */
-  --background:           #ffffff;
-  --foreground:           #1B3A5C;   /* navy */
-  --surface-raised:       #f8fafc;
-  --surface-border:       #e2e8f0;
+  /* ── ink neutrals ── */
+  --ink-900: #0f1b2d;
+  --ink-700: #33425b;
+  --ink-500: #5c6b82;
+  --ink-400: #8b97ac;
+  /* RGB channels so Tailwind can alpha-composite `ink-*`/`navy` opacity
+     modifiers (text-navy/70, bg-navy/10, text-ink-400/60, ...). A bare var()
+     color cannot take an opacity modifier — those utilities would emit no CSS. */
+  --ink-900-rgb: 15 27 45;
+  --ink-700-rgb: 51 66 91;
+  --ink-500-rgb: 92 107 130;
+  --ink-400-rgb: 139 151 172;
 
-  /* Tenant brand — overridden at runtime by TenantProvider */
-  --primary:              #2563eb;   /* brand-600 */
-  --primary-foreground:   #ffffff;
+  /* ── surfaces ── */
+  --paper: #ffffff;
+  --canvas: #f7f9fc;
+  --sunken: #edf1f6;
+  --line: #e2e8f0;
+  --line-strong: #d6dee8;
 
-  /* Status */
-  --success:              #16a34a;
-  --success-bg:           #dcfce7;
-  --warning:              #d97706;
-  --warning-bg:           #fef3c7;
-  --danger:               #dc2626;
-  --danger-bg:            #fee2e2;
-  --info:                 #0284c7;
-  --info-bg:              #e0f2fe;
+  /* ── brand (static teal) — tenant --primary overrides at runtime ── */
+  --brand-700: #0b6e6b;
+  --brand-600: #0e8480;
+  --brand-500: #14a39f;
+  --brand-300: #7fd1cd;
+  --brand-50: #e8f2f1;
+  --primary: var(--brand-500);
+  --primary-strong: var(--brand-600);
+  --primary-deep: var(--brand-700);
+  --primary-soft: var(--brand-50);
+  --primary-mist: #f2f8f8;
+  --primary-foreground: #ffffff;
+
+  /* ── context accent (per-surface knob #1) — operator follows tenant brand ── */
+  --accent: var(--primary);
+  --accent-strong: var(--primary-strong);
+  --accent-deep: var(--primary-deep);
+  --accent-soft: var(--primary-soft);
+
+  /* ── base surface + text (Tailwind background/foreground tokens) ── */
+  --background: var(--paper);
+  --foreground: var(--ink-700);
+  --surface-raised: var(--canvas);
+  --surface-border: var(--line);
+
+  /* ── status — one set everywhere ── */
+  --success: #16a34a;
+  --success-bg: #dcfce7;
+  --warning: #d97706;
+  --warning-bg: #fef3c7;
+  --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --info: #0284c7;
+  --info-bg: #e0f2fe;
+
+  /* ── shape + elevation ── */
+  --r-ctl: 6px;
+  --r-card: 10px;
+  --sh-card: 0 1px 2px rgba(15, 27, 45, 0.05);
+  --sh-drop: 0 8px 24px rgba(15, 27, 45, 0.14);
+  --sh-modal: 0 24px 64px rgba(15, 27, 45, 0.28);
+
+  /* ── type ── */
+  --font-ui: var(--font-spline), "Spline Sans", system-ui, sans-serif;
+  --font-mono: var(--font-spline-mono), "Spline Sans Mono", ui-monospace, monospace;
+  --font-display: var(--font-instrument-serif), "Instrument Serif", Georgia, serif;
+
+  /* ── density (per-surface knob #2): operator = compact ── */
+  --row-h: 44px;
+  --text-body: 13.5px;
+}
+
+/* ── Buyer portal surface: emerald accent, comfortable density ── */
+.surface-buyer {
+  --accent: #059669;
+  --accent-strong: #047857;
+  --accent-deep: #065f46;
+  --accent-soft: #ecfdf5;
+  --primary-mist: #f0fbf6;
+  --row-h: 52px;
+  --text-body: 14px;
+}
+
+/* ── Platform admin surface: indigo on slate chrome, compact density ── */
+.surface-admin {
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-deep: #3730a3;
+  --accent-soft: #eef2ff;
+  --primary-mist: #f4f5fe;
+  --canvas: #f1f5f9;
+  --sunken: #e7edf4;
+  --line: #e0e7f0;
+  --line-strong: #cbd5e1;
 }
 
 /* Dark mode variables — ready to activate with class="dark" on <html> */
 /* Uncomment when dark mode is enabled:
 .dark {
-  --background:           #0f1b2d;
-  --foreground:           #f1f5f9;
-  --surface-raised:       #152238;
-  --surface-border:       #1e3a5c;
-  --primary:              #60a5fa;
-  --primary-foreground:   #0f1b2d;
+  --paper:      #0f1b2d;
+  --canvas:     #152238;
+  --sunken:     #1a2d4a;
+  --ink-900:    #f1f5f9;
+  --ink-700:    #cbd5e1;
+  --line:       #1e3a5c;
 }
 */
 
 /* ── Base styles ────────────────────────────────────────────────────────────── */
 body {
   color: var(--foreground);
-  background: var(--background);
-  /* font-family set via Tailwind font-sans + Inter variable in layout.tsx */
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+  /* font-family set via Tailwind font-sans (Spline Sans) + variable in layout.tsx */
+}
+
+/* Compact density is scoped to the app surfaces (not marketing/auth), so the
+   per-surface --text-body knob actually applies: operator 13.5px, buyer 14px. */
+.surface-operator,
+.surface-buyer,
+.surface-admin {
+  font-size: var(--text-body);
+}
+
+/* ── Ledger typographic utilities ───────────────────────────────────────────── */
+@layer components {
+  /* Tabular monospace for money / numeric columns. */
+  .money {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Uppercase section label. */
+  .overline {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-500);
+  }
+  /* Instrument Serif display (empty-state titles, hero numerals). */
+  .font-display,
+  .display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    color: var(--ink-900);
+  }
+  /* Strikethrough for original (pre-discount) prices. */
+  .strike {
+    text-decoration: line-through;
+    color: var(--ink-400);
+    font-weight: 400;
+  }
 }
 
 /* ── Utilities ──────────────────────────────────────────────────────────────── */
@@ -58,8 +184,26 @@ body {
     display: none;
   }
 
-  /* Smooth focus ring — consistent across all interactive elements */
+  /* Smooth focus ring — consistent across all interactive elements. */
   .focus-ring {
     @apply outline-none ring-2 ring-brand-500 ring-offset-2;
+  }
+
+  /* Shimmer skeleton for loading rows (respects reduced-motion). */
+  .skeleton {
+    background: linear-gradient(90deg, var(--sunken) 25%, #f4f7fb 50%, var(--sunken) 75%);
+    background-size: 200% 100%;
+    animation: rf-shimmer 1.4s infinite;
+    border-radius: 4px;
+  }
+  @keyframes rf-shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton {
+      animation: none;
+    }
   }
 }

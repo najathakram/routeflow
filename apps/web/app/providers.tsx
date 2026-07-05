@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react
 import { AuthProvider } from "@/lib/auth-context";
 import { BuyerAuthProvider } from "@/lib/buyer-auth-context";
 import { ToastProvider, useToast } from "@routeflow/ui/web";
+import { I18nProvider } from "@/lib/i18n";
+import { ReAuthProvider } from "@/components/ReAuthProvider";
 
 function QueryProviders({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
@@ -41,7 +43,11 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ToastProvider>
-      <QueryProviders>{children}</QueryProviders>
+      <I18nProvider>
+        <ReAuthProvider>
+          <QueryProviders>{children}</QueryProviders>
+        </ReAuthProvider>
+      </I18nProvider>
     </ToastProvider>
   );
 }

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Returns</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:920px}
+  body{margin:0;overflow:hidden}
+  .screen{height:920px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Returns">
+  <script>document.write(RFShell.operatorRail('orders.returns'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Returns'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Returns</h2><div class="sub">Return requests against delivered orders, approve, restock, and credit.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Return</button></div>
+      </div>
+
+      <div class="grid3">
+        <div class="stat ring-warning"><span class="overline">Awaiting Review</span><span class="v" style="color:var(--warning)">3</span><span class="hint">Oldest requested 2d ago</span></div>
+        <div class="stat"><span class="overline">Approved, 30d</span><span class="v">11</span><span class="hint">$1,204.80 credited</span></div>
+        <div class="stat"><span class="overline">Return Rate</span><span class="v">1.4%</span><span class="hint">of delivered line items</span></div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <button class="chip active">Awaiting review <span class="n">3</span></button>
+          <button class="chip">Approved</button>
+          <button class="chip">Credited</button>
+          <button class="chip">Rejected</button>
+          <button class="chip">All</button>
+          <div class="input sm" style="width:220px;margin-left:auto"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Return #, order # or customer…</span></div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Return #</th><th>Customer</th><th>Order</th><th>Reason</th><th class="r">Items</th><th class="r">Value</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="mono primary-cell">RET-0092</td><td>Bright Mart #2</td><td class="mono">ORD-2402</td><td>Damaged in transit <span class="faint" style="font-size:11px">· photo attached</span></td><td class="r mono">2</td><td class="r">$88.20</td><td><span class="badge b-warning">Awaiting review</span></td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-primary">Review</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">RET-0091</td><td>Casa Verde Foods</td><td class="mono">ORD-2388</td><td>Wrong item shipped</td><td class="r mono">1</td><td class="r">$44.10</td><td><span class="badge b-warning">Awaiting review</span></td><td><button class="btn sm btn-primary">Review</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">RET-0090</td><td>Sunrise Market</td><td class="mono">ORD-2371</td><td>Short-dated stock</td><td class="r mono">3</td><td class="r">$64.80</td><td><span class="badge b-warning">Awaiting review</span></td><td><button class="btn sm btn-primary">Review</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">RET-0089</td><td>Golden Gate Grocery</td><td class="mono">ORD-2344</td><td>Damaged in transit</td><td class="r mono">1</td><td class="r">$21.60</td><td><span class="badge b-info">Approved · restocking</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">RET-0088</td><td>Hillside Mini Mart</td><td class="mono">ORD-2310</td><td>Over-delivered</td><td class="r mono">2</td><td class="r">$36.80</td><td><span class="badge b-success">Credited · CN-0141</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">RET-0087</td><td>Lucky Corner Deli</td><td class="mono">ORD-2287</td><td>Quality complaint</td><td class="r mono">1</td><td class="r">$14.25</td><td><span class="badge b-neutral">Rejected</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

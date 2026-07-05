@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>RouteFlow — Intro Reel for Wholesalers</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0a; overflow: hidden; font-family: 'Inter', sans-serif; }
+  #root { position: fixed; inset: 0; }
+  :root {
+    --tweak-brand: #2563EB;
+    --tweak-brand-light: #EFF6FF;
+    --tweak-brand-dark: #1D4ED8;
+    --tweak-navy: #1B3A5C;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react" src="animations.jsx"></script>
+<script type="text/babel" data-presets="react" src="reel2-scenes.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+/*
+  New product launch reel for wholesalers. No usage stats.
+  Vertical 1080x1920. Warm, human tone. No em/en dashes.
+
+  Timeline (seconds):
+   0.0 to  5.0   Sound familiar? (paper + calls hook)
+   5.0 to 10.0   Meet RouteFlow
+  10.0 to 16.0   Your customers order themselves
+  16.0 to 22.0   The route plans itself
+  22.0 to 28.5   Tap, scan, sign (driver)
+  28.5 to 34.0   Invoices the moment it is delivered
+  34.0 to 41.0   All of it, one login
+  41.0 to 47.0   Our promise to you (new product, switching is easy)
+  47.0 to 53.0   CTA
+*/
+
+function IntroReelRoot() {
+  const { time } = useTimeline();
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (ref.current) ref.current.setAttribute('data-screen-label', `t=${time.toFixed(1)}s`);
+  }, [Math.floor(time)]);
+
+  return (
+    <div ref={ref} style={{ position: 'absolute', inset: 0 }}>
+      <Sprite start={0.0}  end={5.0}>  <W_SceneHook /></Sprite>
+      <Sprite start={5.0}  end={10.0}> <W_SceneMeet /></Sprite>
+      <Sprite start={10.0} end={16.0}> <W_SceneCustomer /></Sprite>
+      <Sprite start={16.0} end={22.0}> <W_SceneRoute /></Sprite>
+      <Sprite start={22.0} end={28.5}> <W_SceneVan /></Sprite>
+      <Sprite start={28.5} end={34.0}> <W_SceneInvoice /></Sprite>
+      <Sprite start={34.0} end={41.0}> <W_SceneAll /></Sprite>
+      <Sprite start={41.0} end={47.0}> <W_ScenePromise /></Sprite>
+      <Sprite start={47.0} end={53.0}> <W_SceneCTA /></Sprite>
+    </div>
+  );
+}
+
+const App = () => (
+  <Stage width={1080} height={1920} duration={53} background="#FAFBFD" persistKey="routeflow-intro-reel">
+    <IntroReelRoot />
+  </Stage>
+);
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

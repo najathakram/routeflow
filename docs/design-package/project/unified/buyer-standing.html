@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Standing Orders</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:900px}
+  body{margin:0;overflow:hidden}
+  .screen{height:900px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+  .daychip{display:inline-flex;height:22px;padding:0 9px;border-radius:6px;background:var(--accent-soft);color:var(--accent-deep);font-size:11px;font-weight:700;align-items:center}
+  .daychip.off{background:var(--sunken);color:var(--ink-400)}
+  .irow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .irow:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Standing Orders">
+  <script>document.write(RFShell.buyerRail('standing'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:16px">
+        <div><h2>Standing Orders</h2><div class="sub">Templates set up with Golden State Distribution, reorder in one tap, or let them run on schedule.</div></div>
+      </div>
+
+      <div class="row2">
+        <div class="card">
+          <div class="card-h">
+            <div><h3>Weekly Essentials</h3><div class="muted" style="font-size:12px;margin-top:2px">8 items · <span class="money">$412.60</span> per order</div></div>
+            <span class="badge b-success">Active</span>
+          </div>
+          <div class="card-b">
+            <div style="display:flex;gap:6px;margin-bottom:14px">
+              <span class="daychip off">Mon</span><span class="daychip">Tue</span><span class="daychip off">Wed</span><span class="daychip off">Thu</span><span class="daychip">Fri</span><span class="daychip off">Sat</span><span class="daychip off">Sun</span>
+              <span class="muted" style="font-size:12px;margin-left:auto;align-self:center">next: <b style="color:var(--accent-deep)">Tuesday, Jul 7</b></span>
+            </div>
+            <div class="irow"><span style="flex:1">Agua Mineral 355ml · Case 24</span><span class="mono muted">4 boxes</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$86.40</span></div>
+            <div class="irow"><span style="flex:1">Sunburst Orange Soda 2L · Case 8</span><span class="mono muted">6 boxes</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$110.40</span></div>
+            <div class="irow"><span style="flex:1">Valle Tortilla Chips 11oz · Case 9</span><span class="mono muted">4 boxes</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$176.40</span></div>
+            <div class="irow"><span class="muted" style="flex:1">+ 5 more items</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$39.40</span></div>
+            <div style="display:flex;gap:9px;margin-top:16px">
+              <button class="btn btn-primary" style="flex:1;justify-content:center"><i data-ic="repeat" data-sz="15"></i>Reorder now</button>
+              <button class="btn btn-secondary"><i data-ic="pencil" data-sz="14"></i>Edit</button>
+              <button class="btn btn-secondary"><i data-ic="cart" data-sz="14"></i>Add to cart</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div><h3>Beverage Restock</h3><div class="muted" style="font-size:12px;margin-top:2px">4 items · <span class="money">$228.80</span> per order</div></div>
+            <span class="badge b-success">Active</span>
+          </div>
+          <div class="card-b">
+            <div style="display:flex;gap:6px;margin-bottom:14px">
+              <span class="daychip">Mon</span><span class="daychip off">Tue</span><span class="daychip off">Wed</span><span class="daychip off">Thu</span><span class="daychip off">Fri</span><span class="daychip off">Sat</span><span class="daychip off">Sun</span>
+              <span class="muted" style="font-size:12px;margin-left:auto;align-self:center">next: <b style="color:var(--accent-deep)">Monday, Jul 6</b></span>
+            </div>
+            <div class="irow"><span style="flex:1">Agua Mineral 355ml · Case 24</span><span class="mono muted">2 boxes</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$43.20</span></div>
+            <div class="irow"><span style="flex:1">Sunburst Orange Soda 2L · Case 8</span><span class="mono muted">8 boxes</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$147.20</span></div>
+            <div class="irow"><span style="flex:1">Roast House Cold Brew 8oz</span><span class="mono muted">12 pcs</span><span class="money" style="width:70px;text-align:right;color:var(--ink-900)">$37.20</span></div>
+            <div class="irow"><span style="flex:1">Golden Straw Honey 12oz</span><span class="mono muted">,  paused</span><span class="money faint" style="width:70px;text-align:right">$0.00</span></div>
+            <div style="display:flex;gap:9px;margin-top:16px">
+              <button class="btn btn-primary" style="flex:1;justify-content:center"><i data-ic="repeat" data-sz="15"></i>Reorder now</button>
+              <button class="btn btn-secondary"><i data-ic="pencil" data-sz="14"></i>Edit</button>
+              <button class="btn btn-secondary"><i data-ic="cart" data-sz="14"></i>Add to cart</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="card-b" style="display:flex;align-items:center;gap:14px">
+          <div class="empty" style="padding:0;flex-direction:row;gap:14px;text-align:left">
+            <div class="art" style="width:52px;height:42px"><i data-ic="repeat" data-sz="16"></i></div>
+            <div><b style="font-size:14px">Standing orders are set up by your seller</b><p style="max-width:none;font-size:12.5px">Ask Golden State Distribution to create a template for your regular order, it shows up here automatically.</p></div>
+          </div>
+          <button class="btn btn-secondary" style="margin-left:auto"><i data-ic="chat" data-sz="15"></i>Request a template</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

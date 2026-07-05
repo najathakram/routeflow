@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — First-Run Onboarding</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .step{display:flex;align-items:center;gap:14px;padding:15px 18px;border-bottom:1px solid var(--line)}
+  .step:last-child{border-bottom:none}
+  .step .n{width:30px;height:30px;border-radius:99px;display:grid;place-items:center;flex:none;font-size:12.5px;font-weight:700;font-family:var(--font-mono)}
+  .step.done .n{background:var(--success);color:#fff}
+  .step.now .n{background:var(--accent-strong);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
+  .step.todo .n{background:var(--sunken);color:var(--ink-400);border:1.5px solid var(--line-strong)}
+  .step b{font-size:14px;color:var(--ink-900);display:block}
+  .step .sub{font-size:12px;color:var(--ink-500);margin-top:2px}
+  .prog{height:7px;border-radius:99px;background:var(--sunken);overflow:hidden;margin-top:10px}
+  .prog i{display:block;height:100%;width:40%;border-radius:99px;background:var(--accent-strong)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="First-Run Onboarding">
+  <script>document.write(RFShell.operatorRail('dashboard'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Dashboard'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <h2 class="display" style="font-size:26px">Welcome, Maria. Let's get to your first delivery.</h2>
+          <div class="sub">Two steps done, three to go. Most teams finish this in under an hour.</div>
+        </div>
+        <div class="ph-actions"><button class="btn btn-ghost">Skip for now</button></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-b" style="padding-top:14px;padding-bottom:4px">
+            <div style="display:flex;justify-content:space-between;font-size:12.5px"><b style="color:var(--ink-900)">Setup progress</b><span class="mono" style="color:var(--ink-500)">2 of 5</span></div>
+            <div class="prog"><i></i></div>
+          </div>
+          <div class="step done">
+            <span class="n"><i data-ic="check" data-sz="14"></i></span>
+            <div style="flex:1"><b>Create your workspace</b><div class="sub">goldenstate.routeflow.info is live</div></div>
+            <span class="badge b-success">Done</span>
+          </div>
+          <div class="step done">
+            <span class="n"><i data-ic="check" data-sz="14"></i></span>
+            <div style="flex:1"><b>Add your products</b><div class="sub">214 products imported from CSV</div></div>
+            <span class="badge b-success">Done</span>
+          </div>
+          <div class="step now">
+            <span class="n">3</span>
+            <div style="flex:1"><b>Add your customers</b><div class="sub">Import a CSV or add your first customer by hand. Takes about 10 minutes.</div></div>
+            <button class="btn btn-primary">Add customers</button>
+          </div>
+          <div class="step todo">
+            <span class="n">4</span>
+            <div style="flex:1"><b>Create your first order</b><div class="sub">Scan a barcode or pick from the catalog. Price memory starts learning here.</div></div>
+            <button class="btn btn-secondary" disabled>New order</button>
+          </div>
+          <div class="step todo">
+            <span class="n">5</span>
+            <div style="flex:1"><b>Build a route and deliver it</b><div class="sub">Add stops, assign a driver (that can be you), capture proof of delivery.</div></div>
+            <button class="btn btn-secondary" disabled>New route</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card" style="border-color:var(--accent);background:var(--primary-mist)">
+            <div class="card-h" style="border-bottom-color:var(--brand-50)"><h3>Coming from another platform?</h3></div>
+            <div class="card-b">
+              <p style="font-size:12.5px;line-height:1.6;color:var(--ink-700)">Bring everything over from Zoho Books, QuickBooks or CSV files: customers, products, open invoices and balances. Your invoice numbering continues where it left off.</p>
+              <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:12px"><i data-ic="swap" data-sz="15"></i>Start migration</button>
+              <span class="faint" style="font-size:11.5px;display:block;text-align:center;margin-top:8px">Nothing goes live until you review and confirm.</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Watch it work</h3></div>
+            <div class="card-b" style="padding-top:8px">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px"><i data-ic="barcode" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1">Scan an order in 60 seconds</span><a class="btn-link" style="font-size:12.5px">2 min</a></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px"><i data-ic="truck" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1">Your first route, start to settled</span><a class="btn-link" style="font-size:12.5px">4 min</a></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;font-size:13px"><i data-ic="store" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1">Invite customers to the buyer portal</span><a class="btn-link" style="font-size:12.5px">3 min</a></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-b" style="display:flex;gap:11px;font-size:12px;color:var(--ink-500);line-height:1.55">
+              <i data-ic="chat" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i>
+              <span><b style="color:var(--ink-900)">A person, not a bot.</b> Reply to the welcome email and a real human helps you migrate, free on every plan.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

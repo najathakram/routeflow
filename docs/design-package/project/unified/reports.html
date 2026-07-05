@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Reports</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .bars{display:flex;align-items:flex-end;gap:10px;height:150px;padding:6px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .stackcol{width:100%;display:flex;flex-direction:column-reverse;border-radius:5px 5px 2px 2px;overflow:hidden}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Finance Reports">
+  <script>document.write(RFShell.operatorRail('fin.reports'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Reports'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Reports</h2><div class="sub">AR aging, P&amp;L, cash flow and expense breakdown, all exportable.</div></div>
+        <div class="ph-actions">
+          <div class="select sm" style="width:150px"><span>Q2 2026</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button>
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Print</button>
+        </div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab active">AR Aging</button>
+        <button class="tab">Profit &amp; Loss</button>
+        <button class="tab">Cash Flow</button>
+        <button class="tab">Expense Breakdown</button>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>AR Aging by Customer</h3><span class="muted" style="font-size:12px">as of Jul 5, 2026</span></div>
+          <table class="tbl">
+            <thead><tr><th>Customer</th><th class="r">Current</th><th class="r">1 to 15</th><th class="r">16 to 30</th><th class="r">31 to 45</th><th class="r">45+</th><th class="r">Total</th></tr></thead>
+            <tbody>
+              <tr class="row"><td class="primary-cell">Bright Mart #2</td><td class="r">$2,394.60</td><td class="r">$1,180.00</td><td class="r">$1,230.00</td><td class="r muted">, </td><td class="r muted">, </td><td class="r" style="font-weight:600">$4,804.60</td></tr>
+              <tr class="row"><td class="primary-cell">Golden Gate Grocery</td><td class="r">$1,731.25</td><td class="r">$1,388.05</td><td class="r muted">, </td><td class="r muted">, </td><td class="r muted">, </td><td class="r" style="font-weight:600">$3,119.30</td></tr>
+              <tr class="row"><td class="primary-cell">Lucky Corner Deli</td><td class="r">$981.35</td><td class="r muted">, </td><td class="r">$348.40</td><td class="r">$1,476.00</td><td class="r muted">, </td><td class="r" style="font-weight:600">$2,805.75</td></tr>
+              <tr class="row"><td class="primary-cell">Sunrise Market</td><td class="r">$1,038.02</td><td class="r">$1,647.05</td><td class="r muted">, </td><td class="r muted">, </td><td class="r muted">, </td><td class="r" style="font-weight:600">$2,685.07</td></tr>
+              <tr class="row"><td class="primary-cell">Hillside Mini Mart</td><td class="r">$412.80</td><td class="r">$962.75</td><td class="r muted">, </td><td class="r muted">, </td><td class="r muted">, </td><td class="r" style="font-weight:600">$1,375.55</td></tr>
+              <tr class="row"><td class="primary-cell">All others (36)</td><td class="r">$6,382.08</td><td class="r">$2,032.51</td><td class="r">$2,901.60</td><td class="r">$830.20</td><td class="r" style="color:var(--danger)">$1,476.00</td><td class="r" style="font-weight:600">$13,622.39</td></tr>
+              <tr><td style="font-weight:600;color:var(--ink-900)">Total</td><td class="r" style="font-weight:600">$12,940.10</td><td class="r" style="font-weight:600">$7,210.36</td><td class="r" style="font-weight:600">$4,480.00</td><td class="r" style="font-weight:600">$2,306.20</td><td class="r" style="font-weight:600;color:var(--danger)">$1,476.00</td><td class="r" style="font-weight:600;font-size:14px">$28,412.66</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Cash Flow, 6 months</h3>
+              <div style="display:flex;gap:12px;font-size:11.5px;color:var(--ink-500)">
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--brand-500);margin-right:5px;vertical-align:-1px"></span>In</span>
+                <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--danger);opacity:.6;margin-right:5px;vertical-align:-1px"></span>Out</span>
+              </div>
+            </div>
+            <div class="card-b">
+              <div class="bars">
+                <div class="b"><div class="stackcol" style="height:58%"><i style="display:block;height:68%;background:var(--brand-500)"></i><i style="display:block;height:32%;background:var(--danger);opacity:.55"></i></div><span class="lb">Feb</span></div>
+                <div class="b"><div class="stackcol" style="height:66%"><i style="display:block;height:64%;background:var(--brand-500)"></i><i style="display:block;height:36%;background:var(--danger);opacity:.55"></i></div><span class="lb">Mar</span></div>
+                <div class="b"><div class="stackcol" style="height:72%"><i style="display:block;height:66%;background:var(--brand-500)"></i><i style="display:block;height:34%;background:var(--danger);opacity:.55"></i></div><span class="lb">Apr</span></div>
+                <div class="b"><div class="stackcol" style="height:80%"><i style="display:block;height:63%;background:var(--brand-500)"></i><i style="display:block;height:37%;background:var(--danger);opacity:.55"></i></div><span class="lb">May</span></div>
+                <div class="b"><div class="stackcol" style="height:92%"><i style="display:block;height:67%;background:var(--brand-500)"></i><i style="display:block;height:33%;background:var(--danger);opacity:.55"></i></div><span class="lb">Jun</span></div>
+                <div class="b"><div class="stackcol" style="height:24%;opacity:.5"><i style="display:block;height:65%;background:var(--brand-500)"></i><i style="display:block;height:35%;background:var(--danger);opacity:.55"></i></div><span class="lb">Jul</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>P&amp;L Snapshot, June</h3><a class="btn-link" style="font-size:12.5px">Full P&amp;L</a></div>
+            <div class="card-b" style="padding-top:6px">
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Revenue</span><span class="money" style="color:var(--ink-900);font-weight:600">$118,204.60</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Cost of goods</span><span class="money" style="color:var(--ink-900)">−$75,180.92</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Operating expenses</span><span class="money" style="color:var(--ink-900)">−$21,412.30</span></div>
+              <div style="display:flex;justify-content:space-between;padding:10px 0 2px;font-size:14px"><b style="color:var(--ink-900)">Net profit</b><span class="money" style="color:var(--success);font-weight:600;font-size:15px">$21,611.38</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

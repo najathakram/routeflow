@@ -30,6 +30,7 @@ import {
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
+import { useI18n } from "@/lib/i18n";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -283,7 +284,7 @@ function useSearchResults(
               sublabel: c.email ?? c.phone ?? "",
               href: `/customers/${c.id}`,
               icon: Users,
-              group: "Customers",
+              group: "results",
             });
           }
         }
@@ -296,7 +297,7 @@ function useSearchResults(
               sublabel: o.customer?.businessName ?? "",
               href: `/orders/${o.id}`,
               icon: ShoppingCart,
-              group: "Orders",
+              group: "results",
             });
           }
         }
@@ -309,7 +310,7 @@ function useSearchResults(
               sublabel: inv.customer?.businessName ?? "",
               href: `/invoices/${inv.id}`,
               icon: FileText,
-              group: "Invoices",
+              group: "results",
             });
           }
         }
@@ -335,9 +336,25 @@ interface Props {
   onClose: () => void;
 }
 
+/** Map an internal group key to its localized section label. */
+function useGroupLabel() {
+  const { t } = useI18n();
+  return React.useCallback(
+    (group: string) => {
+      if (group === "Navigate") return t("palette.jumpTo");
+      if (group === "Actions") return t("palette.actions");
+      if (group === "results") return t("palette.results");
+      return group;
+    },
+    [t],
+  );
+}
+
 export function CommandPalette({ open, onClose }: Props) {
   const router = useRouter();
   const { user } = useAuth();
+  const { t } = useI18n();
+  const groupLabel = useGroupLabel();
   const isOperator =
     !user?.role ||
     user.role === "OPERATOR" ||
@@ -383,7 +400,8 @@ export function CommandPalette({ open, onClose }: Props) {
     const filtered = staticItems.filter((i) => fuzzyMatch(i, query));
     const statics = filtered.map((item) => ({ type: "static" as const, item }));
     const searches = searchResults.map((item) => ({ type: "search" as const, item }));
-    return [...searches, ...statics];
+    // Design order (overlays.html): Jump to, Actions, then Results.
+    return [...statics, ...searches];
   }, [staticItems, searchResults, query]);
 
   // Reset active index when items change
@@ -462,7 +480,7 @@ export function CommandPalette({ open, onClose }: Props) {
           <input
             ref={inputRef}
             type="text"
-            placeholder="Search pages, customers, orders, invoices…"
+            placeholder={t("palette.placeholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 focus:outline-none"
@@ -479,13 +497,13 @@ export function CommandPalette({ open, onClose }: Props) {
         <div className="max-h-[60vh] overflow-y-auto py-2">
           {flatItems.length === 0 && !searchLoading ? (
             <p className="px-4 py-8 text-center text-sm text-navy/70">
-              No results for &ldquo;{query}&rdquo;
+              {t("palette.noResults", { query })}
             </p>
           ) : (
             Object.entries(grouped).map(([group, entries]) => (
               <div key={group} className="mb-1">
-                <p className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/30">
-                  {group}
+                <p className="px-4 py-1.5 text-[10.5px] font-bold uppercase tracking-[0.09em] text-ink-400">
+                  {groupLabel(group)}
                 </p>
                 {entries.map(({ flatIndex, item, type }) => {
                   const Icon = item.icon;
@@ -506,14 +524,16 @@ export function CommandPalette({ open, onClose }: Props) {
                       onMouseEnter={() => setActiveIndex(flatIndex)}
                       className={cn(
                         "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
-                        isActive ? "bg-brand-50 text-navy" : "text-navy/70 hover:bg-surface-raised",
+                        isActive
+                          ? "bg-[var(--primary-mist)] text-navy shadow-[inset_2.5px_0_0_var(--accent-strong)]"
+                          : "text-navy/70 hover:bg-surface-raised",
                       )}
                     >
                       <span
                         className={cn(
-                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-ctl",
                           isActive
-                            ? "bg-brand-100 text-brand-600"
+                            ? "bg-accent-soft text-accent-deep"
                             : "bg-surface-raised text-navy/70",
                         )}
                       >
@@ -538,19 +558,19 @@ export function CommandPalette({ open, onClose }: Props) {
             <kbd className="rounded border border-surface-border bg-surface-raised px-1 text-[10px]">
               ↑↓
             </kbd>
-            navigate
+            {t("palette.navigate")}
           </span>
           <span className="flex items-center gap-1 text-[11px] text-navy/30">
             <kbd className="rounded border border-surface-border bg-surface-raised px-1 text-[10px]">
               ↵
             </kbd>
-            select
+            {t("palette.select")}
           </span>
-          <span className="flex items-center gap-1 text-[11px] text-navy/30">
+          <span className="ml-auto flex items-center gap-1 text-[11px] text-navy/30">
             <kbd className="rounded border border-surface-border bg-surface-raised px-1 text-[10px]">
-              ESC
+              ?
             </kbd>
-            close
+            {t("palette.shortcuts")}
           </span>
         </div>
       </div>

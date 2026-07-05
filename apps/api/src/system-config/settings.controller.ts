@@ -356,4 +356,28 @@ export class SettingsController {
     }
     return this.getInvoiceSettings();
   }
+
+  // ─── Cost / margin config (pos-cost-roles-spec §1) ────────────────────────────
+  // Read: any operator/driver (the sale builder needs the floor). Write: admin
+  // only — costing method + margin floors are admin-only settings (spec §4).
+
+  @Get("margin")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getMarginConfig() {
+    return this.svc.getMarginConfig();
+  }
+
+  @Patch("margin")
+  @Roles(UserRole.TENANT_ADMIN)
+  async updateMarginConfig(
+    @Body()
+    dto: {
+      costingMethod?: string;
+      defaultMarginFloor?: number;
+      categoryFloors?: Record<string, number>;
+    },
+  ) {
+    await this.svc.setMarginConfig(dto);
+    return this.svc.getMarginConfig();
+  }
 }

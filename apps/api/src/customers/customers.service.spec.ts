@@ -243,4 +243,61 @@ describe("CustomersService", () => {
       expect(result.data).toEqual([]);
     });
   });
+
+  // ─── restoreCustomer (Undo of a soft-delete) ────────────────────────────────
+
+  describe("restoreCustomer", () => {
+    it("clears deletedAt and reactivates the user for a soft-deleted customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+      });
+
+      const result = await service.restoreCustomer("cust-1");
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: "cust-1" },
+        data: { deletedAt: null },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "ACTIVE" },
+      });
+      expect(result).toEqual({ success: true, restored: true });
+    });
+
+    it("restores the user to the pre-delete status when given (SUSPENDED, not ACTIVE)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: new Date(),
+      });
+
+      await service.restoreCustomer("cust-1", "SUSPENDED");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { status: "SUSPENDED" },
+      });
+    });
+
+    it("is a no-op for a customer that is not soft-deleted", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        userId: "user-1",
+        deletedAt: null,
+      });
+
+      const result = await service.restoreCustomer("cust-1");
+
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true, restored: false });
+    });
+
+    it("throws NotFoundException when the customer does not exist", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+      await expect(service.restoreCustomer("missing")).rejects.toThrow(NotFoundException);
+    });
+  });
 });

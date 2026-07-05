@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Credit Notes</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:920px}
+  body{margin:0;overflow:hidden}
+  .screen{height:920px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Credit Notes">
+  <script>document.write(RFShell.operatorRail('fin.credit'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Credit Notes'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Credit Notes</h2><div class="sub">Issued from returns, disputes and manual adjustments, applied against invoices automatically.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Credit Note</button>
+        </div>
+      </div>
+
+      <div class="grid3">
+        <div class="stat"><span class="overline">Open Credit</span><span class="v money">$412.63</span><span class="hint">5 notes with remaining balance</span></div>
+        <div class="stat"><span class="overline">Issued, 30d</span><span class="v money">$1,204.80</span><span class="hint">11 notes · 1.0% of revenue</span></div>
+        <div class="stat"><span class="overline">Top Reason</span><span class="v" style="font-size:18px">Damaged in transit</span><span class="hint">46% of credited value</span></div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <button class="chip active">Open balance <span class="n">5</span></button>
+          <button class="chip">Fully applied</button>
+          <button class="chip">Void</button>
+          <button class="chip">All <span class="n">141</span></button>
+          <div class="input sm" style="width:220px;margin-left:auto"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">CN #, customer or invoice…</span></div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Credit Note</th><th>Customer</th><th>Source</th><th class="r">Amount</th><th class="r">Remaining</th><th>Applied To</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="mono primary-cell">CN-0144</td><td>Bright Mart #2</td><td>Return RET-0092 · damaged</td><td class="r">$88.20</td><td class="r" style="font-weight:600">$88.20</td><td class="muted">next invoice (auto)</td><td><span class="badge b-info">Open</span></td><td><button class="btn sm btn-secondary">Apply now</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">CN-0143</td><td>Sunrise Market</td><td>Dispute · price wrong</td><td class="r">$48.20</td><td class="r" style="font-weight:600">$48.20</td><td class="muted">next invoice (auto)</td><td><span class="badge b-info">Open</span></td><td><button class="btn sm btn-secondary">Apply now</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">CN-0142</td><td>Casa Verde Foods</td><td>Short pick · ORD-2415</td><td class="r">$28.50</td><td class="r" style="font-weight:600">$28.50</td><td class="muted">next invoice (auto)</td><td><span class="badge b-info">Open</span></td><td><button class="btn sm btn-secondary">Apply now</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">CN-0141</td><td>Hillside Mini Mart</td><td>Return RET-0088 · over-delivered</td><td class="r">$36.80</td><td class="r muted">$0.00</td><td class="mono">INV-1921</td><td><span class="badge b-success">Applied</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">CN-0140</td><td>Golden Gate Grocery</td><td>Manual · goodwill</td><td class="r">$25.00</td><td class="r muted">$0.00</td><td class="mono">INV-1913</td><td><span class="badge b-success">Applied</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">CN-0139</td><td>Lucky Corner Deli</td><td>Return RET-0085 · quality</td><td class="r">$14.25</td><td class="r muted">, </td><td class="muted">, </td><td><span class="badge b-neutral">Void</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--line)">
+          <i data-ic="shield" data-sz="13" style="color:var(--accent-deep)"></i>
+          <span class="faint" style="font-size:12px">Credits on regulated lines reverse category tax and post to the category ledger (see Regulated Items).</span>
+          <span class="muted" style="font-size:12.5px;margin-left:auto">Showing 6 of 141</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Order Tracking</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .row21{display:grid;grid-template-columns:1.5fr 1fr;gap:18px;align-items:start}
+  /* horizontal status timeline */
+  .track{display:flex;align-items:flex-start;padding:22px 10px 18px}
+  .tstep{flex:1;display:flex;flex-direction:column;align-items:center;gap:9px;position:relative;text-align:center}
+  .tstep .n{width:30px;height:30px;border-radius:99px;display:grid;place-items:center;z-index:1}
+  .tstep.done .n{background:var(--success);color:#fff}
+  .tstep.now .n{background:var(--accent-strong);color:#fff;box-shadow:0 0 0 5px var(--accent-soft)}
+  .tstep.todo .n{background:var(--sunken);border:1.5px solid var(--line-strong);color:var(--ink-400)}
+  .tstep b{font-size:13px;color:var(--ink-900)}
+  .tstep.todo b{color:var(--ink-400);font-weight:500}
+  .tstep .t{font-size:11.5px;color:var(--ink-400)}
+  .tstep::after{content:"";position:absolute;top:14px;left:calc(50% + 22px);right:calc(-50% + 22px);height:2px;background:var(--line-strong)}
+  .tstep.done::after{background:var(--success)}
+  .tstep:last-child::after{display:none}
+  .mapph{height:220px;border-radius:var(--r-card);border:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 8px,#F4F7FB 8px,#F4F7FB 16px);
+    display:grid;place-items:center;margin:0 18px 18px}
+  .mapph span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-400)}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+  .sumline{display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:11px;font-weight:600;font-size:15px;color:var(--ink-900)}
+  .thumb{width:42px;height:52px;border-radius:7px;border:1px solid var(--line);flex:none;
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 5px,#F4F7FB 5px,#F4F7FB 10px)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Order Tracking">
+  <script>document.write(RFShell.buyerRail('orders'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px"><h2 style="font-family:var(--font-mono)">ORD-2398</h2><span class="badge b-accent"><span class="dot"></span>Out for delivery</span></div>
+          <div class="sub">Placed Jul 1, 8:12 AM · Golden State Distribution · 7 items</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="repeat" data-sz="15"></i>Reorder</button>
+          <button class="btn btn-secondary"><i data-ic="filetext" data-sz="15"></i>View invoice</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="track">
+              <div class="tstep done"><span class="n"><i data-ic="check" data-sz="14"></i></span><b>Placed</b><span class="t">Jul 1, 8:12 AM</span></div>
+              <div class="tstep done"><span class="n"><i data-ic="check" data-sz="14"></i></span><b>Confirmed</b><span class="t">Jul 1, 9:30 AM</span></div>
+              <div class="tstep now"><span class="n"><i data-ic="truck" data-sz="14"></i></span><b>Out for delivery</b><span class="t">Today, 7:00 AM</span></div>
+              <div class="tstep todo"><span class="n"><i data-ic="check" data-sz="14"></i></span><b>Delivered</b><span class="t">est. 10:40 AM</span></div>
+            </div>
+            <div class="mapph"><span>live map, driver position · your stop is 9 of 14</span></div>
+            <div style="display:flex;align-items:center;gap:12px;padding:0 18px 18px">
+              <div class="avatar" style="width:34px;height:34px">JR</div>
+              <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Julia Reyes is delivering your order</b><div class="muted" style="font-size:12.5px">VAN-02 · 3 stops away · arriving ~10:40 AM</div></div>
+              <span class="badge b-success"><span class="dot"></span>Live</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Items, 7</h3></div>
+            <table class="tbl">
+              <thead><tr><th style="width:54px"></th><th>Item</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="r">Amount</th></tr></thead>
+              <tbody>
+                <tr><td><div class="thumb"></div></td><td><span class="primary-cell">Agua Mineral 355ml · Case 24</span></td><td class="r">4 boxes</td><td class="r">$21.60</td><td class="r">$86.40</td></tr>
+                <tr><td><div class="thumb"></div></td><td><span class="primary-cell">Sunburst Orange Soda 2L · Case 8</span></td><td class="r">10 boxes</td><td class="r">$18.40</td><td class="r">$184.00</td></tr>
+                <tr><td><div class="thumb"></div></td><td><span class="primary-cell">Valle Tortilla Chips 11oz · Case 9</span></td><td class="r">16 boxes</td><td class="r">$44.10</td><td class="r">$705.60</td></tr>
+                <tr><td><div class="thumb"></div></td><td><span class="primary-cell">Roast House Cold Brew 8oz</span></td><td class="r">40 pcs</td><td class="r">$3.10</td><td class="r">$124.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Summary</h3></div>
+            <div class="card-b" style="padding-top:8px">
+              <div class="sumline"><span class="muted">Subtotal</span><span class="money" style="color:var(--ink-900)">$1,118.16</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$96.39</span></div>
+              <div class="sumline total"><span>Total</span><span class="money">$1,214.55</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Delivery</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Address</span><span class="v">1180 Valencia St<br>San Francisco, CA 94110</span></div>
+              <div class="kv"><span class="k">Window</span><span class="v">8 to 11 AM</span></div>
+              <div class="kv"><span class="k">Instructions</span><span class="v">Side door · ring twice</span></div>
+              <div class="kv"><span class="k">PO number</span><span class="v mono">PO-SM-0231</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Need a change?</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px">
+              <button class="btn btn-secondary" style="justify-content:center"><i data-ic="chat" data-sz="15"></i>Message Golden State</button>
+              <span class="faint" style="font-size:12px;text-align:center">Orders can be edited until they're confirmed.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

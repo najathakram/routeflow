@@ -9,18 +9,21 @@ const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 select-none whitespace-nowrap",
   {
     variants: {
+      // Surface-aware: primary follows --accent, so buyer renders emerald and
+      // admin indigo automatically (via .surface-buyer / .surface-admin).
       variant: {
-        primary: "bg-brand-500 text-white hover:bg-brand-700 focus-visible:ring-brand-500",
+        primary: "bg-accent-strong text-white hover:bg-accent-deep focus-visible:ring-accent",
         secondary:
-          "bg-surface-raised text-navy border border-surface-border hover:bg-surface-border focus-visible:ring-navy",
-        ghost: "text-navy hover:bg-surface-raised focus-visible:ring-navy",
+          "bg-paper text-navy border border-line-strong shadow-card hover:bg-surface-raised focus-visible:ring-navy",
+        ghost: "text-ink-500 hover:bg-sunken hover:text-navy focus-visible:ring-navy",
         danger: "bg-danger text-white hover:bg-danger/90 focus-visible:ring-danger",
-        link: "text-brand-500 underline-offset-4 hover:underline focus-visible:ring-brand-500",
+        link: "text-accent-deep underline underline-offset-[3px] hover:no-underline focus-visible:ring-accent",
       },
+      // Ledger control heights: sm 28 / md 34 / lg 40, 6px corners.
       size: {
-        sm: "h-8 px-3 text-sm rounded-sm",
-        md: "h-10 px-4 text-sm rounded",
-        lg: "h-12 px-6 text-base rounded-lg",
+        sm: "h-7 px-2.5 text-[12.5px] rounded-ctl",
+        md: "h-[34px] px-3.5 text-[13px] rounded-ctl",
+        lg: "h-10 px-[18px] text-sm rounded-ctl",
       },
     },
     // Override the height/padding/radius that size applies when variant=link,

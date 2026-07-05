@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Vendor Bill Detail</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+  tr.unlinked td{background:#FFFBEB}
+  tr.unlinked td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+  .maprow{display:flex;align-items:center;gap:9px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Vendor Bill Detail">
+  <script>document.write(RFShell.operatorRail('wh.bills'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Bills &amp; Purchasing'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><h2 class="mono" style="font-family:var(--font-mono)">VB-0874</h2><span class="badge b-warning">2 unlinked items</span><span class="badge b-info">Unpaid</span></div>
+          <div class="sub">Valle Foods Co. · billed Jun 28, 2026 · due Jul 8, 2026 · scanned via OCR</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="image" data-sz="15"></i>View scan</button>
+          <button class="btn btn-secondary"><i data-ic="pencil" data-sz="15"></i>Edit</button>
+          <button class="btn btn-primary"><i data-ic="dollar" data-sz="15"></i>Record Payment</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Line Items, 6</h3><span class="muted" style="font-size:12px">unlinked lines don't update stock or costs until mapped</span></div>
+          <table class="tbl">
+            <thead><tr><th>Bill Line (as scanned)</th><th>Mapped Product</th><th class="r">Qty</th><th class="r">Unit Cost</th><th class="r">Amount</th></tr></thead>
+            <tbody>
+              <tr class="row"><td><span class="primary-cell">TORTILLA CHIP 11OZ 9CT</span></td><td class="maprow"><i data-ic="check" data-sz="13" style="color:var(--success)"></i>Valle Tortilla Chips 11oz</td><td class="r">24 cases</td><td class="r">$28.35</td><td class="r">$680.40</td></tr>
+              <tr class="row"><td><span class="primary-cell">SALSA VERDE 16OZ 12CT</span></td><td class="maprow"><i data-ic="check" data-sz="13" style="color:var(--success)"></i>Valle Salsa Verde 16oz</td><td class="r">18 cases</td><td class="r">$22.08</td><td class="r">$397.44</td></tr>
+              <tr class="row"><td><span class="primary-cell">CORN TORTILLA 30CT</span></td><td class="maprow"><i data-ic="check" data-sz="13" style="color:var(--success)"></i>Valle Corn Tortillas 30ct</td><td class="r">30 cases</td><td class="r">$16.20</td><td class="r">$486.00</td></tr>
+              <tr class="row"><td><span class="primary-cell">FLOUR TORTILLA 20CT</span></td><td class="maprow"><i data-ic="check" data-sz="13" style="color:var(--success)"></i>Valle Flour Tortillas 20ct</td><td class="r">20 cases</td><td class="r">$18.90</td><td class="r">$378.00</td></tr>
+              <tr class="row unlinked"><td><span class="primary-cell">CHIPOTLE SALSA 16OZ NEW</span><div class="faint" style="font-size:11px">not recognized</div></td><td><div class="select sm" style="width:220px"><span class="ph">Map to product… or create new</span><i data-ic="chevdown" data-sz="13"></i></div></td><td class="r">12 cases</td><td class="r">$23.40</td><td class="r">$280.80</td></tr>
+              <tr class="row unlinked"><td><span class="primary-cell">VF PROMO DISPLAY RACK</span><div class="faint" style="font-size:11px">not recognized</div></td><td><div class="select sm" style="width:220px"><span class="ph">Map to product… or expense it</span><i data-ic="chevdown" data-sz="13"></i></div></td><td class="r">1</td><td class="r">$0.00</td><td class="r">$0.00</td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid var(--line)">
+            <span class="badge b-warning">2 lines need mapping</span>
+            <span class="faint" style="font-size:12px">Mapping updates unit costs and receives stock.</span>
+            <button class="btn sm btn-primary" style="margin-left:auto"><i data-ic="check" data-sz="13"></i>Save mappings</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Bill</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Supplier</span><span class="v">Valle Foods Co.</span></div>
+              <div class="kv"><span class="k">Supplier invoice #</span><span class="v mono">VF-88213</span></div>
+              <div class="kv"><span class="k">Bill date</span><span class="v">Jun 28, 2026</span></div>
+              <div class="kv"><span class="k">Due</span><span class="v">Jul 8, 2026 · Net 10</span></div>
+              <div class="kv"><span class="k">Subtotal</span><span class="v money">$2,222.64</span></div>
+              <div class="kv"><span class="k">Credit applied</span><span class="v money">−$20.60</span></div>
+              <div class="kv"><span class="k">Total</span><span class="v money" style="font-weight:600;font-size:15px">$2,202.04</span></div>
+              <div class="kv"><span class="k">Balance</span><span class="v money" style="color:var(--danger);font-weight:600">$2,202.04</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Effect on Costs</h3><span class="muted" style="font-size:12px">dry run</span></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Valle Tortilla Chips 11oz</span><span class="v mono">$28.35 <span class="faint">(no change)</span></span></div>
+              <div class="kv"><span class="k">Valle Salsa Verde 16oz</span><span class="v mono" style="color:var(--danger)">$21.84 → $22.08</span></div>
+              <div class="kv"><span class="k">Valle Corn Tortillas 30ct</span><span class="v mono" style="color:var(--success)">$16.55 → $16.20</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Activity</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Scanned via OCR</span><span class="v">Jun 28, 4:02 PM · Tom B.</span></div>
+              <div class="kv"><span class="k">4 of 6 lines auto-mapped</span><span class="v">confidence ≥ 95%</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

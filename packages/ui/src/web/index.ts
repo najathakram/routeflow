@@ -32,7 +32,10 @@ export { Avatar } from "./Avatar";
 export type { AvatarProps, AvatarSize } from "./Avatar";
 
 export { ToastProvider, useToast } from "./Toast";
-export type { ToastData, ToastVariant } from "./Toast";
+export type { ToastData, ToastVariant, ToastAction } from "./Toast";
+
+export { Skeleton, SkeletonRows } from "./Skeleton";
+export type { SkeletonProps } from "./Skeleton";
 
 export { PageHeader } from "./PageHeader";
 export type { PageHeaderProps } from "./PageHeader";

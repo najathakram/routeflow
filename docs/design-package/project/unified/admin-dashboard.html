@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Platform Admin Dashboard</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .bars{display:flex;align-items:flex-end;gap:8px;height:150px;padding:8px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .col{width:100%;border-radius:5px 5px 2px 2px;background:var(--accent-strong);opacity:.85}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+  .donut{width:110px;height:110px;border-radius:99px;flex:none;
+    background:conic-gradient(#4F46E5 0 52%, #818CF8 52% 79%, #C7D2FE 79% 100%);display:grid;place-items:center}
+  .donut::after{content:"";width:68px;height:68px;border-radius:99px;background:var(--paper)}
+  .dleg{display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:var(--ink-500)}
+  .dleg .li{display:flex;align-items:center;gap:8px;min-width:170px}
+  .dleg .sw{width:10px;height:10px;border-radius:3px}
+  .dleg .amt{font-family:var(--font-mono);color:var(--ink-900);font-weight:500;margin-left:auto}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Platform Admin Dashboard">
+  <script>document.write(RFShell.adminRail('dashboard'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>Platform Dashboard</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i><span class="nbadge">1</span></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Platform Dashboard</h2><div class="sub">Health across all tenants, July 5, 2026.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>Create Tenant</button></div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Total Tenants</span><span class="v">142</span><span class="hint">+6 this month</span></div>
+        <div class="stat ring-success"><span class="overline">Active</span><span class="v">117</span><span class="hint">82% of total</span></div>
+        <div class="stat"><span class="overline">Trial</span><span class="v">19</span><span class="hint">5 expiring within 7 days</span></div>
+        <div class="stat"><span class="overline">Total Users</span><span class="v">1,893</span><span class="hint">Across all workspaces</span></div>
+      </div>
+
+      <div class="row21" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-h"><h3>Tenant Growth, 12 months</h3><span class="muted" style="font-size:12px">new tenants / month</span></div>
+          <div class="card-b">
+            <div class="bars">
+              <div class="b"><div class="col" style="height:30%"></div><span class="lb">Aug</span></div>
+              <div class="b"><div class="col" style="height:38%"></div><span class="lb">Sep</span></div>
+              <div class="b"><div class="col" style="height:34%"></div><span class="lb">Oct</span></div>
+              <div class="b"><div class="col" style="height:46%"></div><span class="lb">Nov</span></div>
+              <div class="b"><div class="col" style="height:42%"></div><span class="lb">Dec</span></div>
+              <div class="b"><div class="col" style="height:55%"></div><span class="lb">Jan</span></div>
+              <div class="b"><div class="col" style="height:50%"></div><span class="lb">Feb</span></div>
+              <div class="b"><div class="col" style="height:63%"></div><span class="lb">Mar</span></div>
+              <div class="b"><div class="col" style="height:70%"></div><span class="lb">Apr</span></div>
+              <div class="b"><div class="col" style="height:78%"></div><span class="lb">May</span></div>
+              <div class="b"><div class="col" style="height:88%"></div><span class="lb">Jun</span></div>
+              <div class="b"><div class="col" style="height:25%;opacity:.4"></div><span class="lb">Jul</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3>Plan Distribution</h3><span class="mono" style="font-size:12px;color:var(--ink-500)">Est. MRR $61,240</span></div>
+          <div class="card-b" style="display:flex;align-items:center;gap:20px">
+            <div class="donut"></div>
+            <div class="dleg">
+              <div class="li"><span class="sw" style="background:#4F46E5"></span>Business<span class="amt">74</span></div>
+              <div class="li"><span class="sw" style="background:#818CF8"></span>Starter<span class="amt">38</span></div>
+              <div class="li"><span class="sw" style="background:#C7D2FE"></span>Enterprise<span class="amt">30</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Trials Expiring Soon</h3><a class="btn-link" style="font-size:12.5px">All tenants</a></div>
+          <table class="tbl">
+            <thead><tr><th>Tenant</th><th>Plan</th><th>Users</th><th class="r">Time Left</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row"><td><span class="primary-cell">Cascade Wholesale</span> <span class="mono faint" style="font-size:11px">cascadews</span></td><td><span class="badge b-neutral">Trial</span></td><td class="mono">4</td><td class="r" style="color:var(--danger);font-weight:600">1d left</td><td><button class="btn sm btn-secondary">View</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Metro Beverage Co.</span> <span class="mono faint" style="font-size:11px">metrobev</span></td><td><span class="badge b-neutral">Trial</span></td><td class="mono">7</td><td class="r" style="color:var(--danger);font-weight:600">2d left</td><td><button class="btn sm btn-secondary">View</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Harbor Foods Dist.</span> <span class="mono faint" style="font-size:11px">harborfoods</span></td><td><span class="badge b-neutral">Trial</span></td><td class="mono">3</td><td class="r mono">5d left</td><td><button class="btn sm btn-secondary">View</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Twin Peaks Supply</span> <span class="mono faint" style="font-size:11px">twinpeaks</span></td><td><span class="badge b-neutral">Trial</span></td><td class="mono">2</td><td class="r mono">6d left</td><td><button class="btn sm btn-secondary">View</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3>At-Risk Tenants</h3></div>
+          <table class="tbl">
+            <thead><tr><th>Tenant</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row"><td><span class="primary-cell">Bayview Trading</span><div class="faint" style="font-size:11px">No logins in 21 days</div></td><td><span class="badge b-warning">At risk</span></td><td><button class="btn sm btn-secondary">View</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Redwood Provisions</span><div class="faint" style="font-size:11px">Payment failed twice</div></td><td><span class="badge b-danger">Billing</span></td><td><button class="btn sm btn-secondary">View</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Sierra Distributors</span><div class="faint" style="font-size:11px">Usage down 64% MoM</div></td><td><span class="badge b-warning">At risk</span></td><td><button class="btn sm btn-secondary">View</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="design_doc_mode" content="canvas">
+<title>RouteFlow Unified, Visual System + Hero Screens</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Spline+Sans:wght@400;500;600&display=swap');
+  body{margin:0;font-family:'Spline Sans',system-ui,sans-serif}
+  .frame{position:absolute}
+  .frame .cap{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+  .frame .cap b{font-size:15px;color:#0F1B2D;font-weight:600}
+  .frame .cap span{font-family:ui-monospace,monospace;font-size:11px;color:#8B97AC}
+  .frame iframe{border:1px solid #D6DEE8;border-radius:12px;background:#fff;display:block;
+    box-shadow:0 12px 40px rgba(15,27,45,.10)}
+  .glabel{position:absolute;font-family:ui-monospace,monospace;font-size:12px;font-weight:600;
+    letter-spacing:.09em;text-transform:uppercase;color:#5C6B82;background:#E2E8F0;
+    padding:6px 12px;border-radius:999px}
+</style>
+</head>
+<body>
+
+<div class="frame" style="left:40px;top:60px" data-screen-label="Visual System">
+  <div class="cap"><b>Visual system, "Ledger"</b><span>tokens · type · kit</span></div>
+  <iframe src="unified/system-sheet.html" width="1240" height="2300" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:1380px;top:60px" data-screen-label="Hero, Operator Dashboard">
+  <div class="cap"><b>Hero 1, Operator dashboard</b><span>/dashboard · compact · brand teal</span></div>
+  <iframe src="unified/operator-dashboard.html" width="1440" height="1420" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:1380px;top:1780px" data-screen-label="Hero, Orders List">
+  <div class="cap"><b>Hero 2, Orders list</b><span>/orders · saved views + URL filters + bulk bar</span></div>
+  <iframe src="unified/orders-list.html" width="1440" height="1060" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:2920px;top:60px" data-screen-label="Hero, Order Detail">
+  <div class="cap"><b>Hero 3, Order detail</b><span>/orders/[id] · Edit Items · inline price override</span></div>
+  <iframe src="unified/order-detail.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:2920px;top:1240px" data-screen-label="Auth, Operator">
+  <div class="cap"><b>One auth template, Operator</b><span>/login · brand teal + workspace slug</span></div>
+  <iframe src="unified/auth.html?v=operator" width="1280" height="780" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:2920px;top:2160px" data-screen-label="Auth, Buyer">
+  <div class="cap"><b>One auth template, Buyer</b><span>/buyer/login · emerald accent, no slug</span></div>
+  <iframe src="unified/auth.html?v=buyer" width="1280" height="780" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:2920px;top:3080px" data-screen-label="Auth, Platform Admin">
+  <div class="cap"><b>One auth template, Platform admin</b><span>/admin-login · indigo on slate</span></div>
+  <iframe src="unified/auth.html?v=admin" width="1280" height="780" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:2920px;top:3980px" data-screen-label="Tenant Signup">
+  <div class="cap"><b>Tenant signup</b><span>create workspace · slug check · trial starts here, no card</span></div>
+  <iframe src="unified/signup.html" width="1280" height="820" scrolling="no"></iframe>
+</div>
+
+<!-- ============ OPERATOR, ORDERS & DISPATCH ============ -->
+<div class="glabel" style="left:4460px;top:8px">Operator, orders &amp; dispatch</div>
+
+<div class="frame" style="left:4460px;top:60px" data-screen-label="Sale / Order Builder">
+  <div class="cap"><b>Sale / order builder</b><span>one builder · scan-to-add · price memory · live cost+margin · minimize · regulated split</span></div>
+  <iframe src="unified/order-builder.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:4460px;top:1110px" data-screen-label="Dispatch Overview">
+  <div class="cap"><b>Dispatch overview</b><span>/dispatch · realtime runs + drivers + unassigned</span></div>
+  <iframe src="unified/dispatch.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:6000px;top:60px" data-screen-label="Route Builder Wizard">
+  <div class="cap"><b>Route builder wizard</b><span>numbered steps · same archetype as import wizard</span></div>
+  <iframe src="unified/route-builder.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:6000px;top:1110px" data-screen-label="Live Dispatch">
+  <div class="cap"><b>Live dispatch</b><span>read-only POD · loading manifest · buyer change-request approve</span></div>
+  <iframe src="unified/live-dispatch.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<!-- ============ OPERATOR, PEOPLE & WAREHOUSE ============ -->
+<div class="glabel" style="left:7540px;top:8px">Operator, people &amp; warehouse</div>
+
+<div class="frame" style="left:7540px;top:60px" data-screen-label="Customer Detail">
+  <div class="cap"><b>Customer detail</b><span>tabbed record · licenses &amp; authorizations · approve retailer submissions</span></div>
+  <iframe src="unified/customer-detail.html" width="1440" height="1120" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:7540px;top:1280px" data-screen-label="Inventory Hub">
+  <div class="cap"><b>Inventory hub</b><span>5 tabs · cost tools · bulk-select action bar</span></div>
+  <iframe src="unified/inventory-hub.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:9080px;top:60px" data-screen-label="Product Detail">
+  <div class="cap"><b>Product detail</b><span>4:5 focal-point crop · pricing tiers · cost history · separately-handled category</span></div>
+  <iframe src="unified/product-detail.html" width="1440" height="1050" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:9080px;top:1210px" data-screen-label="Bills &amp; Purchasing">
+  <div class="cap"><b>Bills &amp; Purchasing hub</b><span>consolidates /purchases + /vendor-bills + expense inventory tab · AI scan meter</span></div>
+  <iframe src="unified/bills-purchasing.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<!-- ============ OPERATOR, FINANCE, ANALYTICS, SETTINGS ============ -->
+<div class="glabel" style="left:10620px;top:8px">Operator, finance &amp; admin</div>
+
+<div class="frame" style="left:10620px;top:60px" data-screen-label="Finance Overview">
+  <div class="cap"><b>Receivables / finance overview</b><span>merges /finance + /finance/dashboard + /finance/customers</span></div>
+  <iframe src="unified/finance-overview.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:10620px;top:1160px" data-screen-label="Invoice Detail">
+  <div class="cap"><b>Invoice detail</b><span>email + mark-as-sent (no WhatsApp/SMS) · payment history · PDF</span></div>
+  <iframe src="unified/invoice-detail.html" width="1440" height="1050" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:12160px;top:60px" data-screen-label="Analytics">
+  <div class="cap"><b>Analytics</b><span>4 tabs · Revenue shown · same template hosts regulated items</span></div>
+  <iframe src="unified/analytics.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:12160px;top:1160px" data-screen-label="Settings">
+  <div class="cap"><b>Settings</b><span>8 tabs · tenant branding via --primary · import wizard</span></div>
+  <iframe src="unified/settings.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<!-- ============ BUYER PORTAL ============ -->
+<div class="glabel" style="left:13700px;top:8px">Buyer portal, emerald · comfortable</div>
+
+<div class="frame" style="left:13700px;top:60px" data-screen-label="Buyer Dashboard">
+  <div class="cap"><b>Buyer dashboard</b><span>per-seller home · standing orders · floating cart</span></div>
+  <iframe src="unified/buyer-dashboard.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:13700px;top:1180px" data-screen-label="Buyer Shop">
+  <div class="cap"><b>Buyer shop, catalogue v2</b><span>category rail · running-low strip · promos · rich tiles w/ stock states &amp; behavioral chips</span></div>
+  <iframe src="unified/buyer-shop.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<!-- ============ PLATFORM ADMIN ============ -->
+<div class="glabel" style="left:15240px;top:8px">Platform admin, indigo on slate</div>
+
+<div class="frame" style="left:15240px;top:60px" data-screen-label="Admin Dashboard">
+  <div class="cap"><b>Platform dashboard</b><span>tenant KPIs · growth · plan mix · Est. MRR</span></div>
+  <iframe src="unified/admin-dashboard.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:15240px;top:1160px" data-screen-label="Tenant Detail">
+  <div class="cap"><b>Tenant detail</b><span>5 tabs · addons · impersonate · slug-typed delete</span></div>
+  <iframe src="unified/admin-tenant-detail.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<!-- ============ MARKETING & SHARED OVERLAYS ============ -->
+<div class="glabel" style="left:16780px;top:8px">Marketing, spacious · side-themed</div>
+
+<div class="frame" style="left:16780px;top:60px" data-screen-label="Marketing Home">
+  <div class="cap"><b>Marketing home</b><span>wholesaler teal + retailer rust band · warm paper ground</span></div>
+  <iframe src="unified/marketing-home.html" width="1440" height="2300" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:16780px;top:3160px" data-screen-label="Marketing Pricing">
+  <div class="cap"><b>Pricing</b><span>start small, add things, 4 plans · add-on modules · full comparison</span></div>
+  <iframe src="unified/pricing.html" width="1440" height="2620" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:18320px;top:8px">Shared overlay kit</div>
+
+<div class="frame" style="left:18320px;top:60px" data-screen-label="Overlay Kit">
+  <div class="cap"><b>Overlay kit</b><span>⌘K palette · notifications · toasts · confirm · scan · skeleton/empty</span></div>
+  <iframe src="unified/overlays.html" width="1240" height="1560" scrolling="no"></iframe>
+</div>
+
+<!-- ============ BUYER PORTAL, SHOPPING & ORDERS ============ -->
+<div class="glabel" style="left:19860px;top:8px">Buyer portal, shopping &amp; orders</div>
+
+<div class="frame" style="left:19860px;top:60px" data-screen-label="Buyer Product View">
+  <div class="cap"><b>Buyer product view</b><span>negotiated price · box/piece · favorites</span></div>
+  <iframe src="unified/buyer-product.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:19860px;top:1140px" data-screen-label="Buyer Cart">
+  <div class="cap"><b>Cart &amp; checkout</b><span>per-seller cart · delivery date · PO number · no in-app pay</span></div>
+  <iframe src="unified/buyer-cart.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:21400px;top:60px" data-screen-label="Buyer Orders">
+  <div class="cap"><b>Buyer orders</b><span>saved-view chips · reorder · track</span></div>
+  <iframe src="unified/buyer-orders.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:21400px;top:1110px" data-screen-label="Buyer Order Tracking">
+  <div class="cap"><b>Order tracking</b><span>status timeline · live driver position · delivery details</span></div>
+  <iframe src="unified/buyer-order-detail.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:21400px;top:2230px" data-screen-label="Buyer Licenses">
+  <div class="cap"><b>Buyer licenses &amp; authorizations</b><span>declare once · per-seller verification · expiry renewals</span></div>
+  <iframe src="unified/buyer-licenses.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:22940px;top:8px">Buyer portal, money</div>
+
+<div class="frame" style="left:22940px;top:60px" data-screen-label="Buyer Invoice Detail">
+  <div class="cap"><b>Buyer invoice detail</b><span>PDF download · read-only payment history · pay off-app</span></div>
+  <iframe src="unified/buyer-invoice-detail.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:22940px;top:1160px" data-screen-label="Buyer Finances">
+  <div class="cap"><b>Buyer finances</b><span>spend KPIs · 12-mo chart · AR breakdown</span></div>
+  <iframe src="unified/buyer-finances.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:22940px;top:2260px" data-screen-label="Buyer Standing Orders">
+  <div class="cap"><b>Standing orders</b><span>seller-defined templates · day chips · one-tap reorder</span></div>
+  <iframe src="unified/buyer-standing.html" width="1440" height="900" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:22940px;top:3260px" data-screen-label="Buyer, Your Sellers">
+  <div class="cap"><b>Your Sellers directory</b><span>manage connections · connect-by-code · invite-link path</span></div>
+  <iframe src="unified/buyer-sellers.html" width="1440" height="920" scrolling="no"></iframe>
+</div>
+
+<!-- ============ OPERATOR, LISTS & RECORDS ============ -->
+<div class="glabel" style="left:24480px;top:8px">Operator, lists &amp; records</div>
+
+<div class="frame" style="left:24480px;top:60px" data-screen-label="Customers List">
+  <div class="cap"><b>Customers list</b><span>saved views · URL filters · portal-linked flags</span></div>
+  <iframe src="unified/customers.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:24480px;top:1110px" data-screen-label="Drivers">
+  <div class="cap"><b>Drivers</b><span>roster · live status · assign to open runs</span></div>
+  <iframe src="unified/drivers.html" width="1440" height="920" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:26020px;top:60px" data-screen-label="Products List">
+  <div class="cap"><b>Products list</b><span>scan-to-find · margins · regulation scope selector</span></div>
+  <iframe src="unified/products.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:26020px;top:1140px" data-screen-label="Returns">
+  <div class="cap"><b>Returns</b><span>review → approve → restock → credit note</span></div>
+  <iframe src="unified/returns.html" width="1440" height="920" scrolling="no"></iframe>
+</div>
+
+<!-- ============ OPERATOR, MONEY & COMPLIANCE ============ -->
+<div class="glabel" style="left:27560px;top:8px">Operator, money &amp; compliance</div>
+
+<div class="frame" style="left:27560px;top:60px" data-screen-label="Vendor Bill Detail">
+  <div class="cap"><b>Vendor bill detail</b><span>unlinked-items mapping · cost dry-run · OCR source</span></div>
+  <iframe src="unified/vendor-bill-detail.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:27560px;top:1180px" data-screen-label="Payment Receipt">
+  <div class="cap"><b>Payment receipt</b><span>printable · amount − bank charges = applied · void</span></div>
+  <iframe src="unified/payment-receipt.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:29100px;top:60px" data-screen-label="Finance Reports">
+  <div class="cap"><b>Reports</b><span>AR aging · P&amp;L · cash flow · expense breakdown</span></div>
+  <iframe src="unified/reports.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:29100px;top:1160px" data-screen-label="Regulated Items">
+  <div class="cap"><b>Regulated items</b><span>generalized, tenant-defined categories (tobacco, alcohol, CRV…) · tobacco shown</span></div>
+  <iframe src="unified/compliance.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:30640px;top:8px">Driver self view</div>
+
+<div class="frame" style="left:30640px;top:60px" data-screen-label="My Routes, Driver">
+  <div class="cap"><b>My routes (driver)</b><span>reduced nav · stop-by-stop · POD + payment collection</span></div>
+  <iframe src="unified/my-runs.html" width="1440" height="900" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:30640px;top:1060px" data-screen-label="Tracked Categories">
+  <div class="cap"><b>Tracked categories manager</b><span>define separately-handled items · tax rule · invoice treatment · filing cadence</span></div>
+  <iframe src="unified/tracked-categories.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<!-- ============ PLATFORM ADMIN, CONT. ============ -->
+<div class="glabel" style="left:32180px;top:8px">Platform admin, cont.</div>
+
+<div class="frame" style="left:32180px;top:60px" data-screen-label="Admin Tenants">
+  <div class="cap"><b>Tenants list</b><span>lifecycle actions · impersonate · bulk bar</span></div>
+  <iframe src="unified/admin-tenants.html" width="1440" height="960" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:32180px;top:1120px" data-screen-label="Admin Buyers">
+  <div class="cap"><b>Buyers &amp; merge requests</b><span>cross-tenant accounts · approve/reject merges</span></div>
+  <iframe src="unified/admin-buyers.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:33720px;top:60px" data-screen-label="Admin Billing">
+  <div class="cap"><b>Billing</b><span>Est. MRR · subscriptions · failed payments</span></div>
+  <iframe src="unified/admin-billing.html" width="1440" height="940" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:33720px;top:1100px" data-screen-label="Admin AI Settings">
+  <div class="cap"><b>AI settings</b><span>key status · default model · max tokens · usage</span></div>
+  <iframe src="unified/admin-ai-settings.html" width="1440" height="860" scrolling="no"></iframe>
+</div>
+
+<!-- ============ ACTION MODALS ============ -->
+<div class="glabel" style="left:35260px;top:8px">Action modals</div>
+
+<div class="frame" style="left:35260px;top:60px" data-screen-label="Action Modals">
+  <div class="cap"><b>Action modals</b><span>record payment · order send · customer form · picker · quick-create · license capture · responsibility override</span></div>
+  <iframe src="unified/action-modals.html" width="1300" height="3080" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:36800px;top:8px">Guardrails, failure modes solved</div>
+
+<div class="frame" style="left:36800px;top:60px" data-screen-label="Guardrails &amp; Edge Flows">
+  <div class="cap"><b>Guardrails &amp; edge flows</b><span>offline sync · credit limits · short picks · failed delivery · cutoffs/MOV · price review · disputes · NSF · duplicates · settlement</span></div>
+  <iframe src="unified/guardrails.html" width="1300" height="2900" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:36800px;top:3080px" data-screen-label="POS, Cost &amp; Flow">
+  <div class="cap"><b>POS, cost &amp; flow</b><span>live cost/margin · costing method · minimized drafts · at-the-door edits · drive mode &amp; blended roles</span></div>
+  <iframe src="unified/pos-flow.html" width="1300" height="1560" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:38340px;top:8px">Plan gating &amp; billing UX</div>
+
+<div class="frame" style="left:38340px;top:60px" data-screen-label="Plan Gates &amp; Billing UX">
+  <div class="cap"><b>Plan gates &amp; billing UX</b><span>upsell pages · soft caps + grace · seat/route resolves · add-on proration · metered AI scans · trial · downgrade</span></div>
+  <iframe src="unified/plan-gates.html" width="1300" height="2560" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:39880px;top:8px">Plan lifecycle, tenant &amp; platform</div>
+
+<div class="frame" style="left:39880px;top:60px" data-screen-label="Choose Plan">
+  <div class="cap"><b>Choose plan (in-app)</b><span>trial conversion · usage-fit recommendation · add-ons · checkout summary</span></div>
+  <iframe src="unified/choose-plan.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:39880px;top:1180px" data-screen-label="Settings, Plan &amp; Billing">
+  <div class="cap"><b>Settings, Plan &amp; Billing</b><span>usage meters · add-on toggles · payment method · RouteFlow invoices</span></div>
+  <iframe src="unified/settings-billing.html" width="1440" height="1080" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:39880px;top:2320px" data-screen-label="Admin Plans &amp; Features">
+  <div class="cap"><b>Admin, Plans &amp; Features editor</b><span>plan defs · allotments · flags · SKUs · versioned publishing</span></div>
+  <iframe src="unified/admin-plans.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:41420px;top:8px">Promise completeness</div>
+
+<div class="frame" style="left:41420px;top:60px" data-screen-label="Credit Notes">
+  <div class="cap"><b>Credit notes</b><span>from returns, disputes &amp; short picks · auto-apply to next invoice</span></div>
+  <iframe src="unified/credit-notes.html" width="1440" height="920" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:41420px;top:1080px" data-screen-label="Demand Forecasting">
+  <div class="cap"><b>Demand forecasting</b><span>velocity · days-of-stock · suggested POs by supplier · confidence</span></div>
+  <iframe src="unified/forecasting.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:42960px;top:60px" data-screen-label="Import Wizard">
+  <div class="cap"><b>Import wizard</b><span>column mapping · dry-run · dupe review · 24h undo</span></div>
+  <iframe src="unified/import-wizard.html" width="1440" height="980" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:42960px;top:1140px" data-screen-label="Settings, Integrations">
+  <div class="cap"><b>Settings, Integrations</b><span>accounting sync · webhooks · API keys + SSO (Enterprise)</span></div>
+  <iframe src="unified/settings-integrations.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:44500px;top:8px">Messaging</div>
+
+<div class="frame" style="left:44500px;top:60px" data-screen-label="Messages, Operator">
+  <div class="cap"><b>Messages (operator)</b><span>one thread per customer · WA/SMS/portal in one inbox · act from chat</span></div>
+  <iframe src="unified/messages.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:44500px;top:1160px" data-screen-label="Settings, Notifications">
+  <div class="cap"><b>Settings, Notifications</b><span>event × channel matrix · templates with variables · STOP compliance</span></div>
+  <iframe src="unified/settings-notifications.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:46040px;top:60px" data-screen-label="Buyer Messages">
+  <div class="cap"><b>Buyer messages</b><span>thread with the seller · issue reports + credits inline · WA mirror</span></div>
+  <iframe src="unified/buyer-messages.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:46040px;top:1090px" data-screen-label="Buyer, Your Shelf">
+  <div class="cap"><b>Your Shelf, replenishment</b><span>days-left estimates from order rhythm · add-all-low · delivery calendar + cutoffs</span></div>
+  <iframe src="unified/buyer-shelf.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:47580px;top:60px" data-screen-label="Buyer Order Editing">
+  <div class="cap"><b>Buyer order editing</b><span>add/change freely until loading · change requests after dispatch · live totals</span></div>
+  <iframe src="unified/buyer-order-edit.html" width="1440" height="1000" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:47580px;top:1160px" data-screen-label="Buyer Payments &amp; Credits">
+  <div class="cap"><b>Buyer payments &amp; credits</b><span>checks in flight (Recorded→Deposited→Cleared) · credit wallet · statements</span></div>
+  <iframe src="unified/buyer-payments.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:49120px;top:8px">Onboarding &amp; UX standards</div>
+
+<div class="frame" style="left:49120px;top:60px" data-screen-label="First-Run Onboarding">
+  <div class="cap"><b>First-run onboarding</b><span>get-to-first-delivery checklist · migration entry · human help</span></div>
+  <iframe src="unified/onboarding.html" width="1440" height="950" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:49120px;top:1110px" data-screen-label="UX Standards">
+  <div class="cap"><b>UX standards</b><span>undo everywhere · session expiry keeps drafts · language · help links</span></div>
+  <iframe src="unified/ux-standards.html" width="1300" height="820" scrolling="no"></iframe>
+</div>
+
+<div class="glabel" style="left:50660px;top:8px">Migration &amp; batch import</div>
+
+<div class="frame" style="left:50660px;top:60px" data-screen-label="Migration Hub">
+  <div class="cap"><b>Migration hub</b><span>Zoho/QuickBooks/CSV · numbering continues · dedupe guaranteed · staged go-live</span></div>
+  <iframe src="unified/migration.html" width="1440" height="1020" scrolling="no"></iframe>
+</div>
+
+<div class="frame" style="left:50660px;top:1180px" data-screen-label="Batch Invoice Import">
+  <div class="cap"><b>Batch invoice import</b><span>upload all, AI processes, review once · variant resolution · duplicates skipped</span></div>
+  <iframe src="unified/batch-import.html" width="1440" height="1080" scrolling="no"></iframe>
+</div>
+
+<script>
+  // size each iframe to its content
+  document.querySelectorAll('iframe').forEach(function (f) {
+    f.addEventListener('load', function () {
+      try {
+        var h = f.contentDocument.documentElement.scrollHeight;
+        if (h > 100) f.height = h;
+      } catch (e) {}
+    });
+  });
+</script>
+</body>
+</html>

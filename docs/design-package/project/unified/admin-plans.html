@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Admin Plans &amp; Features</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .flagrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .flagrow:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Admin Plans &amp; Features">
+  <script>document.write(RFShell.adminRail('plans'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>Plans &amp; Features</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Plans &amp; Features</h2><div class="sub">Plan definitions, allotments and add-on SKUs, changes version; existing subscriptions keep their terms until renewal.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="clock" data-sz="15"></i>Version history</button><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Plan</button></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Plans</h3><span class="muted" style="font-size:12px">v7 · effective Jul 1, 2026</span></div>
+            <table class="tbl">
+              <thead><tr><th>Plan</th><th class="r">Monthly</th><th class="r">Annual (×10)</th><th class="r">Seats</th><th class="r">Routes</th><th class="r">AI Scans</th><th class="r">Tenants</th><th></th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="primary-cell">Starter</td><td class="r">$59.00</td><td class="r">$590.00</td><td class="r">1</td><td class="r">1/day</td><td class="r">20</td><td class="r">27</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="primary-cell">Team</td><td class="r">$149.00</td><td class="r">$1,490.00</td><td class="r">5</td><td class="r">3</td><td class="r">100</td><td class="r">38</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row" style="background:var(--primary-mist)"><td class="primary-cell">Business <span class="badge b-accent" style="margin-left:6px;text-transform:none;letter-spacing:0">most popular</span></td><td class="r">$349.00</td><td class="r">$3,490.00</td><td class="r">15</td><td class="r">∞</td><td class="r">300</td><td class="r">47</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="primary-cell">Enterprise</td><td class="r muted">custom</td><td class="r muted">custom</td><td class="r">∞</td><td class="r">∞</td><td class="r">∞</td><td class="r">30</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Add-on SKUs</h3></div>
+            <table class="tbl" style="--row-h:40px">
+              <thead><tr><th>SKU</th><th>Name</th><th class="r">Price</th><th class="r">Active Subs</th><th></th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="mono">SEAT_EXTRA</td><td>Extra seat</td><td class="r">$12.00/user/mo</td><td class="r">96</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="mono">BUYER_PORTAL</td><td>Buyer Portal (Starter/Team)</td><td class="r">$49.00/mo</td><td class="r">22</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="mono">REGULATED_ITEMS</td><td>Regulated-Items Compliance</td><td class="r">$39.00/mo</td><td class="r">31</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="mono">OCR_PACK_250</td><td>AI scan pack +250</td><td class="r">$19.00/mo</td><td class="r">14</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="mono">ROUTE_EXTRA</td><td>Extra concurrent route (Team)</td><td class="r">$15.00/route/mo</td><td class="r">9</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+                <tr class="row"><td class="mono">MSG_BUNDLE_500</td><td>Messaging +500</td><td class="r">$10.00/mo</td><td class="r">41</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h3>Edit, Business</h3><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">draft v8</span></div>
+          <div class="card-b" style="padding-top:10px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+              <div class="field"><label>Monthly price</label><div class="input"><span class="faint">$</span><input value="349.00" class="mono" style="text-align:right"></div></div>
+              <div class="field"><label>Seats included</label><div class="input"><input value="15" class="mono" style="text-align:right"></div></div>
+              <div class="field"><label>Concurrent routes</label><div class="input"><input value="∞" class="mono" style="text-align:right"></div></div>
+              <div class="field"><label>AI scans / mo</label><div class="input"><input value="300" class="mono" style="text-align:right"></div></div>
+            </div>
+            <div class="overline" style="margin-bottom:6px">Feature flags</div>
+            <div class="flagrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span class="mono" style="flex:1">flag.dispatch_live</span><span class="faint">Team+</span></div>
+            <div class="flagrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span class="mono" style="flex:1">flag.reports · flag.returns · flag.ap_bills</span><span class="faint">Team+</span></div>
+            <div class="flagrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span class="mono" style="flex:1">flag.analytics · flag.forecasting</span><span class="faint">Business+</span></div>
+            <div class="flagrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span class="mono" style="flex:1">flag.pricing_tiers · flag.import_integrations</span><span class="faint">Business+</span></div>
+            <div class="flagrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span class="mono" style="flex:1">addon.buyer_portal, included</span><span class="faint">Business+</span></div>
+            <div class="flagrow"><span class="cb"></span><span class="mono" style="flex:1">flag.api_sso</span><span class="faint">Enterprise</span></div>
+            <div style="display:flex;gap:9px;margin-top:16px">
+              <button class="btn btn-secondary" style="flex:1;justify-content:center">Discard</button>
+              <button class="btn btn-primary" style="flex:1;justify-content:center"><i data-ic="check" data-sz="14"></i>Publish v8</button>
+            </div>
+            <span class="faint" style="font-size:11.5px;display:block;margin-top:10px">Publishing applies to new subscriptions immediately; existing tenants migrate at renewal with 30-day notice.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

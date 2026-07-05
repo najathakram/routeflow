@@ -16,7 +16,15 @@ import {
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
 import { apiClient } from "@/lib/api-client";
-import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
+import {
+  getTierPrice,
+  computeLineSubtotal,
+  computeMarginFraction,
+  priceForMarginFloor,
+  classifyMargin,
+  costPerSellingUnit,
+} from "@/lib/pricing";
+import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 
@@ -53,8 +61,65 @@ interface LineItem {
   unitsPerBox?: number; // set when product has box packaging
   boxes?: number; // whole boxes (only when unitsPerBox is set)
   pieces?: number; // extra loose pieces (only when unitsPerBox is set)
+  unitCost?: number; // Product.averageCost (per piece) — for the live margin hint
+  category?: string; // for the per-category margin floor
   /** True for a free-text, non-catalog line (sent as { name, qty, unitPrice }). */
   isUnlisted?: boolean;
+}
+
+// ─── Live cost/margin hint (the negotiation floor, pos-cost-roles-spec §1) ──────
+
+/**
+ * Shows `cost $X.XX · margin %` under a line's price. Below floor or below cost
+ * turns red and offers a one-tap "Set to floor $Y" fix plus "Sell anyway" (which
+ * the caller records). Renders nothing when the product's cost is unknown.
+ */
+function MarginHint({
+  li,
+  floor,
+  acked,
+  onSetToFloor,
+  onSellAnyway,
+}: {
+  li: LineItem;
+  floor: number;
+  acked: boolean;
+  onSetToFloor: () => void;
+  onSellAnyway: () => void;
+}) {
+  if (li.unitCost == null) return null;
+  const margin = computeMarginFraction(li.unitPrice, li.unitCost, li.unitsPerBox);
+  if (margin == null) return null;
+  const cls = classifyMargin(margin, floor);
+  const cost = costPerSellingUnit(li.unitCost, li.unitsPerBox);
+  const below = cls === "belowFloor" || cls === "belowCost";
+  const color = below ? "text-danger" : cls === "warn" ? "text-amber-600" : "text-navy/40";
+  const floorPrice = priceForMarginFloor(li.unitCost, floor, li.unitsPerBox);
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-2">
+      <span className={`font-mono text-[10px] ${color}`}>
+        cost ${cost.toFixed(2)} · {(margin * 100).toFixed(1)}%
+      </span>
+      {below && !acked && (
+        <>
+          <button
+            type="button"
+            onClick={onSetToFloor}
+            className="rounded border border-danger/30 px-1.5 py-0.5 text-[10px] font-semibold text-danger transition-colors hover:bg-danger-bg"
+          >
+            Set to floor ${floorPrice.toFixed(2)}
+          </button>
+          <button
+            type="button"
+            onClick={onSellAnyway}
+            className="text-[10px] font-semibold text-navy/50 underline underline-offset-2 hover:text-navy"
+          >
+            Sell anyway
+          </button>
+        </>
+      )}
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -128,6 +193,15 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+
+  // Live cost/margin: the "negotiation floor" (pos-cost-roles-spec §1).
+  const { data: marginConfig } = useMarginConfig();
+  // Lines where the operator chose "Sell anyway" below the floor — dismisses the warning.
+  const [floorAcked, setFloorAcked] = React.useState<Set<string>>(new Set());
+  const ackFloor = React.useCallback(
+    (tempId: string) => setFloorAcked((prev) => new Set(prev).add(tempId)),
+    [],
+  );
 
   // Debounce customer search
   React.useEffect(() => {
@@ -317,6 +391,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         unitsPerBox: upb,
         boxes: upb ? 1 : undefined,
         pieces: upb ? 0 : undefined,
+        unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
+        category: product.category ?? undefined,
       },
     ]);
     setScrollToId(newTempId);
@@ -1065,6 +1141,25 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
                               )}
                           </div>
                         )}
+                        {/* Live cost & margin — the negotiation floor */}
+                        <MarginHint
+                          li={li}
+                          floor={floorForCategory(marginConfig, li.category)}
+                          acked={floorAcked.has(li.tempId)}
+                          onSetToFloor={() =>
+                            setDiscountedPrice(
+                              li.tempId,
+                              String(
+                                priceForMarginFloor(
+                                  li.unitCost ?? 0,
+                                  floorForCategory(marginConfig, li.category),
+                                  li.unitsPerBox,
+                                ),
+                              ),
+                            )
+                          }
+                          onSellAnyway={() => ackFloor(li.tempId)}
+                        />
                       </div>
                     )}
                     {/* Qty controls */}

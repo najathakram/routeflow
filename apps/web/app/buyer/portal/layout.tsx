@@ -198,7 +198,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   };
 
   return (
-    <div className="flex min-h-screen bg-surface-raised">
+    <div className="surface-buyer flex min-h-screen bg-surface-raised">
       {/* Sidebar — Buyer: dark teal/emerald theme */}
       <aside className="flex w-64 flex-shrink-0 flex-col bg-gradient-to-b from-buyer-900 to-buyer-800 shadow-lg">
         {/* Header */}

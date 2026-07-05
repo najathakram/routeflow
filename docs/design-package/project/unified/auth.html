@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Unified Auth</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1280px;height:780px}
+  body{margin:0;overflow:hidden}
+  .auth{display:grid;grid-template-columns:1.05fr 1fr;width:1280px;height:780px}
+  /* left: accent panel */
+  .pane{position:relative;color:#fff;padding:52px 56px;display:flex;flex-direction:column;overflow:hidden}
+  .pane .orb{position:absolute;border-radius:50%;pointer-events:none}
+  .brandline{display:flex;align-items:center;gap:11px;font-weight:700;font-size:15px;letter-spacing:-.01em}
+  .brandline .mark{width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);display:grid;place-items:center;font-size:13px;font-weight:700}
+  .pane h1{font-family:var(--font-display);font-weight:400;font-size:46px;line-height:1.1;color:#fff;margin-top:auto;max-width:440px}
+  .pane p{font-size:14.5px;line-height:1.6;color:rgba(255,255,255,.72);max-width:400px;margin-top:16px}
+  .pane .foot{margin-top:auto;display:flex;gap:22px;font-size:12px;color:rgba(255,255,255,.55)}
+  .pane .foot span{display:flex;align-items:center;gap:7px}
+  /* right: form */
+  .formside{background:var(--canvas);display:flex;align-items:center;justify-content:center}
+  .formcard{width:400px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-drop);padding:34px 36px}
+  .formcard h2{font-size:19px;font-weight:600;letter-spacing:-.01em}
+  .formcard .sub{font-size:13px;color:var(--ink-500);margin-top:5px;margin-bottom:22px}
+  .formcard .field{margin-bottom:14px}
+  .aux{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin-top:14px}
+  .switchrow{margin-top:22px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-500);text-align:center}
+</style>
+</head>
+<body>
+<div class="auth" data-screen-label="Unified Auth">
+
+  <div class="pane" id="pane">
+    <div class="orb" id="orb1" style="width:420px;height:420px;top:-140px;right:-120px"></div>
+    <div class="orb" id="orb2" style="width:340px;height:340px;bottom:-140px;left:-100px"></div>
+    <div class="brandline" style="position:relative"><span class="mark" id="mark">RF</span><span id="brandname">RouteFlow</span></div>
+    <h1 id="headline" style="position:relative">Every route, order and invoice in one ledger.</h1>
+    <p id="valueprop" style="position:relative">Wholesale delivery operations for teams who run on scan guns, route sheets and same-day invoices.</p>
+    <div class="foot" style="position:relative" id="foot">
+      <span><i data-ic="check" data-sz="13"></i>Multi-tenant</span>
+      <span><i data-ic="check" data-sz="13"></i>Realtime dispatch</span>
+      <span><i data-ic="check" data-sz="13"></i>PWA on any device</span>
+    </div>
+  </div>
+
+  <div class="formside">
+    <div class="formcard">
+      <h2 id="formtitle">Sign in to your workspace</h2>
+      <div class="sub" id="formsub">Use the workspace your team gave you.</div>
+
+      <div class="field" id="slugfield">
+        <label>Workspace</label>
+        <div class="input"><input value="goldenstate"><span class="faint" style="font-size:12px">.routeflow.info</span></div>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <div class="input"><input value="maria@goldenstate.co" id="emailinput"></div>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <div class="input"><input type="password" value="••••••••••"><i data-ic="eye" data-sz="15" style="color:var(--ink-400)"></i></div>
+      </div>
+
+      <button class="btn lg btn-primary" style="width:100%;justify-content:center;margin-top:6px" id="cta">Sign in</button>
+
+      <div class="aux">
+        <a class="btn-link" style="font-size:12.5px">Forgot password?</a>
+        <span class="faint" id="ssohint">or continue with Google</span>
+      </div>
+      <div class="switchrow" id="switchrow">New to RouteFlow? <a class="btn-link" style="font-size:12.5px">Create your workspace</a></div>
+    </div>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+<script>
+  // One template; role sets accent + copy. ?v=operator|buyer|admin
+  var v = new URLSearchParams(location.search).get('v') || 'operator';
+  var conf = {
+    operator: {
+      grad: 'linear-gradient(155deg,#0B4241 0%,#0B6E6B 55%,#14A39F 130%)',
+      orb1: 'radial-gradient(circle,rgba(127,209,205,.35),transparent 70%)',
+      orb2: 'radial-gradient(circle,rgba(20,163,159,.3),transparent 70%)',
+      accent: '#14A39F', accentStrong: '#0E8480', accentDeep: '#0B6E6B', soft: '#E8F2F1'
+    },
+    buyer: {
+      grad: 'linear-gradient(155deg,#043D2B 0%,#047857 55%,#059669 130%)',
+      orb1: 'radial-gradient(circle,rgba(110,231,183,.32),transparent 70%)',
+      orb2: 'radial-gradient(circle,rgba(5,150,105,.3),transparent 70%)',
+      accent: '#059669', accentStrong: '#047857', accentDeep: '#065F46', soft: '#ECFDF5',
+      headline: 'Your sellers, one storefront.',
+      valueprop: 'Shop every wholesaler you buy from, reorder in one tap, and keep invoices and balances in one place.',
+      title: 'Sign in to shop', sub: 'Buyer account, works across all your sellers.',
+      slug: false, switchrow: 'First order? <a class="btn-link" style="font-size:12.5px">Create a buyer account</a>',
+      brand: 'RouteFlow · Buyer', email: 'maya@harborcafe.com'
+    },
+    admin: {
+      grad: 'linear-gradient(155deg,#131A2E 0%,#1E2749 60%,#312E81 135%)',
+      orb1: 'radial-gradient(circle,rgba(99,102,241,.35),transparent 70%)',
+      orb2: 'radial-gradient(circle,rgba(79,70,229,.25),transparent 70%)',
+      accent: '#4F46E5', accentStrong: '#4F46E5', accentDeep: '#4338CA', soft: '#EEF2FF',
+      headline: 'The platform, not a tenant.',
+      valueprop: 'Tenants, plans, billing and audit, super-admin access is isolated, logged, and read-only when impersonating.',
+      title: 'Platform administration', sub: 'Restricted, super-admin credentials only.',
+      slug: false, switchrow: '<span style="display:inline-flex;align-items:center;gap:6px;color:var(--ink-400)">🛡 All sessions are audit-logged</span>',
+      brand: 'RouteFlow · Platform', mark: '🛡', email: 'admin@routeflow.info'
+    }
+  }[v];
+
+  var r = document.documentElement.style;
+  r.setProperty('--accent', conf.accent);
+  r.setProperty('--accent-strong', conf.accentStrong);
+  r.setProperty('--accent-deep', conf.accentDeep);
+  r.setProperty('--accent-soft', conf.soft);
+  document.getElementById('pane').style.background = conf.grad;
+  document.getElementById('orb1').style.background = conf.orb1;
+  document.getElementById('orb2').style.background = conf.orb2;
+  if (conf.headline) document.getElementById('headline').textContent = conf.headline;
+  if (conf.valueprop) document.getElementById('valueprop').textContent = conf.valueprop;
+  if (conf.title) document.getElementById('formtitle').textContent = conf.title;
+  if (conf.sub) document.getElementById('formsub').textContent = conf.sub;
+  if (conf.brand) document.getElementById('brandname').textContent = conf.brand;
+  if (conf.mark) document.getElementById('mark').textContent = conf.mark;
+  if (conf.slug === false) document.getElementById('slugfield').style.display = 'none';
+  if (conf.email) document.getElementById('emailinput').value = conf.email;
+  if (conf.switchrow) document.getElementById('switchrow').innerHTML = conf.switchrow;
+  if (v === 'admin') document.getElementById('ssohint').style.display = 'none';
+  document.querySelector('.auth').setAttribute('data-screen-label', 'Auth, ' + v);
+</script>
+</body>
+</html>

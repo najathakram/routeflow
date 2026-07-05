@@ -96,24 +96,24 @@ const STATUS_MAP: Record<BadgeStatus, { variant: BadgeVariant; label: string }> 
 
 const VARIANT_STYLES: Record<BadgeVariant, { badge: string; dot: string }> = {
   success: {
-    badge: "bg-success-bg text-success",
-    dot: "bg-success",
+    badge: "bg-success-bg text-[#15803D]",
+    dot: "bg-current",
   },
   warning: {
-    badge: "bg-warning-bg text-warning",
-    dot: "bg-warning",
+    badge: "bg-warning-bg text-[#B45309]",
+    dot: "bg-current",
   },
   danger: {
-    badge: "bg-danger-bg text-danger",
-    dot: "bg-danger",
+    badge: "bg-danger-bg text-[#B91C1C]",
+    dot: "bg-current",
   },
   info: {
-    badge: "bg-brand-100 text-brand-700",
-    dot: "bg-brand-500",
+    badge: "bg-info-bg text-[#0369A1]",
+    dot: "bg-current",
   },
   neutral: {
-    badge: "bg-surface-raised text-navy/70 border border-surface-border",
-    dot: "bg-navy/40",
+    badge: "bg-sunken text-ink-500",
+    dot: "bg-current",
   },
 };
 
@@ -135,7 +135,7 @@ export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
       <span
         ref={ref}
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+          "inline-flex h-[21px] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold uppercase tracking-[0.03em] whitespace-nowrap",
           styles.badge,
           className,
         )}

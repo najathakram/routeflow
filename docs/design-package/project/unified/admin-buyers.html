@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Admin Buyers &amp; Merge Requests</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:980px}
+  body{margin:0;overflow:hidden}
+  .screen{height:980px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .mergecard{display:grid;grid-template-columns:1fr 40px 1fr;gap:14px;align-items:center}
+  .acct{border:1px solid var(--line);border-radius:9px;padding:12px 14px;font-size:12.5px}
+  .acct b{display:block;color:var(--ink-900);font-size:13px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Admin Buyers &amp; Merge Requests">
+  <script>document.write(RFShell.adminRail('buyers'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>Buyers</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Buyers <span class="muted" style="font-weight:400;font-size:15px">· 1,204 accounts</span></h2><div class="sub">Cross-tenant buyer accounts and pending account merges.</div></div>
+      </div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div class="filters">
+          <div class="input sm" style="width:240px"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Buyer email or business…</span></div>
+          <div class="select sm" style="width:140px"><span>All sellers</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="chip active">All <span class="n">1,204</span></button>
+          <button class="chip">Multi-seller <span class="n">204</span></button>
+          <button class="chip">Unverified <span class="n">38</span></button>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Buyer</th><th>Business</th><th class="r">Sellers</th><th class="r">Orders 90d</th><th>Verified</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="primary-cell">rosa@sunrisemkt.com</span></td><td>Sunrise Market</td><td class="r">2</td><td class="r">26</td><td><span class="badge b-success">Verified</span></td><td class="muted">Apr 2024</td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="primary-cell">knguyen@brightmart.com</span></td><td>Bright Mart #2</td><td class="r">3</td><td class="r">31</td><td><span class="badge b-success">Verified</span></td><td class="muted">Jan 2025</td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="primary-cell">mchen@ggategrocery.com</span></td><td>Golden Gate Grocery</td><td class="r">1</td><td class="r">31</td><td><span class="badge b-success">Verified</span></td><td class="muted">Sep 2025</td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="primary-cell">tpark.deli@gmail.com</span></td><td>Lucky Corner Deli</td><td class="r">1</td><td class="r">19</td><td><span class="badge b-warning">Unverified</span></td><td class="muted">Jun 2026</td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>Merge Requests</h3><span class="badge b-warning">2 pending</span></div>
+        <div class="card-b" style="display:flex;flex-direction:column;gap:14px">
+          <div class="mergecard">
+            <div class="acct"><b>rosa@sunrisemkt.com</b>kept · 2 sellers · 86 orders</div>
+            <i data-ic="arrowleft" data-sz="18" style="color:var(--ink-400);justify-self:center"></i>
+            <div class="acct" style="background:var(--sunken)"><b>rosa.delgado@gmail.com</b>absorbed · 1 seller · 12 orders<div class="faint" style="margin-top:3px">"Old personal account, same store."</div></div>
+          </div>
+          <div style="display:flex;gap:9px;justify-content:flex-end">
+            <button class="btn sm btn-secondary">View details</button>
+            <button class="btn sm btn-secondary" style="color:var(--danger)">Reject</button>
+            <button class="btn sm btn-primary"><i data-ic="check" data-sz="13"></i>Approve merge</button>
+          </div>
+          <div class="mergecard" style="border-top:1px solid var(--line);padding-top:14px">
+            <div class="acct"><b>orders@valleypantry.com</b>kept · 1 seller · 0 orders</div>
+            <i data-ic="arrowleft" data-sz="18" style="color:var(--ink-400);justify-self:center"></i>
+            <div class="acct" style="background:var(--sunken)"><b>jokoye@valleypantry.com</b>absorbed · 1 seller · 4 orders</div>
+          </div>
+          <div style="display:flex;gap:9px;justify-content:flex-end">
+            <button class="btn sm btn-secondary">View details</button>
+            <button class="btn sm btn-secondary" style="color:var(--danger)">Reject</button>
+            <button class="btn sm btn-primary"><i data-ic="check" data-sz="13"></i>Approve merge</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

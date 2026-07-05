@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Sale / Order Builder</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .cols{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start}
+  .scanbar{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .scaninput{flex:1;display:flex;align-items:center;gap:10px;height:40px;border:1px solid var(--accent);outline:2px solid var(--accent);outline-offset:-1px;border-radius:var(--r-ctl);background:var(--paper);padding:0 12px}
+  .scaninput .ph{color:var(--ink-400)}
+  .modeseg{display:flex;background:var(--sunken);border-radius:8px;padding:3px;gap:2px}
+  .modeseg button{height:30px;padding:0 14px;border-radius:6px;font-size:12.5px;font-weight:600;color:var(--ink-500)}
+  .modeseg button.on{background:var(--paper);color:var(--ink-900);box-shadow:var(--sh-card)}
+  .qtygrp{display:inline-flex;align-items:center;border:1px solid var(--line-strong);border-radius:var(--r-ctl);height:30px;overflow:hidden}
+  .qtygrp button{width:26px;height:100%;display:grid;place-items:center;color:var(--ink-400)}
+  .qtygrp button:hover{background:var(--sunken);color:var(--ink-900)}
+  .qtygrp .q{width:34px;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--ink-900)}
+  .unitsel{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 9px;border:1px solid var(--line-strong);border-radius:var(--r-ctl);font-size:12px;color:var(--ink-700);background:var(--paper)}
+  .pricecell{display:flex;flex-direction:column;gap:1px;align-items:flex-end}
+  .priceinput{width:88px;height:30px;border:1px solid var(--line-strong);border-radius:var(--r-ctl);text-align:right;padding:0 9px;font-family:var(--font-mono);font-size:13px;color:var(--ink-900);background:var(--paper)}
+  tr.justscanned td{animation:flash 1.6s ease-out both}
+  @keyframes flash{0%{background:#DCFCE7}100%{background:transparent}}
+  .custcard .row{display:flex;align-items:center;gap:11px}
+  .sumline{display:flex;justify-content:space-between;font-size:13.5px;padding:7px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:12px;font-weight:600;font-size:15px;color:var(--ink-900)}
+  .memnote{display:flex;gap:9px;padding:10px 12px;border-radius:8px;background:var(--primary-mist);border:1px solid var(--brand-50);font-size:12px;color:var(--ink-500);line-height:1.5}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Sale / Order Builder">
+  <script>document.write(RFShell.operatorRail('orders.all'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('New Sale'))</script>
+    <div class="content">
+      <div class="ph-row">
+        <div>
+          <h2>New Sale</h2>
+          <div class="sub">One builder for orders and invoices, scan, search, or pick from the catalog.</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="minus" data-sz="15"></i>Minimize</button>
+          <div class="modeseg"><button class="on">Order</button><button>Invoice</button><button>From existing order</button></div>
+        </div>
+      </div>
+
+      <div class="cols">
+        <div class="card">
+          <div class="scanbar">
+            <div class="scaninput"><i data-ic="barcode" data-sz="17" style="color:var(--accent-deep)"></i><span class="ph">Scan barcode or search name / SKU…</span><span class="kbd">USB ready</span></div>
+            <button class="btn btn-secondary"><i data-ic="camera" data-sz="15"></i>Webcam scan</button>
+            <button class="btn btn-secondary"><i data-ic="plus" data-sz="15"></i>New product</button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th style="width:38%">Item</th><th>Qty</th><th>Unit</th><th class="r">Unit Price</th><th class="r">Discount</th><th class="r">Line Total</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row">
+                <td><span class="primary-cell">Agua Mineral 355ml</span><div class="faint" style="font-size:11.5px">SKU AGM-355 · 24/case</div></td>
+                <td><span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">3</span><button><i data-ic="plus" data-sz="12"></i></button></span></td>
+                <td><span class="unitsel">Boxes<i data-ic="chevupdown" data-sz="12"></i></span></td>
+                <td class="r"><div class="pricecell"><input class="priceinput" value="21.60"><span style="font-size:11px"><span class="strike money">$24.00</span> <span class="tag tag-special">Special</span></span><span class="faint" style="font-size:10px">cost $13.92 · 35.6%</span></div></td>
+                <td class="r money">$0.00</td>
+                <td class="r money" style="color:var(--ink-900);font-weight:600">$64.80</td>
+                <td><button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">Cloud Chips BBQ 1.5oz</span><div class="faint" style="font-size:11.5px">SKU CCB-015 · 12/case</div></td>
+                <td><span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">2</span><button><i data-ic="plus" data-sz="12"></i></button></span></td>
+                <td><span class="unitsel">Boxes<i data-ic="chevupdown" data-sz="12"></i></span></td>
+                <td class="r"><div class="pricecell"><input class="priceinput" value="14.25"></div></td>
+                <td class="r money">$0.00</td>
+                <td class="r money" style="color:var(--ink-900);font-weight:600">$28.50</td>
+                <td><button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">Roast House Cold Brew 8oz</span><div class="faint" style="font-size:11.5px">SKU RHC-008 · 6/case</div></td>
+                <td><span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">1</span><button><i data-ic="plus" data-sz="12"></i></button></span></td>
+                <td><span class="unitsel">Pieces<i data-ic="chevupdown" data-sz="12"></i></span></td>
+                <td class="r"><div class="pricecell"><input class="priceinput" value="3.10"><span style="font-size:11px"><span class="strike money">$3.45</span> <span class="tag tag-discount">Override</span></span></div></td>
+                <td class="r money">$0.00</td>
+                <td class="r money" style="color:var(--ink-900);font-weight:600">$3.10</td>
+                <td><button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">Sunburst Orange Soda 2L</span><div class="faint" style="font-size:11.5px">SKU SOS-200 · 8/case</div></td>
+                <td><span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">4</span><button><i data-ic="plus" data-sz="12"></i></button></span></td>
+                <td><span class="unitsel">Boxes<i data-ic="chevupdown" data-sz="12"></i></span></td>
+                <td class="r"><div class="pricecell"><input class="priceinput" value="18.40"><span style="font-size:11px"><span class="strike money">$19.20</span> <span class="tag tag-special">Special</span></span></div></td>
+                <td class="r money">−$2.00</td>
+                <td class="r money" style="color:var(--ink-900);font-weight:600">$71.60</td>
+                <td><button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button></td>
+              </tr>
+              <tr class="row justscanned">
+                <td style="box-shadow:inset 3px 0 0 var(--warning)"><span class="primary-cell">Marlin Gold 100s · Carton</span> <span class="tag tag-discount" style="margin-left:4px">Tobacco · regulated</span><div class="faint" style="font-size:11.5px">SKU MG-100 · <b style="color:var(--success);font-weight:600">just scanned</b> · splits to its own invoice · license #TB-88-2041 on file ✓</div></td>
+                <td><span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">1</span><button><i data-ic="plus" data-sz="12"></i></button></span></td>
+                <td><span class="unitsel">Cartons<i data-ic="chevupdown" data-sz="12"></i></span></td>
+                <td class="r"><div class="pricecell"><input class="priceinput" value="92.40"><span style="font-size:11px" class="faint">incl. excise $28.70</span><span class="faint" style="font-size:10px">cost $81.10 · 12.2%</span></div></td>
+                <td class="r money">$0.00</td>
+                <td class="r money" style="color:var(--ink-900);font-weight:600">$92.40</td>
+                <td><button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="padding:12px 14px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center">
+            <button class="btn sm btn-ghost"><i data-ic="plus" data-sz="14"></i>Add line</button>
+            <span class="faint" style="font-size:12px;margin-left:auto">Re-scanning a line increments its quantity · scanned line auto-scrolls into view</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="card custcard">
+            <div class="card-h"><h3>Customer</h3><button class="btn sm btn-ghost"><i data-ic="swap" data-sz="13"></i>Change</button></div>
+            <div class="card-b">
+              <div class="row">
+                <div class="avatar" style="width:36px;height:36px;font-size:13px">SM</div>
+                <div style="flex:1"><b style="color:var(--ink-900);font-size:14px">Sunrise Market</b><div class="muted" style="font-size:12px">1180 Valencia St, San Francisco</div></div>
+              </div>
+              <div class="memnote" style="margin-top:12px"><i data-ic="zap" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i><span><b style="color:var(--ink-900)">Price memory on.</b> Negotiated prices auto-fill from this customer's last sale; list price shows struck through.</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Summary</h3><span class="badge b-neutral">Draft</span></div>
+            <div class="card-b" style="padding-top:8px">
+              <div class="overline" style="font-size:10px;margin-bottom:2px">Invoice 1, standard items (4)</div>
+              <div class="sumline"><span class="muted">Subtotal · after −$2.00 discounts</span><span class="money" style="color:var(--ink-900)">$166.00</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$14.32</span></div>
+              <div class="overline" style="font-size:10px;margin:10px 0 2px;padding-top:10px;border-top:1px dashed var(--line-strong)">Invoice 2, Tobacco · regulated (1)</div>
+              <div class="sumline"><span class="muted">Subtotal · incl. excise $28.70</span><span class="money" style="color:var(--ink-900)">$92.40</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$7.97</span></div>
+              <div class="sumline total"><span>Order total</span><span class="money">$280.69</span></div>
+              <div class="memnote" style="margin-top:12px"><i data-ic="shield" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i><span><b style="color:var(--ink-900)">One order, two invoices.</b> Regulated items split to their own invoice automatically; regulated sales post to their own ledger. Toggle in Settings → Invoicing.</span></div>
+              <div class="field" style="margin-top:14px">
+                <label>Delivery date</label>
+                <div class="select"><span>Tomorrow, Jul 6</span><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i></div>
+              </div>
+              <button class="btn lg btn-primary" style="width:100%;justify-content:center;margin-top:14px"><i data-ic="check" data-sz="15"></i>Create Order</button>
+              <button class="btn btn-secondary" style="width:100%;justify-content:center;margin-top:8px">Save Draft</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

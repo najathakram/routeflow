@@ -31,11 +31,13 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
 
 Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./tokens`.
 
-- **Web** (`src/web/`, Tailwind + Radix): `Button`, `Input`, `PasswordInput`, `Textarea`,
-  `Select`, `Modal`, `Table`, `Avatar`, `Card`, `Badge` (BadgeStatus now covers 30+ statuses
-  incl. all finance/returns/estimate/invoice values), `PageHeader`, `EmptyState`, `Toast`
-  (ToastProvider/useToast), `StatCard`, `Tabs` (underline tab bar, key+label+badge);
-  utils `cn()`, `mergeRefs()`; illustration set.
+- **Web** (`src/web/`, Tailwind + Radix): `Button` (Ledger: 6px `rounded-ctl`, surface-aware
+  `bg-accent-strong`), `Input`, `PasswordInput`, `Textarea`, `Select`, `Modal`, `Table`, `Avatar`,
+  `Card`, `Badge` (uppercase 11px pill; BadgeStatus covers 30+ statuses), `PageHeader`, `EmptyState`
+  (Instrument-Serif title), `Toast` (ToastProvider; `useToast()` → `{toast→id, dismiss(id)}`; white
+  card + colored icon tile; optional `action` slot — drives web `useUndo()` 8s Undo),
+  `StatCard` (accent icon tile, tabular value), `Skeleton` +`SkeletonRows` (`.skeleton` shimmer), `Tabs`; utils `cn()`, `mergeRefs()`; illustration set.
+  **All web primitives consume the Ledger tokens (below), so re-pointing tokens reskins them.**
 - **Mobile** (`src/mobile/index.ts`): `MobileButton`, `MobileInput`, `StatusBadge`,
   `ScreenHeader`, `SectionHeader`, `EmptyState`.
 - **iOS** (`src/mobile/ios/`): `NavBar`, `NavBackButton`, `NavAction`, `IosTabBar`, `KpiCard`,
@@ -49,6 +51,13 @@ Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./t
 
 Shared build/format configs (no TS source). Exports via package.json: `./eslint`, `./prettier`,
 `./tsconfig` (tsconfig.base.json), `./tailwind` (tailwind.config.ts).
+
+- **`tailwind.config.ts` = the Unified "Ledger" token source of truth.** `brand` = teal scale
+  (500 `#14A39F`), `navy`/`ink`= `#0F1B2D` ink-900, `surface.raised` = canvas `#F7F9FC`; var-backed
+  `ink`/`accent`/`line`/`paper`/`sunken` resolve against CSS vars in `apps/web/app/globals.css`
+  (per-surface `--accent`: operator teal / `.surface-buyer` emerald / `.surface-admin` indigo).
+  Fonts: `sans`=Spline Sans, `mono`=Spline Sans Mono, `display`=Instrument Serif. Radii `ctl`6/`card`10;
+  hairline shadows. Mirrors `docs/design-package/project/unified/rf.css`.
 
 ### `@routeflow/eslint-config` (`packages/eslint-config`)
 

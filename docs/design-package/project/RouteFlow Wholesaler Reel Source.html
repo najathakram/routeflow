@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>RouteFlow — Reel for Wholesalers</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0a; overflow: hidden; font-family: 'Inter', sans-serif; }
+  #root { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail" data-bg-color="#1B3A5C">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#1B3A5C"/>
+    <path d="M 280 300 Q 600 280 600 500 Q 600 720 920 700" stroke="#2563EB" stroke-width="32" stroke-linecap="round" fill="none"/>
+    <circle cx="280" cy="300" r="52" fill="#2563EB"/>
+    <circle cx="600" cy="500" r="36" fill="#2563EB" opacity="0.7"/>
+    <circle cx="920" cy="700" r="52" fill="#2563EB"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react" src="animations.jsx"></script>
+<script type="text/babel" data-presets="react" src="reel-scenes.jsx"></script>
+
+<script>
+  window.TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "brandColor": "#2563EB",
+    "navyColor": "#1B3A5C",
+    "accentStyle": "blue",
+    "taglineFirst": "Delivery operations,",
+    "taglineSecond": "made calm.",
+    "ctaLine": "Ready for a calmer Monday?",
+    "ctaButton": "Start your free trial",
+    "ctaUrl": "www.routeflow.info",
+    "playbackSpeed": 1,
+    "showPlaybackBar": true
+  }/*EDITMODE-END*/;
+</script>
+<script type="text/babel" data-presets="react">
+// ─── Tweaks context + panel ────────────────────────────────────────────
+const TweaksContext = React.createContext(window.TWEAK_DEFAULTS);
+window.useTweaks = () => React.useContext(TweaksContext);
+
+function applyCssVars(t) {
+  const r = document.documentElement;
+  r.style.setProperty('--tweak-brand', t.brandColor);
+  r.style.setProperty('--tweak-navy', t.navyColor);
+  const accents = {
+    blue:   { light: '#EFF6FF', dark: '#1D4ED8' },
+    teal:   { light: '#ECFEFF', dark: '#0E7490' },
+    amber:  { light: '#FFFBEB', dark: '#B45309' },
+    rose:   { light: '#FFF1F2', dark: '#BE123C' },
+    forest: { light: '#ECFDF5', dark: '#047857' },
+  };
+  const a = accents[t.accentStyle] || accents.blue;
+  r.style.setProperty('--tweak-brand-light', a.light);
+  r.style.setProperty('--tweak-brand-dark', a.dark);
+}
+
+function TweaksPanel({ tweaks, setTweaks, onClose }) {
+  const update = (patch) => {
+    const next = { ...tweaks, ...patch };
+    setTweaks(next);
+    try {
+      window.parent.postMessage({ type: '__edit_mode_set_keys', edits: patch }, '*');
+    } catch {}
+  };
+  const Row = ({ label, children }) => (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: '0.14em', color: '#94A3B8', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase' }}>{label}</div>
+      {children}
+    </div>
+  );
+  const input = {
+    width: '100%', padding: '8px 10px', borderRadius: 8,
+    border: '1px solid #334155', background: '#0F172A', color: '#E2E8F0',
+    fontFamily: "'Inter', sans-serif", fontSize: 13, boxSizing: 'border-box',
+  };
+  return (
+    <div style={{
+      position: 'fixed', right: 20, bottom: 76, width: 320,
+      background: '#1E293B', border: '1px solid #334155', borderRadius: 14,
+      padding: 18, color: '#E2E8F0', zIndex: 1000,
+      boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
+      fontFamily: "'Inter', sans-serif",
+      maxHeight: '80vh', overflowY: 'auto',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 16 }}>Tweaks</div>
+        <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: 18 }}>×</button>
+      </div>
+      <Row label="Brand color">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input type="color" value={tweaks.brandColor} onChange={(e) => update({ brandColor: e.target.value })} style={{ width: 44, height: 34, border: 'none', background: 'transparent', cursor: 'pointer' }}/>
+          <input type="text" value={tweaks.brandColor} onChange={(e) => update({ brandColor: e.target.value })} style={{ ...input, fontFamily: "'JetBrains Mono', monospace" }}/>
+        </div>
+      </Row>
+      <Row label="Navy color">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input type="color" value={tweaks.navyColor} onChange={(e) => update({ navyColor: e.target.value })} style={{ width: 44, height: 34, border: 'none', background: 'transparent', cursor: 'pointer' }}/>
+          <input type="text" value={tweaks.navyColor} onChange={(e) => update({ navyColor: e.target.value })} style={{ ...input, fontFamily: "'JetBrains Mono', monospace" }}/>
+        </div>
+      </Row>
+      <Row label="Accent family">
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {['blue', 'teal', 'amber', 'rose', 'forest'].map(a => (
+            <button key={a} onClick={() => update({ accentStyle: a })} style={{
+              padding: '6px 10px', borderRadius: 8,
+              border: `1px solid ${tweaks.accentStyle === a ? '#60A5FA' : '#334155'}`,
+              background: tweaks.accentStyle === a ? '#1E3A8A' : '#0F172A',
+              color: '#E2E8F0', fontSize: 11, cursor: 'pointer', textTransform: 'capitalize',
+            }}>{a}</button>
+          ))}
+        </div>
+      </Row>
+      <Row label="Tagline line 1">
+        <input type="text" value={tweaks.taglineFirst} onChange={(e) => update({ taglineFirst: e.target.value })} style={input}/>
+      </Row>
+      <Row label="Tagline line 2">
+        <input type="text" value={tweaks.taglineSecond} onChange={(e) => update({ taglineSecond: e.target.value })} style={input}/>
+      </Row>
+      <Row label="CTA headline">
+        <input type="text" value={tweaks.ctaLine} onChange={(e) => update({ ctaLine: e.target.value })} style={input}/>
+      </Row>
+      <Row label="CTA button">
+        <input type="text" value={tweaks.ctaButton} onChange={(e) => update({ ctaButton: e.target.value })} style={input}/>
+      </Row>
+      <Row label="CTA URL">
+        <input type="text" value={tweaks.ctaUrl} onChange={(e) => update({ ctaUrl: e.target.value })} style={{ ...input, fontFamily: "'JetBrains Mono', monospace" }}/>
+      </Row>
+      <Row label={`Playback speed: ${tweaks.playbackSpeed.toFixed(2)}x`}>
+        <input type="range" min="0.25" max="2" step="0.05" value={tweaks.playbackSpeed} onChange={(e) => update({ playbackSpeed: parseFloat(e.target.value) })} style={{ width: '100%' }}/>
+      </Row>
+      <Row label="Playback bar">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+          <input type="checkbox" checked={tweaks.showPlaybackBar} onChange={(e) => update({ showPlaybackBar: e.target.checked })}/>
+          Show scrubber
+        </label>
+      </Row>
+    </div>
+  );
+}
+
+/*
+  Vertical reel (9:16, 1080x1920), warm conversational tone for wholesalers.
+  No em/en dashes.
+
+  Timeline (seconds):
+  0.0  to  4.8   Hook: "Tuesday 6am, 14 orders on scraps of paper..."
+  4.8  to 10.0   Meet RouteFlow: logo + tagline
+  10.0 to 16.5   Customers order themselves (phone + dashboard inbox)
+  16.5 to 22.5   Route plans itself (map animation)
+  22.5 to 28.5   Driver: tap, scan, sign
+  28.5 to 34.0   Invoices auto-sent on delivery
+  34.0 to 40.5   One login, twelve jobs done (feature grid)
+  40.5 to 47.5   What wholesalers feel at 90 days (stats + quote)
+  47.5 to 53.0   CTA: "Ready for a calmer Monday?"
+*/
+
+function ReelRoot() {
+  const { time } = useTimeline();
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (ref.current) ref.current.setAttribute('data-screen-label', `t=${time.toFixed(1)}s`);
+  }, [Math.floor(time)]);
+
+  return (
+    <div ref={ref} style={{ position: 'absolute', inset: 0 }}>
+      <Sprite start={0.0}  end={4.8}>  <ReelHook /></Sprite>
+      <Sprite start={4.8}  end={10.0}> <ReelMeet /></Sprite>
+      <Sprite start={10.0} end={16.5}> <ReelMorning /></Sprite>
+      <Sprite start={16.5} end={22.5}> <ReelRoute /></Sprite>
+      <Sprite start={22.5} end={28.5}> <ReelDriver /></Sprite>
+      <Sprite start={28.5} end={34.0}> <ReelInvoice /></Sprite>
+      <Sprite start={34.0} end={40.5}> <ReelAll /></Sprite>
+      <Sprite start={40.5} end={47.5}> <ReelPromise /></Sprite>
+      <Sprite start={47.5} end={53.0}> <ReelCTA /></Sprite>
+    </div>
+  );
+}
+
+function App() {
+  const [tweaks, setTweaks] = React.useState(window.TWEAK_DEFAULTS);
+  const [editMode, setEditMode] = React.useState(false);
+
+  React.useEffect(() => { applyCssVars(tweaks); }, [tweaks]);
+
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      const d = e.data || {};
+      if (d.type === '__activate_edit_mode') setEditMode(true);
+      else if (d.type === '__deactivate_edit_mode') setEditMode(false);
+    };
+    window.addEventListener('message', onMsg);
+    try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // Hide/show scrubber via CSS; override speed by driving Stage duration inversely is messy,
+  // so instead we scale CSS animations/Time via a runtime hack: tweak the RAF by replacing
+  // requestAnimationFrame timestamps. Simpler: wrap Stage in a key that forces remount when
+  // speed changes, and use a custom loop. For now we re-duration: higher speed = shorter duration.
+  const baseDuration = 53;
+  const duration = baseDuration / tweaks.playbackSpeed;
+
+  return (
+    <TweaksContext.Provider value={tweaks}>
+      <style>{`
+        ${tweaks.showPlaybackBar ? '' : 'div[style*="rgba(20,20,20,0.92)"] { display: none !important; }'}
+      `}</style>
+      <Stage key={tweaks.playbackSpeed} width={1080} height={1920} duration={duration} background="#F8FAFC" persistKey="routeflow-reel">
+        <ReelRoot />
+      </Stage>
+      {editMode && <TweaksPanel tweaks={tweaks} setTweaks={setTweaks} onClose={() => setEditMode(false)} />}
+    </TweaksContext.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

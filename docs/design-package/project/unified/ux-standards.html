@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — UX Standards</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1300px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden;width:460px}
+  .mh{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .mh h4{font-size:14.5px;font-weight:600;color:var(--ink-900)}
+  .mh .x{margin-left:auto;color:var(--ink-400)}
+  .mb{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+  .mf{display:flex;gap:9px;justify-content:flex-end;padding:13px 20px;border-top:1px solid var(--line);background:var(--canvas)}
+  .undobar{width:460px;display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:12px;background:var(--ink-900);color:#fff;box-shadow:var(--sh-drop)}
+  .undobar .ring{width:22px;height:22px;border-radius:99px;border:2.5px solid rgba(255,255,255,.25);border-top-color:#fff;flex:none}
+  .langrow{display:flex;align-items:center;gap:11px;padding:10px 13px;border:1px solid var(--line-strong);border-radius:9px;font-size:13px}
+  .langrow.on{border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px;background:var(--primary-mist)}
+  .helplink{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--accent-deep);font-weight:600;border-bottom:1px dashed var(--accent);padding-bottom:1px}
+</style>
+</head>
+<body data-screen-label="UX Standards">
+  <div class="g">
+    <div class="cell">
+      <div class="lbl">undo standard: every destructive or bulk action gets 8 seconds of undo, no confirm dialog needed for reversible things</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="undobar">
+          <span class="ring"></span>
+          <div style="flex:1"><b style="font-size:13px">Deleted 3 draft invoices</b><div style="font-size:11.5px;color:rgba(255,255,255,.55)">They restore exactly as they were</div></div>
+          <button class="btn sm" style="background:#fff;color:var(--ink-900);font-weight:700">Undo</button>
+        </div>
+        <div class="undobar" style="opacity:.9">
+          <span class="ring"></span>
+          <div style="flex:1"><b style="font-size:13px">Order line removed</b><div style="font-size:11.5px;color:rgba(255,255,255,.55)">Cloud Chips BBQ, 2 boxes</div></div>
+          <button class="btn sm" style="background:#fff;color:var(--ink-900);font-weight:700">Undo</button>
+        </div>
+        <span class="faint" style="font-size:11.5px;width:460px">Rule: reversible actions act immediately and offer Undo. Confirm dialogs are reserved for the truly irreversible (posting a filing, voiding a payment, deleting a tenant). Imports keep their 24 hour undo.</span>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">session expiry: never lose work, never bounce to a login page mid-task</div>
+      <div class="modal">
+        <div class="mh"><h4>You've been signed out</h4></div>
+        <div class="mb">
+          <p style="font-size:13px;line-height:1.6;color:var(--ink-500)">Your session timed out after 12 hours. Your draft order for Sunrise Market is safe and exactly where you left it.</p>
+          <div class="field"><label>Password for maria@goldenstate.co</label><div class="input"><input type="password" value="••••••••••"><i data-ic="eye" data-sz="15" style="color:var(--ink-400)"></i></div></div>
+        </div>
+        <div class="mf"><button class="btn btn-ghost">Switch account</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Unlock and continue</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">language: per-user, one tap in the avatar menu · Spanish first for driver app and buyer portal</div>
+      <div class="modal">
+        <div class="mh"><h4>Language / Idioma</h4><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb">
+          <div class="langrow on"><b style="flex:1;color:var(--ink-900)">English</b><span class="cb on" style="border-radius:99px"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></div>
+          <div class="langrow"><b style="flex:1;color:var(--ink-900)">Español</b><span class="cb" style="border-radius:99px"></span></div>
+          <span class="faint" style="font-size:11.5px">Applies to this account on every device. Customer messages use each customer's own language setting, independent of yours.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">help affordance: complex screens carry one quiet "how this works" link, opening a 60 second explainer</div>
+      <div class="modal">
+        <div class="mh"><h4>Inventory costing</h4><span class="helplink" style="margin-left:auto"><i data-ic="chat" data-sz="12"></i>How costing works</span></div>
+        <div class="mb">
+          <p style="font-size:13px;line-height:1.6;color:var(--ink-500)">The link opens a short plain-language card with a worked example, not a docs site. Screens that get one: costing method, regulated categories, invoice splits, credit limits, run settlement, migration.</p>
+          <div style="border:1px solid var(--line);border-radius:9px;padding:12px 14px;background:var(--canvas);font-size:12.5px;line-height:1.6;color:var(--ink-700)">
+            <b style="color:var(--ink-900)">Weighted average, in one line.</b> You had 100 units at $0.55 and bought 50 more at $0.61, so every unit now costs $0.57. Your margins update; history never rewrites.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

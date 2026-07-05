@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Invoice Detail</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;align-items:start}
+  .doc{padding:26px 30px}
+  .doc h3{font-family:var(--font-display);font-size:26px;font-weight:400}
+  .sumline{display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:11px;font-weight:600;font-size:16px;color:var(--ink-900)}
+  .prow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .prow:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Invoice Detail">
+  <script>document.write(RFShell.buyerRail('invoices'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px"><h2 style="font-family:var(--font-mono)">INV-1919</h2><span class="badge b-danger">Overdue · 2d</span></div>
+          <div class="sub">From Golden State Distribution · issued Jun 18, 2026 · due Jul 3, 2026 · for ORD-2389</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="printer" data-sz="15"></i>Print</button>
+          <button class="btn btn-primary"><i data-ic="download" data-sz="15"></i>Download PDF</button>
+        </div>
+      </div>
+
+      <div class="row21">
+        <div class="card doc">
+          <div style="display:flex;justify-content:space-between;margin-bottom:24px">
+            <div><h3>Invoice</h3><div class="mono" style="font-size:12.5px;color:var(--ink-500);margin-top:4px">INV-1919 · Jun 18, 2026</div></div>
+            <div style="text-align:right;font-size:12.5px;color:var(--ink-500);line-height:1.6">
+              <b style="color:var(--ink-900);font-size:13.5px">Golden State Distribution</b><br>2200 Jerrold Ave, San Francisco, CA<br><span class="mono">billing@goldenstate.co</span>
+            </div>
+          </div>
+          <table class="tbl" style="--row-h:42px">
+            <thead><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="r">Amount</th></tr></thead>
+            <tbody>
+              <tr><td><span class="primary-cell">Agua Mineral 355ml · Case 24</span></td><td class="r">6 boxes</td><td class="r">$21.60</td><td class="r">$129.60</td></tr>
+              <tr><td><span class="primary-cell">Sunburst Orange Soda 2L · Case 8</span></td><td class="r">12 boxes</td><td class="r">$18.40</td><td class="r">$220.80</td></tr>
+              <tr><td><span class="primary-cell">Valle Tortilla Chips 11oz · Case 9</span></td><td class="r">18 boxes</td><td class="r">$44.10</td><td class="r">$793.80</td></tr>
+              <tr><td><span class="primary-cell">Roast House Cold Brew 8oz</span></td><td class="r">120 pcs</td><td class="r">$3.10</td><td class="r">$372.00</td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px">
+            <div style="width:280px">
+              <div class="sumline"><span class="muted">Subtotal</span><span class="money" style="color:var(--ink-900)">$1,516.20</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$130.85</span></div>
+              <div class="sumline"><span class="muted">Paid to date</span><span class="money" style="color:var(--ink-900)">$0.00</span></div>
+              <div class="sumline total"><span>Balance due</span><span class="money">$1,647.05</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card" style="border-color:#FCD34D;background:#FFFDF5">
+            <div class="card-b" style="display:flex;gap:12px">
+              <i data-ic="alert" data-sz="17" style="color:var(--warning);flex:none;margin-top:2px"></i>
+              <div style="font-size:13px;line-height:1.6;color:var(--ink-700)">
+                <b style="color:var(--ink-900)">How to pay.</b> Golden State collects payment on delivery or by check / ACH, there's no in-app payment. Questions? <a class="btn-link" style="font-size:13px">Message them</a>.
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Payment History</h3><span class="muted" style="font-size:12px">read-only</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="prow"><span class="badge b-neutral">None yet</span><span class="muted" style="flex:1">No payments recorded on this invoice.</span></div>
+              <div class="prow" style="border-top:1px dashed var(--line)"><span class="muted" style="flex:1">Balance due</span><span class="money" style="color:var(--ink-900);font-weight:600;font-size:15px">$1,647.05</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Your Balance at Golden State</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="prow"><span class="muted" style="flex:1">Open invoices</span><span class="mono">3</span></div>
+              <div class="prow"><span class="muted" style="flex:1">Total outstanding</span><span class="money" style="color:var(--ink-900);font-weight:600">$2,685.02</span></div>
+              <div class="prow"><span class="muted" style="flex:1">Overdue</span><span class="money" style="color:var(--danger);font-weight:600">$1,647.05</span></div>
+              <div style="padding-top:12px"><button class="btn btn-secondary" style="width:100%;justify-content:center"><i data-ic="chart" data-sz="15"></i>View finances</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>
