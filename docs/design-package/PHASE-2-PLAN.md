@@ -36,6 +36,11 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      line; red on below-cost/below-floor; **"Set to floor $Y"** one-tap fix (sets discounted price via
      `priceForMarginFloor`); **"Sell anyway"** dismisses the warning. `unitCost`(averageCost)+`category`
      threaded into the line. Verified: typecheck + lint + `/orders` compiles 200.
+  - ✅ Admin **Settings → Costing tab** (`CostingTab` in settings/page.tsx): costing method +
+     default margin floor, via `useMarginConfig`/`useUpdateMarginConfig` (admin-gated). Closes the
+     "cost method configurable (tenant)" acceptance line. (PR #117)
+  - ✅ **Drive mode entry (§4)**: avatar-menu one-tap → `/routes/my-runs` for `canActAsDriver`
+     (capability already enforced by RolesGuard). MVP entry point; full field-layout swap = follow-on. (PR #117)
   - Follow-on (TRACKED, not done): (a) same hint in `orders/[id]` `PriceEditRow` + `invoices/new`
      (needs `averageCost`/`unitsPerBox`/`category` threaded through the order-item DTO → `EditItemState`;
      `overrideReason` already persists there so "Sell anyway" can log server-side + AuditLog SALE_BELOW_FLOOR);
