@@ -611,6 +611,19 @@ function Header({
                 {t("menu.profile")}
               </DropdownMenu.Item>
 
+              {/* Drive mode — one tap to the field run view for admins/operators who
+                  can act as a driver (canActAsDriver; capability enforced server-side
+                  by RolesGuard). pos-cost-roles-spec §4. */}
+              {(user as { canActAsDriver?: boolean })?.canActAsDriver && (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  onSelect={() => router.push("/routes/my-runs")}
+                >
+                  <Truck className="h-4 w-4 text-navy/70" />
+                  Drive mode
+                </DropdownMenu.Item>
+              )}
+
               {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
