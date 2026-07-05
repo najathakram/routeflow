@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Route Builder</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  /* stepper */
+  .steps{display:flex;align-items:center;gap:0;margin-bottom:20px}
+  .step{display:flex;align-items:center;gap:9px}
+  .step .n{width:26px;height:26px;border-radius:99px;display:grid;place-items:center;font-size:12px;font-weight:700;font-family:var(--font-mono)}
+  .step.done .n{background:var(--success);color:#fff}
+  .step.now .n{background:var(--accent-strong);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
+  .step.todo .n{background:var(--sunken);color:var(--ink-400);border:1.5px solid var(--line-strong)}
+  .step b{font-size:13px;color:var(--ink-500);font-weight:600}
+  .step.now b{color:var(--ink-900)}
+  .steps .bar{flex:1;height:1.5px;background:var(--line-strong);margin:0 14px;max-width:90px}
+  .steps .bar.done{background:var(--success)}
+  .row21{display:grid;grid-template-columns:1fr 1.15fr;gap:16px;align-items:start}
+  .orow{display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px}
+  .orow:last-child{border-bottom:none}
+  .orow b{color:var(--ink-900)}
+  .orow .sub{font-size:11.5px;color:var(--ink-400)}
+  .seq{display:flex;align-items:center;gap:11px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:13px;background:var(--paper)}
+  .seq:last-child{border-bottom:none}
+  .seq .hnd{color:var(--ink-400);cursor:grab;font-family:var(--font-mono);letter-spacing:2px}
+  .seq .num{width:22px;height:22px;border-radius:99px;background:var(--ink-900);color:#fff;display:grid;place-items:center;font-size:10.5px;font-weight:700;font-family:var(--font-mono);flex:none}
+  .mapph{height:180px;border-radius:0 0 var(--r-card) var(--r-card);border-top:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 8px,#F4F7FB 8px,#F4F7FB 16px);display:grid;place-items:center}
+  .mapph span{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-400)}
+  .wizfoot{display:flex;align-items:center;gap:10px;margin-top:18px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Route Builder Wizard">
+  <script>document.write(RFShell.operatorRail('dispatch.routes'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('New Route'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>New Route</h2><div class="sub">Saved automatically as a draft. Start from a template or build from scratch.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="filetext" data-sz="15"></i>Use template</button></div>
+      </div>
+
+      <div class="steps">
+        <div class="step done"><span class="n"><i data-ic="check" data-sz="13"></i></span><b>Details</b></div><span class="bar done"></span>
+        <div class="step now"><span class="n">2</span><b>Stops</b></div><span class="bar"></span>
+        <div class="step todo"><span class="n">3</span><b>Assign driver</b></div><span class="bar"></span>
+        <div class="step todo"><span class="n">4</span><b>Review</b></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Unrouted orders</h3>
+            <div class="input sm" style="width:180px"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Filter…</span></div>
+          </div>
+          <div class="orow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><div style="flex:1"><b>Bright Mart #2</b> · <span class="mono">ORD-2416</span><div class="sub">2214 Telegraph Ave, Oakland · 11 items</div></div><span class="money">$2,394.60</span></div>
+          <div class="orow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><div style="flex:1"><b>Casa Verde Foods</b> · <span class="mono">ORD-2415</span><div class="sub">830 Fruitvale Ave, Oakland · 6 items</div></div><span class="money">$644.90</span></div>
+          <div class="orow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><div style="flex:1"><b>Lucky Corner Deli</b> · <span class="mono">ORD-2411</span><div class="sub">417 14th St, Oakland · 8 items</div></div><span class="money">$981.35</span></div>
+          <div class="orow"><span class="cb"></span><div style="flex:1"><b>Hillside Mini Mart</b> · <span class="mono">ORD-2409</span><div class="sub">96 Euclid Ave, Berkeley · 3 items</div></div><span class="money">$412.80</span></div>
+          <div class="orow"><span class="cb"></span><div style="flex:1"><b>Sunrise Market</b> · <span class="mono">ORD-2417</span><div class="sub">1180 Valencia St, SF, off-corridor</div></div><span class="money">$1,008.02</span></div>
+          <div style="padding:11px 14px;border-top:1px solid var(--line);display:flex;align-items:center">
+            <span class="muted" style="font-size:12.5px">3 selected · <span class="money">$4,020.85</span></span>
+            <button class="btn sm btn-primary" style="margin-left:auto"><i data-ic="chevright" data-sz="13"></i>Add to route</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h3>Stop sequence, East Bay Corridor</h3>
+            <button class="btn sm btn-secondary"><i data-ic="zap" data-sz="13"></i>Optimize order</button>
+          </div>
+          <div class="seq"><span class="hnd">⠿</span><span class="num">1</span><div style="flex:1"><b>Bright Mart #2</b><div class="sub" style="font-size:11.5px;color:var(--ink-400)">2214 Telegraph Ave · window 11 AM to 12 PM</div></div><span class="mono" style="font-size:11.5px;color:var(--ink-400)">8.2 mi</span><button class="iconbtn" style="width:26px;height:26px"><i data-ic="x" data-sz="13"></i></button></div>
+          <div class="seq"><span class="hnd">⠿</span><span class="num">2</span><div style="flex:1"><b>Lucky Corner Deli</b><div class="sub" style="font-size:11.5px;color:var(--ink-400)">417 14th St · no window</div></div><span class="mono" style="font-size:11.5px;color:var(--ink-400)">1.4 mi</span><button class="iconbtn" style="width:26px;height:26px"><i data-ic="x" data-sz="13"></i></button></div>
+          <div class="seq" style="outline:2px solid var(--accent);outline-offset:-2px;border-radius:6px"><span class="hnd">⠿</span><span class="num">3</span><div style="flex:1"><b>Casa Verde Foods</b><div class="sub" style="font-size:11.5px;color:var(--ink-400)">830 Fruitvale Ave · gate code #2214, dragging…</div></div><span class="mono" style="font-size:11.5px;color:var(--ink-400)">3.1 mi</span><button class="iconbtn" style="width:26px;height:26px"><i data-ic="x" data-sz="13"></i></button></div>
+          <div class="mapph"><span>map preview, sequenced pins + polyline · 12.7 mi · ~1h 50m</span></div>
+        </div>
+      </div>
+
+      <div class="wizfoot">
+        <button class="btn btn-secondary"><i data-ic="arrowleft" data-sz="15"></i>Back to Details</button>
+        <span class="faint" style="font-size:12px">Draft saved 12s ago</span>
+        <button class="btn btn-primary" style="margin-left:auto">Continue to Assign driver<i data-ic="chevright" data-sz="15"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

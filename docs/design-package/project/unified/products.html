@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Products List</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:980px}
+  body{margin:0;overflow:hidden}
+  .screen{height:980px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .pthumb{width:36px;height:45px;border-radius:6px;border:1px solid var(--line);flex:none;
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 4px,#F4F7FB 4px,#F4F7FB 8px)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Products List">
+  <script>document.write(RFShell.operatorRail('wh.products'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Products'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Products</h2><div class="sub">214 SKUs across 12 categories.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="upload" data-sz="15"></i>Import</button>
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Product</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <button class="chip active">All <span class="n">214</span></button>
+          <button class="chip">Active <span class="n">198</span></button>
+          <button class="chip">Regulated <span class="n">67</span></button>
+          <button class="chip">No image <span class="n">31</span></button>
+          <button class="chip">Archived <span class="n">16</span></button>
+          <div class="input sm" style="width:230px;margin-left:auto"><i data-ic="barcode" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Name, SKU or scan barcode…</span></div>
+          <div class="select sm" style="width:140px"><span>All categories</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <div class="select sm" style="width:170px;border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px"><span style="color:var(--ink-900)">Regulation: All</span><i data-ic="chevdown" data-sz="13"></i></div>
+        </div>
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:34px"><span class="cb"></span></th>
+            <th><span class="th-sort on">Product<i data-ic="chevup" data-sz="12"></i></span></th>
+            <th>Category</th><th>Supplier</th><th class="r">List Price</th><th class="r">Cost</th><th class="r">Margin</th><th class="r">On Hand</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Agua Mineral 355ml · Case 24</span><div class="faint" style="font-size:11px">AGM-355 · box + piece</div></div></div></td><td class="muted">Beverages <span class="tag tag-custom" style="margin-left:4px">CRV</span></td><td>Pacific Beverage</td><td class="r">$24.00</td><td class="r">$13.92</td><td class="r" style="color:var(--success)">42.0%</td><td class="r" style="color:var(--warning);font-weight:600">6</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Sunburst Orange Soda 2L · Case 8</span><div class="faint" style="font-size:11px">SOS-200 · box only</div></div></div></td><td class="muted">Beverages</td><td>Pacific Beverage</td><td class="r">$19.20</td><td class="r">$12.88</td><td class="r" style="color:var(--warning)">32.9%</td><td class="r">112</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Valle Tortilla Chips 11oz · Case 9</span><div class="faint" style="font-size:11px">VTC-110 · box + piece</div></div></div></td><td class="muted">Snacks</td><td>Valle Foods Co.</td><td class="r">$48.60</td><td class="r">$28.35</td><td class="r" style="color:var(--success)">41.7%</td><td class="r">203</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Roast House Cold Brew 8oz</span><div class="faint" style="font-size:11px">RHC-008 · piece</div></div></div></td><td class="muted">Beverages</td><td>Roast House</td><td class="r">$3.45</td><td class="r">$2.05</td><td class="r" style="color:var(--warning)">40.6%</td><td class="r" style="color:var(--warning);font-weight:600">9</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Marlin Gold 100s · Carton</span><div class="faint" style="font-size:11px">MG-100 · carton</div></div></div></td><td class="muted">Tobacco <span class="tag tag-custom" style="margin-left:4px">tracked</span></td><td>West Coast Tobacco</td><td class="r">$92.40</td><td class="r">$81.10</td><td class="r" style="color:var(--danger)">12.2%</td><td class="r">48</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Golden Straw Honey 12oz · Case 12</span><div class="faint" style="font-size:11px">GSH-120 · box + piece</div></div></div></td><td class="muted">Grocery</td><td>Apiary West</td><td class="r">$52.00</td><td class="r">$40.80</td><td class="r" style="color:var(--warning)">21.5%</td><td class="r">67</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:11px"><span class="pthumb"></span><div><span class="primary-cell">Valle Salsa Verde 16oz · Case 12</span><div class="faint" style="font-size:11px">VSV-160 · box</div></div></div></td><td class="muted">Grocery</td><td>Valle Foods Co.</td><td class="r">$31.80</td><td class="r">$22.08</td><td class="r" style="color:var(--warning)">30.6%</td><td class="r" style="color:var(--danger);font-weight:600">0</td><td><button class="btn sm btn-ghost">Edit</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:12.5px">Showing 7 of 214 · page 1 of 31</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

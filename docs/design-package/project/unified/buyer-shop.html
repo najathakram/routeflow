@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Shop</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .shopgrid{display:grid;grid-template-columns:200px 1fr;gap:20px;align-items:start}
+  .catrail{display:flex;flex-direction:column;gap:1px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:8px;box-shadow:var(--sh-card)}
+  .cat{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border-radius:7px;font-size:13px;color:var(--ink-700)}
+  .cat:hover{background:var(--canvas)}
+  .cat.on{background:var(--accent-soft);color:var(--accent-deep);font-weight:600}
+  .cat .n{margin-left:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-400)}
+  .lowstrip{display:grid;grid-template-columns:auto repeat(3,1fr) auto;gap:12px;align-items:center;background:#FFFBEB;border:1px solid #FCD34D;border-radius:12px;padding:12px 16px;margin-bottom:16px}
+  .lowitem{display:flex;gap:10px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+  .lowitem .th{width:34px;height:42px;border-radius:6px;border:1px solid var(--line);flex:none;background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 4px,#F4F7FB 4px,#F4F7FB 8px)}
+  .lowitem b{font-size:12px;color:var(--ink-900);display:block;line-height:1.3}
+  .lowitem .d{font-size:10.5px;color:#B45309;font-weight:600}
+  .promo{display:flex;align-items:center;gap:18px;border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:14px 18px;margin-bottom:16px;box-shadow:var(--sh-card)}
+  .promoimg{width:150px;height:84px;border-radius:9px;border:1px dashed var(--line-strong);flex:none;
+    background:repeating-linear-gradient(-45deg,#F0FBF6,#F0FBF6 7px,#E7F6EE 7px,#E7F6EE 14px);display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:9.5px;color:var(--ink-400)}
+  .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .ptile{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--paper);position:relative;box-shadow:var(--sh-card)}
+  .ptile .img{height:150px;border-bottom:1px solid var(--line);position:relative;
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 7px,#F4F7FB 7px,#F4F7FB 14px);
+    display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:9.5px;color:var(--ink-400);text-align:center}
+  .dots{position:absolute;bottom:7px;left:0;right:0;display:flex;gap:4px;justify-content:center}
+  .dots i{width:5px;height:5px;border-radius:99px;background:var(--line-strong)}
+  .dots i.on{background:var(--accent-strong)}
+  .flag{position:absolute;top:9px;left:9px;display:inline-flex;height:19px;padding:0 8px;border-radius:5px;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;align-items:center}
+  .fav{position:absolute;top:8px;right:8px;width:27px;height:27px;border-radius:99px;background:rgba(255,255,255,.94);border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-400)}
+  .fav.on{color:#E11D48}
+  .ptile .bd{padding:11px 13px 13px}
+  .ptile b{font-size:13.5px;color:var(--ink-900);display:block;line-height:1.35}
+  .ptile .meta{font-size:11.5px;color:var(--ink-400);margin-top:2px}
+  .ptile .pr{display:flex;align-items:center;margin-top:9px}
+  .qtygrp{display:inline-flex;align-items:center;border:1px solid var(--accent-strong);border-radius:6px;height:28px;overflow:hidden;margin-left:auto}
+  .qtygrp button{width:25px;height:100%;display:grid;place-items:center;color:var(--accent-deep)}
+  .qtygrp .q{width:26px;text-align:center;font-family:var(--font-mono);font-size:12.5px;color:var(--ink-900)}
+  .cartfab{position:absolute;bottom:26px;right:28px;height:48px;border-radius:99px;background:var(--accent-strong);color:#fff;display:flex;align-items:center;gap:10px;padding:0 20px;font-weight:600;font-size:14px;box-shadow:var(--sh-drop)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Shop" style="position:relative">
+  <script>document.write(RFShell.buyerRail('shop'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Shop</h2><div class="sub">Golden State Distribution · your negotiated prices · next delivery Tuesday (order by 8 PM tonight)</div></div>
+        <div class="ph-actions">
+          <div class="input" style="width:340px"><i data-ic="search" data-sz="15" style="color:var(--ink-400)"></i><span class="ph">Search 189 products, name, SKU, barcode…</span></div>
+          <div class="select" style="width:140px"><span>Best for you</span><i data-ic="chevdown" data-sz="14"></i></div>
+        </div>
+      </div>
+
+      <div class="shopgrid">
+        <div class="catrail">
+          <a class="cat on">All products<span class="n">189</span></a>
+          <a class="cat">Your usuals<span class="n">23</span></a>
+          <a class="cat"><i data-ic="heart" data-sz="13"></i>Favorites<span class="n">12</span></a>
+          <a class="cat">New this month<span class="n">6</span></a>
+          <a class="cat">Deals<span class="n">9</span></a>
+          <div style="height:1px;background:var(--line);margin:7px 4px"></div>
+          <a class="cat">Beverages<span class="n">54</span></a>
+          <a class="cat">Snacks<span class="n">38</span></a>
+          <a class="cat">Grocery<span class="n">47</span></a>
+          <a class="cat">Household<span class="n">28</span></a>
+          <a class="cat" style="color:var(--ink-400)"><i data-ic="shield" data-sz="13"></i>Tobacco<span class="n">locked</span></a>
+        </div>
+
+        <div>
+          <div class="lowstrip">
+            <div style="display:flex;flex-direction:column;gap:2px;padding-right:6px">
+              <b style="font-size:13px;color:#92400E">Running low</b>
+              <span style="font-size:11px;color:#B45309">from your order rhythm</span>
+            </div>
+            <div class="lowitem"><span class="th"></span><div style="flex:1"><b>Agua Mineral 355ml</b><span class="d">~2 days left</span></div><button class="btn sm btn-primary">Add</button></div>
+            <div class="lowitem"><span class="th"></span><div style="flex:1"><b>Cold Brew 8oz</b><span class="d">~3 days left</span></div><button class="btn sm btn-primary">Add</button></div>
+            <div class="lowitem"><span class="th"></span><div style="flex:1"><b>Tortilla Chips 11oz</b><span class="d">~4 days left</span></div><button class="btn sm btn-primary">Add</button></div>
+            <button class="btn sm btn-secondary" style="white-space:nowrap">See all 4 →</button>
+          </div>
+
+          <div class="promo">
+            <div class="promoimg">seller promo image</div>
+            <div style="flex:1">
+              <span class="badge b-accent" style="text-transform:none;letter-spacing:0">July deal</span>
+              <b style="display:block;font-size:15.5px;color:var(--ink-900);margin-top:5px">Summer beverages, 8% off cases of 8+</b>
+              <div class="muted" style="font-size:12.5px;margin-top:3px">Sunburst, Agua Mineral and Cold Brew · applied automatically at checkout · ends Jul 31</div>
+            </div>
+            <button class="btn btn-secondary">Shop the deal</button>
+          </div>
+
+          <div class="tiles">
+            <div class="ptile"><span class="flag" style="background:var(--warning-bg);color:#B45309">Running low</span><span class="fav on"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal<div class="dots"><i class="on"></i><i></i><i></i></div></div>
+              <div class="bd"><b>Agua Mineral 355ml · Case 24</b><div class="meta">You order weekly · <span style="color:var(--success);font-weight:600">In stock</span></div>
+              <div class="pr"><div><span class="money" style="color:var(--ink-900);font-size:15px">$21.60</span> <span class="strike" style="font-size:11px">$24.00</span></div><span class="qtygrp"><button><i data-ic="minus" data-sz="11"></i></button><span class="q">2</span><button><i data-ic="plus" data-sz="11"></i></button></span></div></div></div>
+            <div class="ptile"><span class="flag" style="background:var(--success-bg);color:#15803D">Deal −8%</span><span class="fav"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal<div class="dots"><i class="on"></i><i></i></div></div>
+              <div class="bd"><b>Sunburst Orange Soda 2L · Case 8</b><div class="meta">Bought 31× · <span style="color:var(--success);font-weight:600">In stock</span></div>
+              <div class="pr"><div><span class="money" style="color:var(--ink-900);font-size:15px">$16.93</span> <span class="strike" style="font-size:11px">$18.40</span></div><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+            <div class="ptile"><span class="flag" style="background:var(--info-bg);color:#0369A1">New</span><span class="fav"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal<div class="dots"><i class="on"></i><i></i><i></i></div></div>
+              <div class="bd"><b>Golden Straw Honey 12oz · Case 12</b><div class="meta">New this month · <span style="color:var(--success);font-weight:600">In stock</span></div>
+              <div class="pr"><span class="money" style="color:var(--ink-900);font-size:15px">$46.80</span><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+            <div class="ptile"><span class="fav on"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal<div class="dots"><i class="on"></i><i></i></div></div>
+              <div class="bd"><b>Roast House Cold Brew 8oz</b><div class="meta">By piece · <span style="color:var(--warning);font-weight:600">Only 9 left</span></div>
+              <div class="pr"><div><span class="money" style="color:var(--ink-900);font-size:15px">$3.10</span> <span class="strike" style="font-size:11px">$3.45</span></div><span class="qtygrp"><button><i data-ic="minus" data-sz="11"></i></button><span class="q">12</span><button><i data-ic="plus" data-sz="11"></i></button></span></div></div></div>
+            <div class="ptile"><span class="fav"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal<div class="dots"><i class="on"></i></div></div>
+              <div class="bd"><b>Cloud Chips BBQ 1.5oz · Case 12</b><div class="meta">Bought 18× · <span style="color:var(--success);font-weight:600">In stock</span></div>
+              <div class="pr"><span class="money" style="color:var(--ink-900);font-size:15px">$14.25</span><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+            <div class="ptile" style="opacity:.92"><span class="fav"><i data-ic="heart" data-sz="13"></i></span>
+              <div class="img">product photo · 4:5 focal</div>
+              <div class="bd"><b>Valle Salsa Verde 16oz · Case 12</b><div class="meta"><span style="color:var(--danger);font-weight:600">Out of stock</span> · back ~Jul 9</div>
+              <div class="pr"><span class="money" style="color:var(--ink-400);font-size:15px">$28.90</span><button class="btn sm btn-secondary" style="margin-left:auto"><i data-ic="bell" data-sz="12"></i>Notify me</button></div></div></div>
+          </div>
+
+          <div style="display:flex;align-items:center;margin-top:16px">
+            <span class="muted" style="font-size:13px">Showing 6 of 189</span>
+            <div style="margin-left:auto;display:flex;gap:6px"><button class="btn sm btn-secondary" disabled>Previous</button><button class="btn sm btn-secondary">Next</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <button class="cartfab"><i data-ic="cart" data-sz="18"></i>Cart · 3 items · <span class="money">$84.10</span></button>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

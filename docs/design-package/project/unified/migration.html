@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — Migration Hub</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .src{display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid var(--line-strong);border-radius:10px;font-size:13.5px}
+  .src.on{border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px;background:var(--primary-mist)}
+  .src .ic{width:36px;height:36px;border-radius:9px;background:var(--sunken);display:grid;place-items:center;font-weight:700;font-size:12px;color:var(--ink-500);flex:none}
+  .mrow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .mrow:last-child{border-bottom:none}
+  .numprev{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:9px;background:var(--ink-900);color:#fff;font-family:var(--font-mono);font-size:13px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Migration Hub">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Migration'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <h2>Move to RouteFlow</h2>
+          <div class="sub">Bring your whole history over. Nothing goes live until you review and confirm, and every import can be undone for 24 hours.</div>
+        </div>
+        <div class="ph-actions"><span class="helplink" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--accent-deep);font-weight:600;border-bottom:1px dashed var(--accent)"><i data-ic="chat" data-sz="12"></i>How migration works</span></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Where are you coming from?</h3></div>
+            <div class="card-b" style="display:grid;grid-template-columns:1fr 1fr;gap:11px">
+              <div class="src on"><span class="ic">ZB</span><div style="flex:1"><b style="color:var(--ink-900)">Zoho Books</b><div class="faint" style="font-size:11.5px">Direct connection, we fetch everything</div></div><span class="cb on" style="border-radius:99px"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></div>
+              <div class="src"><span class="ic">QB</span><div style="flex:1"><b style="color:var(--ink-900)">QuickBooks</b><div class="faint" style="font-size:11.5px">Direct connection</div></div></div>
+              <div class="src"><span class="ic"><i data-ic="filetext" data-sz="16"></i></span><div style="flex:1"><b style="color:var(--ink-900)">CSV files</b><div class="faint" style="font-size:11.5px">Exports from any system</div></div></div>
+              <div class="src"><span class="ic"><i data-ic="camera" data-sz="16"></i></span><div style="flex:1"><b style="color:var(--ink-900)">Paper or PDF invoices</b><div class="faint" style="font-size:11.5px">Batch AI import, reviewed after</div></div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>What comes over from Zoho Books</h3><span class="badge b-accent">Connected as goldenstate</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="mrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Customers</b> with contacts, terms and addresses</span><span class="mono faint">128 found</span></div>
+              <div class="mrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Products</b> with SKUs, prices and tax rates</span><span class="mono faint">209 found</span></div>
+              <div class="mrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Open invoices</b> with balances, due dates and numbering</span><span class="mono faint">41 open</span></div>
+              <div class="mrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Paid history</b> for the last 24 months, for reports and price memory</span><span class="mono faint">1,842 invoices</span></div>
+              <div class="mrow"><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span><span style="flex:1"><b style="color:var(--ink-900)">Customer balances</b> and unapplied credits</span><span class="mono faint">$28,214.90</span></div>
+              <div class="mrow"><span class="cb"></span><span style="flex:1;color:var(--ink-500)">Chart of accounts <span class="faint">(RouteFlow manages its own ledger; export anytime)</span></span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Invoice numbering continues</h3></div>
+            <div class="card-b">
+              <div class="numprev">
+                <span style="color:rgba(255,255,255,.55)">Your last Zoho invoice</span>
+                <b>INV-08841</b>
+                <i data-ic="chevright" data-sz="14" style="color:rgba(255,255,255,.4)"></i>
+                <span style="color:rgba(255,255,255,.55)">RouteFlow starts at</span>
+                <b style="color:#7FD1CD">INV-08842</b>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:14px">
+                <div class="field"><label>Prefix</label><div class="input"><input value="INV-" class="mono"></div></div>
+                <div class="field"><label>Next number</label><div class="input"><input value="08842" class="mono" style="text-align:right"></div></div>
+                <div class="field"><label>Padding</label><div class="select"><span>5 digits</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              </div>
+              <span class="faint" style="font-size:11.5px;display:block;margin-top:6px">Same for estimates, credit notes and payments. If a number already exists, we skip to the next free one and tell you.</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>No duplicates, guaranteed</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="mrow"><i data-ic="shield" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1;font-size:12.5px;line-height:1.5">Each record keeps its Zoho ID. Re-running the migration updates instead of duplicating.</span></div>
+              <div class="mrow"><i data-ic="shield" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1;font-size:12.5px;line-height:1.5">Invoices also match on number + amount + date, so the same invoice from CSV and from Zoho still counts once.</span></div>
+              <div class="mrow"><i data-ic="shield" data-sz="15" style="color:var(--accent-deep)"></i><span style="flex:1;font-size:12.5px;line-height:1.5">Anything skipped as a duplicate is listed, with a link to what it matched.</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Review before it counts</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="mrow"><span class="badge b-success" style="flex:none">1</span><span style="flex:1;font-size:12.5px">Everything lands in a staging area first</span></div>
+              <div class="mrow"><span class="badge b-success" style="flex:none">2</span><span style="flex:1;font-size:12.5px">You review counts, spot-check records, resolve anything flagged</span></div>
+              <div class="mrow"><span class="badge b-success" style="flex:none">3</span><span style="flex:1;font-size:12.5px">One click makes it live. Undo for 24 hours.</span></div>
+            </div>
+          </div>
+          <div class="card" style="border-color:var(--accent)">
+            <div class="card-b" style="display:flex;flex-direction:column;gap:10px">
+              <button class="btn lg btn-primary" style="justify-content:center"><i data-ic="swap" data-sz="16"></i>Fetch from Zoho Books</button>
+              <span class="faint" style="font-size:11.5px;text-align:center">Read-only access. We never write back to Zoho.</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-b" style="display:flex;gap:11px;font-size:12px;color:var(--ink-500);line-height:1.55">
+              <i data-ic="chat" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i>
+              <span><b style="color:var(--ink-900)">Free migration help.</b> Share a Zoho export and we set the whole thing up with you on a call, on any plan.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

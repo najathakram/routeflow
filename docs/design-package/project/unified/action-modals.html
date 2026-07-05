@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Action Modals</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1300px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:var(--font-mono);font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden}
+  .modal .mh{display:flex;align-items:center;gap:10px;padding:16px 22px;border-bottom:1px solid var(--line)}
+  .modal .mh h4{font-size:15px;font-weight:600;color:var(--ink-900)}
+  .modal .mh .x{margin-left:auto;color:var(--ink-400)}
+  .modal .mb{padding:18px 22px;display:flex;flex-direction:column;gap:13px}
+  .modal .mf{display:flex;gap:9px;justify-content:flex-end;padding:14px 22px;border-top:1px solid var(--line);background:var(--canvas)}
+  .fx2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+  .chanrow{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--line-strong);border-radius:9px}
+  .chanrow.on{border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px;background:var(--primary-mist)}
+  .chanrow .cic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;flex:none}
+  .chanrow b{font-size:13px;color:var(--ink-900);display:block}
+  .chanrow .sub{font-size:11.5px;color:var(--ink-400)}
+  .pickrow{display:flex;align-items:center;gap:10px;padding:9px 13px;font-size:13px;border-bottom:1px solid var(--line)}
+  .pickrow:last-child{border-bottom:none}
+  .pickrow.on{background:var(--primary-mist);box-shadow:inset 2.5px 0 0 var(--accent-strong)}
+  .dryrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .dryrow:last-child{border-bottom:none}
+</style>
+</head>
+<body data-screen-label="Action Modals">
+  <div class="g">
+    <div class="cell">
+      <div class="lbl">record payment (AR), from invoice detail · amount − bank charges = total applied</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Record Payment, INV-1919</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="fx2">
+            <div class="field"><label>Amount received</label><div class="input"><span class="faint">$</span><input value="1,647.05" class="mono" style="text-align:right"></div></div>
+            <div class="field"><label>Payment date</label><div class="select"><span>Jul 5, 2026</span><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i></div></div>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>Mode</label><div class="select"><span>Check</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            <div class="field"><label>Reference / check #</label><div class="input"><input value="4482" class="mono"></div></div>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>Bank charges <span class="faint" style="font-weight:400">(optional)</span></label><div class="input"><span class="faint">$</span><input value="0.00" class="mono" style="text-align:right"></div></div>
+            <div class="field"><label>Total applied</label><div class="input" style="background:var(--sunken)"><span class="money" style="color:var(--ink-900);width:100%;text-align:right">$1,647.05</span></div></div>
+          </div>
+          <span class="faint" style="font-size:11.5px">Applying $1,647.05 marks INV-1919 <b>Paid</b>. Overpayment becomes customer credit.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Record Payment</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">multi-channel order send, channels enabled per available contact info · invoices are email-only</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Send Order, ORD-2417</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="chanrow on"><span class="cic" style="background:#DCFCE7;color:#15803D"><i data-ic="chat" data-sz="16"></i></span><div style="flex:1"><b>WhatsApp</b><span class="sub">(415) 555-0182 · opens with order summary prefilled</span></div><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></div>
+          <div class="chanrow"><span class="cic" style="background:var(--info-bg);color:var(--info)"><i data-ic="phone" data-sz="16"></i></span><div style="flex:1"><b>SMS</b><span class="sub">(415) 555-0182</span></div><span class="cb"></span></div>
+          <div class="chanrow"><span class="cic" style="background:var(--primary-soft);color:var(--accent-deep)"><i data-ic="mail" data-sz="16"></i></span><div style="flex:1"><b>Email</b><span class="sub">rosa@sunrisemkt.com · with PDF attached</span></div><span class="cb"></span></div>
+          <div class="chanrow" style="opacity:.5"><span class="cic" style="background:var(--sunken);color:var(--ink-400)"><i data-ic="printer" data-sz="16"></i></span><div style="flex:1"><b>Print / PDF</b><span class="sub">always available</span></div><button class="btn sm btn-secondary">Download</button></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="send" data-sz="14"></i>Send via WhatsApp</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">customer form, create/edit modal · email optional · debounced address autocomplete</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>New Customer</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="field"><label>Business name</label><div class="input"><input value="Mission Corner Market"></div></div>
+          <div class="fx2">
+            <div class="field"><label>Contact</label><div class="input"><input value="Ana Silva"></div></div>
+            <div class="field"><label>Phone</label><div class="input"><input value="(415) 555-0307" class="mono"></div></div>
+          </div>
+          <div class="field"><label>Email <span class="faint" style="font-weight:400">(optional, enables portal invite)</span></label><div class="input"><span class="ph">ana@…</span></div></div>
+          <div class="field" style="position:relative">
+            <label>Address</label>
+            <div class="input focus"><i data-ic="pin" data-sz="14" style="color:var(--ink-400)"></i><input value="2801 Missio"></div>
+            <div style="position:absolute;top:100%;left:0;right:0;z-index:2;background:var(--paper);border:1px solid var(--line);border-radius:8px;box-shadow:var(--sh-drop);margin-top:4px;overflow:hidden">
+              <div class="pickrow on"><i data-ic="pin" data-sz="13" style="color:var(--ink-400)"></i>2801 <b>Missio</b>n St, San Francisco, CA 94110</div>
+              <div class="pickrow"><i data-ic="pin" data-sz="13" style="color:var(--ink-400)"></i>2801 <b>Missio</b>n Blvd, Hayward, CA 94544</div>
+            </div>
+          </div>
+          <div class="fx2" style="margin-top:34px">
+            <div class="field"><label>Pricing tier</label><div class="select"><span>Tier B</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            <div class="field"><label>Payment terms</label><div class="select"><span>Net 15</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>Credit limit</label><div class="input"><span class="faint">$</span><input value="3,000.00" class="mono" style="text-align:right"></div></div>
+            <div class="field"><label>When over limit</label><div class="select"><span>Warn (allow override)</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+          </div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Create Customer</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">searchable product picker, keyboard-navigable · inline-create-and-auto-select</div>
+      <div class="modal" style="width:480px">
+        <div class="mh" style="padding:0;border-bottom:1px solid var(--line)"><div class="input" style="border:none;height:48px;width:100%;border-radius:0"><i data-ic="search" data-sz="15" style="color:var(--ink-400)"></i><input value="chipotle sal"></div></div>
+        <div style="padding:6px 0">
+          <div class="pickrow on"><div style="width:30px;height:37px;border-radius:5px;background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 4px,#F4F7FB 4px,#F4F7FB 8px);border:1px solid var(--line);flex:none"></div><div style="flex:1"><b style="color:var(--ink-900)">Valle Salsa Verde 16oz</b><div class="faint" style="font-size:11px">closest match · VSV-160 · $31.80/box</div></div><span class="kbd">↵</span></div>
+          <div class="pickrow"><div style="width:30px;height:37px;border-radius:5px;background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 4px,#F4F7FB 4px,#F4F7FB 8px);border:1px solid var(--line);flex:none"></div><div style="flex:1"><b style="color:var(--ink-900)">Valle Salsa Roja 16oz</b><div class="faint" style="font-size:11px">VSR-160 · $31.80/box</div></div></div>
+          <div class="pickrow" style="border-top:1px dashed var(--line-strong);color:var(--accent-deep)"><span style="width:30px;display:grid;place-items:center"><i data-ic="plus" data-sz="15"></i></span><b style="color:var(--accent-deep)">Create "Chipotle Salsa 16oz"…</b><span class="faint" style="margin-left:auto;font-size:11px">creates &amp; selects</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">quick restock, from inventory hub or low-stock alerts</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Quick Restock, 3 items</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb" style="gap:0">
+          <div class="dryrow"><span style="flex:1"><b style="color:var(--ink-900)">Valle Salsa Verde 16oz</b> <span class="faint">0 on hand</span></span><div class="input sm" style="width:80px"><input value="24" class="mono" style="text-align:right"></div><span class="faint" style="width:40px">cases</span></div>
+          <div class="dryrow"><span style="flex:1"><b style="color:var(--ink-900)">Cloud Chips BBQ 1.5oz</b> <span class="faint">4 on hand</span></span><div class="input sm" style="width:80px"><input value="18" class="mono" style="text-align:right"></div><span class="faint" style="width:40px">cases</span></div>
+          <div class="dryrow"><span style="flex:1"><b style="color:var(--ink-900)">Agua Mineral 355ml</b> <span class="faint">6 on hand</span></span><div class="input sm" style="width:80px"><input value="30" class="mono" style="text-align:right"></div><span class="faint" style="width:40px">cases</span></div>
+          <div style="display:flex;gap:10px;align-items:center;padding-top:13px">
+            <span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+            <span style="font-size:12.5px">Draft a purchase order to each supplier</span>
+          </div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="zap" data-sz="14"></i>Restock &amp; draft 3 POs</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">recompute costs, dry run preview before committing</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Recompute Costs, Dry Run</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb" style="gap:0">
+          <span class="faint" style="font-size:12px;padding-bottom:9px">Weighted-average from the last 90 days of vendor bills. Nothing changes until you apply.</span>
+          <div class="dryrow"><span style="flex:1">Agua Mineral 355ml</span><span class="mono">$0.58 → <b style="color:var(--danger)">$0.60</b></span><span class="badge b-warning" style="margin-left:10px">+3.4%</span></div>
+          <div class="dryrow"><span style="flex:1">Sunburst Orange Soda 2L</span><span class="mono">$1.61 → <b style="color:var(--success)">$1.58</b></span><span class="badge b-success" style="margin-left:10px">−1.9%</span></div>
+          <div class="dryrow"><span style="flex:1">Valle Tortilla Chips 11oz</span><span class="mono">$3.15 → $3.15</span><span class="badge b-neutral" style="margin-left:10px">no change</span></div>
+          <div class="dryrow"><span style="flex:1;color:var(--ink-400)">208 more SKUs</span><span class="faint" style="font-size:11.5px">11 change · 197 unchanged</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-secondary"><i data-ic="download" data-sz="14"></i>Export preview</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Apply 14 changes</button></div>
+      </div>
+    </div>
+    <div class="cell">
+      <div class="lbl">quick-create product, from sale builder / inline-create · regulation set at creation</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>New Product</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="field"><label>Name</label><div class="input"><input value="Chipotle Salsa 16oz · Case 12"></div></div>
+          <div class="fx2">
+            <div class="field"><label>SKU</label><div class="input"><input value="CSL-160" class="mono"></div></div>
+            <div class="field"><label>Barcode</label><div class="input"><i data-ic="barcode" data-sz="14" style="color:var(--ink-400)"></i><input value="0 78542 00160 4" class="mono"></div></div>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>List price / box</label><div class="input"><span class="faint">$</span><input value="27.60" class="mono" style="text-align:right"></div></div>
+            <div class="field"><label>Unit cost</label><div class="input"><span class="faint">$</span><input value="19.32" class="mono" style="text-align:right"></div></div>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>Category</label><div class="select"><span>Grocery</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            <div class="field"><label>Separately handled</label><div class="select" style="border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px"><span style="color:var(--ink-900);white-space:nowrap">None, standard</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+          </div>
+          <span class="faint" style="font-size:11.5px">Pick a tracked category (Tobacco, Alcohol, CRV…) to make this a regulated product, tax rule, invoice split and filings apply automatically. Changeable later on the product page.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Create &amp; add to sale</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">license capture, guard when selling a regulated category to an unlicensed customer</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Tobacco license required</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--warning-bg);font-size:12.5px;color:#92400E;line-height:1.55">
+            <i data-ic="alert" data-sz="15" style="flex:none;margin-top:1px"></i>
+            <span><b>Sunrise Market</b> has no tobacco license on file. Regulated items in this category can't be sold until one is captured.</span>
+          </div>
+          <div class="fx2">
+            <div class="field"><label>License number</label><div class="input"><input value="TB-88-2041" class="mono"></div></div>
+            <div class="field"><label>Expires</label><div class="select"><span>Dec 31, 2026</span><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i></div></div>
+          </div>
+          <div class="field"><label>License photo <span class="faint" style="font-weight:400">(optional)</span></label>
+            <div style="height:64px;border:1px dashed var(--line-strong);border-radius:8px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-400)">drop photo or use camera</div>
+          </div>
+        </div>
+        <div class="mf"><button class="btn btn-ghost">Remove item</button><button class="btn btn-secondary" style="color:var(--warning)">Override…</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Save license &amp; add item</button></div>
+      </div>
+    </div>
+    <div class="cell">
+      <div class="lbl">responsibility override, sell without a license on file · logged, time-boxed, follow-up task</div>
+      <div class="modal" style="width:480px">
+        <div class="mh"><h4>Sell Tobacco on your responsibility</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--warning-bg);font-size:12.5px;color:#92400E;line-height:1.55">
+            <i data-ic="alert" data-sz="15" style="flex:none;margin-top:1px"></i>
+            <span><b>Sunrise Market</b> has no verified tobacco license. You can still sell by taking responsibility for their eligibility yourself.</span>
+          </div>
+          <div class="field"><label>Reason</label><div class="select"><span>License sighted in person, paperwork pending</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+          <div class="field"><label>Override applies</label><div class="select"><span>This order only</span><i data-ic="chevdown" data-sz="14"></i></div><span class="faint" style="font-size:11.5px">Or set a date, a follow-up task to capture the license is created either way.</span></div>
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border:1px solid var(--line-strong);border-radius:9px">
+            <span class="cb on" style="margin-top:2px;flex:none"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+            <span style="font-size:12px;color:var(--ink-700);line-height:1.55"><b style="color:var(--ink-900)">Golden State Distribution takes responsibility</b> for verifying this customer may purchase Tobacco. Recorded in the audit log (who, when, reason) and noted on the invoice.</span>
+          </div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary" style="background:var(--warning)"><i data-ic="check" data-sz="14"></i>Accept responsibility &amp; continue</button></div>
+      </div>
+    </div>
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

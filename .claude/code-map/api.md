@@ -90,8 +90,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `customers/`
 
-- **controller** `customers` — export, tags CRUD, merge, pending-portal-approvals; `me`/`me/statement`/`@Patch me`; per-id: status, routes, orders, statement, advance-payments, prices CRUD, addresses, contacts, comments, tax-documents, documents, portal invite/approve/disconnect.
-- **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `getStatement`, `merge`, `add{Tag,Address,Contact,Price}`, `exportCSV`, portal flows. side effects: Customer + related writes; portal-invite email; presigned doc URLs; ledger updates on price/advance changes. **`email` is OPTIONAL** (DTO `@IsOptional`): `create` mints a unique `no-email+<uuid>@placeholder.local` for the required `User.email` and leaves `Customer.email` null; `sendPortalInvite` ignores `@placeholder.local` fallbacks. Spec: `customers.service.spec.ts`.
+- **controller** `customers` — export, tags CRUD, merge, pending-portal-approvals; `me`/`me/statement`/`@Patch me`; per-id: status, routes, orders, statement, advance-payments, prices CRUD, addresses, contacts, comments, tax-documents, documents, portal invite/approve/disconnect; `DELETE :id` (soft-delete w/ `force`), **`POST :id/restore`** (server side of the 8s Undo).
+- **service** — `findAll`, `findOne`, `create`, `update`, `updateStatus`, `getStatement`, `merge`, `add{Tag,Address,Contact,Price}`, `exportCSV`, portal flows; `deleteCustomer(force)` soft-deletes (sets `deletedAt` + deactivates user) preserving financial records, `restoreCustomer` reverses it (clears `deletedAt` + reactivates user, idempotent). side effects: Customer + related writes; portal-invite email; presigned doc URLs; ledger updates on price/advance changes. **`email` is OPTIONAL** (DTO `@IsOptional`): `create` mints a unique `no-email+<uuid>@placeholder.local` for the required `User.email` and leaves `Customer.email` null; `sendPortalInvite` ignores `@placeholder.local` fallbacks. Spec: `customers.service.spec.ts`.
 
 ### `drivers/`
 

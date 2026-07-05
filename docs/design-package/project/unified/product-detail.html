@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Product Detail</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1050px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1050px}
+  .row12{display:grid;grid-template-columns:380px 1fr;gap:16px;align-items:start;margin-top:4px}
+  .focal{position:relative;width:100%;aspect-ratio:4/5;border-radius:10px;border:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 8px,#F4F7FB 8px,#F4F7FB 16px);overflow:hidden}
+  .focal .lbl{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--font-mono);font-size:11.5px;color:var(--ink-400);text-align:center;line-height:1.6}
+  .focal .cross{position:absolute;left:58%;top:38%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:99px;border:2px solid #fff;box-shadow:0 0 0 1.5px var(--accent-strong),0 2px 8px rgba(15,27,45,.3);background:rgba(20,163,159,.25)}
+  .focal .gl-v{position:absolute;left:58%;top:0;bottom:0;width:1px;background:rgba(20,163,159,.4)}
+  .focal .gl-h{position:absolute;top:38%;left:0;right:0;height:1px;background:rgba(20,163,159,.4)}
+  .vrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .vrow:last-child{border-bottom:none}
+  .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .toggle{width:36px;height:20px;border-radius:99px;background:var(--accent-strong);position:relative;flex:none}
+  .toggle::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:99px;background:#fff}
+  .toggle.off{background:var(--line-strong)}
+  .toggle.off::after{right:auto;left:2px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Product Detail">
+  <script>document.write(RFShell.operatorRail('wh.products'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Products'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><h2>Agua Mineral 355ml</h2><span class="badge b-success">Active</span><span class="badge b-warning">Low stock</span></div>
+          <div class="sub">SKU AGM-355 · Pacific Beverage · Beverages / Water</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary">Discard</button>
+          <button class="btn btn-primary"><i data-ic="check" data-sz="15"></i>Save changes</button>
+        </div>
+      </div>
+
+      <div class="row12">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Image</h3><button class="btn sm btn-secondary"><i data-ic="upload" data-sz="13"></i>Replace</button></div>
+            <div class="card-b">
+              <div class="focal">
+                <span class="gl-v"></span><span class="gl-h"></span><span class="cross"></span>
+                <span class="lbl">product photo, 4:5 crop<br>drag the focal point;<br>every tile crops around it</span>
+              </div>
+              <div class="faint" style="font-size:11.5px;margin-top:9px;text-align:center">Focal point 58% · 38%, used by shop tiles, carts and order lines</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Compliance</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:14px">
+              <div class="field" style="flex:1"><label>Separately handled category</label><div class="select"><span>CRV Beverage Deposit · $0.05/container</span><i data-ic="chevdown" data-sz="14"></i></div><span class="faint" style="font-size:11.5px;margin-top:2px">Tracked categories (Tobacco, Alcohol, CRV…) carry their own tax rule, invoice treatment and filings. <a class="btn-link" style="font-size:11.5px">Manage categories</a></span></div>
+              <div style="display:flex;align-items:center;gap:12px"><span class="toggle"></span><div><b style="font-size:13px;color:var(--ink-900)">Visible in buyer portal</b><div class="muted" style="font-size:12px">Buyers see their tier price</div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Details</h3></div>
+            <div class="card-b fgrid">
+              <div class="field"><label>Name</label><div class="input"><input value="Agua Mineral 355ml"></div></div>
+              <div class="field"><label>Category</label><div class="select"><span>Beverages / Water</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              <div class="field"><label>SKU</label><div class="input"><input value="AGM-355" class="mono"></div></div>
+              <div class="field"><label>Barcode (UPC)</label><div class="input"><i data-ic="barcode" data-sz="14" style="color:var(--ink-400)"></i><input value="0 78542 00355 1" class="mono"></div></div>
+              <div class="field"><label>Unit configuration</label><div class="select"><span>Case of 24 · sellable by box + piece</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              <div class="field"><label>Supplier</label><div class="select"><span>Pacific Beverage</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Pricing Tiers</h3><span class="muted" style="font-size:12px">per box unless noted</span></div>
+            <table class="tbl">
+              <thead><tr><th>Tier</th><th>Customers</th><th class="r">Box Price</th><th class="r">Piece Price</th><th class="r">Margin</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="primary-cell">List</td><td class="muted">Default</td><td class="r">$24.00</td><td class="r">$1.25</td><td class="r" style="color:var(--success)">42.0%</td></tr>
+                <tr class="row"><td class="primary-cell">Tier A</td><td>14 customers</td><td class="r">$22.80</td><td class="r">$1.19</td><td class="r" style="color:var(--success)">38.9%</td></tr>
+                <tr class="row"><td class="primary-cell">Tier B</td><td>31 customers</td><td class="r">$21.60</td><td class="r">$1.13</td><td class="r" style="color:var(--success)">35.6%</td></tr>
+                <tr class="row"><td class="primary-cell">Tier C</td><td>9 customers</td><td class="r">$20.40</td><td class="r">$1.06</td><td class="r" style="color:var(--warning)">31.8%</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Cost History</h3><button class="btn sm btn-secondary">Set cost</button></div>
+            <table class="tbl">
+              <thead><tr><th>Effective</th><th>Source</th><th class="r">Unit Cost</th><th class="r">Δ</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="muted">Jun 22, 2026</td><td>Vendor bill VB-0871 · Pacific Beverage</td><td class="r" style="font-weight:600">$0.58</td><td class="r" style="color:var(--danger)">+3.6%</td></tr>
+                <tr class="row"><td class="muted">Apr 9, 2026</td><td>Vendor bill VB-0792</td><td class="r">$0.56</td><td class="r" style="color:var(--danger)">+1.8%</td></tr>
+                <tr class="row"><td class="muted">Jan 15, 2026</td><td>Manual set, Maria L.</td><td class="r">$0.55</td><td class="r muted">, </td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

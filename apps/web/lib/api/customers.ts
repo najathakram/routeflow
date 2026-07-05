@@ -306,6 +306,37 @@ export function useDeleteCustomer() {
   });
 }
 
+/**
+ * Soft-delete a customer (force=true → sets deletedAt, deactivates the user,
+ * preserves all financial records). Restorable via {@link useRestoreCustomer} —
+ * this is the delete half of the 8-second Undo pattern.
+ */
+export function useSoftDeleteCustomer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/customers/${id}`, { params: { force: "true" } }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
+  });
+}
+
+/**
+ * Restore a soft-deleted customer (the Undo of {@link useSoftDeleteCustomer}).
+ * Pass the user's pre-delete `status` so the undo restores exactly (a SUSPENDED
+ * customer comes back SUSPENDED, not ACTIVE).
+ */
+export function useRestoreCustomer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status?: string }) =>
+      apiClient.post(`/customers/${id}/restore`, { status }).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["customers"] });
+      qc.invalidateQueries({ queryKey: ["customers", vars.id] });
+    },
+  });
+}
+
 export interface CustomerDocument {
   id: string;
   docType: string;

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Drivers</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:920px}
+  body{margin:0;overflow:hidden}
+  .screen{height:920px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px}
+  .dstat{width:8px;height:8px;border-radius:99px;display:inline-block;margin-right:8px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Drivers">
+  <script>document.write(RFShell.operatorRail('dispatch.drivers'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Drivers'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Drivers</h2><div class="sub">8 on roster · 6 active today.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>Add Driver</button></div>
+      </div>
+
+      <div class="grid3">
+        <div class="stat"><span class="overline">On the Road</span><span class="v">3</span><span class="hint">2 runs in progress, 1 loading</span></div>
+        <div class="stat"><span class="overline">Stops Today</span><span class="v">46</span><span class="hint">5 completed so far</span></div>
+        <div class="stat ring-success"><span class="overline">POD Compliance</span><span class="v">99.2%</span><span class="hint">Photo or signature on 30d deliveries</span></div>
+      </div>
+
+      <div class="card">
+        <table class="tbl">
+          <thead><tr><th>Driver</th><th>Vehicle</th><th>Today's Route</th><th class="r">Stops</th><th class="r">On-time 30d</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">JR</span><div><span class="primary-cell">Julia Reyes</span><div class="faint" style="font-size:11px">(415) 555-0221 · also operator</div></div></div></td><td class="mono">VAN-02 · 5H88 TR</td><td>East Bay Corridor</td><td class="r mono">5/14</td><td class="r">97%</td><td><span class="dstat" style="background:var(--success)"></span><span class="badge b-accent">Driving</span></td><td><button class="btn sm btn-secondary"><i data-ic="live" data-sz="13"></i>Live</button></td></tr>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">DO</span><div><span class="primary-cell">Daniel Okafor</span><div class="faint" style="font-size:11px">(415) 555-0242</div></div></div></td><td class="mono">VAN-04 · 7B12 KC</td><td>Mission Loop AM</td><td class="r mono">0/12</td><td class="r">98%</td><td><span class="dstat" style="background:var(--success)"></span><span class="badge b-info">Loading</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">AP</span><div><span class="primary-cell">Alexei Petrov</span><div class="faint" style="font-size:11px">(415) 555-0263</div></div></div></td><td class="mono">VAN-07 · 9K41 LM</td><td>Peninsula South · 8:15 AM</td><td class="r mono">0/9</td><td class="r">94%</td><td><span class="dstat" style="background:var(--success)"></span><span class="badge b-info">Ready</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">MT</span><div><span class="primary-cell">Marcus Tran</span><div class="faint" style="font-size:11px">(415) 555-0284</div></div></div></td><td class="mono">VAN-05 · 3F67 WN</td><td class="muted">Unassigned, City Center PM open</td><td class="r mono">, </td><td class="r">96%</td><td><span class="dstat" style="background:var(--success)"></span><span class="badge b-success">Available</span></td><td><button class="btn sm btn-primary">Assign</button></td></tr>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">SW</span><div><span class="primary-cell">Sam Whitfield</span><div class="faint" style="font-size:11px">(415) 555-0205</div></div></div></td><td class="mono">VAN-01 · 2D07 PQ</td><td class="muted">Off today</td><td class="r mono">, </td><td class="r">95%</td><td><span class="dstat" style="background:var(--ink-400)"></span><span class="badge b-neutral">Off</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">EK</span><div><span class="primary-cell">Elena Kim</span><div class="faint" style="font-size:11px">(415) 555-0296</div></div></div></td><td class="mono">VAN-03 · 8J29 XD</td><td class="muted">Off today</td><td class="r mono">, </td><td class="r">99%</td><td><span class="dstat" style="background:var(--ink-400)"></span><span class="badge b-neutral">Off</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

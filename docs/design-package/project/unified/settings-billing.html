@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Settings · Plan &amp; Billing</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1080px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1080px}
+  .row21{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start}
+  .meter{margin-bottom:14px}
+  .meter .t{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px}
+  .meter .bar{height:7px;border-radius:99px;background:var(--sunken);overflow:hidden}
+  .meter .bar i{display:block;height:100%;border-radius:99px;background:var(--accent-strong)}
+  .addonrow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .addonrow:last-child{border-bottom:none}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Settings, Plan &amp; Billing">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Settings'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Settings</h2><div class="sub">Workspace configuration for Golden State Distribution.</div></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab">Business Profile</button>
+        <button class="tab active">Plan &amp; Billing</button>
+        <button class="tab">Notifications</button>
+        <button class="tab">User Management</button>
+        <button class="tab">Import</button>
+        <button class="tab">Email</button>
+        <button class="tab">Invoicing</button>
+        <button class="tab">Integrations</button>
+        <button class="tab">My Account</button>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h">
+              <div style="display:flex;align-items:center;gap:9px"><h3>Business plan</h3><span class="badge b-success">Active</span><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">Annual</span></div>
+              <div style="display:flex;gap:8px"><button class="btn sm btn-secondary">Change plan</button><button class="btn sm btn-ghost" style="color:var(--danger)">Cancel…</button></div>
+            </div>
+            <div class="card-b" style="padding-top:12px">
+              <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:16px">
+                <span class="money" style="font-size:24px;color:var(--ink-900)">$388.00</span>
+                <span class="muted" style="font-size:12.5px">/mo effective · base $349 + Regulated-Items $39 · renews Mar 12, 2027</span>
+              </div>
+              <div class="meter"><div class="t"><span class="muted">Seats</span><span class="mono">12 of 15</span></div><div class="bar"><i style="width:80%"></i></div></div>
+              <div class="meter"><div class="t"><span class="muted">Concurrent routes</span><span class="mono">4 today · unlimited</span></div><div class="bar"><i style="width:18%;background:var(--success)"></i></div></div>
+              <div class="meter"><div class="t"><span class="muted">AI invoice scans</span><span class="mono">184 of 300 · resets Aug 1</span></div><div class="bar"><i style="width:61%"></i></div></div>
+              <div class="meter" style="margin-bottom:2px"><div class="t"><span class="muted">WhatsApp / SMS messages</span><span class="mono">140 of 200</span></div><div class="bar"><i style="width:70%;background:var(--warning)"></i></div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Add-ons</h3><span class="muted" style="font-size:12px">prorated on toggle · history kept if disabled</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="addonrow"><i data-ic="shield" data-sz="15" style="color:var(--accent-deep)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">Regulated-Items Compliance</b><div class="faint" style="font-size:11.5px">3 categories · Jul filing due Jul 20</div></div><span class="mono" style="font-size:12px">$39/mo</span><span style="width:36px;height:20px;border-radius:99px;background:var(--accent-strong);position:relative;display:inline-block"><i style="position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:99px;background:#fff"></i></span></div>
+              <div class="addonrow"><i data-ic="camera" data-sz="15" style="color:var(--ink-400)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">AI scan pack +250/mo</b><div class="faint" style="font-size:11.5px">On pace to use ~290 of 300 included</div></div><span class="mono" style="font-size:12px">$19/mo</span><span style="width:36px;height:20px;border-radius:99px;background:var(--line-strong);position:relative;display:inline-block"><i style="position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;background:#fff"></i></span></div>
+              <div class="addonrow"><i data-ic="store" data-sz="15" style="color:var(--ink-400)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">Buyer Portal</b><div class="faint" style="font-size:11.5px">31 linked buyers</div></div><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Included in Business</span></div>
+              <div class="addonrow"><i data-ic="chat" data-sz="15" style="color:var(--ink-400)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">Messaging bundle +500/mo</b><div class="faint" style="font-size:11.5px">70% of included used, consider before month end</div></div><span class="mono" style="font-size:12px">$10/mo</span><span style="width:36px;height:20px;border-radius:99px;background:var(--line-strong);position:relative;display:inline-block"><i style="position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;background:#fff"></i></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Payment Method</h3><button class="btn sm btn-secondary">Update</button></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Card</span><span class="v mono">Visa •••• 4242 · 12/28</span></div>
+              <div class="kv"><span class="k">Billing email</span><span class="v">billing@goldenstate.co</span></div>
+              <div class="kv"><span class="k">Next charge</span><span class="v money">$4,268.00 · Mar 12, 2027</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Invoices from RouteFlow</h3><a class="btn-link" style="font-size:12.5px">All</a></div>
+            <table class="tbl" style="--row-h:40px">
+              <thead><tr><th>Invoice</th><th class="r">Amount</th><th>Status</th><th></th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="mono primary-cell">RF-2026-0312</td><td class="r">$4,268.00</td><td><span class="badge b-success">Paid</span></td><td><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></td></tr>
+                <tr class="row"><td class="mono primary-cell">RF-2026-0208</td><td class="r">$20.80</td><td><span class="badge b-success">Paid</span></td><td><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></td></tr>
+                <tr class="row"><td class="mono primary-cell">RF-2025-0312</td><td class="r">$3,880.00</td><td><span class="badge b-success">Paid</span></td><td><button class="btn sm btn-ghost"><i data-ic="download" data-sz="13"></i></button></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card" style="background:var(--primary-mist);border-style:dashed">
+            <div class="card-b" style="display:flex;gap:11px;font-size:12px;color:var(--ink-500);line-height:1.55">
+              <i data-ic="zap" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i>
+              <span><b style="color:var(--ink-900)">Right-size hint.</b> Your usage fits Business comfortably. If messaging keeps climbing, the $10 bundle beats per-message overage in ~2 months.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

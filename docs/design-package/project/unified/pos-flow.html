@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, POS, Cost &amp; Flow</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1300px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden;width:480px}
+  .mh{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .mh h4{font-size:14.5px;font-weight:600;color:var(--ink-900)}
+  .mh .x{margin-left:auto;color:var(--ink-400)}
+  .mb{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+  .mf{display:flex;gap:9px;justify-content:flex-end;padding:13px 20px;border-top:1px solid var(--line);background:var(--canvas)}
+  .qrow{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .qrow:last-child{border-bottom:none}
+  .priceinput{width:88px;height:32px;border:1px solid var(--line-strong);border-radius:6px;text-align:right;padding:0 9px;font-family:var(--font-mono);font-size:13.5px;color:var(--ink-900);background:var(--paper)}
+  .costline{display:flex;align-items:center;gap:7px;font-size:11.5px}
+  .qty{display:inline-flex;align-items:center;border:1px solid var(--line-strong);border-radius:6px;height:30px;overflow:hidden}
+  .qty button{width:28px;height:100%;display:grid;place-items:center;color:var(--ink-500)}
+  .qty .q{width:32px;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--ink-900)}
+  .dock{display:flex;align-items:center;gap:11px;width:480px;padding:10px 14px;border-radius:12px;background:var(--ink-900);color:#fff;box-shadow:var(--sh-drop)}
+  .dock .badge{flex:none}
+  .modeitem{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:9px;font-size:13px}
+  .modeitem:hover{background:var(--sunken)}
+</style>
+</head>
+<body data-screen-label="POS, Cost &amp; Flow">
+  <div class="g">
+
+    <div class="cell">
+      <div class="lbl">live cost &amp; margin, the negotiation floor is always visible · WAC as of right now</div>
+      <div class="modal">
+        <div class="mh"><h4>Negotiating a line: what it costs you today</h4><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb">
+          <div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Agua Mineral 355ml · Case 24</b><div class="faint" style="font-size:11.5px">list $24.00 · their last price $21.60</div></div>
+              <input class="priceinput" value="21.60">
+            </div>
+            <div class="costline" style="margin-top:9px">
+              <i data-ic="chart" data-sz="13" style="color:var(--ink-400)"></i>
+              <span class="muted">Cost now <b class="money" style="color:var(--ink-900)">$13.92</b> <span class="faint">(weighted avg)</span></span>
+              <span class="badge b-success" style="margin-left:auto">margin 35.6% · $7.68/box</span>
+            </div>
+          </div>
+          <div style="border:1px solid #FCA5A5;border-radius:10px;padding:12px 14px;background:#FFFBFB">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Marlin Gold 100s · Carton</b><div class="faint" style="font-size:11.5px">cost moved +4.1% on last bill (VB-0871)</div></div>
+              <input class="priceinput" value="84.00" style="border-color:var(--danger)">
+            </div>
+            <div class="costline" style="margin-top:9px">
+              <i data-ic="alert" data-sz="13" style="color:var(--danger)"></i>
+              <span style="color:#B91C1C">Cost now <b class="money">$81.10</b>, this price nets <b class="money">$2.90 (3.4%)</b>, below your 10% floor</span>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:9px">
+              <button class="btn sm btn-secondary" style="flex:1;justify-content:center">Set to floor · $89.21</button>
+              <button class="btn sm btn-ghost" style="color:var(--danger)">Sell anyway</button>
+            </div>
+          </div>
+          <span class="faint" style="font-size:11.5px">Tap any cost to see the lot/bill history behind it. Margin floors are per-category (Settings → Invoicing). Cost is snapshotted on every sold line, disputes months later still show what it cost <i>that day</i>.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">costing method, pick the accounting system · applied everywhere, snapshotted per sale</div>
+      <div class="modal">
+        <div class="mh"><h4>Inventory costing</h4><span class="badge b-accent">Settings</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb">
+          <div class="qrow" style="border:1px solid var(--accent);border-radius:9px;padding:10px 13px;background:var(--primary-mist)">
+            <span class="cb on" style="border-radius:99px"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+            <span style="flex:1"><b style="color:var(--ink-900)">Weighted average (recommended)</b><br><span class="faint" style="font-size:11.5px">Every vendor bill re-averages cost across on-hand stock, smooth, audit-friendly</span></span>
+          </div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px">
+            <span class="cb" style="border-radius:99px"></span>
+            <span style="flex:1"><b style="color:var(--ink-900)">FIFO</b><br><span class="faint" style="font-size:11.5px">Sales consume oldest lots first, cost per line follows the actual lot</span></span>
+          </div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px">
+            <span class="cb" style="border-radius:99px"></span>
+            <span style="flex:1"><b style="color:var(--ink-900)">Last purchase cost</b><br><span class="faint" style="font-size:11.5px">Simplest, cost = most recent bill price</span></span>
+          </div>
+          <div class="qrow"><span style="flex:1;font-size:12px" class="muted">Example, Agua Mineral, 3 recent bills</span><span class="mono" style="font-size:11.5px">$0.55 → $0.56 → $0.58 · <b style="color:var(--ink-900)">WAC $0.567</b></span></div>
+          <span class="faint" style="font-size:11.5px">Changing method applies going forward; historic sold-line snapshots are never rewritten. Margin reports state the method used.</span>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Save method</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">minimize &amp; resume, park a half-built order, check anything, come back · multi-draft</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="dock">
+          <span class="badge b-accent" style="background:rgba(255,255,255,.12);color:#7FD1CD">Draft</span>
+          <div style="flex:1;min-width:0"><b style="font-size:13px">Order, Sunrise Market</b><div style="font-size:11.5px;color:rgba(255,255,255,.55)">5 items · <span class="money">$280.69</span> · paused 2 min ago on this device</div></div>
+          <button class="btn sm btn-primary">Resume</button>
+          <button class="iconbtn" style="color:rgba(255,255,255,.55)"><i data-ic="x" data-sz="14"></i></button>
+        </div>
+        <div class="dock" style="opacity:.85">
+          <span class="badge b-accent" style="background:rgba(255,255,255,.12);color:#7FD1CD">Draft</span>
+          <div style="flex:1;min-width:0"><b style="font-size:13px">Invoice, Bright Mart #2</b><div style="font-size:11.5px;color:rgba(255,255,255,.55)">from ORD-2416 · started on <i data-ic="phone" data-sz="11" style="display:inline-block;vertical-align:-1px"></i> mobile, 9:12 AM</div></div>
+          <button class="btn sm btn-primary">Resume</button>
+          <button class="iconbtn" style="color:rgba(255,255,255,.55)"><i data-ic="x" data-sz="14"></i></button>
+        </div>
+        <span class="faint" style="font-size:11.5px;width:480px">The <b>Minimize</b> button in any builder parks the draft into this dock (bottom-left, every screen). Drafts autosave on each keystroke, sync across devices, and survive going offline. Scanning while a draft is minimized offers "add to draft?" in one tap.</span>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">at the door, deliver, adjust, or start a new order · reprice + invoice regen automatic</div>
+      <div class="modal">
+        <div class="mh"><h4>Stop 6, Casa Verde Foods</h4><span class="badge b-accent"><span class="dot"></span>Arrived</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb" style="gap:0;padding-top:8px;padding-bottom:10px">
+          <div class="qrow"><span style="flex:1">Agua Mineral 355ml <span class="faint">· $21.60</span></span><span class="qty"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">4</span><button><i data-ic="plus" data-sz="12"></i></button></span></div>
+          <div class="qrow" style="background:#FFFBEB;margin:0 -20px;padding:9px 20px"><span style="flex:1"><b style="color:var(--ink-900)">Cloud Chips BBQ</b> <span class="faint">· they want 2 fewer</span></span><span class="qty" style="border-color:var(--warning)"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">4</span><button><i data-ic="plus" data-sz="12"></i></button></span></div>
+          <div class="qrow"><span style="flex:1;color:var(--accent-deep)"><i data-ic="barcode" data-sz="13" style="display:inline-block;vertical-align:-2px"></i> <b>Scan to add</b> <span class="faint">,  they asked for cold brew</span></span><span class="mono faint" style="font-size:11px">price memory applies</span></div>
+          <div class="qrow"><span style="flex:1"><b style="color:var(--ink-900)">New total</b> <span class="faint">recalculated live</span></span><span class="money" style="font-weight:600;color:var(--ink-900)">$616.40 <span class="strike" style="font-size:11px">$644.90</span></span></div>
+          <div style="display:flex;flex-direction:column;gap:7px;padding-top:11px">
+            <button class="btn btn-primary" style="justify-content:center"><i data-ic="check" data-sz="14"></i>Save changes &amp; capture POD</button>
+            <div style="display:flex;gap:7px">
+              <button class="btn btn-secondary" style="flex:1;justify-content:center"><i data-ic="plus" data-sz="14"></i>New order at door</button>
+              <button class="btn btn-secondary" style="flex:1;justify-content:center"><i data-ic="dollar" data-sz="14"></i>Collect payment</button>
+            </div>
+            <span class="faint" style="font-size:11.5px;text-align:center">Two taps: adjust → save. The invoice regenerates from delivered lines; the retailer gets the updated copy instantly; edits are on the order timeline.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">every hat, one account, owner-operators, admin-drivers, one-person businesses</div>
+      <div class="modal">
+        <div class="mh"><h4>Maria López</h4><span class="badge b-accent">Tenant Admin</span><span class="badge b-neutral">Driver</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb">
+          <div class="modeitem" style="border:1px solid var(--accent);background:var(--primary-mist);border-radius:9px">
+            <i data-ic="truck" data-sz="16" style="color:var(--accent-deep)"></i>
+            <span style="flex:1"><b style="color:var(--ink-900)">Drive mode</b><br><span class="faint" style="font-size:11.5px">Big targets, today's run first, scanner one tap away, full app still behind it</span></span>
+            <span style="width:36px;height:20px;border-radius:99px;background:var(--accent-strong);position:relative;display:inline-block"><i style="position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:99px;background:#fff"></i></span>
+          </div>
+          <div class="qrow"><span class="qic" style="width:26px;height:26px;border-radius:7px;background:var(--success-bg);color:#15803D;display:grid;place-items:center"><i data-ic="check" data-sz="13"></i></span><span style="flex:1">Drivers can do <b style="color:var(--ink-900)">the work</b>: orders, invoices, payments, returns, receiving stock, vendor bills, at-door edits</span></div>
+          <div class="qrow"><span class="qic" style="width:26px;height:26px;border-radius:7px;background:var(--sunken);color:var(--ink-500);display:grid;place-items:center"><i data-ic="shield" data-sz="13"></i></span><span style="flex:1">Admin-only stays admin: user management, pricing rules, cost method, settings, exports, deletes</span></div>
+          <div class="qrow"><span class="qic" style="width:26px;height:26px;border-radius:7px;background:var(--info-bg);color:var(--info);display:grid;place-items:center"><i data-ic="eye" data-sz="13"></i></span><span style="flex:1">Admins see every run live (Dispatch → Live), including their own; a one-person business is just one account wearing both badges</span></div>
+          <span class="faint" style="font-size:11.5px">Role = permissions, mode = layout. Switching modes is one tap in the avatar menu and never logs you out or loses a draft.</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

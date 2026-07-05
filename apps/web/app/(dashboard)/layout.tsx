@@ -34,9 +34,12 @@ import {
   BarChart3,
   PieChart,
   ShoppingBag,
+  ClipboardList,
   Search,
   Menu,
   X,
+  Check,
+  Languages,
   Cigarette,
   type LucideIcon,
 } from "lucide-react";
@@ -51,6 +54,7 @@ import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -89,6 +93,7 @@ const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
       { kind: "leaf", label: "Products", href: "/products", icon: Package },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
+      { kind: "leaf", label: "Bills & Purchasing", href: "/vendor-bills", icon: ClipboardList },
     ],
   },
   {
@@ -239,12 +244,16 @@ function NavLink({
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+        "flex items-center gap-3 rounded-[7px] px-2.5 py-2 text-[13px] font-medium transition-colors",
         collapsed && "justify-center",
-        active ? "bg-white text-navy" : "text-white/70 hover:bg-white/10 hover:text-white",
+        active
+          ? "bg-white/10 text-white shadow-[inset_2.5px_0_0_theme(colors.brand.300)]"
+          : "text-white/70 hover:bg-white/[0.06] hover:text-white",
       )}
     >
-      <Icon className="h-5 w-5 shrink-0" />
+      <Icon
+        className={cn("h-[18px] w-[18px] shrink-0", active ? "text-brand-300" : "opacity-75")}
+      />
       {!collapsed && <span className="truncate">{item.label}</span>}
     </Link>
   );
@@ -441,6 +450,7 @@ function Header({
 }) {
   const { title } = usePageTitle();
   const { user, logout } = useAuth();
+  const { locale, setLocale, t } = useI18n();
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
@@ -476,15 +486,15 @@ function Header({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Command palette trigger */}
+        {/* Command palette trigger — Ledger search pill */}
         <button
           onClick={onOpenPalette}
-          className="hidden items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-1.5 text-sm text-navy/70 transition-colors hover:border-brand-300 hover:text-navy md:flex"
+          className="hidden h-[34px] w-[280px] items-center gap-2.5 rounded-full border border-line-strong bg-surface-raised px-3 text-[13px] text-ink-400 transition-colors hover:border-brand-300 hover:text-ink-500 md:flex"
           aria-label="Open command palette"
         >
-          <Search className="h-3.5 w-3.5" />
-          <span>Search…</span>
-          <kbd className="ml-1 rounded border border-surface-border bg-white px-1 py-0.5 text-[10px] font-medium">
+          <Search className="h-[15px] w-[15px]" />
+          <span>{t("topbar.searchPlaceholder")}</span>
+          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong border-b-2 bg-paper px-1.5 font-mono text-[11px] text-ink-500">
             ⌘K
           </kbd>
         </button>
@@ -598,15 +608,33 @@ function Header({
                 onSelect={() => router.push("/settings")}
               >
                 <UserIcon className="h-4 w-4 text-navy/70" />
-                Profile &amp; Settings
+                {t("menu.profile")}
               </DropdownMenu.Item>
+
+              {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
+              <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
+              <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
+                <Languages className="h-3.5 w-3.5" />
+                {t("menu.language")}
+              </div>
+              {LOCALES.map((l) => (
+                <DropdownMenu.Item
+                  key={l}
+                  className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  onSelect={() => setLocale(l)}
+                >
+                  {LOCALE_LABELS[l]}
+                  {locale === l && <Check className="h-4 w-4 text-accent-deep" />}
+                </DropdownMenu.Item>
+              ))}
+
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <DropdownMenu.Item
                 className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
                 onSelect={() => void logout()}
               >
                 <LogOut className="h-4 w-4" />
-                Sign out
+                {t("menu.signOut")}
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
@@ -786,7 +814,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   ];
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="surface-operator flex h-screen overflow-hidden">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-brand-500 focus:px-4 focus:py-2 focus:text-white focus:shadow-lg"

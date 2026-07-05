@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Tracked Categories</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .toggle{display:inline-block;width:36px;height:20px;border-radius:99px;background:var(--accent-strong);position:relative;flex:none}
+  .toggle::after{content:"";position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:99px;background:#fff}
+  .toggle.off{background:var(--line-strong)}
+  .toggle.off::after{right:auto;left:2px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden}
+  .modal .mh{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .modal .mh h4{font-size:14.5px;font-weight:600;color:var(--ink-900)}
+  .modal .mb{padding:16px 20px;display:flex;flex-direction:column;gap:13px}
+  .modal .mf{display:flex;gap:9px;justify-content:flex-end;padding:13px 20px;border-top:1px solid var(--line);background:var(--canvas)}
+  .fx2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Tracked Categories">
+  <script>document.write(RFShell.operatorRail('tobacco'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Regulated Items'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <h2>Tracked Categories</h2>
+          <div class="sub">Define any category your business must handle separately, tax rules, invoice treatment and filings follow the category.</div>
+        </div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Category</button></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <table class="tbl">
+            <thead><tr><th>Category</th><th class="r">Products</th><th>Tax Rule</th><th>Invoice Treatment</th><th>Reporting</th><th>Active</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row">
+                <td><span class="primary-cell">Tobacco</span><div class="faint" style="font-size:11px">licensed customers only</div></td>
+                <td class="r mono">22</td><td>Excise · $2.87/pack</td><td>Separate section</td><td>Monthly · CA CDTFA</td>
+                <td><span class="toggle"></span></td><td><button class="btn sm btn-ghost">Edit</button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">Alcohol</span><div class="faint" style="font-size:11px">ABC license #482-2201</div></td>
+                <td class="r mono">14</td><td>Excise · % of sale</td><td>Separate section</td><td>Monthly · CA ABC</td>
+                <td><span class="toggle"></span></td><td><button class="btn sm btn-ghost">Edit</button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">CRV Beverage Deposits</span><div class="faint" style="font-size:11px">deposit collected &amp; remitted</div></td>
+                <td class="r mono">31</td><td>Deposit · $0.05 to 0.10/container</td><td>Deposit line per item</td><td>Quarterly · CalRecycle</td>
+                <td><span class="toggle"></span></td><td><button class="btn sm btn-ghost">Edit</button></td>
+              </tr>
+              <tr class="row">
+                <td><span class="primary-cell">Sugary Beverage Tax</span><div class="faint" style="font-size:11px">Oakland + Berkeley deliveries only</div></td>
+                <td class="r mono">18</td><td>Per-ounce · $0.01/oz</td><td>Tax line, city-scoped</td><td>Quarterly · city portals</td>
+                <td><span class="toggle off"></span></td><td><button class="btn sm btn-ghost">Edit</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid var(--line)">
+            <i data-ic="zap" data-sz="14" style="color:var(--accent-deep)"></i>
+            <span class="faint" style="font-size:12px">Category taxes are computed per line at sale time and land in their own ledger accounts, analytics, filings and CSV exports split by category automatically.</span>
+          </div>
+        </div>
+
+        <div class="modal">
+          <div class="mh"><h4>New Category</h4><i data-ic="x" data-sz="15" style="margin-left:auto;color:var(--ink-400)"></i></div>
+          <div class="mb">
+            <div class="field"><label>Category name</label><div class="input"><input value="Sugary Beverage Tax"></div></div>
+            <div class="fx2">
+              <div class="field"><label>Tax type</label><div class="select"><span>Per-ounce excise</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              <div class="field"><label>Rate</label><div class="input"><span class="faint">$</span><input value="0.01" class="mono" style="text-align:right"><span class="faint">/oz</span></div></div>
+            </div>
+            <div class="fx2">
+              <div class="field"><label>Invoice treatment</label><div class="select"><span>Tax line per item</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              <div class="field"><label>Reporting cadence</label><div class="select"><span>Quarterly</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            </div>
+            <div class="field"><label>Applies to</label><div class="select"><span>Delivery city is Oakland or Berkeley</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+            <div class="field">
+              <label>Products in this category</label>
+              <div class="input"><i data-ic="search" data-sz="14" style="color:var(--ink-400)"></i><span class="ph">Search or scan to add… 18 added</span></div>
+              <span class="faint" style="font-size:11.5px">You can also flag products from the product form, "Separately handled" picks from these categories.</span>
+            </div>
+          </div>
+          <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Create Category</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Pricing</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1440px}
+  body{margin:0;background:#FBF9F4;color:var(--ink-700)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+  .mnav{display:flex;align-items:center;gap:30px;height:76px}
+  .mnav .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;color:var(--ink-900)}
+  .mnav .brand .mark{width:32px;height:32px;border-radius:9px;background:var(--brand-600);color:#fff;display:grid;place-items:center;font-size:12px}
+  .mnav a{font-size:14px;font-weight:500;color:var(--ink-500)}
+  .mnav a.on{color:var(--ink-900);font-weight:600}
+  .hero{padding:64px 0 30px;text-align:center}
+  .hero h1{font-family:var(--font-display);font-weight:400;font-size:52px;line-height:1.1;color:var(--ink-900)}
+  .hero p{font-size:17px;line-height:1.6;color:var(--ink-500);max-width:560px;margin:18px auto 0}
+  .billseg{display:inline-flex;background:#EFEAE0;border-radius:99px;padding:3px;gap:2px;margin-top:26px}
+  .billseg button{height:34px;padding:0 18px;border-radius:99px;font-size:13px;font-weight:600;color:var(--ink-500)}
+  .billseg button.on{background:var(--brand-600);color:#fff}
+  .freechip{display:inline-flex;height:18px;padding:0 8px;border-radius:99px;background:#DCEFEA;color:#0B6E6B;font-size:10px;font-weight:700;align-items:center;margin-left:8px}
+  .billseg button.on .freechip{background:rgba(255,255,255,.22);color:#fff}
+  .pnote{font-size:11.5px;color:var(--ink-400);margin-top:3px}
+  .pgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:40px;text-align:left;align-items:stretch}
+  .pcard{background:#fff;border:1px solid #E9E3D7;border-radius:14px;padding:26px 24px;display:flex;flex-direction:column}
+  .pcard.hot{border-color:var(--brand-500);box-shadow:0 0 0 3px rgba(20,163,159,.1);position:relative}
+  .pcard.hot::before{content:"Most popular";position:absolute;top:-11px;left:22px;background:var(--brand-600);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:99px}
+  .pcard .nm{font-size:14px;font-weight:700;color:var(--ink-900)}
+  .pcard .who{font-size:12px;color:var(--ink-400);margin-top:2px;min-height:30px}
+  .pcard .amt{font-size:34px;font-weight:600;color:var(--ink-900);letter-spacing:-.02em;margin-top:10px}
+  .pcard .amt small{font-size:13px;font-weight:500;color:var(--ink-400)}
+  .pcard ul{list-style:none;margin:16px 0 20px;display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink-700);flex:1}
+  .pcard li{display:flex;gap:8px;align-items:flex-start;line-height:1.45}
+  .pcard li svg{margin-top:1px}
+  .pcard .plus{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--brand-700);margin:2px 0 0}
+  /* add-ons */
+  .addons{padding:70px 0 10px}
+  .addons h2,.cmp h2{font-family:var(--font-display);font-weight:400;font-size:36px;color:var(--ink-900);text-align:center}
+  .addons .sub2{text-align:center;font-size:14.5px;color:var(--ink-500);margin-top:10px}
+  .agrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:34px}
+  .acard{background:#fff;border:1px solid #E9E3D7;border-radius:13px;padding:20px 22px;display:flex;gap:14px}
+  .acard .ic{width:38px;height:38px;border-radius:10px;background:var(--brand-50);color:var(--brand-700);display:grid;place-items:center;flex:none}
+  .acard b{font-size:14px;color:var(--ink-900)}
+  .acard .pr{font-family:var(--font-mono);font-size:12px;color:var(--brand-700);font-weight:600;margin-top:2px}
+  .acard p{font-size:12.5px;line-height:1.55;color:var(--ink-500);margin-top:6px}
+  /* comparison */
+  .cmp{padding:70px 0 80px}
+  .cmp table{width:100%;border-collapse:collapse;margin-top:34px;background:#fff;border:1px solid #E9E3D7;border-radius:14px;overflow:hidden;font-size:12.5px}
+  .cmp th{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-500);padding:14px 14px;border-bottom:2px solid var(--ink-900);text-align:center;background:#fff}
+  .cmp th:first-child{text-align:left}
+  .cmp td{padding:10px 14px;border-bottom:1px solid #EFEAE0;color:var(--ink-700);text-align:center}
+  .cmp td:first-child{text-align:left;font-weight:500;color:var(--ink-900)}
+  .cmp tr.sec td{background:#FBF9F4;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-500);padding:8px 14px}
+  .cmp .y{color:var(--brand-700)}
+  .cmp .n{color:#C9C2B4}
+  .cmp .a{color:var(--ink-500);font-size:11.5px}
+  .foot{border-top:1px solid #E9E3D7;padding:34px 0 60px;text-align:center;font-size:13px;color:var(--ink-400)}
+</style>
+</head>
+<body data-screen-label="Marketing Pricing">
+  <div class="wrap">
+    <nav class="mnav">
+      <span class="brand"><span class="mark">RF</span>RouteFlow</span>
+      <a>Product</a><a class="on">Pricing</a><a>Company</a><a>Contact</a>
+      <span style="margin-left:auto"></span>
+      <a style="font-weight:600;color:var(--ink-900)">Sign in</a>
+      <button class="btn btn-primary">Start free trial</button>
+    </nav>
+  </div>
+
+  <header class="hero wrap">
+    <h1>Start small. Add what your routes need.</h1>
+    <p>Every plan runs your whole day, orders, invoices, deliveries. Grow into seats, routes and modules only when the business asks for them.</p>
+    <div class="billseg"><button id="bill-m">Monthly</button><button class="on" id="bill-y">Annual<span class="freechip">2 months free</span></button></div>
+  </header>
+
+  <section class="wrap">
+    <div class="pgrid">
+      <div class="pcard">
+        <span class="nm">Starter</span><span class="who">One person, one van, the whole business in your pocket</span>
+        <span class="amt"><span data-m="$59" data-y="$49">$49</span><small>/mo</small></span>
+        <div class="pnote" data-m="billed monthly" data-y="$590 billed yearly, 2 months free">$590 billed yearly, 2 months free</div>
+        <ul>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i><b>1 user</b> (owner-operator · Drive mode)</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Unlimited orders, invoices &amp; customers</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Barcode scanning (USB + camera) · price memory</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Inventory with costs (WAC) &amp; quick restock</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>1 route/day with stops, POD &amp; at-door edits</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Payments received + printable receipts</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Offline-first PWA · works in dead zones</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>AI invoice scanning, 20 bills/mo included</li>
+        </ul>
+        <button class="btn btn-secondary" style="justify-content:center">Start free trial</button>
+      </div>
+
+      <div class="pcard">
+        <span class="nm">Team</span><span class="who">A crew of drivers and a real dispatch morning</span>
+        <span class="amt"><span data-m="$149" data-y="$124">$124</span><small>/mo</small></span>
+        <div class="pnote" data-m="billed monthly" data-y="$1,490 billed yearly, 2 months free">$1,490 billed yearly, 2 months free</div>
+        <ul>
+          <li class="plus">Everything in Starter, plus</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i><b>5 users</b> · <b>3 concurrent routes</b></li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Dispatch overview · live tracking · route wizard</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Returns &amp; credit notes</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Bills &amp; Purchasing (vendor bills, POs, cost sync)</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Reports: AR aging · P&amp;L · cash flow</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Credit limits · run settlement · driver mode for all</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>AI invoice scanning, 100/mo included</li>
+        </ul>
+        <button class="btn btn-secondary" style="justify-content:center">Start free trial</button>
+      </div>
+
+      <div class="pcard hot">
+        <span class="nm" style="color:var(--brand-700)">Business</span><span class="who">Your customers order themselves, you run the machine</span>
+        <span class="amt"><span data-m="$349" data-y="$291">$291</span><small>/mo</small></span>
+        <div class="pnote" data-m="billed monthly" data-y="$3,490 billed yearly, 2 months free">$3,490 billed yearly, 2 months free</div>
+        <ul>
+          <li class="plus">Everything in Team, plus</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i><b>15 users</b> · <b>unlimited routes</b></li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i><b>Buyer portal included</b>, B2B ordering, standing orders, disputes</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Analytics suite + demand forecasting</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Pricing tiers &amp; margin floors</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Import wizard · integrations · CSV everywhere</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Priority support · AI scanning 300/mo included</li>
+        </ul>
+        <button class="btn btn-primary" style="justify-content:center">Start free trial</button>
+      </div>
+
+      <div class="pcard">
+        <span class="nm">Enterprise</span><span class="who">Multiple depots, custom terms, someone to call</span>
+        <span class="amt">Custom</span>
+        <ul>
+          <li class="plus">Everything in Business, plus</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Unlimited users &amp; seats pooling</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>API access &amp; SSO</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>All add-on modules included</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Dedicated onboarding &amp; data migration</li>
+          <li><i data-ic="check" data-sz="13" style="color:var(--brand-600)"></i>Custom contracts, SLA &amp; invoicing</li>
+        </ul>
+        <button class="btn btn-secondary" style="justify-content:center">Talk to sales</button>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:12.5px;color:var(--ink-400);margin-top:18px">14-day free trial on any plan, full Business features, no card. Switch or cancel anytime; your data stays.</div>
+  </section>
+
+  <section class="addons wrap">
+    <h2>Add things when you need them</h2>
+    <div class="sub2">Modules bolt onto any plan, prorated to the day. Turn them off just as easily.</div>
+    <div class="agrid">
+      <div class="acard"><span class="ic"><i data-ic="user" data-sz="17"></i></span><div><b>Extra seats</b><div class="pr">$12 / user / mo</div><p>Beyond your plan's included users. Drivers, office staff, same price, role-based permissions.</p></div></div>
+      <div class="acard"><span class="ic"><i data-ic="store" data-sz="17"></i></span><div><b>Buyer Portal</b><div class="pr">$49 / mo · included in Business+</div><p>Self-serve B2B ordering for your retailers: negotiated prices, standing orders, invoices, disputes.</p></div></div>
+      <div class="acard"><span class="ic"><i data-ic="shield" data-sz="17"></i></span><div><b>Regulated-Items Compliance</b><div class="pr">$39 / mo · unlimited categories</div><p>Tobacco, alcohol, CRV, city taxes, separate invoicing, licenses, filings and category ledgers.</p></div></div>
+      <div class="acard"><span class="ic"><i data-ic="camera" data-sz="17"></i></span><div><b>More AI scans</b><div class="pr">$19 / mo per +250 scans · stackable</div><p>AI invoice scanning is <b>included in every plan</b> (20 / 100 / 300 per month). Need more? Stack packs, a scan is never blocked mid-flow.</p></div></div>
+      <div class="acard"><span class="ic"><i data-ic="truck" data-sz="17"></i></span><div><b>Extra concurrent route</b><div class="pr">$15 / route / mo · Team plan</div><p>Add a fourth or fifth simultaneous run without jumping plans.</p></div></div>
+      <div class="acard"><span class="ic"><i data-ic="chat" data-sz="17"></i></span><div><b>Messaging bundle</b><div class="pr">$10 / mo per 500 messages</div><p>WhatsApp &amp; SMS order sends and delivery notifications beyond the included 200/mo.</p></div></div>
+    </div>
+  </section>
+
+  <section class="cmp wrap">
+    <h2>What's in each plan</h2>
+    <table>
+      <thead><tr><th style="width:34%">Feature</th><th>Starter</th><th>Team</th><th>Business</th><th>Enterprise</th></tr></thead>
+      <tbody>
+        <tr><td>Users included</td><td class="a">1</td><td class="a">5</td><td class="a">15</td><td class="a">Unlimited</td></tr>
+        <tr><td>Concurrent routes</td><td class="a">1/day</td><td class="a">3</td><td class="a">Unlimited</td><td class="a">Unlimited</td></tr>
+        <tr class="sec"><td colspan="5">Sell &amp; invoice</td></tr>
+        <tr><td>Orders, invoices, customers (unlimited)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Barcode scanning + price memory</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Live cost &amp; margin (WAC / FIFO / last cost)</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Pricing tiers &amp; margin floors</td><td class="n">, </td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr class="sec"><td colspan="5">Deliver</td></tr>
+        <tr><td>Routes, stops, POD, at-door edits</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Dispatch overview + live tracking</td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Run settlement (cash reconciliation)</td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr class="sec"><td colspan="5">Buy &amp; account</td></tr>
+        <tr><td>Bills &amp; Purchasing (vendor bills, POs)</td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Returns &amp; credit notes</td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Reports (AR aging · P&amp;L · cash flow)</td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Analytics + forecasting</td><td class="n">, </td><td class="a">add-on</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr class="sec"><td colspan="5">Grow</td></tr>
+        <tr><td>Buyer portal (B2B ordering)</td><td class="a">add-on</td><td class="a">add-on</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>Regulated-Items Compliance</td><td class="a">add-on</td><td class="a">add-on</td><td class="a">add-on</td><td class="y">✓</td></tr>
+        <tr><td>AI invoice scanning (included / mo)</td><td class="a">20</td><td class="a">100</td><td class="a">300</td><td class="a">Unlimited</td></tr>
+        <tr><td>Import wizard &amp; integrations</td><td class="n">, </td><td class="n">, </td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>API access &amp; SSO</td><td class="n">, </td><td class="n">, </td><td class="n">, </td><td class="y">✓</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="foot wrap">Prices in USD. Annual billing = 2 months free. Overage never blocks a delivery, soft caps warn first, always.</div>
+<script src="icons.js"></script>
+<script>
+(function () {
+  var mo = document.getElementById('bill-m'), yr = document.getElementById('bill-y');
+  function set(mode) {
+    mo.classList.toggle('on', mode === 'm');
+    yr.classList.toggle('on', mode === 'y');
+    document.querySelectorAll('[data-m][data-y]').forEach(function (el) {
+      el.textContent = el.getAttribute(mode === 'm' ? 'data-m' : 'data-y');
+    });
+  }
+  mo.addEventListener('click', function () { set('m'); });
+  yr.addEventListener('click', function () { set('y'); });
+})();
+</script>
+</body>
+</html>

@@ -16,11 +16,19 @@ export const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
     const isNeutral = trend === 0;
 
     return (
-      <div ref={ref} className={cn("rounded-lg bg-white p-6 shadow-card", className)} {...props}>
+      <div
+        ref={ref}
+        className={cn("rounded-card border border-line bg-paper p-4 shadow-card", className)}
+        {...props}
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-navy/70 truncate">{label}</p>
-            <p className="mt-1 text-2xl font-bold text-navy">{value}</p>
+            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">
+              {label}
+            </p>
+            <p className="mt-1.5 text-2xl font-semibold tabular-nums tracking-[-0.02em] text-navy">
+              {value}
+            </p>
             {trend !== undefined && (
               <div
                 className={cn(
@@ -43,7 +51,7 @@ export const StatCard = React.forwardRef<HTMLDivElement, StatCardProps>(
             )}
           </div>
           {icon && (
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-brand-100 text-brand-500">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-ctl bg-accent-soft text-accent-deep">
               {icon}
             </div>
           )}

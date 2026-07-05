@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Operator Dashboard</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1440px}
+  body{margin:0}
+  .grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+  .pipe{display:grid;grid-template-columns:repeat(5,1fr);}
+  .pipe .cell{padding:13px 18px;display:flex;flex-direction:column;gap:3px;border-right:1px solid var(--line)}
+  .pipe .cell:last-child{border-right:none}
+  .pipe .cell .n{font-size:20px;font-weight:600;color:var(--ink-900)}
+  .pipe .cell .lb{font-size:11.5px;font-weight:600;color:var(--ink-500)}
+  .pipe .cell.t-warning{background:#FFFBEB}.pipe .cell.t-info{background:#F0F9FF}
+  .pipe .cell.t-accent{background:var(--primary-mist)}.pipe .cell.t-success{background:#F0FDF4}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .row31{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+  .stack{display:flex;flex-direction:column;gap:16px}
+  /* AR aging */
+  .arbar{display:flex;height:14px;border-radius:99px;overflow:hidden;margin:12px 0 14px}
+  .arleg{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .arleg .li{display:flex;flex-direction:column;gap:2px;font-size:11.5px;color:var(--ink-500)}
+  .arleg .sw{width:10px;height:10px;border-radius:3px;margin-bottom:2px}
+  .arleg .amt{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--ink-900);font-weight:500;font-size:12px}
+  /* mini list rows */
+  .mrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .mrow:last-child{border-bottom:none}
+  .mrow .grow{flex:1;min-width:0}
+  .mrow b{color:var(--ink-900);font-weight:600}
+  .mrow .sub{font-size:12px;color:var(--ink-400);margin-top:1px}
+  /* urgent panel */
+  .urgentcard{border:1px solid #FCA5A5;background:#FFF9F9}
+  .urgentcard .card-h{border-bottom-color:#FECACA}
+  /* stock bar */
+  .stockbar{height:5px;border-radius:99px;background:var(--sunken);overflow:hidden;margin-top:6px}
+  .stockbar i{display:block;height:100%;border-radius:99px;background:var(--warning)}
+  .dstat{width:8px;height:8px;border-radius:99px;flex:none}
+  .greet h2{font-size:25px;letter-spacing:0}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Operator Dashboard">
+
+  <!-- ===== rail ===== -->
+  <aside class="rail">
+    <div class="rail-brand"><div class="rail-logo">GS</div><div><div class="t">Golden State Dist.</div><div class="s">RouteFlow</div></div></div>
+    <nav>
+      <a class="nl active"><i data-ic="grid"></i>Dashboard</a>
+      <div class="ng"><button class="ng-head"><i data-ic="package"></i>Orders<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <div class="ng"><button class="ng-head"><i data-ic="truck"></i>Dispatch<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="users"></i>Customers</a>
+      <div class="ng"><button class="ng-head"><i data-ic="warehouse"></i>Warehouse<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <div class="ng"><button class="ng-head"><i data-ic="dollar"></i>Finance<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="chart"></i>Analytics</a>
+      <a class="nl"><i data-ic="leaf"></i>Tobacco</a>
+      <a class="nl"><i data-ic="sliders"></i>Settings</a>
+    </nav>
+    <div class="rail-foot"><a class="nl"><i data-ic="chevleft"></i>Collapse</a></div>
+  </aside>
+
+  <!-- ===== main ===== -->
+  <div class="main">
+    <div class="topbar">
+      <h1>Dashboard</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search or jump to…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i><span class="nbadge">3</span></button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="avatar">ML</div>
+        <span style="font-size:13px;font-weight:600;color:var(--ink-900)">Maria</span>
+        <i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- greeting + quick create -->
+      <div class="ph-row greet">
+        <div>
+          <h2 class="display">Good morning, Maria.</h2>
+          <div class="sub">Here's what's happening at Golden State Distribution today.</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="filetext" data-sz="15"></i>New Invoice</button>
+          <button class="btn btn-secondary"><i data-ic="truck" data-sz="15"></i>New Route</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Order</button>
+        </div>
+      </div>
+
+      <!-- KPI cards -->
+      <div class="grid6" style="margin-bottom:16px">
+        <a class="stat"><span class="overline">Today's Revenue</span><span class="v money">$4,318.50</span><span class="hint">→ Finance overview</span></a>
+        <a class="stat ring-danger"><span class="overline">Overdue Invoices</span><span class="v" style="color:var(--danger)">7</span><span class="hint">$8,262.20 outstanding</span></a>
+        <a class="stat"><span class="overline">Active Orders</span><span class="v">23</span><span class="hint">Pending → out for delivery</span></a>
+        <a class="stat"><span class="overline">Scheduled Routes</span><span class="v">4</span><span class="hint">Next run 6:30 AM</span></a>
+        <a class="stat ring-success"><span class="overline">Active Drivers</span><span class="v">6</span><span class="hint">of 8 on roster</span></a>
+        <a class="stat ring-warning"><span class="overline">Low Stock Items</span><span class="v" style="color:var(--warning)">3</span><span class="hint">Below threshold</span></a>
+      </div>
+
+      <!-- order pipeline -->
+      <div class="card pipe" style="margin-bottom:16px">
+        <a class="cell t-warning"><span class="n">9</span><span class="lb">Pending</span></a>
+        <a class="cell t-info"><span class="n">8</span><span class="lb">Confirmed</span></a>
+        <a class="cell t-accent"><span class="n">6</span><span class="lb">Out for Delivery</span></a>
+        <a class="cell t-success"><span class="n">41</span><span class="lb">Delivered</span></a>
+        <a class="cell"><span class="n">2</span><span class="lb">Cancelled</span></a>
+      </div>
+
+      <!-- finance insights -->
+      <div class="row2" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-h"><h3>AR Aging</h3><a class="btn-link" style="font-size:12.5px">Full report</a></div>
+          <div class="card-b">
+            <div style="display:flex;align-items:baseline;gap:8px">
+              <span class="money" style="font-size:24px;color:var(--ink-900)">$28,412.66</span>
+              <span class="muted" style="font-size:12.5px">total outstanding</span>
+            </div>
+            <div class="arbar">
+              <i style="flex:45.5;background:var(--brand-500)"></i>
+              <i style="flex:25.4;background:var(--info)"></i>
+              <i style="flex:15.8;background:var(--warning)"></i>
+              <i style="flex:8.1;background:#EA580C"></i>
+              <i style="flex:5.2;background:var(--danger)"></i>
+            </div>
+            <div class="arleg" style="margin-bottom:2px">
+              <div class="li"><span class="sw" style="background:var(--brand-500)"></span>Current<span class="amt">$12,940.10</span></div>
+              <div class="li"><span class="sw" style="background:var(--info)"></span>1 to 15 days<span class="amt">$7,210.36</span></div>
+              <div class="li"><span class="sw" style="background:var(--warning)"></span>16 to 30 days<span class="amt">$4,480.00</span></div>
+              <div class="li"><span class="sw" style="background:#EA580C"></span>31 to 45 days<span class="amt">$2,306.20</span></div>
+              <div class="li"><span class="sw" style="background:var(--danger)"></span>45+ days<span class="amt">$1,476.00</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3>Overdue Invoices</h3><a class="btn-link" style="font-size:12.5px">View all</a></div>
+          <div class="card-b" style="padding-top:4px;padding-bottom:6px">
+            <div class="mrow"><div class="grow"><b>Lucky Corner Deli</b><div class="sub">INV-1892</div></div><span class="badge b-danger">21d overdue</span><span class="money" style="color:var(--ink-900)">$1,824.40</span><a class="btn-link" style="font-size:12px">View</a></div>
+            <div class="mrow"><div class="grow"><b>Hillside Mini Mart</b><div class="sub">INV-1901</div></div><span class="badge b-danger">14d overdue</span><span class="money" style="color:var(--ink-900)">$962.75</span><a class="btn-link" style="font-size:12px">View</a></div>
+            <div class="mrow"><div class="grow"><b>Bright Mart #2</b><div class="sub">INV-1907</div></div><span class="badge b-danger">9d overdue</span><span class="money" style="color:var(--ink-900)">$2,410.00</span><a class="btn-link" style="font-size:12px">View</a></div>
+            <div class="mrow"><div class="grow"><b>Golden Gate Grocery</b><div class="sub">INV-1913</div></div><span class="badge b-danger">6d overdue</span><span class="money" style="color:var(--ink-900)">$1,388.05</span><a class="btn-link" style="font-size:12px">View</a></div>
+            <div class="mrow"><div class="grow"><b>Sunrise Market</b><div class="sub">INV-1919</div></div><span class="badge b-danger">2d overdue</span><span class="money" style="color:var(--ink-900)">$1,677.00</span><a class="btn-link" style="font-size:12px">View</a></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- middle row -->
+      <div class="row31" style="margin-bottom:16px">
+        <div class="stack">
+          <div class="card urgentcard">
+            <div class="card-h"><h3 style="display:flex;align-items:center;gap:8px;color:#B91C1C"><i data-ic="alert" data-sz="15"></i>Urgent Orders</h3><span class="badge b-danger">2 open</span></div>
+            <div class="card-b" style="padding-top:2px;padding-bottom:4px">
+              <div class="mrow" style="border-bottom-color:#FECACA"><div class="grow"><b>Sunrise Market</b><div class="sub">ORD-2417 · placed 12 min ago</div></div><span class="money" style="color:var(--ink-900)">$1,008.02</span><button class="btn sm btn-secondary">View Order</button></div>
+              <div class="mrow"><div class="grow"><b>Casa Verde Foods</b><div class="sub">ORD-2415 · placed 48 min ago</div></div><span class="money" style="color:var(--ink-900)">$644.90</span><button class="btn sm btn-secondary">View Order</button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Scheduled Route Runs</h3><a class="btn-link" style="font-size:12.5px">All routes</a></div>
+            <table class="tbl">
+              <thead><tr><th>Route</th><th>Driver</th><th>Status</th><th>Stops</th><th class="r">Start</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="primary-cell">Mission Loop AM</td><td>D. Okafor</td><td><span class="badge b-info">Scheduled</span></td><td class="mono">0/12</td><td class="r">6:30 AM</td></tr>
+                <tr class="row"><td class="primary-cell">East Bay Corridor</td><td>J. Reyes</td><td><span class="badge b-accent">In Progress</span></td><td class="mono">5/14</td><td class="r">7:00 AM</td></tr>
+                <tr class="row"><td class="primary-cell">Peninsula South</td><td>A. Petrov</td><td><span class="badge b-info">Scheduled</span></td><td class="mono">0/9</td><td class="r">8:15 AM</td></tr>
+                <tr class="row"><td class="primary-cell">City Center PM</td><td>, </td><td><span class="badge b-warning">Unassigned</span></td><td class="mono">0/11</td><td class="r">1:30 PM</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-h"><h3>Driver Status</h3></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:6px">
+              <div class="mrow"><span class="dstat" style="background:var(--success)"></span><div class="grow"><b>Daniel Okafor</b><div class="sub">VAN-04 · 7B12 KC</div></div><span class="badge b-success">Active</span></div>
+              <div class="mrow"><span class="dstat" style="background:var(--success)"></span><div class="grow"><b>Julia Reyes</b><div class="sub">VAN-02 · 5H88 TR</div></div><span class="badge b-success">Active</span></div>
+              <div class="mrow"><span class="dstat" style="background:var(--success)"></span><div class="grow"><b>Alexei Petrov</b><div class="sub">VAN-07 · 9K41 LM</div></div><span class="badge b-success">Active</span></div>
+              <div class="mrow"><span class="dstat" style="background:var(--ink-400)"></span><div class="grow"><b>Sam Whitfield</b><div class="sub">VAN-01 · 2D07 PQ</div></div><span class="badge b-neutral">Inactive</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Low Stock</h3><a class="btn-link" style="font-size:12.5px">Inventory</a></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:10px">
+              <div class="mrow" style="display:block"><b>Agua Mineral 355ml · Case 24</b><div class="sub" style="display:flex;justify-content:space-between"><span>6 of 24 threshold</span><span class="mono">6/24</span></div><div class="stockbar"><i style="width:25%"></i></div></div>
+              <div class="mrow" style="display:block"><b>Cloud Chips BBQ 1.5oz · Case 12</b><div class="sub" style="display:flex;justify-content:space-between"><span>4 of 18 threshold</span><span class="mono">4/18</span></div><div class="stockbar"><i style="width:22%"></i></div></div>
+              <div class="mrow" style="display:block"><b>Roast House Cold Brew 8oz</b><div class="sub" style="display:flex;justify-content:space-between"><span>9 of 20 threshold</span><span class="mono">9/20</span></div><div class="stockbar"><i style="width:45%"></i></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- recent orders -->
+      <div class="card">
+        <div class="card-h"><h3>Recent Orders</h3><a class="btn-link" style="font-size:12.5px">View all orders</a></div>
+        <table class="tbl">
+          <thead><tr><th>Order #</th><th>Customer</th><th>Items</th><th class="r">Total</th><th>Status</th><th>Date</th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="mono primary-cell">ORD-2417</td><td>Sunrise Market</td><td class="mono">4</td><td class="r">$1,008.02</td><td><span class="badge b-info">Confirmed</span></td><td class="muted">Jul 5, 9:41 AM</td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2416</td><td>Bright Mart #2</td><td class="mono">11</td><td class="r">$2,394.60</td><td><span class="badge b-warning">Pending</span></td><td class="muted">Jul 5, 9:12 AM</td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2415</td><td>Casa Verde Foods</td><td class="mono">6</td><td class="r">$644.90</td><td><span class="badge b-warning">Pending</span></td><td class="muted">Jul 5, 8:53 AM</td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2414</td><td>Golden Gate Grocery</td><td class="mono">9</td><td class="r">$1,731.25</td><td><span class="badge b-accent">Out for Delivery</span></td><td class="muted">Jul 5, 7:20 AM</td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2413</td><td>Hillside Mini Mart</td><td class="mono">3</td><td class="r">$412.80</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jul 4, 4:47 PM</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

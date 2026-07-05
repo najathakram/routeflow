@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Settings · Integrations</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .irow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .irow:last-child{border-bottom:none}
+  .iic{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;flex:none;background:var(--sunken);color:var(--ink-500);font-weight:700;font-size:12px}
+  .evchip{display:inline-flex;height:19px;padding:0 7px;border-radius:5px;background:var(--sunken);color:var(--ink-500);font-family:var(--font-mono);font-size:10px;align-items:center}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Settings, Integrations">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Settings'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Settings</h2><div class="sub">Workspace configuration for Golden State Distribution.</div></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab">Business Profile</button>
+        <button class="tab">Plan &amp; Billing</button>
+        <button class="tab">Notifications</button>
+        <button class="tab">User Management</button>
+        <button class="tab">Import</button>
+        <button class="tab">Email</button>
+        <button class="tab">Invoicing</button>
+        <button class="tab active">Integrations</button>
+        <button class="tab">My Account</button>
+      </div>
+
+      <div class="row2">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Accounting</h3><span class="badge b-success"><span class="dot"></span>Connected</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="irow"><span class="iic" style="background:#E8F2F1;color:var(--brand-700)">QB</span><div style="flex:1"><b style="color:var(--ink-900)">QuickBooks Online</b><div class="faint" style="font-size:11.5px">Invoices, payments, credit notes &amp; vendor bills sync nightly · last sync 2:04 AM ✓</div></div><button class="btn sm btn-secondary">Configure</button></div>
+              <div class="irow"><span class="iic">XE</span><div style="flex:1"><b style="color:var(--ink-900)">Xero</b><div class="faint" style="font-size:11.5px">Not connected</div></div><button class="btn sm btn-ghost">Connect</button></div>
+              <div class="irow"><span class="iic"><i data-ic="download" data-sz="15"></i></span><div style="flex:1"><b style="color:var(--ink-900)">Ledger CSV export</b><div class="faint" style="font-size:11.5px">Always available, bookkeeping ledger, any date range</div></div><button class="btn sm btn-ghost">Export</button></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Webhooks</h3><button class="btn sm btn-secondary"><i data-ic="plus" data-sz="13"></i>Add endpoint</button></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="irow"><span class="iic"><i data-ic="zap" data-sz="15"></i></span><div style="flex:1"><b class="mono" style="color:var(--ink-900);font-size:12.5px">https://ops.goldenstate.co/hooks/rf</b><div style="display:flex;gap:5px;margin-top:5px"><span class="evchip">order.created</span><span class="evchip">order.delivered</span><span class="evchip">invoice.paid</span></div></div><span class="badge b-success">Healthy</span></div>
+              <div class="irow"><span class="iic"><i data-ic="zap" data-sz="15"></i></span><div style="flex:1"><b class="mono" style="color:var(--ink-900);font-size:12.5px">https://sheets-bridge.internal/rf</b><div style="display:flex;gap:5px;margin-top:5px"><span class="evchip">payment.recorded</span><span class="evchip">stock.low</span></div></div><span class="badge b-warning">2 retries</span></div>
+              <div style="padding:9px 0 4px"><span class="faint" style="font-size:11.5px">Signed with your webhook secret · automatic retries with backoff · delivery log kept 30 days.</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><div style="display:flex;align-items:center;gap:8px"><h3>API Keys</h3><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">Enterprise</span></div><button class="btn sm btn-primary"><i data-ic="plus" data-sz="13"></i>Create key</button></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="irow"><span class="iic"><i data-ic="card" data-sz="15"></i></span><div style="flex:1"><b class="mono" style="color:var(--ink-900);font-size:12.5px">rf_live_••••••••3k9a</b><div class="faint" style="font-size:11.5px">Full read · orders write · created Mar 2 · last used 4 min ago</div></div><button class="btn sm btn-ghost" style="color:var(--danger)">Revoke</button></div>
+              <div class="irow"><span class="iic"><i data-ic="card" data-sz="15"></i></span><div style="flex:1"><b class="mono" style="color:var(--ink-900);font-size:12.5px">rf_test_••••••••7p2x</b><div class="faint" style="font-size:11.5px">Sandbox · created Jun 12 · never used</div></div><button class="btn sm btn-ghost" style="color:var(--danger)">Revoke</button></div>
+              <div style="padding:9px 0 4px"><span class="faint" style="font-size:11.5px">Scoped, rotatable keys · rate limit 600 req/min · usage on the Plan &amp; Billing meters.</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><div style="display:flex;align-items:center;gap:8px"><h3>Single Sign-On</h3><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">Enterprise</span></div></div>
+            <div class="card-b" style="padding-top:8px">
+              <div class="field"><label>Identity provider</label><div class="select"><span>SAML 2.0, Okta</span><i data-ic="chevdown" data-sz="14"></i></div></div>
+              <div class="field" style="margin-top:12px"><label>Metadata URL</label><div class="input"><input value="https://goldenstate.okta.com/app/rf/sso/saml/metadata" class="mono" style="font-size:11.5px"></div></div>
+              <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+                <span class="badge b-success"><span class="dot"></span>Enforced for 12 users</span>
+                <span class="faint" style="font-size:11.5px">Password sign-in disabled · drivers keep PIN unlock in Drive mode</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

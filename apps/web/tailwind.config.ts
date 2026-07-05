@@ -14,24 +14,12 @@ const config: Config = {
       colors: {
         background: "var(--background)",
         foreground: "var(--foreground)",
-        // Tenant-branded primary — overridden at runtime by TenantProvider
+        // Tenant-branded primary — overridden at runtime by TenantProvider.
+        // Ledger default is teal (--brand-500). Full brand + canvas scales come
+        // from the shared preset (packages/config/tailwind.config.ts).
         primary: {
-          DEFAULT: "var(--primary, #2563eb)",
+          DEFAULT: "var(--primary, #14A39F)",
           foreground: "var(--primary-foreground, #ffffff)",
-        },
-        // Full brand scale (preset only has 50/100/500/700/900 — extend with rest)
-        brand: {
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          600: "#2563eb",
-          800: "#1e40af",
-        },
-        // Dark-navy canvas colours used in hero / CTA sections
-        canvas: {
-          DEFAULT: "#0f1b2d",
-          mid: "#152238",
-          light: "#1a2d4a",
         },
       },
       // Semantic type scale — same as mobile typography.ts

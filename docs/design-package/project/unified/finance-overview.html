@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Finance Overview</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start}
+  .arbar{display:flex;height:16px;border-radius:99px;overflow:hidden;margin:14px 0 16px}
+  .arleg{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .arleg .li{display:flex;flex-direction:column;gap:2px;font-size:11.5px;color:var(--ink-500)}
+  .arleg .sw{width:10px;height:10px;border-radius:3px;margin-bottom:2px}
+  .arleg .amt{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--ink-900);font-weight:500;font-size:12px}
+  .bars{display:flex;align-items:flex-end;gap:10px;height:120px;padding:4px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .col{width:100%;border-radius:5px 5px 2px 2px;background:var(--accent-strong);opacity:.85}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+  .mrow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .mrow:last-child{border-bottom:none}
+  .mrow b{color:var(--ink-900);font-weight:600}
+  .mrow .sub{font-size:12px;color:var(--ink-400);margin-top:1px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Finance Overview">
+  <script>document.write(RFShell.operatorRail('fin.overview'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Finance'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Receivables Overview</h2><div class="sub">One finance home, AR position, aging and collections. July 2026.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export</button>
+          <button class="btn btn-secondary"><i data-ic="chart" data-sz="15"></i>Reports</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Invoice</button>
+        </div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Outstanding AR</span><span class="v money">$28,412.66</span><span class="hint">41 open invoices</span></div>
+        <div class="stat ring-danger"><span class="overline">Overdue</span><span class="v money" style="color:var(--danger)">$8,262.20</span><span class="hint">7 invoices · oldest 21d</span></div>
+        <div class="stat ring-success"><span class="overline">Collected, July</span><span class="v money">$9,441.15</span><span class="hint">18 payments received</span></div>
+        <div class="stat"><span class="overline">Avg Days to Pay</span><span class="v">12.8</span><span class="hint">Net-15 standard terms</span></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>AR Aging</h3><a class="btn-link" style="font-size:12.5px">Aging report</a></div>
+            <div class="card-b" style="padding-top:10px">
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <span class="money" style="font-size:26px;color:var(--ink-900)">$28,412.66</span>
+                <span class="muted" style="font-size:12.5px">total outstanding</span>
+              </div>
+              <div class="arbar">
+                <i style="flex:45.5;background:var(--brand-500)"></i><i style="flex:25.4;background:var(--info)"></i>
+                <i style="flex:15.8;background:var(--warning)"></i><i style="flex:8.1;background:#EA580C"></i>
+                <i style="flex:5.2;background:var(--danger)"></i>
+              </div>
+              <div class="arleg">
+                <div class="li"><span class="sw" style="background:var(--brand-500)"></span>Current<span class="amt">$12,940.10</span></div>
+                <div class="li"><span class="sw" style="background:var(--info)"></span>1 to 15 days<span class="amt">$7,210.36</span></div>
+                <div class="li"><span class="sw" style="background:var(--warning)"></span>16 to 30 days<span class="amt">$4,480.00</span></div>
+                <div class="li"><span class="sw" style="background:#EA580C"></span>31 to 45 days<span class="amt">$2,306.20</span></div>
+                <div class="li"><span class="sw" style="background:var(--danger)"></span>45+ days<span class="amt">$1,476.00</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Top Balances by Customer</h3><a class="btn-link" style="font-size:12.5px">All customers</a></div>
+            <table class="tbl">
+              <thead><tr><th>Customer</th><th class="r">Current</th><th class="r">Overdue</th><th class="r">Total</th><th></th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="primary-cell">Bright Mart #2</td><td class="r">$2,394.60</td><td class="r" style="color:var(--danger)">$2,410.00</td><td class="r" style="font-weight:600">$4,804.60</td><td><button class="btn sm btn-secondary">Remind</button></td></tr>
+                <tr class="row"><td class="primary-cell">Lucky Corner Deli</td><td class="r">$981.35</td><td class="r" style="color:var(--danger)">$1,824.40</td><td class="r" style="font-weight:600">$2,805.75</td><td><button class="btn sm btn-secondary">Remind</button></td></tr>
+                <tr class="row"><td class="primary-cell">Sunrise Market</td><td class="r">$1,008.02</td><td class="r" style="color:var(--danger)">$1,677.00</td><td class="r" style="font-weight:600">$2,685.02</td><td><button class="btn sm btn-secondary">Remind</button></td></tr>
+                <tr class="row"><td class="primary-cell">Golden Gate Grocery</td><td class="r">$1,731.25</td><td class="r" style="color:var(--danger)">$1,388.05</td><td class="r" style="font-weight:600">$3,119.30</td><td><button class="btn sm btn-secondary">Remind</button></td></tr>
+                <tr class="row"><td class="primary-cell">Hillside Mini Mart</td><td class="r">$412.80</td><td class="r" style="color:var(--danger)">$962.75</td><td class="r" style="font-weight:600">$1,375.55</td><td><button class="btn sm btn-secondary">Remind</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Cash In, Last 8 Weeks</h3></div>
+            <div class="card-b">
+              <div class="bars">
+                <div class="b"><div class="col" style="height:44%"></div><span class="lb">W23</span></div>
+                <div class="b"><div class="col" style="height:58%"></div><span class="lb">W24</span></div>
+                <div class="b"><div class="col" style="height:39%"></div><span class="lb">W25</span></div>
+                <div class="b"><div class="col" style="height:71%"></div><span class="lb">W26</span></div>
+                <div class="b"><div class="col" style="height:52%"></div><span class="lb">W27</span></div>
+                <div class="b"><div class="col" style="height:83%"></div><span class="lb">W28</span></div>
+                <div class="b"><div class="col" style="height:64%"></div><span class="lb">W29</span></div>
+                <div class="b"><div class="col" style="height:37%;opacity:.4"></div><span class="lb">W30</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Recent Payments Received</h3><a class="btn-link" style="font-size:12.5px">All payments</a></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:6px">
+              <div class="mrow"><div style="flex:1"><b>Golden Gate Grocery</b><div class="sub">PMT-0644 · check · INV-1913</div></div><span class="money" style="color:var(--success);font-weight:600">+$1,388.05</span></div>
+              <div class="mrow"><div style="flex:1"><b>Casa Verde Foods</b><div class="sub">PMT-0643 · ACH · INV-1910</div></div><span class="money" style="color:var(--success);font-weight:600">+$644.90</span></div>
+              <div class="mrow"><div style="flex:1"><b>Sunrise Market</b><div class="sub">PMT-0642 · cash · INV-1902</div></div><span class="money" style="color:var(--success);font-weight:600">+$886.10</span></div>
+              <div class="mrow"><div style="flex:1"><b>Hillside Mini Mart</b><div class="sub">PMT-0641 · check · INV-1898</div></div><span class="money" style="color:var(--success);font-weight:600">+$412.80</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

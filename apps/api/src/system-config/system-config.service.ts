@@ -51,6 +51,55 @@ export class SystemConfigService {
     };
   }
 
+  // ─── Cost / margin config (pos-cost-roles-spec §1) ─────────────────────────
+  // Stored in the SystemConfig key-value store (no migration): `costing.method`,
+  // `margin.floor.default`, `margin.floor.category.<category>`. Floors are
+  // fractions (0.15 = 15%). Writes are TENANT_ADMIN-gated at the controller.
+
+  async getMarginConfig(): Promise<{
+    costingMethod: "WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST";
+    defaultMarginFloor: number;
+    categoryFloors: Record<string, number>;
+  }> {
+    const all = await this.getAll("margin.floor.");
+    const method = await this.get("costing.method");
+    const categoryFloors: Record<string, number> = {};
+    for (const [key, value] of Object.entries(all)) {
+      const match = key.match(/^margin\.floor\.category\.(.+)$/);
+      if (!match) continue;
+      const n = Number(value);
+      if (Number.isFinite(n)) categoryFloors[match[1]] = n;
+    }
+    const def = Number(all["margin.floor.default"]);
+    const validMethod =
+      method === "FIFO" || method === "LAST_COST" || method === "WEIGHTED_AVERAGE"
+        ? method
+        : "WEIGHTED_AVERAGE";
+    return {
+      costingMethod: validMethod,
+      defaultMarginFloor: Number.isFinite(def) ? def : 0.15, // 15% default floor
+      categoryFloors,
+    };
+  }
+
+  async setMarginConfig(dto: {
+    costingMethod?: string;
+    defaultMarginFloor?: number;
+    categoryFloors?: Record<string, number>;
+  }): Promise<void> {
+    const updates: Promise<void>[] = [];
+    if (dto.costingMethod !== undefined)
+      updates.push(this.set("costing.method", dto.costingMethod));
+    if (dto.defaultMarginFloor !== undefined)
+      updates.push(this.set("margin.floor.default", String(dto.defaultMarginFloor)));
+    if (dto.categoryFloors) {
+      for (const [category, floor] of Object.entries(dto.categoryFloors)) {
+        updates.push(this.set(`margin.floor.category.${category}`, String(floor)));
+      }
+    }
+    await Promise.all(updates);
+  }
+
   async setZohoConfig(dto: {
     clientId?: string;
     clientSecret?: string;

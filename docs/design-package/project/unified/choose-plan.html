@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Choose Plan</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .cols{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+  .billseg{display:inline-flex;background:var(--sunken);border-radius:99px;padding:3px;gap:2px}
+  .billseg button{height:30px;padding:0 15px;border-radius:99px;font-size:12.5px;font-weight:600;color:var(--ink-500)}
+  .billseg button.on{background:var(--paper);color:var(--ink-900);box-shadow:var(--sh-card)}
+  .plans{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .plan{border:1px solid var(--line);border-radius:12px;background:var(--paper);padding:18px 20px;position:relative;cursor:pointer}
+  .plan.sel{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:-1px;background:var(--primary-mist)}
+  .plan .top{display:flex;align-items:baseline;gap:8px}
+  .plan b{font-size:15px;color:var(--ink-900)}
+  .plan .pr{margin-left:auto;font-family:var(--font-mono);font-size:15px;font-weight:600;color:var(--ink-900)}
+  .plan.sel .pr{margin-right:26px}
+  .plan .pr small{font-size:11px;color:var(--ink-400);font-weight:500}
+  .plan p{font-size:12px;color:var(--ink-500);margin-top:4px;line-height:1.5}
+  .plan .radio{position:absolute;top:16px;right:16px}
+  .addonrow{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .addonrow:last-child{border-bottom:none}
+  .sumline{display:flex;justify-content:space-between;font-size:13px;padding:6px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:11px;font-weight:600;font-size:15px;color:var(--ink-900)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Choose Plan">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Choose a plan'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Choose your plan</h2><div class="sub">Trial ends in 9 days. Everything you've set up carries over exactly as it is.</div></div>
+        <div class="ph-actions"><div class="billseg"><button id="bill-m">Monthly</button><button class="on" id="bill-y">Annual: 2 months free</button></div></div>
+      </div>
+
+      <div class="cols">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="plans">
+            <div class="plan">
+              <div class="top"><b>Starter</b><span class="pr"><span data-m="$59" data-y="$49">$49</span><small>/mo</small></span></div>
+              <p>1 user · 1 route/day · orders, invoicing, POD, offline · AI scans 20/mo</p>
+              <div class="faint" style="font-size:11px;margin-top:6px;color:var(--warning)">You have 12 users, 11 would need deactivating</div>
+            </div>
+            <div class="plan">
+              <div class="top"><b>Team</b><span class="pr"><span data-m="$149" data-y="$124">$124</span><small>/mo</small></span></div>
+              <p>5 users · 3 routes · dispatch + live tracking, returns, vendor bills, reports · AI scans 100/mo</p>
+              <div class="faint" style="font-size:11px;margin-top:6px;color:var(--warning)">You have 12 users, needs 7 extra seats ($84/mo)</div>
+            </div>
+            <div class="plan sel">
+              <span class="radio cb on" style="border-radius:99px"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+              <div class="top"><b>Business</b><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Fits your usage</span><span class="pr"><span data-m="$349" data-y="$291">$291</span><small>/mo</small></span></div>
+              <p>15 users · unlimited routes · buyer portal included · analytics + forecasting · pricing tiers · AI scans 300/mo</p>
+              <div class="faint" style="font-size:11px;margin-top:6px;color:var(--success)">Matches your trial: 12 users, 4 routes, portal on, 184 scans</div>
+            </div>
+            <div class="plan">
+              <div class="top"><b>Enterprise</b><span class="pr">Custom</span></div>
+              <p>Unlimited users · API + SSO · all modules · dedicated onboarding &amp; SLA</p>
+              <div class="faint" style="font-size:11px;margin-top:6px"><a class="btn-link" style="font-size:11px">Talk to sales</a></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Add-ons</h3><span class="muted" style="font-size:12px">prorated to the day · toggle anytime</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="addonrow"><i data-ic="shield" data-sz="15" style="color:var(--accent-deep)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">Regulated-Items Compliance</b><div class="faint" style="font-size:11.5px">You created 3 tracked categories in trial, keep them live</div></div><span class="mono" style="font-size:12px">$39/mo</span><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></div>
+              <div class="addonrow"><i data-ic="camera" data-sz="15" style="color:var(--ink-400)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">AI scan pack +250/mo</b><div class="faint" style="font-size:11.5px">300 included, add if you scan more</div></div><span class="mono" style="font-size:12px">$19/mo</span><span class="cb"></span></div>
+              <div class="addonrow"><i data-ic="chat" data-sz="15" style="color:var(--ink-400)"></i><div style="flex:1"><b style="color:var(--ink-900);font-size:13px">Messaging bundle +500/mo</b><div class="faint" style="font-size:11.5px">200 WhatsApp/SMS included</div></div><span class="mono" style="font-size:12px">$10/mo</span><span class="cb"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="card">
+            <div class="card-h"><h3>Summary</h3><span class="badge b-neutral" style="text-transform:none;letter-spacing:0" data-m="Monthly" data-y="Annual">Annual</span></div>
+            <div class="card-b" style="padding-top:8px">
+              <div class="sumline"><span class="muted" data-m="Business, monthly" data-y="Business, annual (×10)">Business, annual (×10)</span><span class="money" style="color:var(--ink-900)" data-m="$349.00" data-y="$3,490.00">$3,490.00</span></div>
+              <div class="sumline"><span class="muted" data-m="Regulated-Items, monthly" data-y="Regulated-Items, annual">Regulated-Items, annual</span><span class="money" style="color:var(--ink-900)" data-m="$39.00" data-y="$390.00">$390.00</span></div>
+              <div class="sumline"><span class="muted" data-m="Annual would save" data-y="Annual saving">Annual saving</span><span class="money" style="color:var(--success)" data-m="$776.00 per year" data-y="−$776.00">−$776.00</span></div>
+              <div class="sumline total"><span>Due today</span><span class="money" data-m="$388.00" data-y="$3,880.00">$3,880.00</span></div>
+              <div class="faint" style="font-size:11.5px;margin-top:8px" data-m="Renews Aug 5, 2026 · switch or cancel anytime, unused time credits back." data-y="Renews Jul 5, 2027 · switch or cancel anytime, unused time credits back.">Renews Jul 5, 2027 · switch or cancel anytime, unused time credits back.</div>
+              <div class="field" style="margin-top:14px">
+                <label>Payment method</label>
+                <div class="input"><i data-ic="card" data-sz="15" style="color:var(--ink-400)"></i><input value="4242 4242 4242 4242" class="mono"><span class="faint mono" style="font-size:11px">12/28</span></div>
+              </div>
+              <button class="btn lg btn-primary" style="width:100%;justify-content:center;margin-top:12px"><i data-ic="check" data-sz="15"></i><span data-m="Subscribe for $388.00" data-y="Subscribe for $3,880.00">Subscribe for $3,880.00</span></button>
+              <button class="btn btn-ghost" style="width:100%;justify-content:center;margin-top:6px;font-size:12.5px">Keep my trial, 9 days left</button>
+            </div>
+          </div>
+          <div class="card" style="background:var(--primary-mist);border-style:dashed">
+            <div class="card-b" style="display:flex;gap:11px;font-size:12px;color:var(--ink-500);line-height:1.55">
+              <i data-ic="zap" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i>
+              <span><b style="color:var(--ink-900)">Recommended from your trial usage</b>, we pre-picked the cheapest plan that fits what you actually used. Downgrade guidance shows before anything locks.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+<script>
+(function () {
+  var mo = document.getElementById('bill-m'), yr = document.getElementById('bill-y');
+  function set(mode) {
+    mo.classList.toggle('on', mode === 'm');
+    yr.classList.toggle('on', mode === 'y');
+    document.querySelectorAll('[data-m][data-y]').forEach(function (el) {
+      el.textContent = el.getAttribute(mode === 'm' ? 'data-m' : 'data-y');
+    });
+  }
+  mo.addEventListener('click', function () { set('m'); });
+  yr.addEventListener('click', function () { set('y'); });
+})();
+</script>
+</body>
+</html>

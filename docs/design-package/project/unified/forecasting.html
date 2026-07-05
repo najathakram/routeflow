@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Forecasting</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .dbar{width:90px;height:5px;border-radius:99px;background:var(--sunken);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+  .dbar i{display:block;height:100%;border-radius:99px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Demand Forecasting">
+  <script>document.write(RFShell.operatorRail('wh.inventory'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Inventory'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Inventory forecasting</h2><div class="sub">Demand predicted from your own sales rhythm, order patterns, seasonality and standing orders.</div></div>
+        <div class="ph-actions">
+          <div class="select sm" style="width:150px"><span>Next 14 days</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="btn btn-primary"><i data-ic="zap" data-sz="15"></i>Draft POs for 5 items</button>
+        </div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat ring-danger"><span class="overline">Stockout Risk, 7d</span><span class="v" style="color:var(--danger)">5</span><span class="hint">SKUs run dry before next PO lands</span></div>
+        <div class="stat"><span class="overline">Suggested Order Value</span><span class="v money">$4,182.60</span><span class="hint">Across 3 suppliers</span></div>
+        <div class="stat ring-success"><span class="overline">Forecast Accuracy</span><span class="v">91.4%</span><span class="hint">Last 8 weeks, MAPE-based</span></div>
+        <div class="stat"><span class="overline">Signal</span><span class="v" style="font-size:17px">Beverages ▲ July</span><span class="hint">Seasonal lift +18% vs June</span></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:0">
+        <button class="tab">Stock</button>
+        <button class="tab">Stock Count</button>
+        <button class="tab">Suppliers</button>
+        <button class="tab">Purchase Orders</button>
+        <button class="tab active">Forecasting</button>
+      </div>
+
+      <div class="card" style="border-top-left-radius:0">
+        <table class="tbl">
+          <thead><tr><th><span class="th-sort on">Product<i data-ic="chevup" data-sz="12"></i></span></th><th class="r">On Hand</th><th class="r">Velocity /day</th><th>Days of Stock</th><th class="r">14d Demand</th><th class="r">Suggested Order</th><th class="r">Confidence</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row urgent"><td><span class="primary-cell">Valle Salsa Verde 16oz</span><div class="faint" style="font-size:11px">Valle Foods Co. · lead time 4d</div></td><td class="r" style="color:var(--danger);font-weight:600">0</td><td class="r">3.1</td><td><span class="dbar"><i style="width:2%;background:var(--danger)"></i></span><span class="mono" style="color:var(--danger);font-weight:600">0d</span></td><td class="r">44</td><td class="r" style="font-weight:600">48 cases</td><td class="r" style="color:var(--success)">96%</td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Cloud Chips BBQ 1.5oz</span><div class="faint" style="font-size:11px">Bay Snacks Inc. · lead time 3d</div></td><td class="r" style="color:var(--warning);font-weight:600">4</td><td class="r">2.4</td><td><span class="dbar"><i style="width:9%;background:var(--danger)"></i></span><span class="mono" style="color:var(--danger);font-weight:600">1.7d</span></td><td class="r">34</td><td class="r" style="font-weight:600">36 cases</td><td class="r" style="color:var(--success)">93%</td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Agua Mineral 355ml</span><div class="faint" style="font-size:11px">Pacific Beverage · lead time 2d · ▲ seasonal</div></td><td class="r" style="color:var(--warning);font-weight:600">6</td><td class="r">4.8</td><td><span class="dbar"><i style="width:7%;background:var(--danger)"></i></span><span class="mono" style="color:var(--danger);font-weight:600">1.3d</span></td><td class="r">67</td><td class="r" style="font-weight:600">72 cases</td><td class="r" style="color:var(--success)">95%</td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Roast House Cold Brew 8oz</span><div class="faint" style="font-size:11px">Roast House · lead time 5d</div></td><td class="r">9</td><td class="r">1.9</td><td><span class="dbar"><i style="width:24%;background:var(--warning)"></i></span><span class="mono" style="color:var(--warning);font-weight:600">4.7d</span></td><td class="r">27</td><td class="r" style="font-weight:600">30 cases</td><td class="r">88%</td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Sunburst Orange Soda 2L</span><div class="faint" style="font-size:11px">Pacific Beverage · ▲ seasonal · standing orders cover 40%</div></td><td class="r">112</td><td class="r">6.2</td><td><span class="dbar"><i style="width:64%;background:var(--success)"></i></span><span class="mono">18d</span></td><td class="r">87</td><td class="r" style="font-weight:600">24 cases</td><td class="r">90%</td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            <tr class="row"><td><span class="primary-cell">Valle Tortilla Chips 11oz</span><div class="faint" style="font-size:11px">Valle Foods Co.</div></td><td class="r">203</td><td class="r">5.4</td><td><span class="dbar"><i style="width:92%;background:var(--success)"></i></span><span class="mono">38d</span></td><td class="r">76</td><td class="r muted">, </td><td class="r">94%</td><td><span class="cb"></span></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-top:1px solid var(--line)">
+          <span class="badge b-accent">5 selected · $4,182.60</span>
+          <span class="faint" style="font-size:12px">Suggestion = 14d demand − on hand − inbound POs, rounded to case size + lead-time buffer.</span>
+          <button class="btn sm btn-primary" style="margin-left:auto"><i data-ic="zap" data-sz="13"></i>Draft 3 supplier POs</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

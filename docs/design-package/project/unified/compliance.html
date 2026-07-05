@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Regulated Items</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .catseg{display:flex;gap:8px;align-items:center;margin-bottom:16px}
+  .catchip{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 15px;border-radius:999px;border:1px solid var(--line-strong);background:var(--paper);font-size:13px;font-weight:600;color:var(--ink-700)}
+  .catchip .n{font-family:var(--font-mono);font-size:11px;color:var(--ink-400)}
+  .catchip.on{background:var(--ink-900);border-color:var(--ink-900);color:#fff}
+  .catchip.on .n{color:rgba(255,255,255,.6)}
+  .bars{display:flex;align-items:flex-end;gap:9px;height:150px;padding:6px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .col{width:100%;border-radius:5px 5px 2px 2px;background:var(--accent-strong);opacity:.85}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Regulated Items">
+  <script>document.write(RFShell.operatorRail('tobacco'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Regulated Items'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div>
+          <h2>Regulated Items</h2>
+          <div class="sub">Separately-handled categories, each gets its own tax treatment, invoice section and filings. You define the categories.</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="sliders" data-sz="15"></i>Manage categories</button>
+          <button class="btn btn-primary"><i data-ic="filetext" data-sz="15"></i>Generate July filing</button>
+        </div>
+      </div>
+
+      <div class="catseg">
+        <button class="catchip on"><i data-ic="leaf" data-sz="14"></i>Tobacco <span class="n">22 SKUs</span></button>
+        <button class="catchip"><i data-ic="dollar" data-sz="14"></i>Alcohol <span class="n">14 SKUs</span></button>
+        <button class="catchip"><i data-ic="refresh" data-sz="14"></i>CRV Beverage Deposits <span class="n">31 SKUs</span></button>
+        <button class="catchip" style="border-style:dashed;color:var(--accent-deep)"><i data-ic="plus" data-sz="14"></i>New category</button>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Tobacco Sales, June</span><span class="v money">$21,808.40</span><span class="hint">18.4% of revenue · shown as separate invoice section</span></div>
+        <div class="stat"><span class="overline">Units Sold, June</span><span class="v">921</span><span class="hint">cartons · 184,200 sticks</span></div>
+        <div class="stat"><span class="overline">Excise Tax Collected</span><span class="v money">$5,240.16</span><span class="hint">CA per-pack rate · category tax rule</span></div>
+        <div class="stat ring-success"><span class="overline">Filing Status</span><span class="v" style="color:var(--success);font-size:19px">Current</span><span class="hint">Monthly cadence · next due Jul 20</span></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab active">Filings</button>
+        <button class="tab">Inventory</button>
+        <button class="tab">Purchases</button>
+        <button class="tab">Sales</button>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Filings, Tobacco</h3><span class="muted" style="font-size:12px">CA CDTFA template</span></div>
+          <table class="tbl">
+            <thead><tr><th>Period</th><th class="r">Category Sales</th><th class="r">Excise Tax</th><th>Filed</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row"><td class="primary-cell">July 2026</td><td class="r">$3,804.20 <span class="faint" style="font-size:11px">to date</span></td><td class="r">$912.40</td><td class="muted">due Jul 20</td><td><span class="badge b-warning">Open</span></td><td><button class="btn sm btn-primary">Prepare</button></td></tr>
+              <tr class="row"><td class="primary-cell">June 2026</td><td class="r">$21,808.40</td><td class="r">$5,240.16</td><td class="muted">Jun 19</td><td><span class="badge b-success">Filed</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+              <tr class="row"><td class="primary-cell">May 2026</td><td class="r">$19,412.85</td><td class="r">$4,655.02</td><td class="muted">May 18</td><td><span class="badge b-success">Filed</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+              <tr class="row"><td class="primary-cell">April 2026</td><td class="r">$20,108.10</td><td class="r">$4,822.60</td><td class="muted">Apr 17</td><td><span class="badge b-success">Filed</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+              <tr class="row"><td class="primary-cell">March 2026</td><td class="r">$18,224.90</td><td class="r">$4,371.44</td><td class="muted">Mar 19</td><td><span class="badge b-success">Filed</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Category Rules, Tobacco</h3><a class="btn-link" style="font-size:12.5px">Edit</a></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Tax rule</span><span class="v">Excise · $2.87 / pack</span></div>
+              <div class="kv"><span class="k">Invoice treatment</span><span class="v">Separate section + subtotal</span></div>
+              <div class="kv"><span class="k">Reporting</span><span class="v">Monthly · CA CDTFA</span></div>
+              <div class="kv"><span class="k">Sales restriction</span><span class="v">Licensed customers only</span></div>
+              <div class="kv"><span class="k">Products</span><span class="v mono">22 SKUs</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Category Sales, 6 months</h3></div>
+            <div class="card-b">
+              <div class="bars">
+                <div class="b"><div class="col" style="height:62%"></div><span class="lb">Feb</span></div>
+                <div class="b"><div class="col" style="height:70%"></div><span class="lb">Mar</span></div>
+                <div class="b"><div class="col" style="height:78%"></div><span class="lb">Apr</span></div>
+                <div class="b"><div class="col" style="height:74%"></div><span class="lb">May</span></div>
+                <div class="b"><div class="col" style="height:84%"></div><span class="lb">Jun</span></div>
+                <div class="b"><div class="col" style="height:16%;opacity:.4"></div><span class="lb">Jul</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

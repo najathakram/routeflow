@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Import Wizard</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:980px}
+  body{margin:0;overflow:hidden}
+  .screen{height:980px}
+  .steps{display:flex;align-items:center;margin-bottom:20px}
+  .step{display:flex;align-items:center;gap:9px}
+  .step .n{width:26px;height:26px;border-radius:99px;display:grid;place-items:center;font-size:12px;font-weight:700;font-family:var(--font-mono)}
+  .step.done .n{background:var(--success);color:#fff}
+  .step.now .n{background:var(--accent-strong);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
+  .step.todo .n{background:var(--sunken);color:var(--ink-400);border:1.5px solid var(--line-strong)}
+  .step b{font-size:12.5px;color:var(--ink-500);font-weight:600;white-space:nowrap}
+  .step.now b{color:var(--ink-900)}
+  .steps .bar{flex:1;height:1.5px;background:var(--line-strong);margin:0 10px;min-width:24px}
+  .steps .bar.done{background:var(--success)}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .maprow{display:grid;grid-template-columns:1fr 30px 1fr 90px;gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .maprow:last-child{border-bottom:none}
+  .csvcol{font-family:var(--font-mono);font-size:12px;color:var(--ink-900)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Import Wizard">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Import'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Import, Inventory</h2><div class="sub">Step 3 of 6 · dry-run first, nothing writes until you confirm.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Download template CSV</button></div>
+      </div>
+
+      <div class="steps">
+        <div class="step done"><span class="n"><i data-ic="check" data-sz="13"></i></span><b>Products</b></div><span class="bar done"></span>
+        <div class="step done"><span class="n"><i data-ic="check" data-sz="13"></i></span><b>Customers</b></div><span class="bar done"></span>
+        <div class="step now"><span class="n">3</span><b>Inventory</b></div><span class="bar"></span>
+        <div class="step todo"><span class="n">4</span><b>Invoices</b></div><span class="bar"></span>
+        <div class="step todo"><span class="n">5</span><b>Payments</b></div><span class="bar"></span>
+        <div class="step todo"><span class="n">6</span><b>Expenses</b></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Map columns, inventory.csv</h3><span class="muted" style="font-size:12px">214 rows detected · auto-mapped 5 of 6</span></div>
+          <div class="maprow" style="background:var(--canvas);font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-500)"><span>Your CSV column</span><span></span><span>RouteFlow field</span><span>Sample</span></div>
+          <div class="maprow"><span class="csvcol">sku</span><i data-ic="chevright" data-sz="13" style="color:var(--ink-400)"></i><div class="select sm"><span>SKU (match key)</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">AGM-355</span></div>
+          <div class="maprow"><span class="csvcol">qty_on_hand</span><i data-ic="chevright" data-sz="13" style="color:var(--ink-400)"></i><div class="select sm"><span>On-hand quantity</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">6</span></div>
+          <div class="maprow"><span class="csvcol">unit_cost</span><i data-ic="chevright" data-sz="13" style="color:var(--ink-400)"></i><div class="select sm"><span>Unit cost</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">0.58</span></div>
+          <div class="maprow"><span class="csvcol">reorder_at</span><i data-ic="chevright" data-sz="13" style="color:var(--ink-400)"></i><div class="select sm"><span>Low-stock threshold</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">24</span></div>
+          <div class="maprow"><span class="csvcol">bin</span><i data-ic="chevright" data-sz="13" style="color:var(--ink-400)"></i><div class="select sm"><span>Warehouse location</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">A-04</span></div>
+          <div class="maprow" style="background:#FFFBEB"><span class="csvcol">last_count</span><i data-ic="chevright" data-sz="13" style="color:var(--warning)"></i><div class="select sm" style="border-color:var(--warning)"><span class="ph">Choose a field…</span><i data-ic="chevdown" data-sz="13"></i></div><span class="faint mono" style="font-size:11px">2026-06-28</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Dry-Run Result</h3><span class="badge b-warning">3 warnings</span></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><i data-ic="check" data-sz="14" style="color:var(--success)"></i><span style="flex:1">209 rows import cleanly</span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><i data-ic="users" data-sz="14" style="color:var(--warning)"></i><span style="flex:1">2 possible duplicate SKUs → <a class="btn-link" style="font-size:12px">review &amp; merge</a></span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><i data-ic="dollar" data-sz="14" style="color:var(--warning)"></i><span style="flex:1">1 row missing cost → uses last purchase cost</span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;font-size:12.5px"><i data-ic="x" data-sz="14" style="color:var(--danger)"></i><span style="flex:1">2 unknown SKUs → skipped, exported to <span class="mono" style="font-size:11.5px">errors.csv</span></span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px">
+              <button class="btn lg btn-primary" style="justify-content:center"><i data-ic="check" data-sz="15"></i>Import 212 rows</button>
+              <button class="btn btn-secondary" style="justify-content:center"><i data-ic="arrowleft" data-sz="14"></i>Back to Customers</button>
+              <span class="faint" style="font-size:11.5px;text-align:center">Imports are reversible for 24h (Undo import in Settings → Import history).</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

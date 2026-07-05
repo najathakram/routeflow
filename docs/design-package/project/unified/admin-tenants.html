@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Admin Tenants</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-admin.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:960px}
+  body{margin:0;overflow:hidden}
+  .screen{height:960px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .bulkwrap{position:absolute;left:50%;transform:translateX(-50%);bottom:24px;z-index:5}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Admin Tenants List" style="position:relative">
+  <script>document.write(RFShell.adminRail('tenants'))</script>
+  <div class="main">
+    <div class="topbar">
+      <h1>Tenants</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search tenants, buyers…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i></button>
+      <div style="display:flex;align-items:center;gap:8px"><div class="avatar">AK</div><span style="font-size:13px;font-weight:600;color:var(--ink-900)">Aaron</span><i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+    </div>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Tenants <span class="muted" style="font-weight:400;font-size:15px">· 142 total</span></h2><div class="sub">Master roster with lifecycle actions, cancelled tenants hidden by default.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>Create New Tenant</button></div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <div class="input sm" style="width:220px"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Slug or business name…</span></div>
+          <div class="select sm" style="width:120px"><span>All statuses</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <div class="select sm" style="width:120px"><span>All plans</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="chip">Show deleted <span class="n">11</span></button>
+          <span class="muted" style="font-size:12px;margin-left:auto">131 shown</span>
+          <a class="btn-link" style="font-size:12px">Clear filters</a>
+        </div>
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:34px"><span class="cb ind"><i data-ic="minus" data-sz="11" style="color:#fff"></i></span></th>
+            <th><span class="th-sort on">Slug<i data-ic="chevup" data-sz="12"></i></span></th>
+            <th>Business Name</th><th>Status</th><th>Plan</th><th class="r">Users</th><th>Created</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td class="mono primary-cell">bayviewtr</td><td>Bayview Trading</td><td><span class="badge b-success">Active</span></td><td><span class="badge b-neutral">Starter</span></td><td class="r">3</td><td class="muted">May 2, 2026</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td class="mono primary-cell">cascadews</td><td>Cascade Wholesale</td><td><span class="badge b-warning">Trial · 1d left</span></td><td><span class="badge b-neutral">, </span></td><td class="r">4</td><td class="muted">Jun 21, 2026</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td class="mono primary-cell">goldenstate</td><td>Golden State Distribution</td><td><span class="badge b-success">Active</span></td><td><span class="badge b-accent">Business</span></td><td class="r">12</td><td class="muted">Mar 12, 2024</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td class="mono primary-cell">harborfoods</td><td>Harbor Foods Distribution</td><td><span class="badge b-warning">Trial · 5d left</span></td><td><span class="badge b-neutral">, </span></td><td class="r">3</td><td class="muted">Jun 25, 2026</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td class="mono primary-cell">metrobev</td><td>Metro Beverage Co.</td><td><span class="badge b-warning">Trial · 2d left</span></td><td><span class="badge b-neutral">, </span></td><td class="r">7</td><td class="muted">Jun 18, 2026</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td class="mono primary-cell">redwoodprov</td><td>Redwood Provisions</td><td><span class="badge b-danger">Suspended</span></td><td><span class="badge b-neutral">Starter</span></td><td class="r">5</td><td class="muted">Jan 8, 2026</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost" style="color:var(--success)">Reactivate</button><button class="btn sm btn-ghost" style="color:var(--danger)">Delete</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td class="mono primary-cell">sierradist</td><td>Sierra Distributors</td><td><span class="badge b-success">Active</span></td><td><span class="badge b-accent">Enterprise</span></td><td class="r">28</td><td class="muted">Aug 30, 2025</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-ghost">View</button><button class="btn sm btn-ghost">Impersonate</button><button class="btn sm btn-ghost" style="color:var(--warning)">Suspend</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:12.5px">Page 1 of 19</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bulkwrap">
+    <div class="bulkbar">
+      <b>2 selected</b><span class="sep"></span>
+      <button class="bb-link">Suspend All</button>
+      <button class="bb-link">Activate All</button>
+      <button class="bb-link">Change Plan…</button>
+      <span class="sep"></span>
+      <button class="bb-link">Clear selection</button>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

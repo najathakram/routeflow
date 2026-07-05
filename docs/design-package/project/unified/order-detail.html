@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Order Detail</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1440px}
+  body{margin:0}
+  .layout{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start}
+  /* editable line grid */
+  .lihead,.lirow{display:grid;grid-template-columns:1fr 84px 150px 110px 110px 66px;gap:12px;align-items:center;padding:0 18px}
+  .lihead{height:38px;border-bottom:2px solid var(--ink-900)}
+  .lihead span{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-500)}
+  .lirow{padding-top:12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .lirow .pname{font-weight:600;color:var(--ink-900);font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .lirow .psub{font-size:11.5px;color:var(--ink-400);margin-top:2px}
+  .num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+  .was{font-size:11.5px;color:var(--ink-400);text-decoration:line-through;margin-top:4px;font-family:var(--font-mono)}
+  .rowicons{display:flex;gap:4px;justify-content:flex-end}
+  .rowicons .iconbtn{width:28px;height:28px}
+  .scanrow{margin:14px 18px;display:flex;align-items:center;gap:10px}
+  .scaninput{flex:1;display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border:1.5px dashed var(--line-strong);
+    border-radius:var(--r-ctl);color:var(--ink-400);font-size:13px;background:var(--canvas)}
+  .totals{display:flex;justify-content:flex-end;padding:14px 18px 4px}
+  .totals table{font-size:13px;border-collapse:collapse}
+  .totals td{padding:3px 0 3px 40px;text-align:right}
+  .totals td:first-child{color:var(--ink-500);padding-left:0;text-align:left}
+  .totals .grand td{padding-top:8px;border-top:1px solid var(--line-strong);font-weight:600;color:var(--ink-900);font-size:14px}
+  .sideitem{display:flex;justify-content:space-between;gap:10px;padding:6px 0;font-size:13px}
+  .sideitem .k{color:var(--ink-500)}
+  .sideitem .v{color:var(--ink-900);font-weight:500;text-align:right}
+  .reason{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-500);margin-top:-2px}
+  .metapill{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;
+    border:1px solid var(--line-strong);background:var(--paper);font-size:12px;font-weight:500;color:var(--ink-700)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Order Detail, Edit Items">
+
+  <aside class="rail">
+    <div class="rail-brand"><div class="rail-logo">GS</div><div><div class="t">Golden State Dist.</div><div class="s">RouteFlow</div></div></div>
+    <nav>
+      <a class="nl"><i data-ic="grid"></i>Dashboard</a>
+      <div class="ng open">
+        <button class="ng-head"><i data-ic="package"></i>Orders<i class="chev" data-ic="chevup" data-sz="14"></i></button>
+        <div class="ng-kids"><a class="nl active">All Orders</a><a class="nl">Returns</a></div>
+      </div>
+      <div class="ng"><button class="ng-head"><i data-ic="truck"></i>Dispatch<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="users"></i>Customers</a>
+      <div class="ng"><button class="ng-head"><i data-ic="warehouse"></i>Warehouse<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <div class="ng"><button class="ng-head"><i data-ic="dollar"></i>Finance<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="chart"></i>Analytics</a>
+      <a class="nl"><i data-ic="leaf"></i>Tobacco</a>
+      <a class="nl"><i data-ic="sliders"></i>Settings</a>
+    </nav>
+    <div class="rail-foot"><a class="nl"><i data-ic="chevleft"></i>Collapse</a></div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="iconbtn"><i data-ic="arrowleft" data-sz="17"></i></button>
+      <h1>Order ORD-2417</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search or jump to…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i><span class="nbadge">3</span></button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="avatar">ML</div>
+        <span style="font-size:13px;font-weight:600;color:var(--ink-900)">Maria</span>
+        <i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- header -->
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2 class="mono" style="letter-spacing:-.01em">ORD-2417</h2>
+            <span class="badge b-danger"><i data-ic="alert" data-sz="11"></i>Urgent</span>
+            <span class="badge b-info">Confirmed</span>
+          </div>
+          <div class="sub" style="display:flex;align-items:center;gap:8px;margin-top:7px">
+            Created Jul 5, 9:41 AM
+            <span class="metapill"><i data-ic="calendar" data-sz="13" style="color:var(--ink-400)"></i>Delivery: Tue, Jul 8</span>
+          </div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-danger-ghost">Cancel Order</button>
+          <button class="btn btn-secondary">Return to Pending</button>
+          <button class="btn btn-primary" data-celebrate><i data-ic="truck" data-sz="15"></i>Out for Delivery</button>
+        </div>
+      </div>
+
+      <div class="layout">
+        <!-- ===== line items (edit mode) ===== -->
+        <div class="card">
+          <div class="card-h">
+            <h3 style="display:flex;align-items:center;gap:9px">Line Items<span class="badge b-accent">Editing</span></h3>
+            <span class="muted" style="font-size:12px">Prices &amp; quantities save on <b style="color:var(--ink-900)">Save Changes</b></span>
+          </div>
+
+          <div class="lihead">
+            <span>Product</span><span style="text-align:right">Qty</span><span style="text-align:right">Unit Price</span>
+            <span style="text-align:right">$ Off / Unit</span><span style="text-align:right">Line Total</span><span></span>
+          </div>
+
+          <!-- special price line -->
+          <div class="lirow">
+            <div><div class="pname">Agua Mineral Sparkling 355ml<span class="tag tag-special">Special</span></div><div class="psub">SKU AGM-355 · Case of 24</div></div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="12" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div>
+              <div class="input sm focus num" style="justify-content:flex-end"><span class="faint">$</span><input value="18.50" style="text-align:right;font-family:var(--font-mono)"></div>
+              <div class="was" style="text-align:right">was $21.00</div>
+            </div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="2.50" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div class="num" style="font-weight:600;color:var(--ink-900)">$222.00</div>
+            <div class="rowicons"><button class="iconbtn" title="Substitute"><i data-ic="swap" data-sz="15"></i></button><button class="iconbtn" title="Remove"><i data-ic="trash" data-sz="15"></i></button></div>
+          </div>
+
+          <!-- discounted line with reason -->
+          <div class="lirow" style="row-gap:8px">
+            <div><div class="pname">Cloud Chips BBQ 1.5oz<span class="tag tag-discount">Discounted</span></div><div class="psub">SKU CCB-15 · Case of 12</div></div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="8" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div>
+              <div class="input sm num" style="justify-content:flex-end"><span class="faint">$</span><input value="32.40" style="text-align:right;font-family:var(--font-mono)"></div>
+              <div class="was" style="text-align:right">was $36.00</div>
+            </div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="3.60" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div class="num" style="font-weight:600;color:var(--ink-900)">$259.20</div>
+            <div class="rowicons"><button class="iconbtn" title="Substitute"><i data-ic="swap" data-sz="15"></i></button><button class="iconbtn" title="Remove"><i data-ic="trash" data-sz="15"></i></button></div>
+            <div class="reason">Reason<div class="input sm" style="width:280px"><input value="Long-standing customer" style="font-size:12px"></div></div>
+          </div>
+
+          <!-- plain line -->
+          <div class="lirow">
+            <div><div class="pname">Roast House Cold Brew 8oz</div><div class="psub">SKU RHC-08 · Each</div></div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="15" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div><div class="input sm num" style="justify-content:flex-end"><span class="faint">$</span><input value="24.00" style="text-align:right;font-family:var(--font-mono)"></div></div>
+            <div class="input sm num" style="justify-content:flex-end"><input placeholder="0.00" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div class="num" style="font-weight:600;color:var(--ink-900)">$360.00</div>
+            <div class="rowicons"><button class="iconbtn" title="Substitute"><i data-ic="swap" data-sz="15"></i></button><button class="iconbtn" title="Remove"><i data-ic="trash" data-sz="15"></i></button></div>
+          </div>
+
+          <!-- custom line -->
+          <div class="lirow">
+            <div><div class="pname">Ice Bags 10lb<span class="tag tag-custom">Custom</span></div><div class="psub">Unlisted item</div></div>
+            <div class="input sm num" style="justify-content:flex-end"><input value="2" style="text-align:right;font-family:var(--font-mono)"></div>
+            <div><div class="input sm num" style="justify-content:flex-end"><span class="faint">$</span><input value="45.00" style="text-align:right;font-family:var(--font-mono)"></div></div>
+            <div></div>
+            <div class="num" style="font-weight:600;color:var(--ink-900)">$90.00</div>
+            <div class="rowicons"><button class="iconbtn" title="Remove"><i data-ic="trash" data-sz="15"></i></button></div>
+          </div>
+
+          <!-- scan-to-add -->
+          <div class="scanrow">
+            <div class="scaninput"><i data-ic="barcode" data-sz="17"></i>Scan barcode or type a product name…</div>
+            <button class="btn btn-secondary" title="Scan with camera"><i data-ic="camera" data-sz="16"></i></button>
+            <a class="btn-link" style="font-size:12.5px;white-space:nowrap">+ Add custom item</a>
+          </div>
+
+          <!-- totals preview -->
+          <div class="totals">
+            <table>
+              <tr><td>Subtotal</td><td class="money">$931.20</td></tr>
+              <tr><td>Tax (8.25%)</td><td class="money">$76.82</td></tr>
+              <tr class="grand"><td>New total</td><td class="money">$1,008.02</td></tr>
+            </table>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:9px;padding:14px 18px 18px">
+            <button class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-primary" data-celebrate>Save Changes</button>
+          </div>
+        </div>
+
+        <!-- ===== sidebar ===== -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="card">
+            <div class="card-h"><h3>Customer</h3><a class="btn-link" style="font-size:12px">View profile</a></div>
+            <div class="card-b" style="padding-top:12px">
+              <div style="font-weight:600;color:var(--ink-900);font-size:14px">Sunrise Market</div>
+              <div class="muted" style="font-size:12.5px;margin-top:3px">Rosa Delgado · (415) 555-0182</div>
+              <div class="muted" style="font-size:12.5px;margin-top:2px">2214 Mission St, San Francisco, CA</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Summary</h3></div>
+            <div class="card-b" style="padding-top:8px;padding-bottom:10px">
+              <div class="sideitem"><span class="k">Delivery date</span><span class="v">Tue, Jul 8</span></div>
+              <div class="sideitem"><span class="k">Line items</span><span class="v mono">4</span></div>
+              <div class="sideitem"><span class="k">Total quantity</span><span class="v mono">37</span></div>
+              <div class="sideitem"><span class="k">Subtotal</span><span class="v money">$931.20</span></div>
+              <div class="sideitem"><span class="k">Tax (8.25%)</span><span class="v money">$76.82</span></div>
+              <div class="sideitem" style="border-top:1px solid var(--line);margin-top:4px;padding-top:10px"><span class="k" style="font-weight:600;color:var(--ink-900)">Order total</span><span class="v money" style="font-size:15px">$1,008.02</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Invoice</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px;padding-top:12px">
+              <div class="muted" style="font-size:12.5px">No invoice has been generated for this order.</div>
+              <button class="btn btn-secondary" style="justify-content:center"><i data-ic="filetext" data-sz="15"></i>Generate Invoice (full order)</button>
+              <a class="btn-link" style="font-size:12.5px;align-self:center">Split into invoice…</a>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Shipment</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px;padding-top:12px">
+              <div class="select sm">Carrier, none<i data-ic="chevdown" data-sz="13" style="color:var(--ink-400)"></i></div>
+              <div class="input sm"><span class="ph">Tracking number</span></div>
+              <button class="btn sm btn-secondary" style="align-self:flex-end">Save</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Order Notes</h3></div>
+            <div class="card-b" style="padding-top:12px;font-size:13px;color:var(--ink-700)">
+              Deliver to rear entrance before 10 AM, ask for Rosa.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

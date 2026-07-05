@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Overlay Kit</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1240px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:var(--font-mono);font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  /* command palette */
+  .pal{width:520px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden}
+  .pal .in{display:flex;align-items:center;gap:11px;padding:15px 18px;border-bottom:1px solid var(--line);font-size:14.5px;color:var(--ink-900)}
+  .pal .sec{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-400);padding:12px 18px 5px}
+  .pal .it{display:flex;align-items:center;gap:11px;padding:9px 18px;font-size:13.5px;color:var(--ink-700)}
+  .pal .it.on{background:var(--primary-mist);box-shadow:inset 2.5px 0 0 var(--accent-strong);color:var(--ink-900)}
+  .pal .it .k{margin-left:auto}
+  .pal .foot{display:flex;gap:16px;padding:10px 18px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-400)}
+  /* notifications */
+  .npanel{width:380px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh-drop);overflow:hidden}
+  .npanel .hd{display:flex;align-items:center;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .npanel .hd b{font-size:13.5px;color:var(--ink-900)}
+  .nit{display:flex;gap:11px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .nit:last-child{border-bottom:none}
+  .nit .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none}
+  .nit b{display:block;font-size:13px;color:var(--ink-900)}
+  .nit .t{color:var(--ink-400);font-size:11px;margin-top:2px}
+  /* confirm */
+  .confirm{width:420px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);padding:24px}
+  .confirm h4{font-size:15.5px;color:var(--ink-900);font-weight:600}
+  .confirm p{font-size:13px;color:var(--ink-500);line-height:1.6;margin-top:8px}
+  .confirm .acts{display:flex;gap:9px;justify-content:flex-end;margin-top:20px}
+  /* scan overlay */
+  .scan{width:460px;border-radius:14px;overflow:hidden;background:#0F1B2D;box-shadow:var(--sh-modal);position:relative}
+  .scan .cam{height:250px;display:grid;place-items:center;position:relative;
+    background:repeating-linear-gradient(-45deg,#16233A,#16233A 10px,#1B2A44 10px,#1B2A44 20px)}
+  .scan .reticle{position:absolute;left:50%;top:50%;width:250px;height:120px;transform:translate(-50%,-50%);border-radius:12px;
+    border:2px solid rgba(255,255,255,.85);box-shadow:0 0 0 400px rgba(15,27,45,.45)}
+  .scan .laser{position:absolute;left:50%;top:50%;width:222px;height:2px;transform:translate(-50%,-50%);background:var(--danger);border-radius:2px;box-shadow:0 0 10px rgba(220,38,38,.8)}
+  .scan .cam span{position:absolute;bottom:12px;left:0;right:0;text-align:center;font-family:var(--font-mono);font-size:10.5px;color:rgba(255,255,255,.5)}
+  .scan .bar{display:flex;align-items:center;gap:10px;padding:13px 16px;color:#fff;font-size:13px}
+  /* shortcuts */
+  .keys{width:460px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);padding:22px 24px}
+  .keys h4{font-size:15px;color:var(--ink-900);font-weight:600;margin-bottom:14px}
+  .krow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .krow:last-child{border-bottom:none}
+  .krow .ks{margin-left:auto;display:flex;gap:4px}
+</style>
+</head>
+<body data-screen-label="Overlay Kit">
+  <div class="g">
+    <div class="cell">
+      <div class="lbl">command palette, ⌘K / Ctrl+K · role-filtered nav + actions + live search · g-sequences</div>
+      <div class="pal">
+        <div class="in"><i data-ic="search" data-sz="16" style="color:var(--ink-400)"></i>ord<span style="color:var(--ink-300);border-left:1.5px solid var(--accent);height:18px"></span><span class="kbd" style="margin-left:auto">esc</span></div>
+        <div class="sec">Jump to</div>
+        <div class="it on"><i data-ic="package" data-sz="15"></i>Orders<span class="k"><span class="kbd">g</span> <span class="kbd">o</span></span></div>
+        <div class="it"><i data-ic="undo" data-sz="15"></i>Returns</div>
+        <div class="sec">Actions</div>
+        <div class="it"><i data-ic="plus" data-sz="15"></i>New Order…</div>
+        <div class="it"><i data-ic="search" data-sz="15"></i>Search orders for "ord"</div>
+        <div class="sec">Results</div>
+        <div class="it"><i data-ic="filetext" data-sz="15"></i><span class="mono">ORD-2417</span>, Sunrise Market · $1,008.02</div>
+        <div class="foot"><span><span class="kbd">↑↓</span> navigate</span><span><span class="kbd">↵</span> open</span><span style="margin-left:auto"><span class="kbd">?</span> shortcuts</span></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">notification center, bell dropdown · socket-fed · rf_notifications (cap 50) · distinct from toasts</div>
+      <div class="npanel">
+        <div class="hd"><b>Notifications</b><a class="btn-link" style="font-size:12px;margin-left:auto">Clear all</a></div>
+        <div class="nit"><span class="ic" style="background:var(--danger-bg);color:var(--danger)"><i data-ic="alert" data-sz="14"></i></span><div><b>Urgent order, Sunrise Market</b>ORD-2417 · $1,008.02 flagged for same-day<div class="t">12 min ago</div></div></div>
+        <div class="nit"><span class="ic" style="background:var(--primary-soft);color:var(--accent-deep)"><i data-ic="truck" data-sz="14"></i></span><div><b>Route started</b>Julia Reyes began East Bay Corridor<div class="t">2h ago</div></div></div>
+        <div class="nit"><span class="ic" style="background:var(--warning-bg);color:var(--warning)"><i data-ic="warehouse" data-sz="14"></i></span><div><b>Low stock</b>Cloud Chips BBQ fell below threshold (4/18)<div class="t">3h ago</div></div></div>
+        <div class="nit"><span class="ic" style="background:var(--info-bg);color:var(--info)"><i data-ic="undo" data-sz="14"></i></span><div><b>New return request</b>Bright Mart #2 · 2 items from ORD-2402<div class="t">Yesterday</div></div></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">toasts, bottom-right · swipe to dismiss · 4s · 4 variants</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="toast" style="animation:none"><span class="ic" style="background:var(--success-bg);color:var(--success)"><i data-ic="check" data-sz="14"></i></span><div><b>Order created</b><p>ORD-2418 for Sunrise Market, $180.32</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+        <div class="toast" style="animation:none"><span class="ic" style="background:var(--info-bg);color:var(--info)"><i data-ic="truck" data-sz="14"></i></span><div><b>Driver update</b><p>Julia Reyes completed stop 6 of 14</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+        <div class="toast" style="animation:none"><span class="ic" style="background:var(--warning-bg);color:var(--warning)"><i data-ic="alert" data-sz="14"></i></span><div><b>Low stock</b><p>Agua Mineral 355ml, 6 left (threshold 24)</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+        <div class="toast" style="animation:none"><span class="ic" style="background:var(--danger-bg);color:var(--danger)"><i data-ic="live" data-sz="14"></i></span><div><b>Connection lost</b><p>Reconnecting… live updates paused</p></div><i class="x" data-ic="x" data-sz="14"></i></div>
+      </div>
+    </div>
+
+    <div class="cell" style="display:flex;flex-direction:column;gap:30px">
+      <div>
+        <div class="lbl">confirm dialog, destructive actions report partial success</div>
+        <div class="confirm">
+          <h4>Delete 3 invoices?</h4>
+          <p>Drafts are removed permanently. Sent invoices are skipped and reported, this action can partially succeed.</p>
+          <div class="acts"><button class="btn btn-secondary">Cancel</button><button class="btn btn-danger">Delete 3 invoices</button></div>
+        </div>
+      </div>
+      <div>
+        <div class="lbl">keyboard shortcuts, “?” help modal · g-sequences</div>
+        <div class="keys">
+          <h4>Keyboard shortcuts</h4>
+          <div class="krow">Command palette<span class="ks"><span class="kbd">⌘</span><span class="kbd">K</span></span></div>
+          <div class="krow">Go home / dashboard<span class="ks"><span class="kbd">g</span><span class="kbd">h</span></span></div>
+          <div class="krow">Go to orders<span class="ks"><span class="kbd">g</span><span class="kbd">o</span></span></div>
+          <div class="krow">Go to routes<span class="ks"><span class="kbd">g</span><span class="kbd">r</span></span></div>
+          <div class="krow">Go to customers<span class="ks"><span class="kbd">g</span><span class="kbd">c</span></span></div>
+          <div class="krow">Go to invoices<span class="ks"><span class="kbd">g</span><span class="kbd">i</span></span></div>
+          <div class="krow">Go to finance<span class="ks"><span class="kbd">g</span><span class="kbd">f</span></span></div>
+          <div class="krow">This help<span class="ks"><span class="kbd">?</span></span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">webcam barcode scan, @zxing overlay · every scan surface also accepts USB fast-keystroke</div>
+      <div class="scan">
+        <div class="cam">
+          <span class="reticle"></span><span class="laser"></span>
+          <span>webcam feed, align barcode inside the frame</span>
+        </div>
+        <div class="bar"><i data-ic="barcode" data-sz="16"></i>Scanning…<span class="mono" style="margin-left:auto;font-size:11.5px;color:rgba(255,255,255,.55)">last: 0 78542 00355 1 ✓</span><button class="btn sm btn-secondary">Close</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">skeleton table + illustrated empty state, baked into every list</div>
+      <div class="card" style="width:460px">
+        <table class="tbl">
+          <thead><tr><th>Order #</th><th>Customer</th><th class="r">Total</th></tr></thead>
+          <tbody>
+            <tr><td><span class="skel" style="width:64px;display:block"></span></td><td><span class="skel" style="width:120px;display:block"></span></td><td><span class="skel" style="width:56px;display:block;margin-left:auto"></span></td></tr>
+            <tr><td><span class="skel" style="width:64px;display:block"></span></td><td><span class="skel" style="width:96px;display:block"></span></td><td><span class="skel" style="width:56px;display:block;margin-left:auto"></span></td></tr>
+          </tbody>
+        </table>
+        <div class="empty">
+          <div class="art"><i data-ic="package" data-sz="18"></i></div>
+          <b>No orders yet</b>
+          <p>Scan a barcode or create your first order, it takes about a minute.</p>
+          <button class="btn sm btn-primary" style="margin-top:4px"><i data-ic="plus" data-sz="13"></i>New Order</button>
+        </div>
+      </div>
+    </div>
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

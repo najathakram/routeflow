@@ -32,7 +32,7 @@ function getTenantSlugFromCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
-const DEFAULT_PRIMARY = "#2563eb"; // brand-600
+const DEFAULT_PRIMARY = "#14a39f"; // Ledger --brand-500 (teal operator default)
 
 /** Convert a #rrggbb hex string to "r, g, b" for CSS rgba() */
 function hexToRgb(hex: string): string {
@@ -40,7 +40,30 @@ function hexToRgb(hex: string): string {
   const r = parseInt(clean.slice(0, 2), 16);
   const g = parseInt(clean.slice(2, 4), 16);
   const b = parseInt(clean.slice(4, 6), 16);
-  return isNaN(r) ? "37, 99, 235" : `${r}, ${g}, ${b}`;
+  return isNaN(r) ? "20, 163, 159" : `${r}, ${g}, ${b}`;
+}
+
+/**
+ * Mix a hex color toward black (amount < 0) or white (amount > 0) by |amount|.
+ * Used to derive the accent ramp (strong/deep/soft) from a tenant's brand color
+ * so primary buttons, stat tiles, and links re-brand together.
+ */
+function shade(hex: string, amount: number): string {
+  const clean = hex.replace("#", "");
+  const ch = [clean.slice(0, 2), clean.slice(2, 4), clean.slice(4, 6)].map((h) => parseInt(h, 16));
+  if (ch.some((n) => isNaN(n))) return hex;
+  const target = amount < 0 ? 0 : 255;
+  const t = Math.abs(amount);
+  return (
+    "#" +
+    ch
+      .map((c) =>
+        Math.round(c + (target - c) * t)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")
+  );
 }
 
 /**
@@ -80,6 +103,16 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       root.style.setProperty("--primary-foreground", "#ffffff");
       // RGB breakdown for rgba() tinting e.g. rgba(var(--primary-rgb), 0.1)
       root.style.setProperty("--primary-rgb", hexToRgb(primary));
+      // Only a custom brand overrides the accent ramp; without one, the exact
+      // Ledger teal ramp (--primary-strong/deep/soft in globals.css) stands.
+      // The accent ramp (--accent-strong/deep/soft) references --primary-strong/…,
+      // so setting these re-brands the primary button, stat tiles, and links
+      // together with the DEFAULT accent (which drives the focus ring).
+      if (data.primaryColor) {
+        root.style.setProperty("--primary-strong", shade(primary, -0.14));
+        root.style.setProperty("--primary-deep", shade(primary, -0.28));
+        root.style.setProperty("--primary-soft", shade(primary, 0.9));
+      }
     } catch {
       // Branding fetch failure is non-fatal; app works without it
     } finally {

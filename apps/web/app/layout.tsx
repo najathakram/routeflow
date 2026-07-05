@@ -1,10 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Instrument_Serif } from "next/font/google";
+import { Inter, Instrument_Serif, Spline_Sans, Spline_Sans_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
 
+// Ledger UI typeface. Drives `font-sans` app-wide via --font-spline.
+const splineSans = Spline_Sans({
+  subsets: ["latin"],
+  variable: "--font-spline",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+// Ledger monospace — money columns and codes (tabular-nums) via .money / .mono.
+const splineSansMono = Spline_Sans_Mono({
+  subsets: ["latin"],
+  variable: "--font-spline-mono",
+  weight: ["400", "500", "600"],
+  display: "swap",
+});
+
+// Kept as a fallback in the font stack during the Spline Sans migration.
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
@@ -70,7 +87,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} ${instrumentSerif.variable} font-sans antialiased`}>
+      <body
+        className={`${splineSans.variable} ${splineSansMono.variable} ${inter.variable} ${instrumentSerif.variable} font-sans antialiased`}
+      >
         <TenantProvider>
           <Providers>{children}</Providers>
           <ServiceWorkerRegistry />

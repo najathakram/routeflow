@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Customers List</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Customers List">
+  <script>document.write(RFShell.operatorRail('customers'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Customers'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Customers</h2><div class="sub">128 customers · filters live in the URL, so views are shareable.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Customer</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <button class="chip active">All <span class="n">128</span></button>
+          <button class="chip">With balance <span class="n">41</span></button>
+          <button class="chip">Overdue <span class="n">7</span></button>
+          <button class="chip">Portal linked <span class="n">31</span></button>
+          <button class="chip">Inactive 30d+ <span class="n">12</span></button>
+          <div class="input sm" style="width:230px;margin-left:auto"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Name, contact or phone…</span></div>
+          <div class="select sm" style="width:130px"><span>All routes</span><i data-ic="chevdown" data-sz="13"></i></div>
+        </div>
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:34px"><span class="cb"></span></th>
+            <th><span class="th-sort on">Customer<i data-ic="chevup" data-sz="12"></i></span></th>
+            <th>Contact</th><th>Route Day</th><th class="r">Orders 90d</th><th class="r">Balance</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">BM</span><div><span class="primary-cell">Bright Mart #2</span><div class="faint" style="font-size:11px">Oakland · Tier A</div></div></div></td><td>K. Nguyen · <span class="mono">(510) 555-0147</span></td><td>Tue / Fri</td><td class="r">24</td><td class="r" style="color:var(--danger);font-weight:600">$4,804.60</td><td><span class="badge b-danger">Overdue</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">SM</span><div><span class="primary-cell">Sunrise Market</span><div class="faint" style="font-size:11px">San Francisco · Tier B · portal</div></div></div></td><td>R. Delgado · <span class="mono">(415) 555-0182</span></td><td>Tue / Fri</td><td class="r">26</td><td class="r" style="color:var(--danger);font-weight:600">$2,685.02</td><td><span class="badge b-danger">Overdue</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">GG</span><div><span class="primary-cell">Golden Gate Grocery</span><div class="faint" style="font-size:11px">San Francisco · Tier A · portal</div></div></div></td><td>M. Chen · <span class="mono">(415) 555-0126</span></td><td>Mon / Thu</td><td class="r">31</td><td class="r">$3,119.30</td><td><span class="badge b-success">Active</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">CV</span><div><span class="primary-cell">Casa Verde Foods</span><div class="faint" style="font-size:11px">Oakland · Tier B</div></div></div></td><td>L. Moreno · <span class="mono">(510) 555-0193</span></td><td>Wed</td><td class="r">14</td><td class="r">$644.90</td><td><span class="badge b-success">Active</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">LC</span><div><span class="primary-cell">Lucky Corner Deli</span><div class="faint" style="font-size:11px">Oakland · Tier C</div></div></div></td><td>T. Park · <span class="mono">(510) 555-0168</span></td><td>Tue / Fri</td><td class="r">19</td><td class="r" style="color:var(--danger);font-weight:600">$2,805.75</td><td><span class="badge b-danger">Overdue</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">HM</span><div><span class="primary-cell">Hillside Mini Mart</span><div class="faint" style="font-size:11px">Berkeley · Tier B</div></div></div></td><td>S. Ali · <span class="mono">(510) 555-0114</span></td><td>Fri</td><td class="r">11</td><td class="r">$1,375.55</td><td><span class="badge b-success">Active</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><div style="display:flex;align-items:center;gap:10px"><span class="avatar" style="width:26px;height:26px;font-size:10px">VP</span><div><span class="primary-cell">Valley Pantry</span><div class="faint" style="font-size:11px">San Leandro · Tier C</div></div></div></td><td>J. Okoye · <span class="mono">(510) 555-0139</span></td><td class="muted">, </td><td class="r">0</td><td class="r muted">$0.00</td><td><span class="badge b-neutral">Inactive</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:12.5px">Showing 7 of 128 · page 1 of 19</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

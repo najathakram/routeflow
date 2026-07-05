@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Finances</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start}
+  .bars{display:flex;align-items:flex-end;gap:8px;height:170px;padding:8px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .col{width:100%;border-radius:5px 5px 2px 2px;background:var(--accent-strong);opacity:.85}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+  .arbar{display:flex;height:14px;border-radius:99px;overflow:hidden;margin:12px 0 14px}
+  .leg{display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink-500)}
+  .leg .li{display:flex;align-items:center;gap:9px}
+  .leg .sw{width:10px;height:10px;border-radius:3px}
+  .leg .amt{font-family:var(--font-mono);color:var(--ink-900);font-weight:500;margin-left:auto}
+  .prow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .prow:last-child{border-bottom:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Finances">
+  <script>document.write(RFShell.buyerRail('finances'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Finances</h2><div class="sub">Your spend and balance with Golden State Distribution.</div></div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button></div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:18px">
+        <div class="stat"><span class="overline">Spend, 30 days</span><span class="v money">$4,209.32</span><span class="hint" style="color:var(--success)">▲ 8% vs prior 30d</span></div>
+        <div class="stat"><span class="overline">Spend, 12 months</span><span class="v money">$47,681.90</span><span class="hint">86 orders</span></div>
+        <div class="stat ring-danger"><span class="overline">Outstanding</span><span class="v money" style="color:var(--danger)">$2,685.02</span><span class="hint">$1,647.05 overdue</span></div>
+        <div class="stat"><span class="overline">Avg Invoice</span><span class="v money">$1,042.31</span><span class="hint">Net 15 terms</span></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Monthly Spend, 12 months</h3></div>
+            <div class="card-b">
+              <div class="bars">
+                <div class="b"><div class="col" style="height:42%"></div><span class="lb">Aug</span></div>
+                <div class="b"><div class="col" style="height:48%"></div><span class="lb">Sep</span></div>
+                <div class="b"><div class="col" style="height:39%"></div><span class="lb">Oct</span></div>
+                <div class="b"><div class="col" style="height:56%"></div><span class="lb">Nov</span></div>
+                <div class="b"><div class="col" style="height:68%"></div><span class="lb">Dec</span></div>
+                <div class="b"><div class="col" style="height:47%"></div><span class="lb">Jan</span></div>
+                <div class="b"><div class="col" style="height:52%"></div><span class="lb">Feb</span></div>
+                <div class="b"><div class="col" style="height:58%"></div><span class="lb">Mar</span></div>
+                <div class="b"><div class="col" style="height:62%"></div><span class="lb">Apr</span></div>
+                <div class="b"><div class="col" style="height:71%"></div><span class="lb">May</span></div>
+                <div class="b"><div class="col" style="height:78%"></div><span class="lb">Jun</span></div>
+                <div class="b"><div class="col" style="height:18%;opacity:.4"></div><span class="lb">Jul</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Recent Payments</h3></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="prow"><span class="mono" style="font-weight:600;color:var(--ink-900)">PMT-0642</span><span class="muted" style="flex:1">Jun 30 · cash on delivery · applied to INV-1902</span><span class="money" style="color:var(--success);font-weight:600">$886.10</span></div>
+              <div class="prow"><span class="mono" style="font-weight:600;color:var(--ink-900)">PMT-0618</span><span class="muted" style="flex:1">Jun 21 · check #1204 · applied to INV-1884</span><span class="money" style="color:var(--success);font-weight:600">$1,402.80</span></div>
+              <div class="prow"><span class="mono" style="font-weight:600;color:var(--ink-900)">PMT-0597</span><span class="muted" style="flex:1">Jun 14 · ACH · applied to INV-1861</span><span class="money" style="color:var(--success);font-weight:600">$1,088.90</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Invoice Status</h3></div>
+            <div class="card-b">
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <span class="money" style="font-size:24px;color:var(--ink-900)">$2,685.02</span>
+                <span class="muted" style="font-size:12.5px">outstanding</span>
+              </div>
+              <div class="arbar">
+                <i style="flex:38.7;background:var(--brand-500)"></i>
+                <i style="flex:61.3;background:var(--danger)"></i>
+              </div>
+              <div class="leg">
+                <div class="li"><span class="sw" style="background:var(--brand-500)"></span>Current (1 invoice)<span class="amt">$1,037.97</span></div>
+                <div class="li"><span class="sw" style="background:var(--danger)"></span>Overdue (2 invoices)<span class="amt">$1,647.05</span></div>
+                <div class="li"><span class="sw" style="background:var(--success)"></span>Paid, last 90d (14)<span class="amt">$13,204.66</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Open Invoices</h3><a class="btn-link" style="font-size:13px">All invoices</a></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div class="prow"><span class="mono" style="font-weight:600;color:var(--ink-900)">INV-1919</span><span class="badge b-danger">Overdue</span><span class="money" style="margin-left:auto;color:var(--ink-900)">$1,647.05</span></div>
+              <div class="prow"><span class="mono" style="font-weight:600;color:var(--ink-900)">INV-1926</span><span class="badge b-info">Due Jul 12</span><span class="money" style="margin-left:auto;color:var(--ink-900)">$1,037.97</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

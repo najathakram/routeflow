@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>RouteFlow Mobile v2 — Reimagined</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0A1424; }
+  #root { position: fixed; inset: 0; }
+  input::placeholder { color: rgba(255,255,255,0.4); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" data-presets="react" src="ios-frame.jsx"></script>
+<script type="text/babel" data-presets="react" src="tweaks-panel.jsx"></script>
+<script type="text/babel" data-presets="react" src="m3-core.jsx"></script>
+<script type="text/babel" data-presets="react" src="m3-wholesaler.jsx"></script>
+<script type="text/babel" data-presets="react" src="m3-buyer.jsx"></script>
+<script type="text/babel" data-presets="react" src="m3-driver.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#2563EB",
+  "roundness": 26,
+  "celebrations": true
+}/*EDITMODE-END*/;
+
+const M3ACCENTS = {
+  '#2563EB': { acc2: '#3B82F6', soft: '#E9F0FE' },
+  '#7C5CE0': { acc2: '#9678F0', soft: '#F0EBFD' },
+  '#0E9488': { acc2: '#14B3A5', soft: '#E4F5F3' },
+};
+
+const M3ROLES = [
+  { id: 'wh', label: 'Wholesaler', icon: 'box', who: 'Sam · Fresh Fields Wholesale' },
+  { id: 'dr', label: 'Driver', icon: 'truck', who: 'Tom · in the van' },
+  { id: 'by', label: 'Shop', icon: 'bag', who: 'Maya · Harbor Cafe' },
+];
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [role, setRole] = React.useState(() => localStorage.getItem('m3:role') || 'wh');
+  const [store, dispatch] = React.useReducer(m3Reducer, m3Initial);
+  const [scale, setScale] = React.useState(1);
+  const overlayRef = React.useRef(null);
+
+  React.useEffect(() => { localStorage.setItem('m3:role', role); }, [role]);
+
+  React.useEffect(() => {
+    const a = M3ACCENTS[t.accent] || M3ACCENTS['#2563EB'];
+    const r = document.documentElement;
+    r.style.setProperty('--m3-acc', t.accent);
+    r.style.setProperty('--m3-acc2', a.acc2);
+    r.style.setProperty('--m3-acc-soft', a.soft);
+    r.style.setProperty('--m3-rad', t.roundness + 'px');
+  }, [t.accent, t.roundness]);
+
+  React.useEffect(() => {
+    const m = () => setScale(Math.max(0.05, Math.min(1, (window.innerHeight - 126) / 874, (window.innerWidth - 40) / 402)));
+    m();
+    const raf = requestAnimationFrame(m);
+    const t = setTimeout(m, 300);
+    window.addEventListener('resize', m);
+    const ro = new ResizeObserver(m);
+    ro.observe(document.documentElement);
+    return () => { window.removeEventListener('resize', m); cancelAnimationFrame(raf); clearTimeout(t); ro.disconnect(); };
+  }, []);
+
+  const cur = M3ROLES.find(r => r.id === role);
+
+  return (
+    <M3Store.Provider value={{ store, dispatch }}>
+    <M3Overlay.Provider value={overlayRef}>
+      <style>{m3Css}</style>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(130% 110% at 50% -10%, #17263E 0%, #0A1424 60%)',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        fontFamily: "'Inter', sans-serif",
+      }}>
+        {/* Role switcher */}
+        <div style={{ display: 'flex', gap: 7, marginTop: 20, zIndex: 5, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: 5 }}>
+          {M3ROLES.map(r => {
+            const on = r.id === role;
+            return (
+              <div key={r.id} className="m3-press" onClick={() => setRole(r.id)} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '10px 17px', borderRadius: 999,
+                background: on ? M3GRAD : 'transparent',
+                color: on ? '#fff' : 'rgba(255,255,255,0.55)',
+                fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 14,
+                boxShadow: on ? '0 8px 20px rgba(37,99,235,0.4)' : 'none',
+                transition: 'background 220ms, color 220ms',
+              }}>
+                {M3I(r.icon, { size: 17 })}{r.label}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 9, fontSize: 12.5, fontWeight: 600, color: 'rgba(255,255,255,0.4)' }}>{cur.who}</div>
+
+        {/* Phone */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+          <div style={{ transform: `scale(${scale})`, transformOrigin: 'center' }} data-screen-label={cur.label + ' app'}>
+            <IOSDevice dark={role === 'dr'}>
+              <M3Boundary key={role}>
+                {role === 'wh' && <W3App/>}
+                {role === 'by' && <B3App/>}
+                {role === 'dr' && <D3App/>}
+              </M3Boundary>
+              <div ref={overlayRef}></div>
+              <M3Toast celebrate={t.celebrations}/>
+            </IOSDevice>
+          </div>
+        </div>
+      </div>
+
+      <TweaksPanel>
+        <TweakSection label="Theme"/>
+        <TweakColor label="Accent" value={t.accent} options={['#2563EB', '#7C5CE0', '#0E9488']} onChange={(v) => setTweak('accent', v)}/>
+        <TweakSlider label="Roundness" value={t.roundness} min={18} max={32} unit="px" onChange={(v) => setTweak('roundness', v)}/>
+        <TweakSection label="Feel"/>
+        <TweakToggle label="Celebrations" value={t.celebrations} onChange={(v) => setTweak('celebrations', v)}/>
+        <TweakSection label="Demo"/>
+        <TweakButton label="Reset the day" onClick={() => dispatch({ type: 'RESET_DAY' })}/>
+      </TweaksPanel>
+    </M3Overlay.Provider>
+    </M3Store.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

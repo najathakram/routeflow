@@ -1,0 +1,16 @@
+# Build output & caches
+**/dist/
+**/.next/
+**/build/
+**/coverage/
+**/.turbo/
+**/node_modules/
+
+# Generated
+**/*.min.js
+package-lock.json
+
+# Design package — reference material dropped in for the Unified redesign
+# (hi-fi mockups, animation scenes, the design system's own JS). This is the
+# visual source of truth, NOT our source code — never reformat it.
+docs/design-package/

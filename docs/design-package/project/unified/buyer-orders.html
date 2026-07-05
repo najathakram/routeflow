@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Orders</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .filters{display:flex;gap:9px;align-items:center;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .cartfab{position:absolute;bottom:26px;right:28px;height:48px;border-radius:99px;background:var(--accent-strong);color:#fff;
+    display:flex;align-items:center;gap:10px;padding:0 20px;font-weight:600;font-size:14px;box-shadow:var(--sh-drop)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Orders" style="position:relative">
+  <script>document.write(RFShell.buyerRail('orders'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Orders</h2><div class="sub">Your orders with Golden State Distribution.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="store" data-sz="15"></i>Shop products</button></div>
+      </div>
+
+      <div class="card">
+        <div class="filters">
+          <button class="chip active">All <span class="n">86</span></button>
+          <button class="chip">In progress <span class="n">2</span></button>
+          <button class="chip">Delivered <span class="n">81</span></button>
+          <button class="chip">Cancelled <span class="n">3</span></button>
+          <div class="input sm" style="width:220px;margin-left:auto"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Order # or product…</span></div>
+          <div class="select sm" style="width:140px"><span>Last 6 months</span><i data-ic="chevdown" data-sz="13"></i></div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th><span class="th-sort on">Order #<i data-ic="chevdown" data-sz="12"></i></span></th><th>Placed</th><th>Items</th><th class="r">Total</th><th>Status</th><th>Delivery</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="mono primary-cell">ORD-2417</td><td class="muted">Jul 5, 9:41 AM</td><td class="mono">4</td><td class="r">$1,008.02</td><td><span class="badge b-info">Confirmed</span></td><td>Tomorrow AM</td><td style="display:flex;gap:6px;align-items:center;height:52px"><button class="btn sm btn-secondary">Edit</button><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2398</td><td class="muted">Jul 1, 8:12 AM</td><td class="mono">7</td><td class="r">$1,214.55</td><td><span class="badge b-accent"><span class="dot"></span>Out for delivery</span></td><td><b style="color:var(--accent-deep)">Today · stop 9 of 14</b></td><td><button class="btn sm btn-primary"><i data-ic="pin" data-sz="13"></i>Track</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2371</td><td class="muted">Jun 27</td><td class="mono">5</td><td class="r">$886.10</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 28, 9:14 AM</td><td style="display:flex;gap:6px;align-items:center;height:52px"><button class="btn sm btn-secondary"><i data-ic="repeat" data-sz="13"></i>Reorder</button><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2344</td><td class="muted">Jun 24</td><td class="mono">9</td><td class="r">$1,402.80</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 25, 8:47 AM</td><td style="display:flex;gap:6px;align-items:center;height:52px"><button class="btn sm btn-secondary"><i data-ic="repeat" data-sz="13"></i>Reorder</button><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2310</td><td class="muted">Jun 20</td><td class="mono">6</td><td class="r">$1,088.90</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 21, 10:02 AM</td><td style="display:flex;gap:6px;align-items:center;height:52px"><button class="btn sm btn-secondary"><i data-ic="repeat" data-sz="13"></i>Reorder</button><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2287</td><td class="muted">Jun 17</td><td class="mono">3</td><td class="r">$412.80</td><td><span class="badge b-neutral">Cancelled</span></td><td class="muted">, </td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">ORD-2251</td><td class="muted">Jun 13</td><td class="mono">8</td><td class="r">$1,377.15</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 14, 9:31 AM</td><td style="display:flex;gap:6px;align-items:center;height:52px"><button class="btn sm btn-secondary"><i data-ic="repeat" data-sz="13"></i>Reorder</button><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:12px 16px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:13px">Showing 7 of 86 orders</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <button class="cartfab"><i data-ic="cart" data-sz="18"></i>Cart · 3 items · <span class="money">$84.10</span></button>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

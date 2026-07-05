@@ -1,0 +1,11 @@
+/* Platform admin surface — indigo on slate chrome, compact density. Load AFTER rf.css */
+:root{
+  --accent:#4F46E5; --accent-strong:#4338CA; --accent-deep:#3730A3; --accent-soft:#EEF2FF;
+  --primary-mist:#F4F5FE;
+  --canvas:#F1F5F9; --sunken:#E7EDF4; --line:#E0E7F0; --line-strong:#CBD5E1;
+}
+.rail{background:#0F172A;color:rgba(226,232,240,.72)}
+.rail-logo{background:#4F46E5}
+.nl.active{background:#4F46E5;color:#fff;box-shadow:none}
+.nl.active svg{color:#fff;opacity:1}
+.topbar{background:#FFFFFF}

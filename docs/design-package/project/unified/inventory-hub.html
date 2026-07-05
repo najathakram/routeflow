@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Inventory Hub</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .stockbar{width:90px;height:5px;border-radius:99px;background:var(--sunken);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+  .stockbar i{display:block;height:100%;border-radius:99px}
+  .bulkwrap{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;z-index:5}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Inventory Hub" style="position:relative">
+  <script>document.write(RFShell.operatorRail('wh.inventory'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Inventory'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Inventory</h2><div class="sub">Stock levels, counts, purchasing and forecasting for 214 SKUs.</div></div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export CSV</button>
+          <button class="btn btn-secondary"><i data-ic="swap" data-sz="15"></i>Adjust stock</button>
+          <button class="btn btn-primary"><i data-ic="zap" data-sz="15"></i>Quick restock</button>
+        </div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Stock Value (cost)</span><span class="v money">$96,412.09</span><span class="hint">214 SKUs · 12 categories</span></div>
+        <div class="stat ring-warning"><span class="overline">Low Stock</span><span class="v" style="color:var(--warning)">3</span><span class="hint">Below threshold</span></div>
+        <div class="stat ring-danger"><span class="overline">Out of Stock</span><span class="v" style="color:var(--danger)">1</span><span class="hint">Valle Salsa Verde 16oz</span></div>
+        <div class="stat"><span class="overline">Open POs</span><span class="v">4</span><span class="hint">$12,808.40 inbound</span></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:0">
+        <button class="tab active">Stock</button>
+        <button class="tab">Stock Count</button>
+        <button class="tab">Suppliers</button>
+        <button class="tab">Purchase Orders <span class="mono" style="font-size:11px;color:var(--ink-400)">4</span></button>
+        <button class="tab">Forecasting</button>
+      </div>
+
+      <div class="card" style="border-top-left-radius:0">
+        <div class="filters">
+          <div class="input sm" style="width:230px"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Name, SKU or barcode…</span></div>
+          <div class="select sm" style="width:140px"><span>All categories</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <div class="select sm" style="width:130px"><span>All suppliers</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="chip active">Low stock first <span class="n">4</span></button>
+          <button class="chip">Tobacco</button>
+          <span class="muted" style="font-size:12px;margin-left:auto">214 SKUs</span>
+        </div>
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:34px"><span class="cb ind"><i data-ic="minus" data-sz="11" style="color:#fff"></i></span></th>
+            <th><span class="th-sort on">Product<i data-ic="chevup" data-sz="12"></i></span></th>
+            <th>Supplier</th><th class="r">On Hand</th><th class="r">Threshold</th><th class="r">Unit Cost</th><th class="r">Value</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="primary-cell">Valle Salsa Verde 16oz</span><div class="faint" style="font-size:11px">VSV-160 · 12/case</div></td><td>Valle Foods Co.</td><td class="r"><span class="stockbar"><i style="width:0%;background:var(--danger)"></i></span>0</td><td class="r">12</td><td class="r">$1.84</td><td class="r">$0.00</td><td><span class="badge b-danger">Out of stock</span></td><td><button class="btn sm btn-secondary">Restock</button></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="primary-cell">Cloud Chips BBQ 1.5oz</span><div class="faint" style="font-size:11px">CCB-015 · 12/case</div></td><td>Bay Snacks Inc.</td><td class="r"><span class="stockbar"><i style="width:22%;background:var(--warning)"></i></span>4</td><td class="r">18</td><td class="r">$0.72</td><td class="r">$34.56</td><td><span class="badge b-warning">Low</span></td><td><button class="btn sm btn-secondary">Restock</button></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="primary-cell">Agua Mineral 355ml</span><div class="faint" style="font-size:11px">AGM-355 · 24/case</div></td><td>Pacific Beverage</td><td class="r"><span class="stockbar"><i style="width:25%;background:var(--warning)"></i></span>6</td><td class="r">24</td><td class="r">$0.58</td><td class="r">$83.52</td><td><span class="badge b-warning">Low</span></td><td><button class="btn sm btn-secondary">Restock</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><span class="primary-cell">Roast House Cold Brew 8oz</span><div class="faint" style="font-size:11px">RHC-008 · 6/case</div></td><td>Roast House</td><td class="r"><span class="stockbar"><i style="width:45%;background:var(--warning)"></i></span>9</td><td class="r">20</td><td class="r">$2.05</td><td class="r">$110.70</td><td><span class="badge b-warning">Low</span></td><td><button class="btn sm btn-secondary">Restock</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><span class="primary-cell">Sunburst Orange Soda 2L</span><div class="faint" style="font-size:11px">SOS-200 · 8/case</div></td><td>Pacific Beverage</td><td class="r"><span class="stockbar"><i style="width:78%;background:var(--success)"></i></span>112</td><td class="r">40</td><td class="r">$1.61</td><td class="r">$180.32</td><td><span class="badge b-success">In stock</span></td><td><button class="btn sm btn-ghost">Adjust</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><span class="primary-cell">Valle Tortilla Chips 11oz</span><div class="faint" style="font-size:11px">VTC-110 · 9/case</div></td><td>Valle Foods Co.</td><td class="r"><span class="stockbar"><i style="width:92%;background:var(--success)"></i></span>203</td><td class="r">36</td><td class="r">$1.12</td><td class="r">$227.36</td><td><span class="badge b-success">In stock</span></td><td><button class="btn sm btn-ghost">Adjust</button></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td><span class="primary-cell">Golden Straw Honey 12oz</span><div class="faint" style="font-size:11px">GSH-120 · 12/case</div></td><td>Apiary West</td><td class="r"><span class="stockbar"><i style="width:64%;background:var(--success)"></i></span>67</td><td class="r">24</td><td class="r">$3.40</td><td class="r">$227.80</td><td><span class="badge b-success">In stock</span></td><td><button class="btn sm btn-ghost">Adjust</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- bulk action bar (3 selected) -->
+  <div class="bulkwrap">
+    <div class="bulkbar">
+      <b>3 selected</b><span class="sep"></span>
+      <button class="bb-link">Quick restock</button>
+      <button class="bb-link">Set cost…</button>
+      <button class="bb-link">Recompute costs (dry run)</button>
+      <button class="bb-link">Export</button>
+      <span class="sep"></span>
+      <button class="bb-link"><i data-ic="x" data-sz="13"></i></button>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Customer Detail</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1120px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1120px}
+  .row12{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start;margin-top:18px}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--ink-500)}
+  .kv .v{color:var(--ink-900);font-weight:500;text-align:right}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Customer Detail">
+  <script>document.write(RFShell.operatorRail('customers'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Customers'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:4px">
+        <div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="avatar" style="width:42px;height:42px;font-size:15px">SM</div>
+            <div>
+              <div style="display:flex;align-items:center;gap:9px"><h2>Sunrise Market</h2><span class="badge b-success">Active</span><span class="badge b-accent">Tier B pricing</span></div>
+              <div class="sub">CUST-0114 · customer since Mar 2024 · Mission District route</div>
+            </div>
+          </div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="pencil" data-sz="15"></i>Edit</button>
+          <button class="btn btn-secondary"><i data-ic="filetext" data-sz="15"></i>New Invoice</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Order</button>
+        </div>
+      </div>
+
+      <div class="tabs" style="margin-top:14px">
+        <button class="tab active">Overview</button>
+        <button class="tab">Orders <span class="mono" style="font-size:11px;color:var(--ink-400)">86</span></button>
+        <button class="tab">Invoices <span class="mono" style="font-size:11px;color:var(--ink-400)">79</span></button>
+        <button class="tab">Payments</button>
+        <button class="tab">Price Memory</button>
+        <button class="tab">Licenses <span class="badge b-warning" style="height:16px;font-size:9.5px;padding:0 6px">1</span></button>
+        <button class="tab">Notes</button>
+      </div>
+
+      <div class="row12">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Contact</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Contact</span><span class="v">Rosa Delgado</span></div>
+              <div class="kv"><span class="k">Phone</span><span class="v mono">(415) 555-0182</span></div>
+              <div class="kv"><span class="k">Email</span><span class="v">rosa@sunrisemkt.com</span></div>
+              <div class="kv"><span class="k">Address</span><span class="v">1180 Valencia St<br>San Francisco, CA 94110</span></div>
+              <div class="kv"><span class="k">Delivery window</span><span class="v">Tue / Fri · 8 to 11 AM</span></div>
+              <div class="kv"><span class="k">Payment terms</span><span class="v">Net 15</span></div>
+              <div class="kv"><span class="k">Buyer portal</span><span class="v"><span class="badge b-success">Linked</span></span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Balance</h3><a class="btn-link" style="font-size:12.5px">Statement</a></div>
+            <div class="card-b" style="padding-top:6px">
+              <div class="kv"><span class="k">Outstanding</span><span class="v money">$1,677.00</span></div>
+              <div class="kv"><span class="k">Overdue</span><span class="v money" style="color:var(--danger)">$1,677.00</span></div>
+              <div class="kv"><span class="k">Credit notes</span><span class="v money">$48.20</span></div>
+              <div class="kv"><span class="k">Avg days to pay</span><span class="v mono">11.4</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Licenses &amp; Authorizations</h3><button class="btn sm btn-secondary"><i data-ic="plus" data-sz="13"></i>Add</button></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)">
+                <div style="flex:1"><b style="font-size:13px;color:var(--ink-900)">Tobacco</b><div class="faint" style="font-size:11.5px">TB-88-2041 · expires Dec 31, 2026 · submitted by retailer</div></div>
+                <span class="badge b-success">Verified</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)">
+                <div style="flex:1"><b style="font-size:13px;color:var(--ink-900)">Alcohol</b><div class="faint" style="font-size:11.5px">ABC-482-1108 · submitted by retailer Jul 4. Review the attached doc</div></div>
+                <span class="badge b-warning">Pending</span>
+                <button class="btn sm btn-primary">Approve</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px 0">
+                <div style="flex:1"><b style="font-size:13px;color:var(--ink-500);font-weight:500">CRV Deposits</b><div class="faint" style="font-size:11.5px">no authorization needed, deposit category</div></div>
+                <span class="badge b-neutral">n/a</span>
+              </div>
+              <div style="display:flex;gap:9px;padding:9px 11px;border-radius:8px;background:var(--sunken);font-size:11.5px;color:var(--ink-500);line-height:1.5">
+                <i data-ic="shield" data-sz="13" style="flex:none;margin-top:1px"></i>
+                <span>Verified categories appear in their portal automatically. No overrides active for this customer.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="grid3">
+            <div class="stat"><span class="overline">Lifetime Revenue</span><span class="v money">$84,209.16</span><span class="hint">86 orders</span></div>
+            <div class="stat"><span class="overline">Avg Order</span><span class="v money">$979.18</span><span class="hint">Last 90 days</span></div>
+            <div class="stat"><span class="overline">Order Frequency</span><span class="v">2.1<span class="faint" style="font-size:14px;font-weight:500">/wk</span></span><span class="hint">Tue + Fri pattern</span></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Recent Orders</h3><a class="btn-link" style="font-size:12.5px">All orders</a></div>
+            <table class="tbl">
+              <thead><tr><th>Order #</th><th>Items</th><th class="r">Total</th><th>Status</th><th>Date</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="mono primary-cell">ORD-2417</td><td class="mono">4</td><td class="r">$1,008.02</td><td><span class="badge b-info">Confirmed</span></td><td class="muted">Jul 5</td></tr>
+                <tr class="row"><td class="mono primary-cell">ORD-2398</td><td class="mono">7</td><td class="r">$1,214.55</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jul 1</td></tr>
+                <tr class="row"><td class="mono primary-cell">ORD-2371</td><td class="mono">5</td><td class="r">$886.10</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 27</td></tr>
+                <tr class="row"><td class="mono primary-cell">ORD-2344</td><td class="mono">9</td><td class="r">$1,402.80</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jun 24</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Negotiated Prices</h3><span class="muted" style="font-size:12px">auto-filled on every new sale</span></div>
+            <table class="tbl">
+              <thead><tr><th>Product</th><th class="r">List</th><th class="r">Their Price</th><th>Treatment</th><th>Since</th></tr></thead>
+              <tbody>
+                <tr class="row"><td class="primary-cell">Agua Mineral 355ml · Case 24</td><td class="r"><span class="strike">$24.00</span></td><td class="r" style="font-weight:600">$21.60</td><td><span class="tag tag-special">Special</span></td><td class="muted">Apr 12</td></tr>
+                <tr class="row"><td class="primary-cell">Sunburst Orange Soda 2L · Case 8</td><td class="r"><span class="strike">$19.20</span></td><td class="r" style="font-weight:600">$18.40</td><td><span class="tag tag-special">Special</span></td><td class="muted">May 3</td></tr>
+                <tr class="row"><td class="primary-cell">Roast House Cold Brew 8oz</td><td class="r"><span class="strike">$3.45</span></td><td class="r" style="font-weight:600">$3.10</td><td><span class="tag tag-custom">Custom</span></td><td class="muted">Jun 18</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

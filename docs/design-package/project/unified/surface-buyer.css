@@ -1,0 +1,11 @@
+/* Buyer portal surface — emerald accent, comfortable density. Load AFTER rf.css */
+:root{
+  --accent:#059669; --accent-strong:#047857; --accent-deep:#065F46; --accent-soft:#ECFDF5;
+  --primary-mist:#F0FBF6;
+  --row-h:52px; --text-body:14px;
+}
+.rail{background:linear-gradient(180deg,#053B2E,#065F46)}
+.nl.active{box-shadow:inset 2.5px 0 0 #6EE7B7}
+.nl.active svg{color:#6EE7B7}
+.rail-logo{background:#059669}
+.content{padding:26px 32px}

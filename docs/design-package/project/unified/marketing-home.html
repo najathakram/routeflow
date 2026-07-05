@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Marketing Home</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1440px}
+  body{margin:0;background:#FBF9F4;color:var(--ink-700)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+  /* nav */
+  .mnav{display:flex;align-items:center;gap:30px;height:76px}
+  .mnav .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;color:var(--ink-900)}
+  .mnav .brand .mark{width:32px;height:32px;border-radius:9px;background:var(--brand-600);color:#fff;display:grid;place-items:center;font-size:12px}
+  .mnav a{font-size:14px;font-weight:500;color:var(--ink-500)}
+  .mnav a:hover{color:var(--ink-900)}
+  .sideswitch{display:flex;background:#EFEAE0;border-radius:99px;padding:3px;gap:2px;margin-left:auto}
+  .sideswitch button{height:32px;padding:0 16px;border-radius:99px;font-size:13px;font-weight:600;color:var(--ink-500)}
+  .sideswitch button.on{background:var(--brand-600);color:#fff}
+  /* hero */
+  .hero{padding:88px 0 72px;text-align:center}
+  .hero .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--brand-700)}
+  .hero h1{font-family:var(--font-display);font-weight:400;font-size:64px;line-height:1.07;color:var(--ink-900);margin:20px auto 0;max-width:800px}
+  .hero p{font-size:18px;line-height:1.65;color:var(--ink-500);max-width:600px;margin:22px auto 0}
+  .hero .ctas{display:flex;gap:12px;justify-content:center;margin-top:34px}
+  .shot{margin:64px auto 0;max-width:1080px;aspect-ratio:16/9;border-radius:16px;border:1px solid #E4DED2;
+    background:repeating-linear-gradient(-45deg,#F1EDE4,#F1EDE4 10px,#F7F4EC 10px,#F7F4EC 20px);
+    box-shadow:0 32px 80px rgba(15,27,45,.12);display:grid;place-items:center}
+  .shot span{font-family:var(--font-mono);font-size:12.5px;color:var(--ink-400)}
+  /* features */
+  .feat{padding:84px 0}
+  .feat h2{font-family:var(--font-display);font-weight:400;font-size:38px;color:var(--ink-900);text-align:center}
+  .fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:46px}
+  .fcard{background:#fff;border:1px solid #E9E3D7;border-radius:14px;padding:28px}
+  .fcard .fic{width:40px;height:40px;border-radius:11px;background:var(--brand-50);color:var(--brand-700);display:grid;place-items:center;margin-bottom:18px}
+  .fcard b{font-size:16.5px;color:var(--ink-900)}
+  .fcard p{font-size:14px;line-height:1.65;color:var(--ink-500);margin-top:8px}
+  /* rust band */
+  .band{background:#F7EDE6;border-top:1px solid #EBD9CC;border-bottom:1px solid #EBD9CC;padding:76px 0}
+  .band .wrap{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+  .band .eyebrow{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#9A4A21}
+  .band h2{font-family:var(--font-display);font-weight:400;font-size:38px;color:var(--ink-900);margin-top:14px;line-height:1.15}
+  .band p{font-size:15.5px;line-height:1.7;color:var(--ink-500);margin-top:16px}
+  .band .btn-rust{background:#A9501F;color:#fff}
+  .band .btn-rust:hover{background:#8C4119}
+  .bandshot{aspect-ratio:4/3;border-radius:14px;border:1px solid #EBD9CC;
+    background:repeating-linear-gradient(-45deg,#F1E2D6,#F1E2D6 10px,#F6EBE1 10px,#F6EBE1 20px);
+    display:grid;place-items:center}
+  .bandshot span{font-family:var(--font-mono);font-size:12px;color:#B08464}
+  /* pricing teaser */
+  .price{padding:88px 0;text-align:center}
+  .price h2{font-family:var(--font-display);font-weight:400;font-size:38px;color:var(--ink-900)}
+  .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:46px;text-align:left}
+  .pcard{background:#fff;border:1px solid #E9E3D7;border-radius:14px;padding:28px;display:flex;flex-direction:column;gap:6px}
+  .pcard.hot{border-color:var(--brand-500);box-shadow:0 0 0 3px rgba(20,163,159,.1)}
+  .pcard .nm{font-size:14px;font-weight:600;color:var(--ink-500)}
+  .pcard .amt{font-size:38px;font-weight:600;color:var(--ink-900);letter-spacing:-.02em}
+  .pcard .amt small{font-size:14px;font-weight:500;color:var(--ink-400)}
+  .pcard ul{list-style:none;margin:16px 0 22px;display:flex;flex-direction:column;gap:9px;font-size:13.5px;color:var(--ink-500)}
+  .pcard li{display:flex;gap:9px;align-items:center}
+  /* footer */
+  footer{border-top:1px solid #E9E3D7;padding:40px 0 60px}
+  footer .wrap{display:flex;gap:40px;align-items:center;font-size:13px;color:var(--ink-400)}
+</style>
+</head>
+<body data-screen-label="Marketing Home">
+  <div class="wrap">
+    <nav class="mnav">
+      <span class="brand"><span class="mark">RF</span>RouteFlow</span>
+      <a>Product</a><a>Pricing</a><a>Company</a><a>Contact</a>
+      <div class="sideswitch"><button class="on">For Wholesalers</button><button>For Retailers</button></div>
+      <a style="font-weight:600;color:var(--ink-900)">Sign in</a>
+      <button class="btn btn-primary">Start free trial</button>
+    </nav>
+  </div>
+
+  <header class="hero wrap">
+    <span class="eyebrow">Wholesale delivery, run right</span>
+    <h1>Every route, order and invoice in one ledger.</h1>
+    <p>RouteFlow runs your whole wholesale operation: scan-gun order entry, route dispatch with live proof of delivery, and same-day invoicing your customers actually pay.</p>
+    <div class="ctas">
+      <button class="btn lg btn-primary">Start free trial</button>
+      <button class="btn lg btn-secondary">Book a demo</button>
+    </div>
+    <div class="shot"><span>product screenshot, operator dashboard</span></div>
+  </header>
+
+  <section class="feat wrap">
+    <h2>From scan gun to signed delivery</h2>
+    <div class="fgrid">
+      <div class="fcard"><span class="fic"><i data-ic="barcode" data-sz="19"></i></span><b>Orders at scan speed</b><p>USB and webcam barcode scanning build orders in seconds. Negotiated prices auto-fill from each customer's history, no rate-sheet spreadsheets.</p></div>
+      <div class="fcard"><span class="fic"><i data-ic="truck" data-sz="19"></i></span><b>Routes that run themselves</b><p>Build runs in a four-step wizard, hand drivers a mobile manifest, and watch stops complete live with photo and signature proof of delivery.</p></div>
+      <div class="fcard"><span class="fic"><i data-ic="dollar" data-sz="19"></i></span><b>Invoices that get paid</b><p>Same-day invoicing from delivered orders, AR aging you can read at a glance, and a buyer portal where customers reorder without calling you.</p></div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">For retailers</span>
+        <h2>Order from all your distributors in one place.</h2>
+        <p>The RouteFlow buyer portal gives your store one login for every supplier who runs on RouteFlow, your negotiated prices, standing orders that reorder themselves, and every invoice in one ledger.</p>
+        <div style="display:flex;gap:12px;margin-top:26px">
+          <button class="btn lg btn-rust">Explore the retailer side</button>
+          <button class="btn lg btn-ghost" style="color:#9A4A21">See how invites work</button>
+        </div>
+      </div>
+      <div class="bandshot"><span>screenshot, buyer portal shop</span></div>
+    </div>
+  </section>
+
+  <section class="price wrap">
+    <h2>Plans that scale with your routes</h2>
+    <div class="pgrid">
+      <div class="pcard">
+        <span class="nm">Starter</span><span class="amt">$59<small>/mo</small></span>
+        <ul>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>1 user · 1 route/day</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Unlimited orders, invoicing &amp; POD</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Barcode scanning · offline PWA</li>
+        </ul>
+        <button class="btn btn-secondary" style="justify-content:center">Start free trial</button>
+      </div>
+      <div class="pcard">
+        <span class="nm">Team</span><span class="amt">$149<small>/mo</small></span>
+        <ul>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>5 users · 3 concurrent routes</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Dispatch, live tracking &amp; returns</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Vendor bills, reports &amp; settlement</li>
+        </ul>
+        <button class="btn btn-secondary" style="justify-content:center">Start free trial</button>
+      </div>
+      <div class="pcard hot">
+        <span class="nm" style="color:var(--brand-700)">Business</span><span class="amt">$349<small>/mo</small></span>
+        <ul>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>15 users · unlimited routes</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Buyer portal included</li>
+          <li><i data-ic="check" data-sz="14" style="color:var(--brand-600)"></i>Analytics + forecasting</li>
+        </ul>
+        <button class="btn btn-primary" style="justify-content:center">Start free trial</button>
+      </div>
+    </div>
+    <div style="text-align:center;font-size:13px;color:var(--ink-500);margin-top:22px">Add-ons for any plan, buyer portal, regulated-items compliance, OCR scanning, extra seats. Enterprise: custom terms, API &amp; SSO. <a class="btn-link" style="font-size:13px">See full pricing</a></div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <span class="brand" style="display:flex;align-items:center;gap:9px;font-weight:700;color:var(--ink-900)"><span style="width:24px;height:24px;border-radius:7px;background:var(--brand-600);color:#fff;display:grid;place-items:center;font-size:9.5px;font-weight:700">RF</span>RouteFlow</span>
+      <a>Product</a><a>Pricing</a><a>Company</a><a>Retailers</a><a>Wholesalers</a><a>Contact</a>
+      <span style="margin-left:auto">© 2026 RouteFlow, Inc.</span>
+    </div>
+  </footer>
+<script src="icons.js"></script>
+</body>
+</html>

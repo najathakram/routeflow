@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Orders</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1440px}
+  body{margin:0}
+  .filterbar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .toggle{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 12px;border:1px solid var(--line-strong);
+    border-radius:var(--r-ctl);background:var(--paper);font-size:13px;font-weight:600;color:var(--ink-700)}
+  .toggle .tk{width:30px;height:17px;border-radius:99px;background:var(--line-strong);position:relative}
+  .toggle .tk::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:99px;background:#fff}
+  .toggle .cnt{min-width:17px;height:17px;padding:0 5px;border-radius:99px;background:var(--danger-bg);color:#B91C1C;
+    font-family:var(--font-mono);font-size:11px;font-weight:600;display:grid;place-items:center}
+  .pager{display:flex;align-items:center;gap:14px;padding:12px 16px;font-size:12.5px;color:var(--ink-500)}
+  .pgbtn{min-width:28px;height:28px;padding:0 8px;border-radius:var(--r-ctl);display:inline-grid;place-items:center;
+    font-family:var(--font-mono);font-size:12px;color:var(--ink-500)}
+  .pgbtn:hover{background:var(--sunken)}
+  .pgbtn.on{background:var(--ink-900);color:#fff}
+  .btn-toggled{background:var(--accent-soft);border-color:var(--accent-strong);color:var(--accent-deep)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Orders List">
+
+  <aside class="rail">
+    <div class="rail-brand"><div class="rail-logo">GS</div><div><div class="t">Golden State Dist.</div><div class="s">RouteFlow</div></div></div>
+    <nav>
+      <a class="nl"><i data-ic="grid"></i>Dashboard</a>
+      <div class="ng open">
+        <button class="ng-head"><i data-ic="package"></i>Orders<i class="chev" data-ic="chevup" data-sz="14"></i></button>
+        <div class="ng-kids"><a class="nl active">All Orders</a><a class="nl">Returns</a></div>
+      </div>
+      <div class="ng"><button class="ng-head"><i data-ic="truck"></i>Dispatch<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="users"></i>Customers</a>
+      <div class="ng"><button class="ng-head"><i data-ic="warehouse"></i>Warehouse<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <div class="ng"><button class="ng-head"><i data-ic="dollar"></i>Finance<i class="chev" data-ic="chevdown" data-sz="14"></i></button></div>
+      <a class="nl"><i data-ic="chart"></i>Analytics</a>
+      <a class="nl"><i data-ic="leaf"></i>Tobacco</a>
+      <a class="nl"><i data-ic="sliders"></i>Settings</a>
+    </nav>
+    <div class="rail-foot"><a class="nl"><i data-ic="chevleft"></i>Collapse</a></div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <h1>Orders</h1>
+      <div class="searchpill"><i data-ic="search" data-sz="15"></i>Search or jump to…<span class="kbd">⌘K</span></div>
+      <button class="iconbtn"><i data-ic="bell" data-sz="18"></i><span class="nbadge">3</span></button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="avatar">ML</div>
+        <span style="font-size:13px;font-weight:600;color:var(--ink-900)">Maria</span>
+        <i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="ph-row">
+        <div>
+          <h2>Orders</h2>
+          <div class="sub">248 orders · 2 urgent</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export</button>
+          <button class="btn btn-secondary btn-toggled"><i data-ic="check" data-sz="15"></i>Select</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Order</button>
+        </div>
+      </div>
+
+      <!-- saved views -->
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="chip active">All <span class="n">248</span></button>
+        <button class="chip">Pending <span class="n">9</span></button>
+        <button class="chip">Confirmed <span class="n">8</span></button>
+        <button class="chip">Out for Delivery <span class="n">6</span></button>
+        <button class="chip">Urgent <span class="n">2</span></button>
+        <button class="chip">Delivered <span class="n">221</span></button>
+        <button class="chip">Cancelled <span class="n">2</span></button>
+      </div>
+
+      <!-- filter bar -->
+      <div class="filterbar">
+        <div class="input" style="width:250px"><i data-ic="search" data-sz="15" style="color:var(--ink-400)"></i><span class="ph">Search customer or order #…</span></div>
+        <div class="select" style="width:160px">All statuses<i data-ic="chevdown" data-sz="14" style="color:var(--ink-400)"></i></div>
+        <button class="toggle"><span class="tk"></span>Urgent only<span class="cnt">2</span></button>
+        <div class="input" style="width:150px"><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i><span class="ph">Delivery from</span></div>
+        <span class="faint"> to </span>
+        <div class="input" style="width:150px"><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i><span class="ph">Delivery to</span></div>
+        <a class="btn-link" style="font-size:12.5px;margin-left:4px">Clear all</a>
+      </div>
+
+      <!-- bulk action bar -->
+      <div class="bulkbar" style="margin-bottom:12px">
+        <b>3 selected</b>
+        <a class="bb-link">Deselect all</a>
+        <span class="sep"></span>
+        <a class="bb-link">Cancel 3</a>
+        <a class="bb-link bb-danger">Delete 3</a>
+        <span style="margin-left:auto;font-size:11.5px;color:rgba(255,255,255,.45)">Only PENDING / CANCELLED orders can be deleted</span>
+      </div>
+
+      <!-- table -->
+      <div class="card" style="overflow:hidden">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:40px"><span class="cb ind" style="display:inline-grid"><i data-ic="dot" data-sz="10" style="color:#fff"></i></span></th>
+              <th style="width:30px"></th>
+              <th><span class="th-sort">Order #<i data-ic="chevupdown" data-sz="13"></i></span></th>
+              <th><span class="th-sort">Customer<i data-ic="chevupdown" data-sz="13"></i></span></th>
+              <th class="r">Items</th>
+              <th class="r"><span class="th-sort">Total<i data-ic="chevupdown" data-sz="13"></i></span></th>
+              <th>Status</th>
+              <th><span class="th-sort">Delivery Date<i data-ic="chevupdown" data-sz="13"></i></span></th>
+              <th><span class="th-sort on">Created<i data-ic="chevdown" data-sz="13"></i></span></th>
+              <th style="width:44px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row urgent"><td><span class="cb"></span></td><td><i data-ic="alert" data-sz="15" style="color:var(--danger)"></i></td><td class="mono primary-cell">ORD-2417</td><td>Sunrise Market</td><td class="r">4</td><td class="r">$1,008.02</td><td><span class="badge b-info">Confirmed</span></td><td class="muted">Jul 8</td><td class="muted">Jul 5, 9:41 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row urgent"><td><span class="cb"></span></td><td><i data-ic="alert" data-sz="15" style="color:var(--danger)"></i></td><td class="mono primary-cell">ORD-2415</td><td>Casa Verde Foods</td><td class="r">6</td><td class="r">$644.90</td><td><span class="badge b-warning">Pending</span></td><td class="muted">Jul 7</td><td class="muted">Jul 5, 8:53 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td></td><td class="mono primary-cell">ORD-2416</td><td>Bright Mart #2</td><td class="r">11</td><td class="r">$2,394.60</td><td><span class="badge b-warning">Pending</span></td><td class="muted">Jul 9</td><td class="muted">Jul 5, 9:12 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td></td><td class="mono primary-cell">ORD-2414</td><td>Golden Gate Grocery</td><td class="r">9</td><td class="r">$1,731.25</td><td><span class="badge b-accent">Out for Delivery</span></td><td class="muted">Jul 5</td><td class="muted">Jul 5, 7:20 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td></td><td class="mono primary-cell">ORD-2413</td><td>Hillside Mini Mart</td><td class="r">3</td><td class="r">$412.80</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jul 4</td><td class="muted">Jul 4, 4:47 PM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td></td><td class="mono primary-cell">ORD-2412</td><td>Lucky Corner Deli</td><td class="r">7</td><td class="r">$986.44</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jul 4</td><td class="muted">Jul 4, 2:05 PM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td></td><td class="mono primary-cell">ORD-2411</td><td>Casa Verde Foods</td><td class="r">2</td><td class="r">$188.10</td><td><span class="badge b-neutral">Cancelled</span></td><td class="muted">, </td><td class="muted">Jul 4, 11:32 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td></td><td class="mono primary-cell">ORD-2410</td><td>Panorama Smoke Shop</td><td class="r">12</td><td class="r">$3,207.90</td><td><span class="badge b-info">Confirmed</span></td><td class="muted">Jul 8</td><td class="muted">Jul 4, 10:58 AM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td></td><td class="mono primary-cell">ORD-2409</td><td>Sunrise Market</td><td class="r">5</td><td class="r">$742.16</td><td><span class="badge b-success">Delivered</span></td><td class="muted">Jul 3</td><td class="muted">Jul 3, 3:14 PM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+            <tr class="row"><td><span class="cb"></span></td><td></td><td class="mono primary-cell">ORD-2408</td><td>Bright Mart #2</td><td class="r">8</td><td class="r">$1,540.00</td><td><span class="badge b-accent">Out for Delivery</span></td><td class="muted">Jul 5</td><td class="muted">Jul 3, 1:40 PM</td><td><i data-ic="eye" data-sz="16" style="color:var(--ink-400)"></i></td></tr>
+          </tbody>
+        </table>
+        <div class="pager" style="border-top:1px solid var(--line)">
+          <span>Showing <span class="mono">1 to 10</span> of <span class="mono">248</span></span>
+          <span style="display:flex;align-items:center;gap:6px;margin-left:8px">Per page <span class="select sm" style="width:64px">10<i data-ic="chevdown" data-sz="13" style="color:var(--ink-400)"></i></span></span>
+          <span style="margin-left:auto;display:flex;gap:2px">
+            <button class="pgbtn"><i data-ic="chevleft" data-sz="14"></i></button>
+            <button class="pgbtn on">1</button><button class="pgbtn">2</button><button class="pgbtn">3</button>
+            <button class="pgbtn">4</button><button class="pgbtn">5</button><span class="pgbtn">…</span><button class="pgbtn">25</button>
+            <button class="pgbtn"><i data-ic="chevright" data-sz="14"></i></button>
+          </span>
+        </div>
+      </div>
+
+      <!-- toast demo (realtime) -->
+      <div class="toast" style="position:absolute;right:20px;bottom:20px">
+        <div class="ic" style="background:var(--danger-bg);color:var(--danger)"><i data-ic="alert" data-sz="15"></i></div>
+        <div><b>Urgent order placed</b><p>Sunrise Market, order ORD-2417</p></div>
+        <i class="x" data-ic="x" data-sz="14"></i>
+      </div>
+
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

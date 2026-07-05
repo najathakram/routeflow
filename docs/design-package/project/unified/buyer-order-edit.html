@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Order Editing</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start}
+  .thumb{width:44px;height:54px;border-radius:7px;border:1px solid var(--line);flex:none;
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 5px,#F4F7FB 5px,#F4F7FB 10px)}
+  .cline{display:flex;align-items:center;gap:13px;padding:12px 18px;border-bottom:1px solid var(--line)}
+  .cline b{font-size:13.5px;color:var(--ink-900);display:block}
+  .cline .meta{font-size:11.5px;color:var(--ink-400);margin-top:1px}
+  .qtygrp{display:inline-flex;align-items:center;border:1px solid var(--line-strong);border-radius:6px;height:30px;overflow:hidden}
+  .qtygrp button{width:27px;height:100%;display:grid;place-items:center;color:var(--ink-500)}
+  .qtygrp .q{width:32px;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--ink-900)}
+  .sumline{display:flex;justify-content:space-between;font-size:13.5px;padding:6px 0}
+  .sumline.total{border-top:1px solid var(--ink-900);margin-top:6px;padding-top:11px;font-weight:600;font-size:15px;color:var(--ink-900)}
+  .addstrip{display:flex;gap:10px;padding:12px 18px;align-items:center;border-bottom:1px solid var(--line);background:var(--primary-mist)}
+  .quickadd{display:flex;gap:8px;padding:10px 18px;border-bottom:1px solid var(--line);align-items:center;font-size:12px;color:var(--ink-500)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Order Editing">
+  <script>document.write(RFShell.buyerRail('orders'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px"><h2 style="font-family:var(--font-mono)">ORD-2417</h2><span class="badge b-info">Confirmed</span><span class="badge b-accent" style="text-transform:none;letter-spacing:0"><i data-ic="pencil" data-sz="11"></i>&nbsp;Editable until loading, tonight 8:00 PM</span></div>
+          <div class="sub">Delivery Tuesday, Jul 7 · 8 to 11 AM · changes save instantly, no checkout needed</div>
+        </div>
+        <div class="ph-actions"><button class="btn btn-secondary"><i data-ic="chat" data-sz="15"></i>Message seller</button></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="addstrip">
+            <div class="input" style="flex:1;background:var(--paper)"><i data-ic="plus" data-sz="14" style="color:var(--accent-deep)"></i><span class="ph">Add anything to this order, search or scan…</span></div>
+          </div>
+          <div class="quickadd">
+            <span>Quick add from your usuals:</span>
+            <button class="chip">Honey 12oz · $46.80</button>
+            <button class="chip">Cloud Chips · $14.25</button>
+            <button class="chip">Salsa Roja · $31.80</button>
+          </div>
+          <div class="cline">
+            <div class="thumb"></div>
+            <div style="flex:1"><b>Agua Mineral 355ml · Case 24</b><div class="meta"><span class="money">$21.60</span>/box · your price</div></div>
+            <span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">4</span><button><i data-ic="plus" data-sz="12"></i></button></span>
+            <span class="money" style="width:80px;text-align:right;color:var(--ink-900);font-weight:600">$86.40</span>
+            <button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button>
+          </div>
+          <div class="cline" style="background:#F0FBF6">
+            <div class="thumb"></div>
+            <div style="flex:1"><b>Roast House Cold Brew 8oz</b><div class="meta"><span style="color:var(--success);font-weight:600">added just now</span> · <span class="money">$3.10</span>/pc</div></div>
+            <span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">24</span><button><i data-ic="plus" data-sz="12"></i></button></span>
+            <span class="money" style="width:80px;text-align:right;color:var(--ink-900);font-weight:600">$74.40</span>
+            <button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button>
+          </div>
+          <div class="cline">
+            <div class="thumb"></div>
+            <div style="flex:1"><b>Sunburst Orange Soda 2L · Case 8</b><div class="meta"><span class="money">$18.40</span>/box · July deal −8% applies at checkout</div></div>
+            <span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">10</span><button><i data-ic="plus" data-sz="12"></i></button></span>
+            <span class="money" style="width:80px;text-align:right;color:var(--ink-900);font-weight:600">$184.00</span>
+            <button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button>
+          </div>
+          <div class="cline">
+            <div class="thumb"></div>
+            <div style="flex:1"><b>Valle Tortilla Chips 11oz · Case 9</b><div class="meta"><span class="money">$44.10</span>/box</div></div>
+            <span class="qtygrp"><button><i data-ic="minus" data-sz="12"></i></button><span class="q">16</span><button><i data-ic="plus" data-sz="12"></i></button></span>
+            <span class="money" style="width:80px;text-align:right;color:var(--ink-900);font-weight:600">$705.60</span>
+            <button class="iconbtn" style="width:28px;height:28px"><i data-ic="trash" data-sz="14"></i></button>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:12px 18px">
+            <i data-ic="clock" data-sz="14" style="color:var(--ink-400)"></i>
+            <span class="faint" style="font-size:12px">All edits saved · v4 · the seller sees changes live. After loading starts, edits become <b>change requests</b> the driver can accept at the door.</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Summary</h3><span class="muted mono" style="font-size:11px">updates live</span></div>
+            <div class="card-b" style="padding-top:8px">
+              <div class="sumline"><span class="muted">Items (4)</span><span class="money" style="color:var(--ink-900)">$1,050.40</span></div>
+              <div class="sumline"><span class="muted">July deal savings</span><span class="money" style="color:var(--success)">−$14.70</span></div>
+              <div class="sumline"><span class="muted">Tax (8.63%)</span><span class="money" style="color:var(--ink-900)">$89.38</span></div>
+              <div class="sumline total"><span>New total</span><span class="money">$1,125.08</span></div>
+              <div class="faint" style="font-size:11.5px;margin-top:8px">Was $1,008.02 when placed, your invoice is issued from what's actually delivered.</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>After dispatch?</h3></div>
+            <div class="card-b" style="padding-top:10px">
+              <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--sunken);font-size:12.5px;line-height:1.55;color:var(--ink-700)">
+                <i data-ic="truck" data-sz="15" style="flex:none;margin-top:1px;color:var(--ink-500)"></i>
+                <span>Once the van is loaded, adds/changes go to the seller as a <b>change request</b>, approved items ride the same delivery if they're on the truck, or your next one if not. You'll see the answer here and in Messages.</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 13px;border:1px solid #FCD34D;border-radius:9px;background:#FFFDF5;font-size:12.5px">
+                <i data-ic="clock" data-sz="14" style="color:#B45309"></i>
+                <span style="flex:1"><b style="color:var(--ink-900)">+2 cases Cold Brew</b>, requested on ORD-2398 (out for delivery)</span>
+                <span class="badge b-warning">Awaiting driver</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Delivery</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px"><span class="muted">Window</span><b style="color:var(--ink-900)">Tue, Jul 7 · 8 to 11 AM</b></div>
+              <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span class="muted">Edit cutoff</span><b style="color:var(--ink-900)">Tonight 8:00 PM <span class="mono faint" style="font-size:11px">(6h 12m)</span></b></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Dashboard</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1020px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1020px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;align-items:start}
+  .tilegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .ptile{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--paper)}
+  .ptile .img{aspect-ratio:4/5;max-height:130px;width:100%;border-bottom:1px solid var(--line);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 7px,#F4F7FB 7px,#F4F7FB 14px);
+    display:grid;place-items:center;font-family:var(--font-mono);font-size:9.5px;color:var(--ink-400)}
+  .ptile .bd{padding:10px 12px}
+  .ptile b{font-size:13px;color:var(--ink-900);display:block;line-height:1.35}
+  .ptile .pr{display:flex;align-items:center;margin-top:7px}
+  .sorow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .sorow:last-child{border-bottom:none}
+  .daychip{display:inline-flex;height:19px;padding:0 7px;border-radius:5px;background:var(--accent-soft);color:var(--accent-deep);font-size:10.5px;font-weight:700;align-items:center}
+  .mrow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+  .mrow:last-child{border-bottom:none}
+  .cartfab{position:absolute;bottom:26px;right:28px;height:48px;border-radius:99px;background:var(--accent-strong);color:#fff;
+    display:flex;align-items:center;gap:10px;padding:0 20px;font-weight:600;font-size:14px;box-shadow:var(--sh-drop)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Dashboard" style="position:relative">
+  <script>document.write(RFShell.buyerRail('dashboard'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row">
+        <div>
+          <h2 class="display" style="font-size:26px">Welcome back, Sunrise Market.</h2>
+          <div class="sub">Your dashboard at Golden State Distribution.</div>
+        </div>
+        <div class="ph-actions">
+          <button class="btn btn-secondary"><i data-ic="store" data-sz="15"></i>Browse Products</button>
+          <button class="btn btn-primary"><i data-ic="cart" data-sz="15"></i>View Cart · 3</button>
+        </div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:18px">
+        <div class="stat"><span class="overline">Active Orders</span><span class="v">2</span><span class="hint">1 out for delivery</span></div>
+        <div class="stat"><span class="overline">This Month</span><span class="v money">$4,209.32</span><span class="hint">Spend at this seller</span></div>
+        <div class="stat"><span class="overline">Pending Deliveries</span><span class="v">1</span><span class="hint">Arriving tomorrow AM</span></div>
+        <div class="stat"><span class="overline">Standing Orders</span><span class="v">2</span><span class="hint">Next: Tuesday</span></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Frequently Ordered</h3>
+              <div style="display:flex;gap:2px;background:var(--sunken);border-radius:7px;padding:2px">
+                <button class="btn sm" style="height:24px;background:var(--paper);box-shadow:var(--sh-card);color:var(--ink-900);font-size:11.5px">30d</button>
+                <button class="btn sm" style="height:24px;color:var(--ink-500);font-size:11.5px">90d</button>
+                <button class="btn sm" style="height:24px;color:var(--ink-500);font-size:11.5px">All</button>
+              </div>
+            </div>
+            <div class="card-b tilegrid">
+              <div class="ptile"><div class="img">product photo<br>4:5 focal crop</div><div class="bd"><b>Agua Mineral 355ml · Case 24</b><div class="pr"><span class="money" style="color:var(--ink-900);font-size:14px">$21.60</span><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+              <div class="ptile"><div class="img">product photo<br>4:5 focal crop</div><div class="bd"><b>Sunburst Orange Soda 2L · Case 8</b><div class="pr"><span class="money" style="color:var(--ink-900);font-size:14px">$18.40</span><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+              <div class="ptile"><div class="img">product photo<br>4:5 focal crop</div><div class="bd"><b>Valle Tortilla Chips 11oz · Case 9</b><div class="pr"><span class="money" style="color:var(--ink-900);font-size:14px">$44.10</span><button class="btn sm btn-primary" style="margin-left:auto">Add</button></div></div></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Recent Orders</h3><a class="btn-link" style="font-size:13px">All orders</a></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:6px">
+              <div class="mrow"><span class="mono" style="font-weight:600;color:var(--ink-900)">ORD-2417</span><span class="muted" style="flex:1">Jul 5 · 4 items</span><span class="badge b-info">Confirmed</span><span class="money" style="color:var(--ink-900)">$1,008.02</span></div>
+              <div class="mrow"><span class="mono" style="font-weight:600;color:var(--ink-900)">ORD-2398</span><span class="muted" style="flex:1">Jul 1 · 7 items</span><span class="badge b-accent">Out for delivery</span><span class="money" style="color:var(--ink-900)">$1,214.55</span></div>
+              <div class="mrow"><span class="mono" style="font-weight:600;color:var(--ink-900)">ORD-2371</span><span class="muted" style="flex:1">Jun 27 · 5 items</span><span class="badge b-success">Delivered</span><span class="money" style="color:var(--ink-900)">$886.10</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <div class="card">
+            <div class="card-h"><h3>Standing Orders</h3><a class="btn-link" style="font-size:13px">Manage</a></div>
+            <div class="card-b" style="padding-top:6px;padding-bottom:8px">
+              <div class="sorow">
+                <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Weekly Essentials</b>
+                  <div style="display:flex;gap:5px;margin-top:6px"><span class="daychip">Tue</span><span class="daychip">Fri</span><span class="muted" style="font-size:11.5px;align-self:center">· 8 items · next: Tuesday</span></div>
+                </div>
+                <button class="btn sm btn-primary"><i data-ic="repeat" data-sz="13"></i>Reorder</button>
+              </div>
+              <div class="sorow">
+                <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Beverage Restock</b>
+                  <div style="display:flex;gap:5px;margin-top:6px"><span class="daychip">Mon</span><span class="muted" style="font-size:11.5px;align-self:center">· 4 items · next: Monday</span></div>
+                </div>
+                <button class="btn sm btn-primary"><i data-ic="repeat" data-sz="13"></i>Reorder</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Spending Summary</h3></div>
+            <div class="card-b" style="padding-top:6px">
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px"><span class="muted">Last 30 days</span><span class="money" style="color:var(--ink-900);font-weight:600">$4,209.32</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);font-size:13.5px"><span class="muted">Last 90 days</span><span class="money" style="color:var(--ink-900);font-weight:600">$12,861.44</span></div>
+              <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:13.5px"><span class="muted">All time</span><span class="money" style="color:var(--ink-900);font-weight:600">$84,209.16</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>Featured by Golden State</h3></div>
+            <div class="card-b" style="display:flex;gap:12px;align-items:center">
+              <div class="ptile" style="width:110px;flex:none"><div class="img" style="max-height:86px">photo</div></div>
+              <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Golden Straw Honey 12oz</b><div class="muted" style="font-size:12px;margin:3px 0 8px">New this month · case of 12</div><div style="display:flex;align-items:center;gap:10px"><span class="money" style="color:var(--ink-900);font-size:14px">$46.80</span><button class="btn sm btn-primary">Add</button></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="cartfab"><i data-ic="cart" data-sz="18"></i>Cart · 3 items · <span class="money">$84.10</span></button>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

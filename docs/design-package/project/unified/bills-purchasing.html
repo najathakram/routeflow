@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Bills &amp; Purchasing</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:980px}
+  body{margin:0;overflow:hidden}
+  .screen{height:980px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .filters{display:flex;gap:9px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Bills &amp; Purchasing Hub">
+  <script>document.write(RFShell.operatorRail('wh.bills'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Bills &amp; Purchasing'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Bills &amp; Purchasing</h2><div class="sub">One hub for vendor bills, purchase orders and inventory spend, supplier payments happen here.</div></div>
+        <div class="ph-actions">
+          <span class="faint mono" style="font-size:11px;align-self:center">AI scans: 184/300 this mo</span>
+          <button class="btn btn-secondary"><i data-ic="camera" data-sz="15"></i>Scan invoice (AI)</button>
+          <button class="btn btn-secondary"><i data-ic="plus" data-sz="15"></i>New PO</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Vendor Bill</button>
+        </div>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Open Bills</span><span class="v money">$18,224.71</span><span class="hint">9 bills unpaid</span></div>
+        <div class="stat ring-warning"><span class="overline">Due This Week</span><span class="v money" style="color:var(--warning)">$6,410.20</span><span class="hint">3 bills</span></div>
+        <div class="stat ring-danger"><span class="overline">Unlinked Items</span><span class="v" style="color:var(--danger)">12</span><span class="hint">Lines awaiting product mapping</span></div>
+        <div class="stat"><span class="overline">Spend, 30d</span><span class="v money">$41,882.03</span><span class="hint">vs $38,204.16 prior</span></div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active">Vendor Bills <span class="mono" style="font-size:11px;color:var(--ink-400)">9</span></button>
+        <button class="tab">Purchase Orders <span class="mono" style="font-size:11px;color:var(--ink-400)">4</span></button>
+        <button class="tab">Inventory Spend</button>
+      </div>
+
+      <div class="card" style="border-top-left-radius:0">
+        <div class="filters">
+          <button class="chip active">Unpaid <span class="n">9</span></button>
+          <button class="chip">Due soon <span class="n">3</span></button>
+          <button class="chip">Needs mapping <span class="n">2</span></button>
+          <button class="chip">All bills</button>
+          <div class="input sm" style="width:210px;margin-left:auto"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Supplier or bill #…</span></div>
+          <div class="select sm" style="width:130px"><span>All suppliers</span><i data-ic="chevdown" data-sz="13"></i></div>
+        </div>
+        <table class="tbl">
+          <thead><tr><th>Bill #</th><th>Supplier</th><th>Bill Date</th><th>Due</th><th class="r">Amount</th><th class="r">Balance</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            <tr class="row urgent"><td class="mono primary-cell">VB-0871</td><td>Pacific Beverage</td><td class="muted">Jun 22</td><td style="color:var(--danger);font-weight:600">Jul 2, overdue</td><td class="r">$4,208.16</td><td class="r" style="font-weight:600">$4,208.16</td><td><span class="badge b-danger">Overdue</span></td><td><button class="btn sm btn-primary">Record Payment</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0874</td><td>Valle Foods Co. <span class="badge b-warning" style="margin-left:6px">2 unlinked items</span></td><td class="muted">Jun 28</td><td>Jul 8</td><td class="r">$2,202.04</td><td class="r" style="font-weight:600">$2,202.04</td><td><span class="badge b-warning">Needs mapping</span></td><td><button class="btn sm btn-secondary">Map items</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0875</td><td>Bay Snacks Inc.</td><td class="muted">Jun 30</td><td>Jul 10</td><td class="r">$1,644.90</td><td class="r" style="font-weight:600">$1,644.90</td><td><span class="badge b-info">Open</span></td><td><button class="btn sm btn-primary">Record Payment</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0876</td><td>Roast House</td><td class="muted">Jul 1</td><td>Jul 16</td><td class="r">$988.75</td><td class="r" style="font-weight:600">$988.75</td><td><span class="badge b-info">Open</span></td><td><button class="btn sm btn-primary">Record Payment</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0872</td><td>Apiary West</td><td class="muted">Jun 24</td><td>Jul 24</td><td class="r">$2,380.00</td><td class="r" style="font-weight:600">$1,190.00</td><td><span class="badge b-accent">Partially paid</span></td><td><button class="btn sm btn-primary">Record Payment</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0869</td><td>Pacific Beverage</td><td class="muted">Jun 15</td><td class="muted">Paid Jun 29</td><td class="r">$3,911.20</td><td class="r muted">$0.00</td><td><span class="badge b-success">Paid</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+            <tr class="row"><td class="mono primary-cell">VB-0868</td><td>Valle Foods Co.</td><td class="muted">Jun 12</td><td class="muted">Paid Jun 25</td><td class="r">$1,822.66</td><td class="r muted">$0.00</td><td><span class="badge b-success">Paid</span></td><td><button class="btn sm btn-ghost">View</button></td></tr>
+          </tbody>
+        </table>
+        <div style="display:flex;align-items:center;padding:11px 14px;border-top:1px solid var(--line)">
+          <span class="muted" style="font-size:12.5px">Showing 7 of 42 bills</span>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button class="btn sm btn-secondary" disabled>Previous</button>
+            <button class="btn sm btn-secondary">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="faint" style="font-size:12px;margin-top:12px">Consolidates the old /purchases, /vendor-bills and Expenses → Inventory tab. Payments here are money <b>out</b> (AP); Finance → Payments is money <b>in</b> (AR).</div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

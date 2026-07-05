@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Analytics</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+  .bars{display:flex;align-items:flex-end;gap:8px;height:190px;padding:8px 2px 0}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .bars .col{width:100%;border-radius:5px 5px 2px 2px;background:var(--accent-strong);opacity:.85;position:relative}
+  .bars .col.prev{background:var(--line-strong);opacity:1}
+  .bars .lb{font-size:10.5px;color:var(--ink-400);font-family:var(--font-mono)}
+  .donut{width:130px;height:130px;border-radius:99px;flex:none;
+    background:conic-gradient(var(--brand-500) 0 46%, var(--info) 46% 71%, var(--warning) 71% 88%, var(--ink-400) 88% 100%);
+    display:grid;place-items:center}
+  .donut::after{content:"";width:82px;height:82px;border-radius:99px;background:var(--paper)}
+  .dleg{display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--ink-500)}
+  .dleg .sw{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:7px;vertical-align:-1px}
+  .dleg .amt{font-family:var(--font-mono);color:var(--ink-900);font-weight:500;margin-left:auto}
+  .dleg .li{display:flex;align-items:center;gap:2px;min-width:190px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Analytics">
+  <script>document.write(RFShell.operatorRail('analytics'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Analytics'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Analytics</h2><div class="sub">Business performance across revenue, products, customers and operations.</div></div>
+        <div class="ph-actions">
+          <div class="select sm" style="width:150px"><span>Last 12 months</span><i data-ic="chevdown" data-sz="13"></i></div>
+          <button class="btn btn-secondary"><i data-ic="download" data-sz="15"></i>Export</button>
+        </div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab active">Revenue</button>
+        <button class="tab">Products &amp; Inventory</button>
+        <button class="tab">Customers</button>
+        <button class="tab">Operations</button>
+      </div>
+
+      <div class="grid4" style="margin-bottom:16px">
+        <div class="stat"><span class="overline">Revenue, 12 mo</span><span class="v money">$1,284,209.44</span><span class="hint" style="color:var(--success)">▲ 14.2% vs prior year</span></div>
+        <div class="stat"><span class="overline">Gross Margin</span><span class="v">36.4%</span><span class="hint" style="color:var(--success)">▲ 1.1 pts</span></div>
+        <div class="stat"><span class="overline">Avg Order Value</span><span class="v money">$1,042.77</span><span class="hint" style="color:var(--danger)">▼ 2.3% vs prior</span></div>
+        <div class="stat"><span class="overline">Orders, 12 mo</span><span class="v">1,232</span><span class="hint" style="color:var(--success)">▲ 16.8%</span></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Monthly Revenue</h3>
+            <div style="display:flex;gap:14px;font-size:11.5px;color:var(--ink-500)">
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--accent-strong);margin-right:6px;vertical-align:-1px"></span>2026</span>
+              <span><span style="display:inline-block;width:9px;height:9px;border-radius:3px;background:var(--line-strong);margin-right:6px;vertical-align:-1px"></span>2025</span>
+            </div>
+          </div>
+          <div class="card-b">
+            <div class="bars">
+              <div class="b"><div class="col prev" style="height:38%"></div><span class="lb">Aug</span></div>
+              <div class="b"><div class="col prev" style="height:44%"></div><span class="lb">Sep</span></div>
+              <div class="b"><div class="col prev" style="height:41%"></div><span class="lb">Oct</span></div>
+              <div class="b"><div class="col prev" style="height:52%"></div><span class="lb">Nov</span></div>
+              <div class="b"><div class="col prev" style="height:61%"></div><span class="lb">Dec</span></div>
+              <div class="b"><div class="col" style="height:47%"></div><span class="lb">Jan</span></div>
+              <div class="b"><div class="col" style="height:53%"></div><span class="lb">Feb</span></div>
+              <div class="b"><div class="col" style="height:58%"></div><span class="lb">Mar</span></div>
+              <div class="b"><div class="col" style="height:66%"></div><span class="lb">Apr</span></div>
+              <div class="b"><div class="col" style="height:72%"></div><span class="lb">May</span></div>
+              <div class="b"><div class="col" style="height:81%"></div><span class="lb">Jun</span></div>
+              <div class="b"><div class="col" style="height:22%;opacity:.4"></div><span class="lb">Jul</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h3>Revenue by Category</h3></div>
+          <div class="card-b" style="display:flex;align-items:center;gap:22px">
+            <div class="donut"></div>
+            <div class="dleg">
+              <div class="li"><span class="sw" style="background:var(--brand-500)"></span>Beverages<span class="amt">$590,736</span></div>
+              <div class="li"><span class="sw" style="background:var(--info)"></span>Snacks<span class="amt">$321,052</span></div>
+              <div class="li"><span class="sw" style="background:var(--warning)"></span>Grocery<span class="amt">$218,316</span></div>
+              <div class="li"><span class="sw" style="background:var(--ink-400)"></span>Other<span class="amt">$154,105</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-h"><h3>Top Products by Revenue</h3><a class="btn-link" style="font-size:12.5px">Products &amp; Inventory tab</a></div>
+        <table class="tbl">
+          <thead><tr><th>Product</th><th>Category</th><th class="r">Units (boxes)</th><th class="r">Revenue</th><th class="r">Margin</th><th class="r">Trend</th></tr></thead>
+          <tbody>
+            <tr class="row"><td class="primary-cell">Sunburst Orange Soda 2L</td><td class="muted">Beverages</td><td class="r">4,812</td><td class="r">$88,540.80</td><td class="r" style="color:var(--success)">38.2%</td><td class="r" style="color:var(--success)">▲ 21%</td></tr>
+            <tr class="row"><td class="primary-cell">Agua Mineral 355ml</td><td class="muted">Beverages</td><td class="r">3,940</td><td class="r">$85,104.00</td><td class="r" style="color:var(--success)">35.6%</td><td class="r" style="color:var(--success)">▲ 9%</td></tr>
+            <tr class="row"><td class="primary-cell">Valle Tortilla Chips 11oz</td><td class="muted">Snacks</td><td class="r">1,644</td><td class="r">$72,500.40</td><td class="r" style="color:var(--success)">41.0%</td><td class="r" style="color:var(--success)">▲ 12%</td></tr>
+            <tr class="row"><td class="primary-cell">Roast House Cold Brew 8oz</td><td class="muted">Beverages</td><td class="r">1,207</td><td class="r">$49,978.90</td><td class="r" style="color:var(--warning)">29.4%</td><td class="r" style="color:var(--danger)">▼ 4%</td></tr>
+            <tr class="row"><td class="primary-cell">Cloud Chips BBQ 1.5oz</td><td class="muted">Snacks</td><td class="r">2,088</td><td class="r">$35,749.80</td><td class="r" style="color:var(--success)">44.1%</td><td class="r" style="color:var(--success)">▲ 6%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

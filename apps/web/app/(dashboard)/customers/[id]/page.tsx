@@ -86,7 +86,8 @@ import {
   useResendPortalInvite,
   useDisconnectPortal,
   useApprovePortalRequest,
-  useDeleteCustomer,
+  useSoftDeleteCustomer,
+  useRestoreCustomer,
   useCustomerTaxDocuments,
   useUploadCustomerTaxDocuments,
   useDeleteCustomerTaxDocument,
@@ -100,6 +101,7 @@ import {
   type CustomerTag,
   type CustomerComment,
 } from "@/lib/api/customers";
+import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useInvoices } from "@/lib/api/invoices";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
@@ -1476,16 +1478,24 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const removeTag = useRemoveCustomerTag();
   const { data: chartData } = useCustomerIncomeChart(params.id);
 
-  // Delete customer
-  const deleteCustomer = useDeleteCustomer();
+  // Delete customer — reversible soft-delete with 8-second Undo (ux-standards).
+  const softDeleteCustomer = useSoftDeleteCustomer();
+  const restoreCustomer = useRestoreCustomer();
+  const runUndoable = useUndo();
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
-  const [deleteConfirm, setDeleteConfirm] = React.useState("");
 
   const handleDeleteCustomer = () => {
-    deleteCustomer.mutate(params.id, {
-      onSuccess: () => {
-        router.push("/customers");
-      },
+    const id = params.id;
+    const name = customer?.businessName ?? "Customer";
+    // Capture the pre-delete status so Undo restores exactly (not force-ACTIVE).
+    const priorStatus = currentStatus;
+    setIsDeleteOpen(false);
+    router.push("/customers");
+    runUndoable({
+      message: "Customer removed",
+      description: name,
+      perform: () => softDeleteCustomer.mutateAsync(id).then(() => undefined),
+      undo: () => restoreCustomer.mutateAsync({ id, status: priorStatus }).then(() => undefined),
     });
   };
 
@@ -2294,14 +2304,11 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     {currentStatus === "SUSPENDED" && (
                       <div className="border-t border-surface-border pt-4">
                         <button
-                          onClick={() => {
-                            setIsDeleteOpen(true);
-                            setDeleteConfirm("");
-                          }}
+                          onClick={() => setIsDeleteOpen(true)}
                           className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
                         >
                           <Trash2 className="h-4 w-4" />
-                          Delete Customer
+                          Remove customer
                         </button>
                       </div>
                     )}
@@ -3374,12 +3381,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         loading={deleteContact.isPending}
       />
 
-      {/* ── Delete customer modal ─────────────────────────────────── */}
+      {/* ── Remove customer modal — reversible soft-delete with 8s Undo ── */}
       <Modal
         open={isDeleteOpen}
         onClose={() => setIsDeleteOpen(false)}
-        title="Permanently delete customer?"
-        description={`All orders, invoices, addresses, and history for ${customer?.businessName ?? "this customer"} will be permanently erased. This cannot be undone.`}
+        title="Remove customer?"
+        description={`${customer?.businessName ?? "This customer"}'s orders, invoices, and history are kept. You'll have a few seconds to undo, and you can restore the customer any time.`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setIsDeleteOpen(false)}>
@@ -3387,30 +3394,18 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             </Button>
             <Button
               variant="danger"
-              disabled={
-                deleteConfirm !== (customer?.businessName ?? "") || deleteCustomer.isPending
-              }
-              loading={deleteCustomer.isPending}
+              loading={softDeleteCustomer.isPending}
               onClick={handleDeleteCustomer}
             >
-              Delete Permanently
+              Remove customer
             </Button>
           </>
         }
       >
-        <div className="space-y-3 pt-2">
-          <p className="text-sm text-navy/70">
-            Type <strong className="font-semibold text-navy">{customer?.businessName}</strong> to
-            confirm deletion:
-          </p>
-          <input
-            type="text"
-            value={deleteConfirm}
-            onChange={(e) => setDeleteConfirm(e.target.value)}
-            placeholder={customer?.businessName}
-            className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-danger focus:outline-none focus:ring-2 focus:ring-danger/20"
-          />
-        </div>
+        <p className="pt-2 text-sm text-navy/70">
+          The customer stops appearing in lists and their portal access is paused. Nothing is
+          erased.
+        </p>
       </Modal>
 
       {/* ── Tax document lightbox ─────────────────────────────────── */}

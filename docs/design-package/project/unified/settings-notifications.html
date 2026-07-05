@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Settings · Notifications</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .row21{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;align-items:start}
+  .mtx{width:100%;border-collapse:collapse;font-size:12.5px}
+  .mtx th{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-500);text-align:center;padding:10px 8px;border-bottom:2px solid var(--ink-900)}
+  .mtx th:first-child{text-align:left;padding-left:16px}
+  .mtx td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}
+  .mtx td:first-child{text-align:left;padding-left:16px;color:var(--ink-900);font-weight:500}
+  .mtx .sub{display:block;font-size:11px;color:var(--ink-400);font-weight:400;margin-top:1px}
+  .mtx .cb{margin:0 auto}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Settings, Notifications">
+  <script>document.write(RFShell.operatorRail('settings'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Settings'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Settings</h2><div class="sub">Workspace configuration for Golden State Distribution.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="check" data-sz="15"></i>Save changes</button></div>
+      </div>
+
+      <div class="tabs" style="margin-bottom:16px">
+        <button class="tab">Business Profile</button>
+        <button class="tab">Plan &amp; Billing</button>
+        <button class="tab active">Notifications</button>
+        <button class="tab">User Management</button>
+        <button class="tab">Import</button>
+        <button class="tab">Email</button>
+        <button class="tab">Invoicing</button>
+        <button class="tab">Integrations</button>
+        <button class="tab">My Account</button>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <div class="card-h"><h3>Customer notifications</h3><span class="muted" style="font-size:12px">per event × channel · WhatsApp/SMS count toward your 200/mo</span></div>
+          <table class="mtx">
+            <thead><tr><th style="width:40%">Event</th><th>Email</th><th>SMS</th><th>WhatsApp</th><th>Portal</th></tr></thead>
+            <tbody>
+              <tr><td>Order confirmed<span class="sub">with items + delivery day</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>Out for delivery<span class="sub">with live tracking link + ETA</span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>Delivered<span class="sub">with POD photo/signature</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb"></span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>Order changed at door<span class="sub">adjusted lines + new total</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>Invoice sent<span class="sub">PDF attached (email only)</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb" style="opacity:.35"></span></td><td><span class="cb" style="opacity:.35"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>Payment reminder<span class="sub">3d before due · on due · 7d overdue</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+              <tr><td>License expiring<span class="sub">30 / 7 / 1 days, regulated categories</span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td><td><span class="cb"></span></td><td><span class="cb"></span></td><td><span class="cb on"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex;gap:10px;align-items:center;padding:12px 16px;border-top:1px solid var(--line)">
+            <i data-ic="shield" data-sz="13" style="color:var(--accent-deep)"></i>
+            <span class="faint" style="font-size:12px">Customers can reply STOP to any SMS/WhatsApp, opt-outs are honored automatically and shown on the customer record.</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Template, Out for delivery</h3><button class="btn sm btn-secondary">All templates</button></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:10px">
+              <div class="input" style="height:auto;align-items:flex-start;padding:11px 12px"><span style="font-size:12.5px;line-height:1.6;color:var(--ink-900)">Good morning! Your order <b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{order_no}}</b> (<b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{item_count}}</b> items, <b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{total}}</b>) is out for delivery, <b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{driver}}</b> arrives ~<b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{eta}}</b>. Track: <b class="mono" style="font-size:11.5px;background:var(--primary-soft);padding:1px 5px;border-radius:4px">{{track_link}}</b></span></div>
+              <span class="faint" style="font-size:11.5px">Variables fill per customer &amp; order. WhatsApp uses the approved template; SMS falls back to plain text.</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Internal alerts (your team)</h3></div>
+            <div class="card-b" style="padding-top:4px;padding-bottom:8px">
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><span style="flex:1">Urgent order placed</span><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Bell + push</span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><span style="flex:1">Low stock threshold hit</span><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Bell + push</span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px"><span style="flex:1">Failed delivery / refusal</span><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Bell + push + SMS</span></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:9px 0;font-size:12.5px"><span style="flex:1">Payment failed (NSF)</span><span class="badge b-accent" style="text-transform:none;letter-spacing:0">Bell + email</span></div>
+            </div>
+          </div>
+          <div class="card" style="background:var(--primary-mist);border-style:dashed">
+            <div class="card-b" style="display:flex;gap:11px;font-size:12px;color:var(--ink-500);line-height:1.55">
+              <i data-ic="chat" data-sz="14" style="color:var(--accent-deep);flex:none;margin-top:1px"></i>
+              <span><b style="color:var(--ink-900)">Replies become conversations.</b> If a customer answers any notification, it opens a thread in Messages, nothing gets lost in a phone.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

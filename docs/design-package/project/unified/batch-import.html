@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow — Batch Invoice Import</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1080px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1080px}
+  .cols{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start}
+  .qrow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12.5px;cursor:pointer}
+  .qrow:last-child{border-bottom:none}
+  .qrow:hover{background:var(--canvas)}
+  .qrow.on{background:var(--primary-mist);box-shadow:inset 2.5px 0 0 var(--accent-strong)}
+  .qrow b{display:block;font-size:12.5px;color:var(--ink-900)}
+  .qrow .sub{font-size:11px;color:var(--ink-400);margin-top:1px}
+  .scanprev{height:170px;border-radius:9px;border:1px dashed var(--line-strong);
+    background:repeating-linear-gradient(-45deg,var(--sunken),var(--sunken) 8px,#F4F7FB 8px,#F4F7FB 16px);
+    display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:10.5px;color:var(--ink-400);text-align:center;line-height:1.6}
+  tr.needsfix td{background:#FFFBEB}
+  tr.needsfix td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+  .vopt{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line-strong);border-radius:8px;font-size:12.5px}
+  .vopt.on{border-color:var(--accent);outline:1.5px solid var(--accent);outline-offset:-1px;background:var(--primary-mist)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Batch Invoice Import">
+  <script>document.write(RFShell.operatorRail('wh.bills'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Bills &amp; Purchasing'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px"><h2>Batch import: 48 invoices</h2><span class="badge b-success">AI finished</span></div>
+          <div class="sub">Uploaded 9:14 AM, processed in 12 minutes while you were out. 41 imported clean, 4 need review, 3 duplicates skipped.</div>
+        </div>
+        <div class="ph-actions">
+          <span class="faint mono" style="font-size:11px;align-self:center">AI scans: 232/300 this mo</span>
+          <button class="btn btn-secondary"><i data-ic="upload" data-sz="15"></i>Add more files</button>
+          <button class="btn btn-primary"><i data-ic="check" data-sz="15"></i>Finish: post 45 bills</button>
+        </div>
+      </div>
+
+      <div class="cols">
+        <div class="card">
+          <div class="card-h" style="padding:10px 14px"><h3 style="font-size:13px">Queue</h3>
+            <div style="display:flex;gap:5px">
+              <button class="chip" style="height:24px;font-size:11px">Review <span class="n">4</span></button>
+              <button class="chip active" style="height:24px;font-size:11px">All 48</button>
+            </div>
+          </div>
+          <div class="qrow"><i data-ic="check" data-sz="14" style="color:var(--success)"></i><div style="flex:1"><b>VB-0881 · Valle Foods Co.</b><div class="sub">$2,202.04 · 7 lines, all matched</div></div><span class="badge b-success">Clean</span></div>
+          <div class="qrow"><i data-ic="check" data-sz="14" style="color:var(--success)"></i><div style="flex:1"><b>VB-0882 · Pacific Beverage</b><div class="sub">$4,180.20 · 12 lines, all matched</div></div><span class="badge b-success">Clean</span></div>
+          <div class="qrow on"><i data-ic="alert" data-sz="14" style="color:var(--warning)"></i><div style="flex:1"><b>VB-0883 · Bay Snacks Inc.</b><div class="sub">$1,644.90 · 2 of 9 lines need you</div></div><span class="badge b-warning">Review</span></div>
+          <div class="qrow"><i data-ic="alert" data-sz="14" style="color:var(--warning)"></i><div style="flex:1"><b>VB-0884 · Roast House</b><div class="sub">$988.75 · 1 line needs you</div></div><span class="badge b-warning">Review</span></div>
+          <div class="qrow"><i data-ic="alert" data-sz="14" style="color:var(--warning)"></i><div style="flex:1"><b>VB-0885 · Apiary West</b><div class="sub">low confidence on totals</div></div><span class="badge b-warning">Review</span></div>
+          <div class="qrow"><i data-ic="x" data-sz="14" style="color:var(--ink-400)"></i><div style="flex:1"><b>Duplicate of VB-0871</b><div class="sub">same supplier # + amount + date</div></div><span class="badge b-neutral">Skipped</span></div>
+          <div class="qrow"><i data-ic="x" data-sz="14" style="color:var(--ink-400)"></i><div style="flex:1"><b>Duplicate of VB-0869</b><div class="sub">matched by supplier invoice #</div></div><span class="badge b-neutral">Skipped</span></div>
+          <div style="padding:10px 14px"><span class="faint" style="font-size:11px">42 more rows. Clean bills post automatically when you finish; skipped ones link to what they matched.</span></div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="card">
+            <div class="card-h"><h3>VB-0883 · Bay Snacks Inc. · $1,644.90</h3>
+              <div style="display:flex;gap:8px"><button class="btn sm btn-secondary"><i data-ic="image" data-sz="13"></i>Original</button><span class="badge b-warning">2 lines need you</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:300px 1fr;gap:0">
+              <div style="padding:14px;border-right:1px solid var(--line)">
+                <div class="scanprev">scanned invoice<br>page 1 of 2<br>zoom + pan</div>
+                <div class="faint" style="font-size:11px;margin-top:8px;text-align:center">The line you're fixing is highlighted on the scan</div>
+              </div>
+              <table class="tbl" style="--row-h:44px">
+                <thead><tr><th>Scanned line</th><th>Matched product</th><th class="r">Qty</th><th class="r">Cost</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="primary-cell">CLOUD CHIPS BBQ 12CT</span></td><td style="color:var(--ink-700)"><i data-ic="check" data-sz="12" style="color:var(--success)"></i> Cloud Chips BBQ 1.5oz</td><td class="r">14</td><td class="r">$8.64</td></tr>
+                  <tr><td><span class="primary-cell">CLOUD CHIPS SALT+VIN 12CT</span></td><td style="color:var(--ink-700)"><i data-ic="check" data-sz="12" style="color:var(--success)"></i> Cloud Chips Salt &amp; Vinegar 1.5oz</td><td class="r">10</td><td class="r">$8.64</td></tr>
+                  <tr class="needsfix"><td><span class="primary-cell">CLOUD CHIPS JALAPENO 12CT</span><div class="faint" style="font-size:10.5px">new to your catalog</div></td><td><span class="badge b-warning">Pick below</span></td><td class="r">8</td><td class="r">$8.64</td></tr>
+                  <tr class="needsfix"><td><span class="primary-cell">BS PALLET DEPOSIT</span><div class="faint" style="font-size:10.5px">not a product</div></td><td><div class="select sm" style="width:190px"><span>Expense: packaging deposits</span><i data-ic="chevdown" data-sz="13"></i></div></td><td class="r">1</td><td class="r">$18.00</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h3>New item: CLOUD CHIPS JALAPENO 12CT</h3><span class="muted" style="font-size:12px">choose what this is</span></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:10px">
+              <div class="vopt on">
+                <span class="cb on" style="border-radius:99px;flex:none"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+                <div style="flex:1"><b style="color:var(--ink-900)">New variant of Cloud Chips 1.5oz</b><div class="faint" style="font-size:11.5px">Joins BBQ and Salt &amp; Vinegar. Inherits case size, price tiers and supplier; you set the flavor name and SKU.</div></div>
+                <div class="input sm" style="width:150px"><input value="Jalapeño" style="font-size:12px"></div>
+                <div class="input sm" style="width:110px"><input value="CCJ-015" class="mono" style="font-size:11.5px"></div>
+              </div>
+              <div class="vopt">
+                <span class="cb" style="border-radius:99px;flex:none"></span>
+                <div style="flex:1"><b style="color:var(--ink-900)">Brand new product</b><div class="faint" style="font-size:11.5px">Starts from scratch: its own pricing, units and details. Marked "details incomplete" until you finish it.</div></div>
+              </div>
+              <div class="vopt">
+                <span class="cb" style="border-radius:99px;flex:none"></span>
+                <div style="flex:1"><b style="color:var(--ink-900)">Match to an existing product</b><div class="faint" style="font-size:11.5px">If this is just a different name for something you already stock.</div></div>
+                <div class="select sm" style="width:200px"><span class="ph">Search products…</span><i data-ic="chevdown" data-sz="13"></i></div>
+              </div>
+              <div style="display:flex;gap:9px;justify-content:flex-end;padding-top:4px">
+                <button class="btn btn-secondary">Skip this line</button>
+                <button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Create variant and receive 8 cases</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

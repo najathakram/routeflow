@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Messages</title>
+<link rel="stylesheet" href="rf.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:1000px}
+  body{margin:0;overflow:hidden}
+  .screen{height:1000px}
+  .msgwrap{display:grid;grid-template-columns:340px 1fr;gap:0;border:1px solid var(--line);border-radius:var(--r-card);background:var(--paper);box-shadow:var(--sh-card);overflow:hidden;height:812px}
+  .tlist{border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .trow{display:flex;gap:11px;padding:13px 16px;border-bottom:1px solid var(--line);cursor:pointer}
+  .trow:hover{background:var(--canvas)}
+  .trow.on{background:var(--primary-mist);box-shadow:inset 2.5px 0 0 var(--accent-strong)}
+  .trow b{font-size:13px;color:var(--ink-900);display:block}
+  .trow .prev{font-size:12px;color:var(--ink-500);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px}
+  .chan{display:inline-flex;height:17px;padding:0 6px;border-radius:4px;font-size:9.5px;font-weight:700;letter-spacing:.04em;align-items:center}
+  .ch-wa{background:#DCFCE7;color:#15803D}
+  .ch-sms{background:var(--info-bg);color:#0369A1}
+  .ch-portal{background:var(--primary-soft);color:var(--accent-deep)}
+  .convo{display:flex;flex-direction:column}
+  .chead{display:flex;align-items:center;gap:11px;padding:13px 18px;border-bottom:1px solid var(--line)}
+  .cbody{flex:1;padding:18px;display:flex;flex-direction:column;gap:12px;background:var(--canvas);overflow:hidden}
+  .bub{max-width:420px;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.5}
+  .bub .t{font-size:10.5px;color:var(--ink-400);margin-top:4px;font-family:var(--font-mono)}
+  .bub.in{background:var(--paper);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+  .bub.out{background:var(--accent-strong);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+  .bub.out .t{color:rgba(255,255,255,.6)}
+  .ctx{align-self:center;display:flex;gap:9px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:99px;padding:6px 14px;font-size:11.5px;color:var(--ink-500)}
+  .cfoot{display:flex;gap:9px;padding:13px 16px;border-top:1px solid var(--line);align-items:center}
+  .quick{display:flex;gap:7px;padding:0 16px 12px;border-top:none}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Messages, Operator">
+  <script>document.write(RFShell.operatorRail('messages'))</script>
+  <div class="main">
+    <script>document.write(RFShell.topbar('Messages'))</script>
+    <div class="content">
+      <div class="ph-row" style="margin-bottom:12px">
+        <div><h2>Messages</h2><div class="sub">One thread per customer, WhatsApp, SMS and portal chat land in the same place.</div></div>
+        <div class="ph-actions">
+          <span class="faint mono" style="font-size:11px;align-self:center">140/200 sends this mo</span>
+          <button class="btn btn-secondary"><i data-ic="filetext" data-sz="15"></i>Templates</button>
+          <button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>New Message</button>
+        </div>
+      </div>
+
+      <div class="msgwrap">
+        <div class="tlist">
+          <div style="padding:11px 14px;border-bottom:1px solid var(--line)">
+            <div class="input sm"><i data-ic="search" data-sz="13" style="color:var(--ink-400)"></i><span class="ph">Search threads…</span></div>
+          </div>
+          <div class="trow on">
+            <div class="avatar" style="width:34px;height:34px">SM</div>
+            <div style="flex:1;min-width:0"><b>Sunrise Market <span class="chan ch-wa" style="margin-left:4px">WA</span></b><div class="prev">Can you add 2 cases of cold brew to tom…</div></div>
+            <div style="text-align:right"><div class="faint" style="font-size:10.5px">9:41 AM</div><span class="nbadge" style="position:static;display:inline-grid;margin-top:5px">2</span></div>
+          </div>
+          <div class="trow">
+            <div class="avatar" style="width:34px;height:34px">BM</div>
+            <div style="flex:1;min-width:0"><b>Bright Mart #2 <span class="chan ch-portal" style="margin-left:4px">PORTAL</span></b><div class="prev">Issue report: 2 boxes crushed, photo att…</div></div>
+            <div style="text-align:right"><div class="faint" style="font-size:10.5px">8:12 AM</div></div>
+          </div>
+          <div class="trow">
+            <div class="avatar" style="width:34px;height:34px">HM</div>
+            <div style="flex:1;min-width:0"><b>Hillside Mini Mart <span class="chan ch-sms" style="margin-left:4px">SMS</span></b><div class="prev">You: Reminder, INV-1901 $962.75 is 14 da…</div></div>
+            <div style="text-align:right"><div class="faint" style="font-size:10.5px">Yesterday</div></div>
+          </div>
+          <div class="trow">
+            <div class="avatar" style="width:34px;height:34px">CV</div>
+            <div style="flex:1;min-width:0"><b>Casa Verde Foods <span class="chan ch-wa" style="margin-left:4px">WA</span></b><div class="prev">You: Your order ORD-2415 is out for deliv…</div></div>
+            <div style="text-align:right"><div class="faint" style="font-size:10.5px">Yesterday</div></div>
+          </div>
+        </div>
+
+        <div class="convo">
+          <div class="chead">
+            <div class="avatar" style="width:32px;height:32px">SM</div>
+            <div style="flex:1"><b style="font-size:13.5px;color:var(--ink-900)">Sunrise Market</b><div class="faint" style="font-size:11.5px">Rosa Delgado · WhatsApp (415) 555-0182 · opted in Mar 2024</div></div>
+            <button class="btn sm btn-secondary"><i data-ic="cart" data-sz="13"></i>Open ORD-2417</button>
+            <button class="btn sm btn-secondary"><i data-ic="user" data-sz="13"></i>Customer</button>
+          </div>
+          <div class="cbody">
+            <div class="ctx"><i data-ic="truck" data-sz="12"></i>Auto, sent on "out for delivery" · Jul 5, 7:02 AM</div>
+            <div class="bub out">Good morning! Your order ORD-2398 (7 items, $1,214.55) is out for delivery, Julia arrives ~10:40 AM. Track: rf.live/t/2398<div class="t">7:02 AM · WhatsApp · delivered ✓✓</div></div>
+            <div class="bub in">Perfect. Can you add 2 cases of cold brew to tomorrow's order?<div class="t">9:38 AM</div></div>
+            <div class="bub in">Also is the honey in stock again?<div class="t">9:41 AM</div></div>
+            <div class="bub out">Done, added 2× Roast House Cold Brew to ORD-2417 at your price $3.10/pc. Honey is back: $46.80/case, want one?<div class="t">9:44 AM · sent ✓</div></div>
+            <div class="ctx"><i data-ic="pencil" data-sz="12"></i>Order ORD-2417 updated from this thread, 2 lines added</div>
+          </div>
+          <div class="quick">
+            <button class="chip">Add to order…</button>
+            <button class="chip">Send invoice PDF</button>
+            <button class="chip">Payment reminder</button>
+            <button class="chip">Delivery ETA</button>
+          </div>
+          <div class="cfoot">
+            <button class="iconbtn"><i data-ic="plus" data-sz="17"></i></button>
+            <div class="input" style="flex:1"><input value="Yes, adding 1 case of Golden Straw Honey."></div>
+            <button class="btn btn-primary"><i data-ic="send" data-sz="15"></i>Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

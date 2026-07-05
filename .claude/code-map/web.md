@@ -25,7 +25,28 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 
 ## App shell & lib
 
-- **`app/layout.tsx`** — root metadata, fonts, `<Providers>` + `<TenantProvider>` + SW registry.
+- **Unified "Ledger" design foundation (Phase 1).** `app/globals.css` holds the full Ledger CSS-var
+  set (ink/paper/canvas/sunken/line, brand teal, per-surface `--accent`, status, radii, shadows,
+  fonts, `--text-body 13.5px` density) mirroring `docs/design-package/project/unified/rf.css`; adds
+  `.surface-buyer` (emerald) / `.surface-admin` (indigo) overrides + `.money`/`.mono`/`.overline`/
+  `.skeleton` utilities. Tailwind semantic tokens (preset) resolve against these vars, so the whole
+  app adopts the palette without per-screen edits. `app/(dashboard)/layout.tsx` operator rail/topbar
+  restyled to the Ledger (ink-900 rail, active `white/10` + inset teal-300 bar, ⌘K search pill;
+  **Bills & Purchasing** added under Warehouse → `/vendor-bills`). Buyer portal + platform-admin
+  layouts carry the `.surface-buyer`/`.surface-admin` class. Plan + tracker:
+  `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `/QUESTIONS.md`.
+- **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
+  Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
+  `components/ReAuthProvider.tsx` — in-place re-auth sheet; `lib/api-client.ts` 401 handler pauses the
+  failed request and calls `requestReauth()` before falling back to the /login redirect. `lib/i18n/`
+  (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
+  `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
+  Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
+  (`ToastProvider > I18nProvider > ReAuthProvider > QueryProviders`). Customer delete
+  (`customers/[id]/page.tsx`) is now a reversible soft-delete with Undo (`useSoftDeleteCustomer`/
+  `useRestoreCustomer`).
+- **`app/layout.tsx`** — root metadata, fonts (Spline Sans + Spline Sans Mono + Instrument Serif +
+  Inter fallback), `<Providers>` + `<TenantProvider>` + SW registry.
 - **`app/providers.tsx`** — QueryClient/TanStack Query, Zustand, toast container.
 - **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
 - **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue.
@@ -34,7 +55,13 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/socket.ts`** — Socket.io singleton, token auth, reconnect.
 - **`lib/auth-keys.ts`** — `OP_KEYS`/`BUYER_KEYS`/`DRIVER_KEYS` (prevent cross-context token bleed).
 - **`lib/page-title-context.tsx`** — `usePageTitle()`.
-- **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney` (mirror of `apps/api/src/common/pricing.ts` — keep in sync).
+- **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
+  and the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
+  (box-vs-piece aware; the sale-builder "negotiation floor"). Mirror of `apps/api/src/common/pricing.ts`
+  (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+- **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
+  margin floors via `/settings/margin`) + `floorForCategory()`. `CreateOrderModal.tsx` renders
+  `<MarginHint>` (cost·margin under each line, red below floor, Set-to-floor / Sell-anyway).
 - **`lib/product-display.ts`**, **`lib/image-focal.ts`** — product focal-point crop (4:5), image fit.
 - **`lib/barcode-resolve.ts`** — `BarcodeResolveHit<T>`/`Miss` types.
 - **`lib/formatting.ts`**, **`lib/export.ts`** (`downloadCsv()`), **`lib/report-export.ts`** — format + CSV/report export.
@@ -126,7 +153,7 @@ Each module exports TanStack Query hooks + TS types mirroring API DTOs. Key entr
 | `orders.ts`          | `useOrders`, `useOrder`, `useCreateOrder`, `useUpdateOrderStatus`, `useToggleUrgent`, `useReopenOrder`, `useBulkDeleteOrders`                                                                                                         |
 | `invoices.ts`        | `useInvoices`, `useInvoice`, `useCreateInvoice`, `useUpdateInvoice`, `useSendInvoice`, `useVoidInvoice`, `useApplyCreditNote`, `useApplyAdvanceToInvoice`, `useDownloadInvoicePdf`, `useRecordInvoicePayment`, `useRecurringInvoices` |
 | `routes.ts`          | `useRoutes`, `useRoute`, `useCreateRoute`, `useAddStopToRoute`, `useUpdateRoute`, `useRouteRuns`, `useCreateRouteRun`, `useOptimizeRoute`, `useAnalyzeRoute`                                                                          |
-| `customers.ts`       | `useCustomers`, `useCustomer`, `useCreateCustomer`, `useUpdateCustomer`                                                                                                                                                               |
+| `customers.ts`       | `useCustomers`, `useCustomer`, `useCreateCustomer`, `useUpdateCustomer`, `useDeleteCustomer` (hard), `useSoftDeleteCustomer` (force → restorable) + `useRestoreCustomer` (8s-undo pair)                                               |
 | `products.ts`        | `useProducts`, `useProduct`, `useProductByBarcode`, `useCreateProduct`, `useUpdateProduct`                                                                                                                                            |
 | `drivers.ts`         | `useDrivers`, `useDriver`, `useCreateDriver`, `useUpdateDriver`, `useChangeDriverStatus`, `useDriverHistory`, `useDriverMetrics`                                                                                                      |
 | `suppliers.ts`       | `useSuppliers`, `useSupplier`, `useCreateSupplier`, `useUpdateSupplier`, `useDeactivateSupplier`                                                                                                                                      |

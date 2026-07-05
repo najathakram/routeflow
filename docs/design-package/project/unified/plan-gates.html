@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Plan Gates &amp; Billing UX</title>
+<link rel="stylesheet" href="rf.css">
+<style>
+  html,body{width:1300px}
+  body{margin:0;padding:34px 36px;background:var(--sunken)}
+  .g{display:grid;grid-template-columns:1fr 1fr;gap:34px;align-items:start}
+  .cell>.lbl{font-family:ui-monospace,monospace;font-size:11px;color:var(--ink-500);margin-bottom:12px}
+  .modal{background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-modal);overflow:hidden;width:480px}
+  .mh{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--line)}
+  .mh h4{font-size:14.5px;font-weight:600;color:var(--ink-900)}
+  .mh .x{margin-left:auto;color:var(--ink-400)}
+  .mb{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+  .mf{display:flex;gap:9px;justify-content:flex-end;padding:13px 20px;border-top:1px solid var(--line);background:var(--canvas)}
+  .qrow{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .qrow:last-child{border-bottom:none}
+  .banner{display:flex;align-items:center;gap:11px;width:480px;padding:10px 14px;border-radius:10px;font-size:12.5px;box-shadow:var(--sh-card)}
+  .ghost{height:10px;border-radius:5px;background:var(--sunken)}
+  .lockpage{width:480px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh-card);overflow:hidden}
+</style>
+</head>
+<body data-screen-label="Plan Gates &amp; Billing UX">
+  <div class="g">
+
+    <div class="cell">
+      <div class="lbl">gated feature = a real page that sells itself · nav shows a lock chip, never a dead click</div>
+      <div class="lockpage">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px">
+          <b style="font-size:14px;color:var(--ink-900)">Analytics</b>
+          <span class="badge b-neutral" style="text-transform:none;letter-spacing:0">Business plan</span>
+        </div>
+        <div style="padding:18px;position:relative">
+          <div style="display:flex;flex-direction:column;gap:9px;opacity:.45">
+            <div style="display:flex;gap:10px"><span class="ghost" style="flex:1;height:52px"></span><span class="ghost" style="flex:1;height:52px"></span><span class="ghost" style="flex:1;height:52px"></span></div>
+            <span class="ghost" style="height:110px"></span>
+            <div style="display:flex;gap:10px"><span class="ghost" style="flex:2;height:40px"></span><span class="ghost" style="flex:1;height:40px"></span></div>
+          </div>
+          <div style="position:absolute;inset:0;display:grid;place-items:center">
+            <div style="background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh-drop);padding:18px 20px;width:330px">
+              <b style="font-size:13.5px;color:var(--ink-900)">See what actually makes money</b>
+              <p style="font-size:12px;color:var(--ink-500);line-height:1.55;margin-top:5px">Revenue trends, product margins, customer patterns and operations, computed from data you already have.</p>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="btn sm btn-primary" style="flex:1;justify-content:center">Upgrade to Business</button>
+                <button class="btn sm btn-secondary">Add Forecasting $19</button>
+              </div>
+              <div class="faint" style="font-size:10.5px;margin-top:8px;text-align:center">Applies instantly · prorated · sample data shown until then</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">soft cap + grace, over the route limit never stops a run</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="banner" style="background:var(--warning-bg);color:#92400E;border:1px solid #FCD34D">
+          <i data-ic="truck" data-sz="15" style="flex:none"></i>
+          <span style="flex:1"><b>4 routes running, Team includes 3.</b> Nothing is blocked; you're in a 7-day grace (5 days left).</span>
+        </div>
+        <div class="modal">
+          <div class="mh"><h4>Keep the 4th route?</h4><i class="x" data-ic="x" data-sz="15"></i></div>
+          <div class="mb">
+            <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span style="flex:1"><b style="color:var(--ink-900)">Add a concurrent route</b><br><span class="faint" style="font-size:11.5px">$15/mo · prorated $8.00 for this cycle</span></span><button class="btn sm btn-primary">Add route</button></div>
+            <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span style="flex:1"><b style="color:var(--ink-900)">Move to Business</b><br><span class="faint" style="font-size:11.5px">Unlimited routes + portal + analytics · $349/mo</span></span><button class="btn sm btn-secondary">Compare</button></div>
+            <span class="faint" style="font-size:11.5px">Do nothing and after the grace period new runs queue until one finishes, runs in progress are never interrupted.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">seat limit, resolve inside the invite flow, one tap</div>
+      <div class="modal">
+        <div class="mh"><h4>Invite Tom Baker</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--info-bg);font-size:12.5px;color:#0369A1;line-height:1.55">
+            <i data-ic="users" data-sz="15" style="flex:none;margin-top:1px"></i>
+            <span>All <b>5 Team seats</b> are in use. Pick one:</span>
+          </div>
+          <div class="qrow" style="border:1px solid var(--accent);border-radius:9px;padding:10px 13px;background:var(--primary-mist)"><span style="flex:1"><b style="color:var(--ink-900)">Add a seat, $12/mo</b><br><span class="faint" style="font-size:11.5px">Prorated $6.40 today · invite sends immediately</span></span><span class="cb on" style="border-radius:99px"><i data-ic="check" data-sz="11" style="color:#fff"></i></span></div>
+          <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span style="flex:1"><b style="color:var(--ink-900)">Free a seat</b><br><span class="faint" style="font-size:11.5px">Deactivate an inactive user, Sam W. last signed in 24 days ago</span></span><span class="cb" style="border-radius:99px"></span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="send" data-sz="14"></i>Add seat &amp; invite</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">add-on enable, proration shown before the tap · off-switch keeps data</div>
+      <div class="modal">
+        <div class="mh"><h4>Enable Regulated-Items Compliance</h4><i class="x" data-ic="x" data-sz="16"></i></div>
+        <div class="mb">
+          <div class="qrow"><span class="qic" style="width:26px;height:26px;border-radius:7px;background:var(--primary-soft);color:var(--accent-deep);display:grid;place-items:center"><i data-ic="shield" data-sz="13"></i></span><span style="flex:1">Unlimited tracked categories · separate invoices &amp; ledgers · licenses · filings</span></div>
+          <div class="qrow"><span style="flex:1;color:var(--ink-500)">Price</span><span class="mono" style="color:var(--ink-900)"><b>$39.00/mo</b> · $20.80 prorated today</span></div>
+          <div class="qrow"><span style="flex:1;color:var(--ink-500)">Effective</span><span style="color:var(--ink-900);font-weight:500">Immediately, nav item + settings appear on save</span></div>
+          <div class="qrow"><span style="flex:1;color:var(--ink-500)">If you turn it off</span><span style="color:var(--ink-900);font-weight:500;text-align:right">History &amp; filings stay, read-only</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Cancel</button><button class="btn btn-primary"><i data-ic="check" data-sz="14"></i>Enable for $20.80 today</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">trial, full Business features, honest countdown, graceful expiry (read-only, never hostage)</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="banner" style="background:var(--primary-mist);border:1px solid var(--brand-50);color:var(--ink-700)">
+          <i data-ic="zap" data-sz="15" style="color:var(--accent-deep);flex:none"></i>
+          <span style="flex:1"><b style="color:var(--ink-900)">Trial: 9 days left.</b> You're on full Business features.</span>
+          <button class="btn sm btn-primary">Pick a plan</button>
+        </div>
+        <div class="modal">
+          <div class="mb" style="padding:18px 20px">
+            <div style="display:flex;gap:11px;padding:11px 13px;border-radius:9px;background:var(--sunken);font-size:12.5px;color:var(--ink-700);line-height:1.55">
+              <i data-ic="clock" data-sz="15" style="flex:none;margin-top:1px;color:var(--ink-500)"></i>
+              <span><b style="color:var(--ink-900)">Trial ended.</b> Everything is safe and read-only, orders, invoices and history are all here. Exports still work.</span>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary" style="flex:1;justify-content:center">Choose a plan, from $59/mo</button>
+              <button class="btn btn-secondary"><i data-ic="download" data-sz="14"></i>Export data</button>
+            </div>
+            <span class="faint" style="font-size:11.5px;text-align:center">Subscribing reactivates everything exactly where you left it.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">downgrade preview, what changes, when, and what goes read-only · scheduled, reversible</div>
+      <div class="modal">
+        <div class="mh"><h4>Move Business → Team</h4><span class="badge b-neutral" style="text-transform:none;letter-spacing:0">at period end · Aug 1</span><i class="x" data-ic="x" data-sz="15"></i></div>
+        <div class="mb" style="gap:0;padding-top:8px;padding-bottom:10px">
+          <div class="qrow"><i data-ic="chart" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">Analytics &amp; forecasting lock <span class="faint">(add-on available, $19/mo)</span></span></div>
+          <div class="qrow"><i data-ic="store" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">Buyer portal becomes an add-on <span class="faint">,  keep it for $49/mo or buyers go read-only</span></span></div>
+          <div class="qrow"><i data-ic="users" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">Seats 15 → 5 · <b style="color:var(--ink-900)">choose your 5 active users</b> <span class="faint">(others deactivate, rejoin anytime)</span></span></div>
+          <div class="qrow"><i data-ic="dollar" data-sz="14" style="color:var(--ink-400)"></i><span style="flex:1">Pricing tiers go read-only <span class="faint">,  prices keep working, editing locks</span></span></div>
+          <div style="padding-top:11px"><span class="faint" style="font-size:11.5px">Nothing is deleted, ever. Cancel the downgrade any time before Aug 1.</span></div>
+        </div>
+        <div class="mf"><button class="btn btn-secondary">Keep Business</button><button class="btn btn-primary">Schedule downgrade</button></div>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="lbl">metered AI scans, included in every plan · cap completes the scan, then offers a pack</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="banner" style="background:var(--info-bg);color:#0369A1;border:1px solid #BAE6FD">
+          <i data-ic="camera" data-sz="15" style="flex:none"></i>
+          <span style="flex:1"><b>12 AI scans left this month</b> (288/300 used). Packs add +250 anytime.</span>
+        </div>
+        <div class="modal">
+          <div class="mh"><h4>Scan processed. You're out of included scans</h4><i class="x" data-ic="x" data-sz="15"></i></div>
+          <div class="mb">
+            <div class="qrow"><span class="qic" style="width:26px;height:26px;border-radius:7px;background:var(--success-bg);color:#15803D;display:grid;place-items:center"><i data-ic="check" data-sz="13"></i></span><span style="flex:1"><b style="color:var(--ink-900)">VB-0881 · Valle Foods Co.</b>, this scan finished and mapped 6 of 7 lines. Nothing was lost.</span></div>
+            <div class="qrow" style="border:1px solid var(--accent);border-radius:9px;padding:10px 13px;background:var(--primary-mist)"><span style="flex:1"><b style="color:var(--ink-900)">Add +250 scans, $19/mo</b><br><span class="faint" style="font-size:11.5px">Prorated $10.10 today · stackable · applies instantly</span></span><button class="btn sm btn-primary">Add pack</button></div>
+            <div class="qrow" style="border:1px solid var(--line-strong);border-radius:9px;padding:10px 13px"><span style="flex:1"><b style="color:var(--ink-900)">Enter bills manually</b><br><span class="faint" style="font-size:11.5px">Free, always available, the meter resets on Aug 1</span></span><button class="btn sm btn-secondary">Manual entry</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+<script src="icons.js"></script>
+</body>
+</html>

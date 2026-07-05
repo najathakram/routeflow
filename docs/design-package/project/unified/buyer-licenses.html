@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Buyer Licenses &amp; Authorizations</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:980px}
+  body{margin:0;overflow:hidden}
+  .screen{height:980px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start}
+  .lic{display:flex;align-items:center;gap:14px;padding:15px 18px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+  .licic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;flex:none}
+  .lic b{font-size:14.5px;color:var(--ink-900);display:block}
+  .lic .sub{font-size:12.5px;color:var(--ink-500);margin-top:2px}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer Licenses &amp; Authorizations">
+  <script>document.write(RFShell.buyerRail('account'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:16px">
+        <div><h2>Licenses &amp; Authorizations</h2><div class="sub">Add a license once, connected sellers verify it and the category unlocks in their catalog.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="plus" data-sz="15"></i>Add authorization</button></div>
+      </div>
+
+      <div class="row21">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="lic" style="border-color:#86EFAC">
+            <span class="licic" style="background:var(--success-bg);color:#15803D"><i data-ic="shield" data-sz="19"></i></span>
+            <div style="flex:1"><b>Tobacco</b><div class="sub">TB-88-2041 · expires Dec 31, 2026 · shared with 2 sellers</div></div>
+            <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+              <span class="badge b-success">Verified · Golden State</span>
+              <span class="badge b-success">Verified · Pacific Coast</span>
+            </div>
+            <button class="btn sm btn-ghost"><i data-ic="pencil" data-sz="13"></i></button>
+          </div>
+
+          <div class="lic" style="border-color:#FCD34D">
+            <span class="licic" style="background:var(--warning-bg);color:#B45309"><i data-ic="clock" data-sz="19"></i></span>
+            <div style="flex:1"><b>Alcohol</b><div class="sub">ABC-482-1108 · expires Aug 15, 2027 · submitted Jul 4 with license photo</div></div>
+            <span class="badge b-warning">Pending seller review</span>
+            <button class="btn sm btn-ghost"><i data-ic="pencil" data-sz="13"></i></button>
+          </div>
+
+          <div class="lic" style="border-color:#FCA5A5;background:#FFFBFB">
+            <span class="licic" style="background:var(--danger-bg);color:#B91C1C"><i data-ic="alert" data-sz="19"></i></span>
+            <div style="flex:1"><b>Tobacco at Pacific Coast Foods</b><div class="sub">their copy of your license expires in 26 days. Renew once and it updates every seller</div></div>
+            <span class="badge b-danger">Expiring soon</span>
+            <button class="btn sm btn-primary">Renew</button>
+          </div>
+
+          <div class="card" style="border-style:dashed;background:transparent;box-shadow:none">
+            <div class="card-b" style="display:flex;align-items:center;gap:14px">
+              <div style="width:42px;height:42px;border-radius:11px;border:1px dashed var(--line-strong);display:grid;place-items:center;color:var(--ink-400)"><i data-ic="eye" data-sz="18"></i></div>
+              <div style="flex:1">
+                <b style="font-size:13.5px;color:var(--ink-900)">Don't sell regulated items?</b>
+                <div class="muted" style="font-size:12.5px;margin-top:2px">Then there's nothing to do here, regulated products simply never appear in your catalogs.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h3>Add Authorization</h3></div>
+          <div class="card-b" style="display:flex;flex-direction:column;gap:14px">
+            <div class="field">
+              <label>Category</label>
+              <div class="select"><span>Alcohol</span><i data-ic="chevdown" data-sz="14"></i></div>
+            </div>
+            <div class="field">
+              <label>License number</label>
+              <div class="input"><input value="ABC-482-1108" class="mono"></div>
+            </div>
+            <div class="field">
+              <label>Expiry date</label>
+              <div class="select"><span>Aug 15, 2027</span><i data-ic="calendar" data-sz="14" style="color:var(--ink-400)"></i></div>
+            </div>
+            <div class="field">
+              <label>License document</label>
+              <div style="height:70px;border:1px dashed var(--line-strong);border-radius:9px;display:grid;place-items:center;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-400)">drop photo / PDF or use camera</div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start">
+              <span class="cb on" style="margin-top:2px;flex:none"><i data-ic="check" data-sz="11" style="color:#fff"></i></span>
+              <span style="font-size:12px;color:var(--ink-500);line-height:1.55">Share with sellers I connect to. Each seller reviews and approves before the category unlocks with them.</span>
+            </div>
+            <button class="btn btn-primary" style="justify-content:center"><i data-ic="send" data-sz="15"></i>Submit for review</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

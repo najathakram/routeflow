@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>RouteFlow, Your Shelf (Replenishment)</title>
+<link rel="stylesheet" href="rf.css">
+<link rel="stylesheet" href="surface-buyer.css">
+<script src="shell.js"></script>
+<style>
+  html,body{width:1440px;height:950px}
+  body{margin:0;overflow:hidden}
+  .screen{height:950px}
+  .row21{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;align-items:start}
+  .dbar{width:86px;height:6px;border-radius:99px;background:var(--sunken);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+  .dbar i{display:block;height:100%;border-radius:99px}
+  .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
+  .cal .d{height:52px;border-radius:8px;border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;color:var(--ink-500)}
+  .cal .d b{font-size:13px;color:var(--ink-900);font-family:var(--font-mono)}
+  .cal .d.del{border-color:var(--accent);background:var(--accent-soft)}
+  .cal .d.del b{color:var(--accent-deep)}
+</style>
+</head>
+<body>
+<div class="screen" data-screen-label="Buyer, Your Shelf">
+  <script>document.write(RFShell.buyerRail('shop'))</script>
+  <div class="main">
+    <div class="content" style="overflow:hidden">
+      <div class="ph-row" style="margin-bottom:14px">
+        <div><h2>Your Shelf</h2><div class="sub">What you're running out of, estimated from your own ordering rhythm, not guesses.</div></div>
+        <div class="ph-actions"><button class="btn btn-primary"><i data-ic="cart" data-sz="15"></i>Add all low (4), <span class="money">$212.40</span></button></div>
+      </div>
+
+      <div class="row21">
+        <div class="card">
+          <table class="tbl">
+            <thead><tr><th>Item</th><th>You Order</th><th>Last Ordered</th><th>Est. Left</th><th class="r">Suggested</th><th></th></tr></thead>
+            <tbody>
+              <tr class="row"><td><span class="primary-cell">Agua Mineral 355ml · Case 24</span><div class="faint" style="font-size:11px">$21.60 your price</div></td><td>4 boxes / week</td><td class="muted">Jul 1</td><td><span class="dbar"><i style="width:12%;background:var(--danger)"></i></span><b style="color:var(--danger);font-size:12.5px">~2 days</b></td><td class="r mono">4 boxes</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-primary">Add</button><button class="btn sm btn-ghost">Snooze</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Roast House Cold Brew 8oz</span><div class="faint" style="font-size:11px">$3.10 your price</div></td><td>24 pcs / week</td><td class="muted">Jul 1</td><td><span class="dbar"><i style="width:22%;background:var(--warning)"></i></span><b style="color:#B45309;font-size:12.5px">~3 days</b></td><td class="r mono">24 pcs</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-primary">Add</button><button class="btn sm btn-ghost">Snooze</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Valle Tortilla Chips 11oz · Case 9</span><div class="faint" style="font-size:11px">$44.10 your price</div></td><td>16 boxes / week</td><td class="muted">Jul 1</td><td><span class="dbar"><i style="width:32%;background:var(--warning)"></i></span><b style="color:#B45309;font-size:12.5px">~4 days</b></td><td class="r mono">16 boxes</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-primary">Add</button><button class="btn sm btn-ghost">Snooze</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Sunburst Orange Soda 2L · Case 8</span><div class="faint" style="font-size:11px">$18.40 · July deal at 8+</div></td><td>10 boxes / week</td><td class="muted">Jul 1</td><td><span class="dbar"><i style="width:38%;background:var(--warning)"></i></span><b style="color:#B45309;font-size:12.5px">~4 days</b></td><td class="r mono">10 boxes</td><td style="display:flex;gap:6px;align-items:center;height:44px"><button class="btn sm btn-primary">Add</button><button class="btn sm btn-ghost">Snooze</button></td></tr>
+              <tr class="row"><td><span class="primary-cell">Cloud Chips BBQ 1.5oz · Case 12</span><div class="faint" style="font-size:11px">$14.25 your price</div></td><td>4 boxes / 2 weeks</td><td class="muted">Jun 27</td><td><span class="dbar"><i style="width:64%;background:var(--success)"></i></span><span class="mono" style="font-size:12.5px">~8 days</span></td><td class="r mono">, </td><td><span class="badge b-success">OK</span></td></tr>
+              <tr class="row"><td><span class="primary-cell">Golden Straw Honey 12oz · Case 12</span><div class="faint" style="font-size:11px">$46.80 your price</div></td><td>1 box / month</td><td class="muted">Jun 14</td><td><span class="dbar"><i style="width:78%;background:var(--success)"></i></span><span class="mono" style="font-size:12.5px">~12 days</span></td><td class="r mono">, </td><td><span class="badge b-success">OK</span></td></tr>
+            </tbody>
+          </table>
+          <div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--line)">
+            <i data-ic="zap" data-sz="13" style="color:var(--accent-deep)"></i>
+            <span class="faint" style="font-size:12px">Estimates = your purchase cadence ± seasonality. Snoozed items stay quiet for one cycle. Turn any row into a standing order to stop thinking about it.</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="card">
+            <div class="card-h"><h3>Delivery Calendar</h3><span class="muted" style="font-size:12px">July</span></div>
+            <div class="card-b">
+              <div class="cal">
+                <div class="d"><b>6</b>Mon</div>
+                <div class="d del"><b>7</b>Tue · delivery</div>
+                <div class="d"><b>8</b>Wed</div>
+                <div class="d"><b>9</b>Thu</div>
+                <div class="d del"><b>10</b>Fri · delivery</div>
+                <div class="d"><b>11</b>Sat</div>
+                <div class="d"><b>12</b>Sun</div>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:12px 2px 0;font-size:12.5px">
+                <span class="muted">Order cutoff for Tuesday</span><b style="color:var(--ink-900)">Tonight 8:00 PM</b>
+              </div>
+              <div style="display:flex;justify-content:space-between;padding:6px 2px 0;font-size:12.5px">
+                <span class="muted">Open order riding Tuesday</span><a class="btn-link" style="font-size:12.5px">ORD-2417 · $1,125.08</a>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h3>Make it automatic</h3></div>
+            <div class="card-b" style="display:flex;flex-direction:column;gap:9px">
+              <button class="btn btn-secondary" style="justify-content:center"><i data-ic="repeat" data-sz="15"></i>Turn low items into a standing order</button>
+              <span class="faint" style="font-size:11.5px;text-align:center">Tue + Fri template from these 4 items, pause or edit anytime.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="icons.js"></script>
+<script src="delight.js"></script>
+</body>
+</html>

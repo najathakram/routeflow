@@ -80,8 +80,8 @@ export function EmptyState({
       ) : null}
 
       <div className="space-y-1.5 max-w-sm">
-        <p className="text-base font-semibold text-navy">{title}</p>
-        {description && <p className="text-sm text-navy/70 leading-relaxed">{description}</p>}
+        <p className="font-display text-[17px] leading-tight text-ink-900">{title}</p>
+        {description && <p className="text-[12.5px] text-ink-500 leading-relaxed">{description}</p>}
       </div>
 
       {action && <div className="mt-2">{action}</div>}
