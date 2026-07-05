@@ -37,7 +37,7 @@ setup("authenticate as super admin", async ({ page }) => {
 setup("authenticate as operator", async ({ page, context }) => {
   await setTenantCookie(context, BASE_URL, TENANT_SLUG);
   await page.goto("/login");
-  await page.getByPlaceholder("Enter your username").fill(CREDENTIALS.operator.username);
+  await page.getByLabel("Username or email").fill(CREDENTIALS.operator.username);
   await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.operator.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
@@ -49,7 +49,7 @@ setup("authenticate as operator", async ({ page, context }) => {
 setup("authenticate as customer", async ({ page, context }) => {
   await setTenantCookie(context, BASE_URL, TENANT_SLUG);
   await page.goto("/login");
-  await page.getByPlaceholder("Enter your username").fill(CREDENTIALS.customer.username);
+  await page.getByLabel("Username or email").fill(CREDENTIALS.customer.username);
   await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.customer.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 60_000 });
