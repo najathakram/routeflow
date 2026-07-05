@@ -203,6 +203,22 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  *   4. Parse the tokens out of the resolved URL, persist them, register push token.
  */
 export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse> {
+  // Web (the mobile-web build phones are proxied to) cannot use the native
+  // routeflow:// deep-link flow — a browser can't open a custom URL scheme, so the
+  // sign-in silently hangs. Use the same full-page-redirect + one-time-code exchange
+  // the desktop web uses: the API redirects to ${WEB_URL}/auth/google/callback?code=…,
+  // handled by app/(auth)/auth/google/callback.tsx.
+  if (Platform.OS === "web") {
+    const { data: web } = await apiClient.get<{ url: string }>("/auth/google", {
+      params: { tenant: tenantSlug, context: "staff" }, // no mobile=1 → web exchange-code flow
+    });
+    if (!web?.url) throw new Error("google_unavailable");
+    window.location.assign(web.url); // full-page redirect to Google consent
+    // The page navigates away; the callback route finishes sign-in. Never resolves.
+    return new Promise<AuthResponse>(() => {});
+  }
+
+  // Native (installed iOS/Android app) — deep-link flow.
   // Step 1 — get consent URL from API (no auth required; tenant slug scopes the flow)
   const { data } = await apiClient.get<{ url: string }>("/auth/google", {
     params: { tenant: tenantSlug, context: "staff", mobile: 1 },
