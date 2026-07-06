@@ -44,6 +44,7 @@ import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
 import { BuyerModule } from "./buyer/buyer.module";
 import { TobaccoModule } from "./tobacco/tobacco.module";
+import { DraftsModule } from "./drafts/drafts.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -143,6 +144,8 @@ import { AppService } from "./app.service";
     BuyerModule,
     // ─── Tobacco compliance (tobacco_dealer addon) ─────────────────────────────
     TobaccoModule,
+    // ─── Minimize & resume drafts (pos-cost-roles-spec §2) ─────────────────────
+    DraftsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -310,6 +310,7 @@ model Tenant {
   deliveryBatches        DeliveryBatch[]
   driverLocations        DriverLocation[]
   tobaccoReports         TobaccoReport[]
+  saleDrafts             SaleDraft[]
 
   @@index([slug])
   @@index([status])
@@ -2087,4 +2088,25 @@ model TobaccoReport {
 
   @@unique([tenantId, periodYear, periodMonth])
   @@index([tenantId])
+}
+
+/// Parked sale/order/invoice drafts (pos-cost-roles-spec §2 — Minimize & resume).
+/// Per-user, tenant-scoped; `payload` is the full builder state so a draft
+/// restores exactly. Additive/new — does not touch any existing table.
+model SaleDraft {
+  id           String   @id @default(uuid())
+  tenantId     String
+  userId       String // owner — drafts are per-user
+  kind         String   @default("ORDER") // ORDER | INVOICE
+  customerId   String?
+  customerName String? // denormalized label for the draft dock (no join needed)
+  title        String?
+  payload      Json // full builder state (line items, prices, delivery date, …)
+  device       String? // originating device hint
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, updatedAt])
 }
