@@ -248,6 +248,53 @@ export class OrdersService implements OnApplicationBootstrap {
    * Idempotent: when there is 0 or 1 mergeable order, returns it (or null)
    * without writing.
    */
+
+  /**
+   * Combine one or more contributing order lines for the SAME product into a
+   * single merged line total. Boxed products price by the BOX, so every
+   * contribution is normalized to a total PIECE count first, then re-split and
+   * priced via `computeLineSubtotal` — a plain `qty * unitPrice` over-charges a
+   * boxed line by `unitsPerBox`. Handles mixed denominations: a box-split line
+   * (`boxes`/`pieces` set) stores `qty` as pieces; a selling-unit boxed line
+   * (`boxes==null`, from the box-unaware mobile cart) stores `qty` as a box
+   * count, so its pieces are `qty * unitsPerBox`. The merged line is always
+   * emitted piece-denominated (heals the inconsistency). Non-boxed products fall
+   * back to a simple qty sum × unit price.
+   */
+  private mergeBoxedContributions(
+    contributions: Array<{ qty: unknown; boxes: number | null; pieces: number | null }>,
+    unitPrice: number,
+    unitsPerBox: number | null | undefined,
+  ): { qty: number; boxes: number | null; pieces: number | null; subtotal: number } {
+    const upb = Number(unitsPerBox ?? 0);
+    const totalPieces = contributions.reduce((sum, c) => {
+      const q = Number(c.qty);
+      const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
+      return sum + (sellingUnit ? q * upb : q);
+    }, 0);
+    if (upb > 1) {
+      const split = normalizeBoxesPieces({ qty: totalPieces, unitsPerBox: upb });
+      return {
+        qty: split.qty,
+        boxes: split.boxes,
+        pieces: split.pieces,
+        subtotal: computeLineSubtotal({
+          unitPrice,
+          qty: split.qty,
+          boxes: split.boxes,
+          pieces: split.pieces,
+          unitsPerBox: upb,
+        }),
+      };
+    }
+    return {
+      qty: totalPieces,
+      boxes: null,
+      pieces: null,
+      subtotal: computeLineSubtotal({ unitPrice, qty: totalPieces }),
+    };
+  }
+
   async mergeAllPendingForCustomer(customerId: string) {
     const pendingOrders = await this.prisma.forTenant().order.findMany({
       where: {
@@ -275,14 +322,17 @@ export class OrdersService implements OnApplicationBootstrap {
     const [winner, ...losers] = pendingOrders;
     const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
 
-    // Sum extra qty to apply to winner items that share a productId with losers.
-    const qtyAdditions = new Map<string, number>();
-    // Collect new items to create on the winner (productIds only on losers).
-    // Iteration is updatedAt DESC so the first occurrence wins on price/metadata.
-    const newItemsByProductId = new Map<
+    // Collect each loser catalog line's raw fields per product so boxed lines
+    // can be re-prorated by piece count (see mergeBoxedContributions), not a
+    // naive qty sum. Iteration is updatedAt DESC so the first occurrence wins on
+    // price/metadata.
+    const loserContribsByProduct = new Map<
+      string,
+      Array<{ qty: unknown; boxes: number | null; pieces: number | null }>
+    >();
+    const newItemMetaByProduct = new Map<
       string,
       {
-        qty: number;
         unitPrice: number;
         priceType: PriceType;
         originalPrice: number | null;
@@ -292,7 +342,7 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     >();
     // Unlisted (catalog-free) loser lines can't be keyed by product — each is
-    // appended to the winner as its own new line.
+    // appended to the winner as its own new line (never boxed).
     const unlistedNewItems: Array<{
       name: string | null;
       qty: number;
@@ -319,58 +369,86 @@ export class OrdersService implements OnApplicationBootstrap {
           });
           continue;
         }
-        if (winnerProductIds.has(li.productId)) {
-          qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
-        } else {
-          const existing = newItemsByProductId.get(li.productId);
-          if (existing) {
-            existing.qty += Number(li.qty);
-          } else {
-            newItemsByProductId.set(li.productId, {
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
-              priceType: li.priceType,
-              originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-              overrideReason: li.overrideReason,
-              overriddenBy: li.overriddenBy,
-              notes: li.notes,
-            });
-          }
+        const contribs = loserContribsByProduct.get(li.productId) ?? [];
+        contribs.push({ qty: li.qty, boxes: li.boxes, pieces: li.pieces });
+        loserContribsByProduct.set(li.productId, contribs);
+        if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
+          newItemMetaByProduct.set(li.productId, {
+            unitPrice: Number(li.unitPrice),
+            priceType: li.priceType,
+            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+            overrideReason: li.overrideReason,
+            overriddenBy: li.overriddenBy,
+            notes: li.notes,
+          });
         }
       }
+    }
+
+    // unitsPerBox for every product involved so boxed lines prorate by the box.
+    const involvedProductIds = [
+      ...new Set(
+        [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)]
+          .map((li) => li.productId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const upbByProduct = new Map<string, number>();
+    if (involvedProductIds.length > 0) {
+      const prods = await this.prisma.forTenant().product.findMany({
+        where: { id: { in: involvedProductIds } },
+        select: { id: true, unitsPerBox: true },
+      });
+      for (const p of prods) upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
     }
 
     const taxRate = await this.getTaxRate();
 
     await this.prisma.tenantTransaction(async (tx) => {
-      // 1. Bump qty on winner items that overlap with losers (catalog lines only).
+      // 1. Bump winner catalog lines that overlap losers — re-prorate boxed lines
+      //    from the combined piece count (never a naive newQty * unitPrice).
       for (const li of winner.lineItems) {
         if (!li.productId) continue;
-        const addQty = qtyAdditions.get(li.productId) ?? 0;
-        if (addQty <= 0) continue;
-        const newQty = Number(li.qty) + addQty;
-        const newSubtotal = roundMoney(newQty * Number(li.unitPrice));
+        const loserContribs = loserContribsByProduct.get(li.productId);
+        if (!loserContribs || loserContribs.length === 0) continue;
+        const merged = this.mergeBoxedContributions(
+          [{ qty: li.qty, boxes: li.boxes, pieces: li.pieces }, ...loserContribs],
+          Number(li.unitPrice),
+          upbByProduct.get(li.productId),
+        );
         await tx.orderItem.update({
           where: { id: li.id },
-          data: { qty: newQty, subtotal: newSubtotal },
+          data: {
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            subtotal: merged.subtotal,
+          },
         });
       }
 
       // 2. Create winner items for productIds that were only on losers.
-      for (const [productId, data] of newItemsByProductId.entries()) {
+      for (const [productId, meta] of newItemMetaByProduct.entries()) {
+        const merged = this.mergeBoxedContributions(
+          loserContribsByProduct.get(productId) ?? [],
+          meta.unitPrice,
+          upbByProduct.get(productId),
+        );
         await tx.orderItem.create({
           data: {
             orderId: winner.id,
             productId,
-            qty: data.qty,
-            unitPrice: data.unitPrice,
-            subtotal: roundMoney(data.qty * data.unitPrice),
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            unitPrice: meta.unitPrice,
+            subtotal: merged.subtotal,
             status: ItemStatus.PENDING,
-            priceType: data.priceType,
-            originalPrice: data.originalPrice,
-            overrideReason: data.overrideReason,
-            overriddenBy: data.overriddenBy,
-            notes: data.notes,
+            priceType: meta.priceType,
+            originalPrice: meta.originalPrice,
+            overrideReason: meta.overrideReason,
+            overriddenBy: meta.overriddenBy,
+            notes: meta.notes,
           },
         });
       }
@@ -445,11 +523,13 @@ export class OrdersService implements OnApplicationBootstrap {
       winner.routeRunId == null ? (losers.find((o) => o.routeRunId != null) ?? null) : null;
 
     const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
-    const qtyAdditions = new Map<string, number>();
-    const newItemsByProductId = new Map<
+    const loserContribsByProduct = new Map<
+      string,
+      Array<{ qty: unknown; boxes: number | null; pieces: number | null }>
+    >();
+    const newItemMetaByProduct = new Map<
       string,
       {
-        qty: number;
         unitPrice: number;
         priceType: PriceType;
         originalPrice: number | null;
@@ -485,25 +565,37 @@ export class OrdersService implements OnApplicationBootstrap {
           });
           continue;
         }
-        if (winnerProductIds.has(li.productId)) {
-          qtyAdditions.set(li.productId, (qtyAdditions.get(li.productId) ?? 0) + Number(li.qty));
-        } else {
-          const existing = newItemsByProductId.get(li.productId);
-          if (existing) {
-            existing.qty += Number(li.qty);
-          } else {
-            newItemsByProductId.set(li.productId, {
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
-              priceType: li.priceType,
-              originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
-              overrideReason: li.overrideReason,
-              overriddenBy: li.overriddenBy,
-              notes: li.notes,
-            });
-          }
+        const contribs = loserContribsByProduct.get(li.productId) ?? [];
+        contribs.push({ qty: li.qty, boxes: li.boxes, pieces: li.pieces });
+        loserContribsByProduct.set(li.productId, contribs);
+        if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
+          newItemMetaByProduct.set(li.productId, {
+            unitPrice: Number(li.unitPrice),
+            priceType: li.priceType,
+            originalPrice: li.originalPrice !== null ? Number(li.originalPrice) : null,
+            overrideReason: li.overrideReason,
+            overriddenBy: li.overriddenBy,
+            notes: li.notes,
+          });
         }
       }
+    }
+
+    // unitsPerBox for every product involved so boxed lines prorate by the box.
+    const involvedProductIds = [
+      ...new Set(
+        [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)]
+          .map((li) => li.productId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const upbByProduct = new Map<string, number>();
+    if (involvedProductIds.length > 0) {
+      const prods = await this.prisma.forTenant().product.findMany({
+        where: { id: { in: involvedProductIds } },
+        select: { id: true, unitsPerBox: true },
+      });
+      for (const p of prods) upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
     }
 
     const taxRate = await this.getTaxRate();
@@ -511,28 +603,44 @@ export class OrdersService implements OnApplicationBootstrap {
     await this.prisma.tenantTransaction(async (tx) => {
       for (const li of winner.lineItems) {
         if (!li.productId) continue;
-        const addQty = qtyAdditions.get(li.productId) ?? 0;
-        if (addQty <= 0) continue;
-        const newQty = Number(li.qty) + addQty;
+        const loserContribs = loserContribsByProduct.get(li.productId);
+        if (!loserContribs || loserContribs.length === 0) continue;
+        const merged = this.mergeBoxedContributions(
+          [{ qty: li.qty, boxes: li.boxes, pieces: li.pieces }, ...loserContribs],
+          Number(li.unitPrice),
+          upbByProduct.get(li.productId),
+        );
         await tx.orderItem.update({
           where: { id: li.id },
-          data: { qty: newQty, subtotal: roundMoney(newQty * Number(li.unitPrice)) },
+          data: {
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            subtotal: merged.subtotal,
+          },
         });
       }
-      for (const [productId, data] of newItemsByProductId.entries()) {
+      for (const [productId, meta] of newItemMetaByProduct.entries()) {
+        const merged = this.mergeBoxedContributions(
+          loserContribsByProduct.get(productId) ?? [],
+          meta.unitPrice,
+          upbByProduct.get(productId),
+        );
         await tx.orderItem.create({
           data: {
             orderId: winner.id,
             productId,
-            qty: data.qty,
-            unitPrice: data.unitPrice,
-            subtotal: roundMoney(data.qty * data.unitPrice),
+            qty: merged.qty,
+            boxes: merged.boxes,
+            pieces: merged.pieces,
+            unitPrice: meta.unitPrice,
+            subtotal: merged.subtotal,
             status: ItemStatus.PENDING,
-            priceType: data.priceType,
-            originalPrice: data.originalPrice,
-            overrideReason: data.overrideReason,
-            overriddenBy: data.overriddenBy,
-            notes: data.notes,
+            priceType: meta.priceType,
+            originalPrice: meta.originalPrice,
+            overrideReason: meta.overrideReason,
+            overriddenBy: meta.overriddenBy,
+            notes: meta.notes,
           },
         });
       }
