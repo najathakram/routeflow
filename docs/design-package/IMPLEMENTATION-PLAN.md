@@ -44,8 +44,8 @@
 | # | Phase | Spec | Status |
 |---|---|---|---|
 | 1 | Foundation (tokens, shell, overlays, undo, re-auth, i18n) | ux-standards, overlays | **COMPLETE** |
-| 2 | Operator core (dashboard, orders, sale builder, customers, products, inventory, dispatch, returns) | pos-cost-roles | **IN PROGRESS** — §1 negotiation-floor core done (see PHASE-2-PLAN.md) |
-| 3 | Finance (invoices, payments, credit notes, bills/purchasing, reports, overview) | pos-cost-roles, guardrails §9 | not started |
+| 2 | Operator core (dashboard, orders, sale builder, customers, products, inventory, dispatch, returns) | pos-cost-roles | **SHIPPED & DEPLOYED** (#121, 2026-07-06 — see PHASE-2-PLAN.md) |
+| 3 | Finance (invoices, payments, credit notes, bills/purchasing, reports, overview) | pos-cost-roles, guardrails §9 | **IN PROGRESS** — batch F1 (finance dashboard + invoice detail + credit-notes reskin) shipped with #121; wiring + remaining screens pending |
 | 4 | Regulated items (categories, authorizations, override, invoice split, ledgers, filings, POD) | regulated-items | not started |
 | 5 | Buyer portal (catalogue v2, shelf, cart/checkout, order edit + change requests, tracking, finances, standing, licenses, messages) | buyer-experience | not started |
 | 6 | Messaging (threads, WA/SMS adapters, rules matrix, opt-outs, quiet hours, metering, act-from-chat) | messaging | not started |
