@@ -136,6 +136,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **controller** `order-templates` — get/patch/delete, items add/remove, `:id/generate`.
 - **service** — `findAll`, `findOne`, `update`, `delete`, `addItem`, `removeItem`, `generateOrder` (draft Order from template). side effects: OrderTemplate(+Item)/Order writes.
 
+### `drafts/` (Minimize & resume, pos-cost-roles-spec §2)
+
+- **controller** `drafts` — `/drafts` CRUD (`@Roles(OPERATOR, DRIVER)`; TENANT_ADMIN satisfies OPERATOR).
+- **service** — `list`/`create`/`update`/`get`/`remove`; per-user ownership (`assertOwned`) + tenant-scoped (`forTenant()`); autosave upserts the same draft. Model **`SaleDraft`** (per-user, `payload` Json, additive migration `20260705120000_add_sale_drafts` — CREATE TABLE only; **apply to prod before the web dock deploys**). Spec `drafts.service.spec.ts`. Web: `components/DraftDock.tsx` + `CreateOrderModal` Minimize/resume.
+
 ### `inventory/`
 
 - **controller** `inventory` — overview, movements (+purchase/adjustment), stock-count/commit, **valuation**, **`@Patch products/:id/cost-basis`**, **`@Post cost-basis/bulk`**, **`@Post recompute-costs`**, suppliers CRUD, purchase-orders CRUD + send/receive/close, forecasting.

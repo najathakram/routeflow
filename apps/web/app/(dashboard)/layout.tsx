@@ -53,6 +53,7 @@ import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 
@@ -922,8 +923,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Right column */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      {/* Right column — `relative` so the draft dock anchors to the bottom-left of
+          the content area (right of the rail), not over the sidebar's collapse
+          control; below lg the rail is a drawer so it becomes the viewport corner. */}
+      <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
@@ -942,6 +945,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         >
           {children}
         </main>
+        {/* Persistent parked-draft dock (pos-cost-roles-spec §2) — bottom-left of
+            the content area, every operator screen; resume/discard + scan-to-draft. */}
+        <DraftDock />
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />

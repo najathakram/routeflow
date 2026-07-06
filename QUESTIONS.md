@@ -53,4 +53,24 @@ Genuine ambiguities found while wiring the Unified design package. Each has a **
    soft-delete + undo land when those domains are rebuilt (Phase 2/3), reusing the primitive — not as
    a risky Phase-1 migration. Imports/migrations keep their 24h staging undo (Phase 8).
 
+## Phase 2 — Operator core
+
+8. **When does a builder autosave into a draft?** The spec says drafts "autosave per
+   keystroke". Auto-creating a draft the instant the builder opens (or on the first keystroke of
+   any order) would fill the dock with abandoned half-orders every time someone opens the builder
+   and clicks away.
+   **Chosen default:** a builder autosaves only once it is _bound to a draft_ — i.e. after the
+   operator explicitly hits **Minimize** (parks + creates the draft) or **Resumes** one from the
+   dock. From then on every change autosaves (debounced ~900ms) so a resumed draft survives
+   navigation, device loss, and syncs across devices. A never-parked fresh builder is not
+   persisted (Cancel discards it), keeping the dock free of accidental drafts. Completing the order
+   (create / save-as-draft-order / merge) deletes the parked draft.
+
+9. **Which builders get Minimize in Phase 2?** The spec covers order / invoice / PO builders.
+   **Chosen default:** wire the **order builder** (`CreateOrderModal`) end-to-end now (Minimize +
+   resume-hydrate + autosave + scan-to-draft). The dock already routes `INVOICE` drafts to
+   `/invoices/new`, but the invoice builder's Minimize/resume hydration is a follow-on in Phase 3
+   (Finance). Since only the order builder can _create_ drafts today, no `INVOICE` draft exists yet,
+   so the dock's invoice routing is inert until then.
+
 _(add new questions below as they arise, grouped by phase)_

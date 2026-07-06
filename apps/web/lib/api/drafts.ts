@@ -30,6 +30,20 @@ export function useDrafts() {
   });
 }
 
+/**
+ * Load a single draft for resume-hydration. Only enabled once an id is present
+ * (the builder passes null until the user actually resumes), so a fresh builder
+ * open never fires a request.
+ */
+export function useDraft(id: string | null | undefined) {
+  return useQuery<SaleDraft>({
+    queryKey: ["drafts", id],
+    queryFn: () => apiClient.get(`/drafts/${id}`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 0,
+  });
+}
+
 export function useCreateDraft() {
   const qc = useQueryClient();
   return useMutation({

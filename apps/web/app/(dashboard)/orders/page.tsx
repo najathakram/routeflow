@@ -72,15 +72,33 @@ export default function OrdersPage() {
 
   // Customer search stays local (too transient for URL)
   const [customerSearch, setCustomerSearch] = React.useState("");
-  const [isCreateOpen, setIsCreateOpen] = React.useState(searchParams.get("action") === "new");
+  const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  // Draft resume state (pos-cost-roles-spec §2): which parked draft to hydrate and
+  // an optional barcode to add on open.
+  const [resumeDraftId, setResumeDraftId] = React.useState<string | null>(null);
+  const [initialScanCode, setInitialScanCode] = React.useState<string | null>(null);
 
-  // Strip ?action=new from the URL once the modal has been opened so that
-  // refreshing the page doesn't reopen it unexpectedly.
+  // Open the builder from URL intents: ?action=new (fresh), ?resumeDraft=<id>
+  // (resume a parked draft), optional &scan=<code> (add on open). Runs on mount and
+  // whenever the params change — so Resume from the draft dock works even when
+  // already on this page — then strips the params so a refresh won't reopen it.
   React.useEffect(() => {
-    if (searchParams.get("action") === "new") {
+    const action = searchParams.get("action");
+    const resume = searchParams.get("resumeDraft");
+    const scan = searchParams.get("scan");
+    if (resume) {
+      setResumeDraftId(resume);
+      setInitialScanCode(scan);
+      setIsCreateOpen(true);
+      router.replace("/orders");
+    } else if (action === "new") {
+      setResumeDraftId(null);
+      setInitialScanCode(scan);
+      setIsCreateOpen(true);
       router.replace("/orders");
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -773,7 +791,16 @@ export default function OrdersPage() {
         </div>
       )}
 
-      <CreateOrderModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      <CreateOrderModal
+        isOpen={isCreateOpen}
+        onClose={() => {
+          setIsCreateOpen(false);
+          setResumeDraftId(null);
+          setInitialScanCode(null);
+        }}
+        resumeDraftId={resumeDraftId}
+        initialScanCode={initialScanCode}
+      />
     </div>
   );
 }

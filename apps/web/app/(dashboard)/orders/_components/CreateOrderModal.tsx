@@ -4,7 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle, ChevronRight, Plus } from "lucide-react";
+import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
@@ -15,6 +15,8 @@ import {
   useCustomerPriceHistory,
   type ActiveOrderSummary,
 } from "@/lib/api/orders";
+import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
+import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import {
   getTierPrice,
@@ -127,11 +129,32 @@ function MarginHint({
 export interface CreateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** When set, resume this parked draft (hydrate the builder from its payload). */
+  resumeDraftId?: string | null;
+  /** A barcode to add on open (scan-to-draft / scan-to-new, pos-cost-roles §2). */
+  initialScanCode?: string | null;
 }
 
-export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
+export function CreateOrderModal({
+  isOpen,
+  onClose,
+  resumeDraftId,
+  initialScanCode,
+}: CreateOrderModalProps) {
   const { toast } = useToast();
   const createOrder = useCreateOrder();
+
+  // Minimize & resume drafts (pos-cost-roles-spec §2).
+  const createDraft = useCreateDraft();
+  const updateDraft = useUpdateDraft();
+  const deleteDraft = useDeleteDraft();
+  const { data: loadedDraft, isFetching: draftLoading } = useDraft(isOpen ? resumeDraftId : null);
+  // The draft this builder session is bound to (set on resume, or after Minimize
+  // of a fresh order). While set, edits autosave to it.
+  const [activeDraftId, setActiveDraftId] = React.useState<string | null>(null);
+  const hydratedRef = React.useRef<string | null>(null);
+  const scanConsumedRef = React.useRef(false);
+  const lastSavedRef = React.useRef<string>("");
 
   // Fetch default tax rate from settings
   const { data: settings } = useQuery<{ taxRate?: number }>({
@@ -290,33 +313,40 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
   });
 
   const isUrgent = watch("urgent");
+  const notesValue = watch("notes");
 
-  // Reset everything when modal opens
+  // Reset the builder each time it opens (a fresh session). For a resume, the
+  // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
-    if (isOpen) {
-      reset({ urgent: false });
-      setCustomerSearch("");
-      setDebouncedCustomerSearch("");
-      setSelectedCustomer(null);
-      setCustomerError("");
-      setProductSearch("");
-      setDebouncedProductSearch("");
-      setLineItems([]);
-      setLineItemsError("");
-      setCustomFormOpen(false);
-      setCustomName("");
-      setCustomPrice("");
-      setCustomQty("1");
-      setCustomError("");
-      setRequestedDeliveryDate("");
-      setOrderDiscount("");
-      setCreateProductOpen(false);
-      setCreateProductInitialName("");
-      setCreateProductInitialSku("");
-      createOrder.reset();
-    }
+    if (!isOpen) return;
+    reset({ urgent: false });
+    setCustomerSearch("");
+    setDebouncedCustomerSearch("");
+    setSelectedCustomer(null);
+    setCustomerError("");
+    setProductSearch("");
+    setDebouncedProductSearch("");
+    setLineItems([]);
+    setLineItemsError("");
+    setCustomFormOpen(false);
+    setCustomName("");
+    setCustomPrice("");
+    setCustomQty("1");
+    setCustomError("");
+    setRequestedDeliveryDate("");
+    setOrderDiscount("");
+    setFloorAcked(new Set());
+    setCreateProductOpen(false);
+    setCreateProductInitialName("");
+    setCreateProductInitialSku("");
+    createOrder.reset();
+    // Draft-session bookkeeping: allow (re)hydration + one scan-add per open.
+    setActiveDraftId(null);
+    hydratedRef.current = null;
+    scanConsumedRef.current = false;
+    lastSavedRef.current = "";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, resumeDraftId]);
 
   const [orderDiscount, setOrderDiscount] = React.useState("");
 
@@ -534,6 +564,122 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
 
+  // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
+
+  // The full builder state, serialized so a parked draft restores exactly.
+  const draftPayload = React.useMemo<OrderDraftPayload>(
+    () => ({
+      customer: selectedCustomer,
+      lineItems,
+      orderDiscount,
+      requestedDeliveryDate,
+      notes: notesValue ?? "",
+      urgent: !!isUrgent,
+      floorAcked: Array.from(floorAcked),
+    }),
+    [
+      selectedCustomer,
+      lineItems,
+      orderDiscount,
+      requestedDeliveryDate,
+      notesValue,
+      isUrgent,
+      floorAcked,
+    ],
+  );
+  const draftPayloadJson = JSON.stringify(draftPayload);
+
+  const buildDraftDto = React.useCallback(
+    (payload: OrderDraftPayload) => ({
+      kind: "ORDER" as const,
+      customerId: payload.customer?.id ?? null,
+      customerName: payload.customer?.businessName ?? null,
+      title: payload.customer ? `Order, ${payload.customer.businessName}` : "Order draft",
+      payload: payload as unknown as Record<string, unknown>,
+      device: draftDeviceLabel(),
+    }),
+    [],
+  );
+
+  // Nothing worth parking until a customer is picked or a line is added.
+  const canMinimize = !!selectedCustomer || lineItems.length > 0;
+  const savingDraft = createDraft.isPending || updateDraft.isPending;
+
+  // Park the current builder state into the dock, then close. Reuses the bound
+  // draft when resuming, otherwise creates a new one.
+  const handleMinimize = async () => {
+    if (!canMinimize || savingDraft) return;
+    const dto = buildDraftDto(draftPayload);
+    try {
+      if (activeDraftId) {
+        await updateDraft.mutateAsync({ id: activeDraftId, ...dto });
+      } else {
+        await createDraft.mutateAsync(dto);
+      }
+      lastSavedRef.current = draftPayloadJson;
+      toast({ title: "Draft parked", variant: "success" });
+      onClose();
+    } catch {
+      toast({ title: "Could not park the draft", variant: "error" });
+    }
+  };
+
+  // Hydrate the builder from a resumed draft (once per open).
+  React.useEffect(() => {
+    if (!isOpen || !resumeDraftId || !loadedDraft) return;
+    if (hydratedRef.current === loadedDraft.id) return;
+    hydratedRef.current = loadedDraft.id;
+    const p = (loadedDraft.payload ?? {}) as unknown as OrderDraftPayload;
+    setSelectedCustomer(p.customer ?? null);
+    setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
+    setOrderDiscount(p.orderDiscount ?? "");
+    setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
+    setFloorAcked(new Set(p.floorAcked ?? []));
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent });
+    setActiveDraftId(loadedDraft.id);
+    // Seed the autosave baseline so hydration itself never triggers a write.
+    lastSavedRef.current = JSON.stringify({
+      customer: p.customer ?? null,
+      lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
+      orderDiscount: p.orderDiscount ?? "",
+      requestedDeliveryDate: p.requestedDeliveryDate ?? "",
+      notes: p.notes ?? "",
+      urgent: !!p.urgent,
+      floorAcked: p.floorAcked ?? [],
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, resumeDraftId, loadedDraft]);
+
+  // Autosave per change while bound to a draft (debounced so keystrokes stay cheap
+  // and survive navigation / device loss). Skips when nothing changed.
+  React.useEffect(() => {
+    if (!isOpen || !activeDraftId) return;
+    if (draftPayloadJson === lastSavedRef.current) return;
+    const t = setTimeout(() => {
+      updateDraft.mutate(
+        { id: activeDraftId, ...buildDraftDto(draftPayload) },
+        {
+          onSuccess: () => {
+            lastSavedRef.current = draftPayloadJson;
+          },
+        },
+      );
+    }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeDraftId, draftPayloadJson]);
+
+  // Scan-to-draft / scan-to-new: add the incoming barcode once the builder is
+  // ready — a fresh open adds immediately; a resumed draft waits until it has
+  // hydrated (activeDraftId matches) so the scan appends to the restored lines.
+  React.useEffect(() => {
+    if (!isOpen || !initialScanCode || scanConsumedRef.current) return;
+    if (resumeDraftId && activeDraftId !== resumeDraftId) return;
+    scanConsumedRef.current = true;
+    barcodeScanHandlerRef.current(initialScanCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialScanCode, resumeDraftId, activeDraftId]);
+
   // Stash form values + intended status across the merge-prompt round-trip so we can
   // re-submit with the operator's choice. Both "Save as Draft" and "Create Order"
   // funnel through here so the prompt fires for either action.
@@ -592,6 +738,8 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
           } else {
             toast({ title: "Order created", variant: "success" });
           }
+          // The parked draft has become a real order — clear it from the dock.
+          if (activeDraftId) deleteDraft.mutate(activeDraftId);
           setMergePrompt(null);
           pendingFormValuesRef.current = null;
           pendingAsDraftRef.current = false;
@@ -624,9 +772,10 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
       setCustomerError("Select a customer");
       return;
     }
+    // Read Notes from react-hook-form (the <Textarea> renders id="notes", so the
+    // old getElementById("order-notes") always missed and dropped typed notes).
     const data: FormValues = {
-      notes:
-        (document.getElementById("order-notes") as HTMLTextAreaElement | null)?.value || undefined,
+      notes: notesValue || undefined,
       urgent: false,
     };
     if (activeOrderForCustomer) {
@@ -679,11 +828,24 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Create Order"
+      title={resumeDraftId ? "Resume draft" : "Create Order"}
       description="Create a new order on behalf of a customer."
       className="max-w-2xl"
       footer={
         <>
+          {/* Minimize parks the whole builder into the bottom-left draft dock
+              (pos-cost-roles-spec §2). Left-aligned, away from the save actions. */}
+          <Button
+            variant="ghost"
+            type="button"
+            className="mr-auto"
+            onClick={handleMinimize}
+            disabled={!canMinimize || savingDraft}
+            loading={savingDraft}
+            leftIcon={<Minus className="h-4 w-4" />}
+          >
+            Minimize
+          </Button>
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
@@ -714,6 +876,13 @@ export function CreateOrderModal({ isOpen, onClose }: CreateOrderModalProps) {
         className="max-h-[65vh] overflow-y-auto pr-1"
       >
         <div className="space-y-5">
+          {/* Resume hydration state */}
+          {resumeDraftId && draftLoading && !activeDraftId && (
+            <div className="rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-700 ring-1 ring-brand-200">
+              Loading your parked draft…
+            </div>
+          )}
+
           {/* API error */}
           {apiError && (
             <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
