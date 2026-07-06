@@ -16,9 +16,20 @@ import { ListTrackedCategoriesDto } from "./dto/list-tracked-categories.dto";
  * #1, created by the W1 backfill; it is edited/created/toggled here like any other
  * category. All access is tenant-scoped via `prisma.forTenant()`.
  */
+// Every response carries `productCount` (assigned products) so the shape is
+// identical across the list / detail / mutation endpoints.
+const WITH_COUNT = { _count: { select: { products: true } } } as const;
+
+type WithCount<T> = T & { _count: { products: number } };
+
 @Injectable()
 export class TrackedCategoriesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private serialize<T extends object>(row: WithCount<T>) {
+    const { _count, ...rest } = row;
+    return { ...rest, productCount: _count.products };
+  }
 
   async findAll(query: ListTrackedCategoriesDto) {
     const where: Prisma.TrackedCategoryWhereInput = {};
@@ -28,19 +39,18 @@ export class TrackedCategoriesService {
     const rows = await this.prisma.forTenant().trackedCategory.findMany({
       where,
       orderBy: { name: "asc" },
-      include: { _count: { select: { products: true } } },
+      include: WITH_COUNT,
     });
-    return rows.map(({ _count, ...c }) => ({ ...c, productCount: _count.products }));
+    return rows.map((r) => this.serialize(r));
   }
 
   async findOne(id: string) {
     const cat = await this.prisma.forTenant().trackedCategory.findUnique({
       where: { id },
-      include: { _count: { select: { products: true } } },
+      include: WITH_COUNT,
     });
     if (!cat) throw new NotFoundException("Tracked category not found");
-    const { _count, ...rest } = cat;
-    return { ...rest, productCount: _count.products };
+    return this.serialize(cat);
   }
 
   async create(dto: CreateTrackedCategoryDto) {
@@ -49,9 +59,10 @@ export class TrackedCategoriesService {
       throw new BadRequestException("A tenant context is required to create a category.");
     }
     try {
-      return await this.prisma
+      const row = await this.prisma
         .forTenant()
-        .trackedCategory.create({ data: { ...this.toData(dto), tenantId } });
+        .trackedCategory.create({ data: { ...this.toData(dto), tenantId }, include: WITH_COUNT });
+      return this.serialize(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
         throw new ConflictException(`A category named "${dto.name}" already exists.`);
@@ -63,9 +74,10 @@ export class TrackedCategoriesService {
   async update(id: string, dto: UpdateTrackedCategoryDto) {
     await this.findOne(id);
     try {
-      return await this.prisma
+      const row = await this.prisma
         .forTenant()
-        .trackedCategory.update({ where: { id }, data: this.toData(dto) });
+        .trackedCategory.update({ where: { id }, data: this.toData(dto), include: WITH_COUNT });
+      return this.serialize(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
         throw new ConflictException(`A category named "${dto.name ?? ""}" already exists.`);
@@ -92,10 +104,12 @@ export class TrackedCategoriesService {
   /** Flip active on/off. Deactivation keeps historic sales/ledger data intact. */
   async toggle(id: string) {
     const cat = await this.findOne(id);
-    return this.prisma.forTenant().trackedCategory.update({
+    const row = await this.prisma.forTenant().trackedCategory.update({
       where: { id },
       data: { active: !cat.active },
+      include: WITH_COUNT,
     });
+    return this.serialize(row);
   }
 
   /**

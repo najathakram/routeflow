@@ -78,8 +78,13 @@ different Claude profile won't have prior-session memory — rely on this + the 
     **PENDING: user approval to apply the migration to prod** (via `railway run npx prisma migrate deploy`);
     local docker apply-test not run (Docker unavailable this session — `migrate deploy` is transactional/fail-safe).
   - **W2 (tracked-categories CRUD) + B1 reskins** next, then W3→W4 (separate money-reviewed sessions), W5, W6, W7.
-  - **W2 sync note:** `products.service` still writes only `isTobacco`; W2 must also set `trackedCategoryId`
-    on tobacco-flag writes (and re-sync any products flagged between W1 apply and W2).
+  - **W2 shadow-decoupling (deliberate):** `products.service` still writes only `isTobacco`; the new
+    `tracked-categories` assign endpoint sets only `trackedCategoryId`. They are intentionally NOT synced
+    this release, so tobacco reports (read `isTobacco`) are untouched. Consequence: a tobacco product
+    created after the W1 backfill has `isTobacco=true` but `trackedCategoryId=null`, so it shows in tobacco
+    reports but NOT in the Regulated Items hub's "Regulated Products" count (which sums assigned categories).
+    The hub count reflects **backfilled + B2-assigned** products only — B2 makes product↔category assignment
+    first-class and closes the gap. Do NOT treat the two counts as authoritative for each other until then.
 - Phases 5–10: not started (several are major feature builds, not reskins — buyer portal, messaging,
   plans/billing, migration/import).
 

@@ -48,11 +48,17 @@ describe("TrackedCategoriesService", () => {
 
   describe("create", () => {
     it("injects the tenantId and persists the category", async () => {
-      prisma.trackedCategory.create.mockResolvedValue({ id: "c1", name: "Alcohol" });
-      await service.create({ name: "Alcohol" });
+      prisma.trackedCategory.create.mockResolvedValue({
+        id: "c1",
+        name: "Alcohol",
+        _count: { products: 0 },
+      });
+      const result = await service.create({ name: "Alcohol" });
       expect(prisma.trackedCategory.create).toHaveBeenCalledWith({
         data: { name: "Alcohol", tenantId: "test-tenant" },
+        include: { _count: { select: { products: true } } },
       });
+      expect(result).toMatchObject({ id: "c1", productCount: 0 });
     });
 
     it("maps a unique-constraint violation to a 409 Conflict", async () => {
@@ -76,10 +82,17 @@ describe("TrackedCategoriesService", () => {
         active: true,
         _count: { products: 0 },
       });
+      prisma.trackedCategory.update.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: false,
+        _count: { products: 0 },
+      });
       await service.toggle("c1");
       expect(prisma.trackedCategory.update).toHaveBeenCalledWith({
         where: { id: "c1" },
         data: { active: false },
+        include: { _count: { select: { products: true } } },
       });
     });
   });

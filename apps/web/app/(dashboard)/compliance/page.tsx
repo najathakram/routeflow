@@ -46,8 +46,9 @@ export default function CompliancePage() {
   const { data: categories = [], isLoading } = useTrackedCategories();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
   // KPIs bind to the existing tobacco overview initially; the generic per-category
-  // ledger + filings arrive in W5. Only fetched when the tobacco addon is active.
-  const { data: overview } = useTobaccoOverview();
+  // ledger + filings arrive in W5. Only fetched when the tobacco addon is active
+  // (the endpoint is addon-guarded — avoid a 403 for non-addon tenants).
+  const { data: overview } = useTobaccoOverview(undefined, { enabled: hasTobacco });
 
   const activeCount = categories.filter((c) => c.active).length;
   const regulatedProducts = categories.reduce((sum, c) => sum + (c.productCount ?? 0), 0);
