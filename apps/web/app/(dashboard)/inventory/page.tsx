@@ -18,7 +18,7 @@ import {
   DollarSign,
   RefreshCcw,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useStockOverview,
@@ -438,7 +438,7 @@ function StockTable({
   if (filtered.length === 0) {
     const q = stockSearch.trim();
     return (
-      <div className="rounded-xl border border-surface-border bg-white py-10 text-center text-navy/70">
+      <div className="bg-white py-10 text-center text-navy/70">
         {q
           ? `No products match "${q}"`
           : missingCostOnly
@@ -449,7 +449,7 @@ function StockTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-surface-border">
+    <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
           <tr>
@@ -2263,19 +2263,33 @@ export default function InventoryPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-navy">Inventory</h1>
-      </div>
+      <PageHeader
+        title="Inventory"
+        subtitle="Stock levels, cost basis, purchasing, and forecasting across your catalog."
+      />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <Card>
-          <p className="text-xs text-navy/70">Total Products</p>
-          <p className="mt-1 text-2xl font-bold text-navy">{(stockItems as StockItem[]).length}</p>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-1.5">
-            <p className="text-xs text-navy/70">Inventory Value</p>
+        <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+            Total Products
+          </p>
+          <p className="mt-1.5 text-2xl font-semibold tabular-nums text-navy">
+            {(stockItems as StockItem[]).length}
+          </p>
+          <p className="text-xs text-navy/70">tracked SKUs</p>
+        </div>
+
+        <div
+          className={cn(
+            "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+            missingCostCount > 0 && "border-warning/40 ring-2 ring-warning/10",
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+              Stock Value (cost)
+            </p>
             {totalInventoryValue === 0 && (
               <span
                 title="Value is calculated from average cost per unit. Record purchase receipts in the Vendor Bills tab to populate costs."
@@ -2285,7 +2299,9 @@ export default function InventoryPage() {
               </span>
             )}
           </div>
-          <p className="mt-1 text-2xl font-bold text-navy">${totalInventoryValue.toFixed(2)}</p>
+          <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums tracking-[-0.01em] text-navy">
+            ${totalInventoryValue.toFixed(2)}
+          </p>
           {missingCostCount > 0 ? (
             <button
               type="button"
@@ -2307,21 +2323,31 @@ export default function InventoryPage() {
               </p>
             )
           )}
-        </Card>
-        <Card>
-          <p className="text-xs text-navy/70">Out of Stock</p>
+        </div>
+
+        <div
+          className={cn(
+            "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+            outOfStockCount > 0 && "border-danger/40 ring-2 ring-danger/10",
+          )}
+        >
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+            Out of Stock
+          </p>
           <p
             className={cn(
-              "mt-1 text-2xl font-bold",
+              "mt-1.5 text-2xl font-semibold tabular-nums",
               outOfStockCount > 0 ? "text-danger" : "text-navy",
             )}
           >
             {outOfStockCount}
           </p>
-          {outOfStockCount > (stockItems as StockItem[]).length * 0.5 && (
-            <p className="mt-0.5 text-[10px] text-navy/70">Stock may need updating after import</p>
+          {outOfStockCount > (stockItems as StockItem[]).length * 0.5 ? (
+            <p className="text-xs text-navy/70">Stock may need updating after import</p>
+          ) : (
+            <p className="text-xs text-navy/70">0 or fewer on hand</p>
           )}
-        </Card>
+        </div>
       </div>
 
       {/* Import artifact notice */}
@@ -2343,9 +2369,9 @@ export default function InventoryPage() {
               key={tab.value}
               value={tab.value}
               className={cn(
-                "px-4 py-2 text-sm font-medium transition-colors",
+                "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
                 "text-navy/70 hover:text-navy",
-                "data-[state=active]:border-b-2 data-[state=active]:border-brand-500 data-[state=active]:text-brand-600",
+                "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
               )}
             >
               {tab.label}
@@ -2355,7 +2381,7 @@ export default function InventoryPage() {
 
         {/* ── Stock tab ── */}
         <Tabs.Content value="stock" className="pt-4">
-          <div className="mb-3 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 rounded-t-lg border border-b-0 border-surface-border bg-white px-4 py-3 shadow-card">
             {/* Search — filters the stock table by name, SKU, or category so
                 operators can jump to a product before adjusting its stock,
                 instead of scrolling a long list. Also surfaces a typeahead
@@ -2557,22 +2583,24 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          {stockLoading ? (
-            <div className="space-y-2">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="h-12 animate-pulse rounded-lg bg-surface-raised" />
-              ))}
-            </div>
-          ) : (
-            <StockTable
-              stockItems={stockItems as StockItem[]}
-              stockSearch={stockSearch}
-              missingCostOnly={missingCostOnly}
-              setAdjustPreselectId={setAdjustPreselectId}
-              setShowAdjustModal={setShowAdjustModal}
-              onSetCost={setCostTarget}
-            />
-          )}
+          <div className="overflow-hidden rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
+            {stockLoading ? (
+              <div className="space-y-2 p-4">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-12 animate-pulse rounded-lg bg-surface-raised" />
+                ))}
+              </div>
+            ) : (
+              <StockTable
+                stockItems={stockItems as StockItem[]}
+                stockSearch={stockSearch}
+                missingCostOnly={missingCostOnly}
+                setAdjustPreselectId={setAdjustPreselectId}
+                setShowAdjustModal={setShowAdjustModal}
+                onSetCost={setCostTarget}
+              />
+            )}
+          </div>
         </Tabs.Content>
 
         {/* ── Stock Count tab ── */}
