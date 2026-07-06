@@ -5,9 +5,11 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { CostingMethod } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
@@ -29,13 +31,37 @@ function clampPct(n: number): number {
   return Math.round(n);
 }
 
+/**
+ * The tenant costing method (SystemConfig `costing.method`, pos-cost-roles-spec §1)
+ * mapped to the per-product `CostingMethod` enum. WEIGHTED_AVERAGE ≙ AVCO.
+ */
+const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
+  WEIGHTED_AVERAGE: CostingMethod.AVCO,
+  FIFO: CostingMethod.FIFO,
+  LAST_COST: CostingMethod.LAST_COST,
+};
+
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly addonService: AddonService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
+
+  /**
+   * The costing method a NEW product should use (pos-cost-roles-spec §1): an
+   * explicit choice on the DTO wins; otherwise fall back to the tenant's
+   * configured `costing.method`. Returns `undefined` when the tenant has NOT set
+   * one, so the Prisma schema default (FIFO) applies and existing behavior is
+   * unchanged — existing products are never re-costed.
+   */
+  private async resolveCostingMethod(explicit?: CostingMethod): Promise<CostingMethod | undefined> {
+    if (explicit) return explicit;
+    const tenantMethod = await this.systemConfig.get("costing.method");
+    return TENANT_COSTING_TO_PRODUCT[tenantMethod ?? ""] ?? undefined;
+  }
 
   /**
    * Flagging a product as tobacco requires the tenant's "tobacco_dealer"
@@ -270,7 +296,9 @@ export class ProductsService {
         description: dto.description,
         isActive: dto.isActive,
         isTobacco: dto.isTobacco ?? false,
-        costingMethod: dto.costingMethod,
+        // Default new products to the tenant's configured costing method when the
+        // operator didn't pick one (pos-cost-roles-spec §1).
+        costingMethod: await this.resolveCostingMethod(dto.costingMethod),
         standardCost: dto.standardCost,
         unitsPerBox: dto.unitsPerBox,
         parentProductId: dto.parentProductId ?? null,

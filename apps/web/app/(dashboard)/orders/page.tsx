@@ -13,6 +13,8 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronsUpDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
@@ -118,11 +120,11 @@ export default function OrdersPage() {
   };
 
   const SortIcon = ({ col }: { col: string }) => {
-    if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-0.5 text-navy/30 inline" />;
+    if (sortCol !== col) return <ChevronsUpDown className="h-3 w-3 ml-1 text-navy/30 inline" />;
     return sortDir === "asc" ? (
-      <ChevronUp className="h-3 w-3 ml-0.5 inline" />
+      <ChevronUp className="h-3 w-3 ml-1 inline text-brand-700" />
     ) : (
-      <ChevronDown className="h-3 w-3 ml-0.5 inline" />
+      <ChevronDown className="h-3 w-3 ml-1 inline text-brand-700" />
     );
   };
   const { toast } = useToast();
@@ -315,10 +317,17 @@ export default function OrdersPage() {
     }
   };
 
+  const headerSubtitle = meta
+    ? `${meta.total.toLocaleString("en-US")} order${meta.total !== 1 ? "s" : ""}${
+        urgentCount > 0 ? ` · ${urgentCount} urgent` : ""
+      }`
+    : undefined;
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Orders"
+        subtitle={headerSubtitle}
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -339,6 +348,7 @@ export default function OrdersPage() {
             </Button>
             <Button
               variant="secondary"
+              className={cn(selectMode && "border-brand-600 bg-brand-50 text-brand-700")}
               leftIcon={
                 selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
               }
@@ -351,71 +361,94 @@ export default function OrdersPage() {
         }
       />
 
-      {/* Selection action bar */}
+      {/* Selection action bar — dark "bulkbar" (Ledger) */}
       {selectMode && selected.size > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-warning/30 bg-warning-bg px-4 py-3">
-          <span className="text-sm font-medium text-navy">
-            {selected.size} order{selected.size !== 1 ? "s" : ""} selected
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setSelected(new Set())}
-              className="text-sm text-navy/70 hover:text-navy transition-colors"
-            >
-              Deselect all
-            </button>
-            <Button
-              variant="secondary"
-              leftIcon={<X className="h-4 w-4" />}
-              loading={isCancelling}
-              onClick={handleBulkCancel}
-            >
-              Cancel {selected.size}
-            </Button>
-            {deleteConfirm ? (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-danger font-medium">
-                  Delete {selected.size} orders?
-                </span>
-                <Button variant="danger" size="sm" loading={isDeleting} onClick={handleBulkDelete}>
-                  Confirm Delete
-                </Button>
-                <button
-                  onClick={() => setDeleteConfirm(false)}
-                  className="text-sm text-navy/70 hover:text-navy transition-colors"
-                >
-                  No
-                </button>
-              </div>
-            ) : (
-              <Button
-                variant="danger"
-                leftIcon={<Trash2 className="h-4 w-4" />}
-                onClick={() => setDeleteConfirm(true)}
+        <div className="flex flex-wrap items-center gap-3.5 rounded-lg bg-navy px-4 py-2.5 text-white shadow-dropdown">
+          <b className="text-[13px] font-semibold">{selected.size} selected</b>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
+          >
+            Deselect all
+          </button>
+          <span className="h-[18px] w-px bg-white/20" />
+          <button
+            onClick={handleBulkCancel}
+            disabled={isCancelling}
+            className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors disabled:opacity-60"
+          >
+            {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Cancel {selected.size}
+          </button>
+          {deleteConfirm ? (
+            <div className="flex items-center gap-2.5">
+              <span className="text-[12.5px] font-semibold text-[#FCA5A5]">
+                Delete {selected.size} order{selected.size !== 1 ? "s" : ""}?
+              </span>
+              <button
+                onClick={handleBulkDelete}
+                disabled={isDeleting}
+                className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#FCA5A5] hover:text-white transition-colors disabled:opacity-60"
               >
-                Delete {selected.size}
-              </Button>
-            )}
-          </div>
+                {isDeleting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                Confirm delete
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                className="text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setDeleteConfirm(true)}
+              className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-[#FCA5A5] hover:text-white transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete {selected.size}
+            </button>
+          )}
+          <span className="ml-auto text-[11.5px] text-white/45">
+            Only PENDING / CANCELLED orders can be deleted
+          </span>
         </div>
       )}
 
       {/* Saved view chips */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {SAVED_VIEWS.map((view) => (
-          <button
-            key={view.id}
-            onClick={() => applyView(view)}
-            className={cn(
-              "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-              activeSavedView === view.id
-                ? "bg-brand-600 text-white"
-                : "bg-surface-raised text-navy/70 hover:bg-brand-50 hover:text-brand-700",
-            )}
-          >
-            {view.label}
-          </button>
-        ))}
+        {SAVED_VIEWS.map((view) => {
+          const isActive = activeSavedView === view.id;
+          // Only the counts we actually have from the loaded data are shown
+          // (total for "All", urgent count for the urgent view); others omit
+          // gracefully rather than fabricating per-status tallies.
+          const count =
+            view.id === "all" ? meta?.total : view.id === "urgent" ? urgentCount : undefined;
+          return (
+            <button
+              key={view.id}
+              onClick={() => applyView(view)}
+              className={cn(
+                "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-xs font-medium whitespace-nowrap transition-colors",
+                isActive
+                  ? "border-navy bg-navy text-white"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+              )}
+            >
+              {view.label}
+              {count != null && (
+                <span
+                  className={cn(
+                    "font-mono text-[11px] tabular-nums",
+                    isActive ? "text-white/60" : "text-navy/40",
+                  )}
+                >
+                  {count.toLocaleString("en-US")}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Filter bar */}
@@ -442,10 +475,10 @@ export default function OrdersPage() {
         )}
         <input
           type="search"
-          placeholder="Search by customer or order #…"
+          placeholder="Search customer or order #…"
           value={customerSearch}
           onChange={(e) => setCustomerSearch(e.target.value)}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-10 w-64 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="w-48">
           <Select
@@ -458,16 +491,16 @@ export default function OrdersPage() {
         <button
           onClick={() => setFilter("urgent", !urgentOnly)}
           className={cn(
-            "flex h-10 items-center gap-2 rounded border px-3 text-sm font-medium transition-colors",
+            "flex h-10 items-center gap-2 rounded-ctl border px-3 text-sm font-medium transition-colors",
             urgentOnly
               ? "border-danger/40 bg-danger-bg text-danger"
-              : "border-surface-border bg-white text-navy/70 hover:text-navy",
+              : "border-line-strong bg-white text-navy/70 hover:text-navy",
           )}
         >
           <AlertTriangle className="h-4 w-4" />
           Urgent only
           {urgentOnly && urgentCount > 0 && (
-            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-danger text-[10px] font-bold text-white">
+            <span className="flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-danger-bg px-1.5 font-mono text-[11px] font-semibold text-[#B91C1C]">
               {urgentCount}
             </span>
           )}
@@ -482,16 +515,16 @@ export default function OrdersPage() {
             value={dateFrom}
             onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
           />
-          <span className="text-navy/70">–</span>
+          <span className="text-xs text-navy/40">to</span>
           <input
             type="date"
             value={dateTo}
             onChange={(e) => setFilter("dateTo", e.target.value)}
             min={dateFrom || undefined}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date to"
           />
           {(dateFrom || dateTo) && (
@@ -523,224 +556,243 @@ export default function OrdersPage() {
         )}
       </div>
 
-      {/* Table — urgent rows get red left border via wrapper trick */}
-      <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              {selectMode && <th className="w-10 px-3 py-3" />}
-              <th className="w-4 px-3 py-3" />
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("orderNumber")}
-              >
-                Order # <SortIcon col="orderNumber" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("customer")}
-              >
-                Customer <SortIcon col="customer" />
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Items</th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("total")}
-              >
-                Total <SortIcon col="total" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("status")}
-              >
-                Status <SortIcon col="status" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("deliveryDate")}
-              >
-                Delivery Date <SortIcon col="deliveryDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("createdAt")}
-              >
-                Created <SortIcon col="createdAt" />
-              </th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+      {/* Table card — urgent rows get red left border via wrapper trick */}
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
-              </tr>
-            ) : isError ? (
-              <tr>
-                <td
-                  colSpan={selectMode ? 10 : 9}
-                  className="px-4 py-12 text-center text-sm text-danger"
+                {selectMode && <th className="w-10 px-3 py-3" />}
+                <th className="w-4 px-3 py-3" />
+                <th
+                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("orderNumber")}
                 >
-                  Failed to load orders. Please try again.
-                </td>
-              </tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td colSpan={selectMode ? 10 : 9} className="p-0">
-                  {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
-                    <EmptyState
-                      variant="orders"
-                      title="No matching orders"
-                      description="No orders match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setCustomerSearch("");
-                            clearFilters();
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="orders"
-                      title="No orders yet"
-                      description="Create an order on behalf of a customer to get started."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          Create order
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              filtered.map((order) => (
-                <tr
-                  key={order.id}
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => {
-                    if (selectMode) toggleSelect(order.id);
-                    else router.push(`/orders/${order.id}`);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      if (selectMode) toggleSelect(order.id);
-                      else router.push(`/orders/${order.id}`);
-                    }
-                  }}
-                  className={cn(
-                    "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
-                    order.urgent && "border-l-2 border-l-danger",
-                    selected.has(order.id) && "bg-brand-50",
-                  )}
+                  Order # <SortIcon col="orderNumber" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("customer")}
                 >
-                  {selectMode && (
-                    <td
-                      className="px-3 py-3"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSelect(order.id);
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected.has(order.id)}
-                        onChange={() => toggleSelect(order.id)}
-                        className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
-                      />
-                    </td>
-                  )}
-                  <td className="px-3 py-3">
-                    {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {order.orderNumber}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {order.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy">{order.lineItems.length}</td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={order.status} />
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {order.requestedDeliveryDate ? (
-                      <span className="font-medium text-navy">
-                        {(() => {
-                          const [y, m, d] = order.requestedDeliveryDate
-                            .split("T")[0]
-                            .split("-")
-                            .map(Number);
-                          return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          });
-                        })()}
-                      </span>
-                    ) : (
-                      <span className="text-navy/30">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-navy">
-                    {new Date(order.createdAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      title="View order"
-                      aria-label="View order details"
-                      onClick={() => router.push(`/orders/${order.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+                  Customer <SortIcon col="customer" />
+                </th>
+                <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
+                  Items
+                </th>
+                <th
+                  className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("total")}
+                >
+                  Total <SortIcon col="total" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("status")}
+                >
+                  Status <SortIcon col="status" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("deliveryDate")}
+                >
+                  Delivery Date <SortIcon col="deliveryDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("createdAt")}
+                >
+                  Created <SortIcon col="createdAt" />
+                </th>
+                <th className="w-10 px-3 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : isError ? (
+                <tr>
+                  <td
+                    colSpan={selectMode ? 10 : 9}
+                    className="px-4 py-12 text-center text-sm text-danger"
+                  >
+                    Failed to load orders. Please try again.
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={selectMode ? 10 : 9} className="p-0">
+                    {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
+                      <EmptyState
+                        variant="orders"
+                        title="No matching orders"
+                        description="No orders match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setCustomerSearch("");
+                              clearFilters();
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="orders"
+                        title="No orders yet"
+                        description="Create an order on behalf of a customer to get started."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            Create order
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((order) => (
+                  <tr
+                    key={order.id}
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (selectMode) toggleSelect(order.id);
+                      else router.push(`/orders/${order.id}`);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (selectMode) toggleSelect(order.id);
+                        else router.push(`/orders/${order.id}`);
+                      }
+                    }}
+                    className={cn(
+                      "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+                      order.urgent && "border-l-2 border-l-danger",
+                      selected.has(order.id) && "bg-brand-50",
+                    )}
+                  >
+                    {selectMode && (
+                      <td
+                        className="px-3 py-3"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(order.id);
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.has(order.id)}
+                          onChange={() => toggleSelect(order.id)}
+                          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 py-3">
+                      {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
+                      {order.orderNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {order.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
+                      {order.lineItems.length}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
+                      ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={order.status} />
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {order.requestedDeliveryDate ? (
+                        <span className="text-navy/70">
+                          {(() => {
+                            const [y, m, d] = order.requestedDeliveryDate
+                              .split("T")[0]
+                              .split("-")
+                              .map(Number);
+                            return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            });
+                          })()}
+                        </span>
+                      ) : (
+                        <span className="text-navy/30">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-navy/70">
+                      {new Date(order.createdAt).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="View order"
+                        aria-label="View order details"
+                        onClick={() => router.push(`/orders/${order.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-      {/* Pagination */}
-      {meta && (
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <p className="text-sm text-navy/70">
-              {customerSearch
-                ? filtered.length > 0
-                  ? `Showing ${filtered.length} of ${meta.total} order${meta.total !== 1 ? "s" : ""} (filtered)`
-                  : "No orders match your search"
-                : meta.total > 0
-                  ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} order${meta.total !== 1 ? "s" : ""}`
-                  : "No orders found"}
-            </p>
+        {/* Pager — Ledger card footer */}
+        {meta && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70">
+            <span>
+              {customerSearch ? (
+                filtered.length > 0 ? (
+                  <>
+                    Showing{" "}
+                    <span className="font-mono tabular-nums text-navy">{filtered.length}</span> of{" "}
+                    <span className="font-mono tabular-nums text-navy">{meta.total}</span> order
+                    {meta.total !== 1 ? "s" : ""} (filtered)
+                  </>
+                ) : (
+                  "No orders match your search"
+                )
+              ) : meta.total > 0 ? (
+                <>
+                  Showing{" "}
+                  <span className="font-mono tabular-nums text-navy">
+                    {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
+                  </span>{" "}
+                  of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+                </>
+              ) : (
+                "No orders found"
+              )}
+            </span>
             {!customerSearch && (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-navy/70">Per page:</span>
+                <span>Per page</span>
                 <select
                   value={limit}
                   onChange={(e) => {
                     setLimit(Number(e.target.value));
                     setPage(1);
                   }}
-                  className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 >
                   {[10, 20, 50, 100].map((n) => (
                     <option key={n} value={n}>
@@ -750,46 +802,46 @@ export default function OrdersPage() {
                 </select>
               </div>
             )}
+            {!customerSearch && (meta.totalPages ?? 1) > 1 && (
+              <div className="ml-auto flex items-center gap-0.5">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                  aria-label="Previous page"
+                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+                  const totalPages = meta.totalPages ?? 1;
+                  const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+                  if (p < 1 || p > totalPages) return null;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
+                        p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                      )}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+                <button
+                  disabled={page >= (meta.totalPages ?? 1)}
+                  onClick={() => setPage((p) => p + 1)}
+                  aria-label="Next page"
+                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
           </div>
-          {!customerSearch && (meta.totalPages ?? 1) > 1 && (
-            <div className="flex items-center gap-1">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-                className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Previous
-              </button>
-              {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
-                const totalPages = meta.totalPages ?? 1;
-                const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
-                if (p < 1 || p > totalPages) return null;
-                return (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    className={cn(
-                      "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
-                      p === page
-                        ? "border-brand-500 bg-brand-500 text-white"
-                        : "border-surface-border bg-white text-navy hover:bg-surface-raised",
-                    )}
-                  >
-                    {p}
-                  </button>
-                );
-              })}
-              <button
-                disabled={page >= (meta.totalPages ?? 1)}
-                onClick={() => setPage((p) => p + 1)}
-                className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
       <CreateOrderModal
         isOpen={isCreateOpen}

@@ -56,6 +56,7 @@ import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
+import { useDriveMode } from "@/lib/drive-mode";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
@@ -455,6 +456,7 @@ function Header({
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
+  const { driveMode, setDriveMode } = useDriveMode();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
   const isSubPage = pathname.split("/").filter(Boolean).length > 1;
@@ -482,8 +484,21 @@ function Header({
         <div className="w-9 shrink-0" />
       )}
 
-      <div className="flex-1">
-        {title && <h1 className="text-base font-semibold text-navy">{title}</h1>}
+      <div className="flex flex-1 items-center gap-2 min-w-0">
+        {title && <h1 className="text-base font-semibold text-navy truncate">{title}</h1>}
+        {/* Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4) — lets the
+            operator leave the field layout without hunting through the avatar menu. */}
+        {driveMode && (
+          <button
+            onClick={() => setDriveMode(false)}
+            className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
+            title="Exit drive mode"
+          >
+            <Truck className="h-3.5 w-3.5" />
+            Drive mode
+            <X className="h-3 w-3" />
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -612,16 +627,24 @@ function Header({
                 {t("menu.profile")}
               </DropdownMenu.Item>
 
-              {/* Drive mode — one tap to the field run view for admins/operators who
-                  can act as a driver (canActAsDriver; capability enforced server-side
-                  by RolesGuard). pos-cost-roles-spec §4. */}
+              {/* Drive mode — one tap toggle to the field run layout for admins/operators
+                  who can act as a driver (canActAsDriver; capability enforced server-side
+                  by RolesGuard). Turning it on swaps layout only — no logout, permission
+                  change, or draft loss — and jumps to My Routes; turning it off (here or
+                  via the topbar Exit affordance) just restores the normal layout in place.
+                  pos-cost-roles-spec §4. */}
               {(user as { canActAsDriver?: boolean })?.canActAsDriver && (
                 <DropdownMenu.Item
                   className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
-                  onSelect={() => router.push("/routes/my-runs")}
+                  onSelect={() => {
+                    const next = !driveMode;
+                    setDriveMode(next);
+                    if (next) router.push("/routes/my-runs");
+                  }}
                 >
                   <Truck className="h-4 w-4 text-navy/70" />
-                  Drive mode
+                  <span className="flex-1">Drive mode</span>
+                  {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
                 </DropdownMenu.Item>
               )}
 

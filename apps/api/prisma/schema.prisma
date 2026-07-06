@@ -135,6 +135,10 @@ enum CostingMethod {
   LIFO
   AVCO
   STANDARD
+  // Last cost — every sale is costed at the most recent purchase lot's unit
+  // cost (pos-cost-roles-spec §1). Additive value; see migration
+  // 20260706040000_add_costing_last_cost.
+  LAST_COST
 }
 
 // ─── New Enums (Zoho-parity) ──────────────────────────────────────────────────

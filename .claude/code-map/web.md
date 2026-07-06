@@ -84,6 +84,12 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/stock-count-storage.ts`**, **`lib/buyer-cart.ts`**, **`lib/fetch-pdf-blob.ts`** — local state + PDF blobs.
 - **`lib/admin-api.ts`**, **`lib/buyer-auth.ts`**, **`lib/buyer-api-client.ts`** — admin & buyer clients/types.
 - **`lib/hooks/`** — `useNotifications`, `useBuyerNotifications`, `useRealtimeUpdates` (socket→query invalidation), `useUrlFilters` (filter↔URL), `useDebounce`.
+- **`lib/drive-mode.tsx`** — Drive mode (pos-cost-roles-spec §4, "role = permissions; mode = layout").
+  `useDriveMode()` → `{ driveMode, setDriveMode(on), toggle() }`, localStorage key `rf-drive-mode`
+  (SSR-safe: `false` on server/first render, hydrated in an effect; cross-tab via `storage` event +
+  an in-module listener set so same-tab toggles also re-sync). No deps, no API call. Consumed by
+  `(dashboard)/layout.tsx` Header (topbar chip + one-tap Exit, avatar-menu toggle) and
+  `routes/my-runs/page.tsx` (field-layout switch).
 
 ## Routes (`app/`)
 
@@ -99,13 +105,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - `dashboard/page.tsx` — KPI cards (pending orders, routes, drivers, receivables), tables.
 - `settings/page.tsx` — branding, invoice numbering, delivery defaults. `settings/import/page.tsx` — bulk import.
 - **Order create / scan-to-add:** `orders/_components/CreateOrderModal.tsx` and `invoices/new/page.tsx` both **auto-scroll the just-scanned line into view** (ref-map + `scrollIntoView`); CreateOrderModal pre-fills remembered price (`useCustomerPriceHistory`).
-- **Orders/fulfillment:** `orders/page.tsx` (status views, bulk delete, export), `orders/[id]/page.tsx` (items, pricing tiers, timeline, return, send to route; **inline per-line unit-price edit + "$ off/unit" discount on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice={canEdit}`; was DRAFT-only) via `PriceEditRow` → net `unitPrice`/`overrideReason` to `PATCH /orders/:id/items`; reads `MANUAL` priceType strikethrough; `EditableLineItems` pre-fills remembered price from `useCustomerPriceHistory` + auto-scrolls the scanned row into view; `handleSaveItems` sends an incremental diff with **`replaceAll: false`** so adding an item never deletes the untouched lines); `routes/page.tsx`, `routes/create/page.tsx` (pick stops → optimize → assign), `routes/[id]/page.tsx`, `routes/[id]/dispatch/page.tsx` (live map + POD), `routes/templates/[id]/page.tsx`, `routes/my-runs/page.tsx`.
+- **Orders/fulfillment:** `orders/page.tsx` (status views, bulk delete, export), `orders/[id]/page.tsx` (items, pricing tiers, timeline, return, send to route; **inline per-line unit-price edit + "$ off/unit" discount on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice={canEdit}`; was DRAFT-only) via `PriceEditRow` → net `unitPrice`/`overrideReason` to `PATCH /orders/:id/items`; reads `MANUAL` priceType strikethrough; `EditableLineItems` pre-fills remembered price from `useCustomerPriceHistory` + auto-scrolls the scanned row into view; `handleSaveItems` sends an incremental diff with **`replaceAll: false`** so adding an item never deletes the untouched lines); `routes/page.tsx`, `routes/create/page.tsx` (pick stops → optimize → assign), `routes/[id]/page.tsx` (live-run stop list w/ live status + map; `StopItem` takes an
+  `onAtDoorActions` prop and shows an "At-door actions" button on the `IN_PROGRESS` (current) stop →
+  opens the shared `ArrivedStopSheet` — Phase 2 §3, the real driver at-door surface), `routes/[id]/dispatch/page.tsx` (pre-run
+  packing-list/loading-manifest view; `RequiredStopCard` shows an "At-door actions" button when a
+  stop's packing status is `IN_PROGRESS` (arrived) → opens `ArrivedStopSheet` for that stop, Phase 2
+  §3), `routes/templates/[id]/page.tsx`, `routes/my-runs/page.tsx` (driver's own runs; reskins to the **Drive mode** field layout — today's run promoted to a hero card with big stop rows, Progress/Next Stop/Delivered-Today `StatCard`s, and a prominent "Scan to add order" primary action linking `/orders?action=new&scan=1` — when `useDriveMode().driveMode` is true; same `useRouteRuns`/data untouched, off-state renders the prior compact Today/Upcoming lists).
 - **Invoicing/payments:** `invoices/page.tsx`, `invoices/new/page.tsx`, `invoices/[id]/page.tsx` (mark paid, apply credit/advance, void, email, PDF), `invoices/[id]/edit/page.tsx`, `invoices/recurring/page.tsx`, `invoices/recurring/new/page.tsx`.
 - **Finance:** `finance/dashboard/page.tsx` (AR aging, sales breakdowns), `finance/expenses/page.tsx` + `new/page.tsx` (OCR), `finance/payments/page.tsx` + `[id]/page.tsx`, `finance/reports/page.tsx` (AR aging, P&L, cash flow, expense breakdown).
 - **Credit notes/estimates:** `credit-notes/page.tsx` + `[id]/page.tsx`; `estimates/page.tsx` + `[id]/page.tsx` (convert to invoice).
 - **People:** `customers/page.tsx`, `customers/create/page.tsx`, `customers/[id]/page.tsx` (form `_components/CustomerFormModal.tsx` — **email is OPTIONAL**; username derived from name when email absent); `drivers/page.tsx`, `drivers/[id]/page.tsx`.
 - **Inventory/sourcing:** `products/page.tsx`, `products/[id]/page.tsx` (pricing tiers, image+focal editor, variants, `CostHistoryCard` from /analytics/cost-history, amber "No cost set" states); `inventory/page.tsx` (valuation card + missing-cost chip/filter, `SetCostModal`/`BulkSetCostModal`/`RecomputeModal` dry-run→apply); `inventory/movements/page.tsx`; `suppliers/page.tsx` + `[id]/page.tsx`; `vendor-bills/page.tsx` + `[id]/page.tsx` (`UnlinkedItemsModal` catches UNLINKED_ITEMS 409, unmapped-DRAFT banner); vendor-bill LIST lives in `finance/expenses/page.tsx` `InventoryPurchasesTab` (needs-mapping KPI chip + row badge).
-- **Returns/analytics:** `returns/page.tsx` + `[id]/page.tsx` (approve/reject/in-transit/received/refund); `analytics/page.tsx`.
+- **Returns/analytics:** `returns/page.tsx` (list — reskinned to Unified Ledger per `docs/design-package/project/unified/returns.html`: `PageHeader`+subtitle, 3 KPI stat cards incl. warning-ring "Awaiting Review", status-chip filter bar (all `ReturnStatus` values, not just the design's 5) + reason `<select>` + search, table gained a computed "Value" column (sum of `item.unitPrice*qty`, presentational only), row action button "Review"/"View" by status — same `useReturns`/`useCreateReturn`, same handlers/filters/pagination, unchanged) + `[id]/page.tsx` (detail — NOT reskinned yet; approve/reject/in-transit/received/refund live here); `analytics/page.tsx`.
 - **Tobacco (addon-gated):** `tobacco/page.tsx` — KPIs, monthly chart, tabs (Reports w/ CSV+PDF downloads + generate/regenerate, Inventory, Purchases w/ supplier license, Sales w/ customer-license warnings), TENANT_ADMIN exclusion-toggle card; nav "Tobacco" leaf spliced after Analytics in `layout.tsx` when `useHasAddon("tobacco_dealer")`; product detail Mark-as-tobacco action + banner; product list tobacco badge. Hooks: `lib/api/tobacco.ts` (`useTenantAddons`/`useHasAddon` = the flag read, staleTime 5 min).
 - **Other:** `dispatch/page.tsx`, `bookkeeping/page.tsx` + `[transactionId]/page.tsx`.
 
@@ -156,6 +167,10 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
   `SearchableProductPicker.tsx`, `SupplierSelect.tsx`, `InlineCreate{Product,Supplier}Modal.tsx`,
   `AddressAutocomplete.tsx` (Google Maps), `UnitCombobox.tsx`, `GroupAsVariantsModal.tsx`,
   `ConfirmDialog.tsx`, `DraftDock.tsx` (parked-draft dock + scan-to-draft, Phase 2 §2),
+  `ArrivedStopSheet.tsx` (Phase 2 §3 at-door actions sheet: `Modal` w/ 3 nav tiles — Adjust order
+  → `/orders/{orderId}` (shown only if the stop has an order), New order at door →
+  `/orders?action=new`, Collect payment → `/finance/payments`; pure navigation dispatcher, no new
+  API/state, closes on selection via `router.push`),
   `SortableTh.tsx`, `ReportChart.tsx` (recharts), `ReportToolbar.tsx`,
   `TenantLogo.tsx`, `PwaInstallPrompt.tsx`/`InstallAppButton.tsx`, `ServiceWorkerRegistry.tsx`,
   `AutoRedirectIfAuthed.tsx`, `inventory/StockCount{Tab,Row,BulkBar,ReviewModal}.tsx`.

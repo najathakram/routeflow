@@ -157,6 +157,33 @@ describe("InventoryService", () => {
       expect(result.unitCost.toString()).toBe("2.75");
     });
 
+    it("uses the most recent PURCHASE movement's cost for LAST_COST products", async () => {
+      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      // A newest bill @ 3.5; a later positive stock-count lot @ avg cost must NOT win.
+      prisma.stockMovement.findFirst.mockResolvedValue({ unitCost: D(3.5) });
+
+      const result = await service.recordSale("prod-1", D(2), null, null, tx());
+
+      // Purchase-only + deterministic ordering (createdAt, then id).
+      expect(prisma.stockMovement.findFirst).toHaveBeenCalledWith({
+        where: { productId: "prod-1", type: "PURCHASE" },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { unitCost: true },
+      });
+      expect(result.unitCost.toString()).toBe("3.5");
+      // Last cost is not lot-consuming.
+      expect(prisma.stockLot.update).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the average cost for LAST_COST when there are no purchases", async () => {
+      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      prisma.stockMovement.findFirst.mockResolvedValue(null);
+
+      const result = await service.recordSale("prod-1", D(2), null, null, tx());
+
+      expect(result.unitCost.toString()).toBe("2"); // averageCost fallback
+    });
+
     it("never throws when stock goes negative", async () => {
       prisma.product.findUnique.mockResolvedValue(product({ currentStock: D(1) }));
 

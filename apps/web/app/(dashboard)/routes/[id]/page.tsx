@@ -17,6 +17,7 @@ import {
   GripVertical,
   Pencil,
   Trash2,
+  DoorOpen,
 } from "lucide-react";
 import {
   DndContext,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/api/routes";
 import { EditRunModal } from "../_components/EditRunModal";
 import { RouteMap } from "./RouteMap";
+import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
 
 // ─── Stop status icon ─────────────────────────────────────────────────────────
 
@@ -90,9 +92,11 @@ function SortableStopItem({ stop, draggable }: { stop: RouteRunStop; draggable: 
 function StopItem({
   stop,
   dragHandleProps,
+  onAtDoorActions,
 }: {
   stop: RouteRunStop;
   dragHandleProps?: React.HTMLAttributes<HTMLButtonElement>;
+  onAtDoorActions?: (stop: RouteRunStop) => void;
 }) {
   const [expanded, setExpanded] = React.useState(stop.status === "IN_PROGRESS");
 
@@ -155,6 +159,21 @@ function StopItem({
         </button>
       </div>
 
+      {stop.status === "IN_PROGRESS" && onAtDoorActions && (
+        <div className="px-3 pb-3">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAtDoorActions(stop);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs font-semibold text-brand-700 shadow-card transition-colors hover:bg-surface-raised"
+          >
+            <DoorOpen className="h-3.5 w-3.5" />
+            At-door actions
+          </button>
+        </div>
+      )}
+
       {expanded && (
         <div className="border-t border-surface-border px-3 pb-3 pt-2 space-y-2">
           {stop.orders && stop.orders.length > 0 && (
@@ -216,6 +235,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   const [showEditModal, setShowEditModal] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const [atDoorStop, setAtDoorStop] = React.useState<RouteRunStop | null>(null);
 
   // Local stops state for optimistic DnD reordering
   const [localStops, setLocalStops] = React.useState<RouteRunStop[]>([]);
@@ -351,6 +371,12 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden">
       {showEditModal && <EditRunModal run={run} onClose={() => setShowEditModal(false)} />}
+      <ArrivedStopSheet
+        open={!!atDoorStop}
+        onClose={() => setAtDoorStop(null)}
+        customerName={atDoorStop?.customer?.businessName ?? atDoorStop?.customerId ?? "Customer"}
+        orders={atDoorStop?.orders}
+      />
 
       <Modal
         open={confirmCancel}
@@ -525,7 +551,7 @@ export default function RouteRunDetailPage({ params }: { params: { id: string } 
             <ul className="flex-1 space-y-2 overflow-y-auto p-4">
               {stops.map((stop) => (
                 <li key={stop.id}>
-                  <StopItem stop={stop} />
+                  <StopItem stop={stop} onAtDoorActions={setAtDoorStop} />
                 </li>
               ))}
             </ul>

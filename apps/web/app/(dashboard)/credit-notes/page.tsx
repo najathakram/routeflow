@@ -2,71 +2,18 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Eye, Calendar, X, Loader2, Search } from "lucide-react";
-import {
-  PageHeader,
-  Button,
-  Select,
-  cn,
-  Modal,
-  useToast,
-  EmptyState,
-  Badge,
-} from "@routeflow/ui/web";
+import { Plus, Eye, Calendar, X, Loader2, Search, ShieldCheck } from "lucide-react";
+import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices } from "@/lib/api/invoices";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt } from "@/lib/formatting";
 
-// ─── KPI chip ─────────────────────────────────────────────────────────────────
+// ─── Status filter chips (real statuses) ──────────────────────────────────────
 
-function KpiChip({
-  label,
-  value,
-  danger,
-  onClick,
-  active,
-}: {
-  label: string;
-  value: number;
-  danger?: boolean;
-  onClick: () => void;
-  active: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
-        active
-          ? "border-brand-500 bg-brand-500 text-white"
-          : danger && value > 0
-            ? "border-red-200 bg-red-50 text-red-700 hover:border-red-300"
-            : "border-surface-border bg-white text-navy hover:bg-surface-raised",
-      )}
-    >
-      <span>{label}</span>
-      <span
-        className={cn(
-          "flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 text-xs font-bold",
-          active
-            ? "bg-white/20 text-white"
-            : danger && value > 0
-              ? "bg-red-200 text-red-700"
-              : "bg-surface-raised text-navy/70",
-        )}
-      >
-        {value}
-      </span>
-    </button>
-  );
-}
-
-// ─── Status filter options ────────────────────────────────────────────────────
-
-const STATUS_OPTIONS = [
-  { value: "", label: "All Statuses" },
+const STATUS_CHIPS: { value: string; label: string }[] = [
+  { value: "", label: "All" },
   { value: "DRAFT", label: "Draft" },
   { value: "ISSUED", label: "Issued" },
   { value: "APPLIED", label: "Applied" },
@@ -307,6 +254,35 @@ function CreateCreditNoteModal({
   );
 }
 
+// ─── Stat card (Ledger idiom: overline · value · hint) ─────────────────────────
+
+function StatTile({
+  label,
+  value,
+  hint,
+  money,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  money?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
+      <span className="overline block">{label}</span>
+      <span
+        className={cn(
+          "mt-1.5 block text-2xl text-navy",
+          money ? "money" : "font-semibold tracking-[-0.02em]",
+        )}
+      >
+        {value}
+      </span>
+      <span className="mt-1 block text-xs text-navy/70">{hint}</span>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CreditNotesPage() {
@@ -350,12 +326,68 @@ export default function CreditNotesPage() {
     return counts;
   }, [all]);
 
+  // Stat tiles — derived from real data only (no fabricated revenue %).
+  const stats = React.useMemo(() => {
+    // Open credit: unapplied, unvoided notes still carrying a balance.
+    const openNotes = all.filter((cn) => cn.status === "DRAFT" || cn.status === "ISSUED");
+    const openCredit = openNotes.reduce((s, cn) => s + Number(cn.amount), 0);
+
+    // Issued in the last 30 days (by issue date).
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    const issued30 = all.filter((cn) => {
+      if (cn.status === "VOID") return false;
+      const d = new Date((cn as any).issueDate ?? cn.createdAt);
+      return !isNaN(d.getTime()) && d >= cutoff;
+    });
+    const issued30Value = issued30.reduce((s, cn) => s + Number(cn.amount), 0);
+
+    // Top reason by credited value (non-void).
+    const byReason = new Map<string, number>();
+    let creditedTotal = 0;
+    for (const cn of all) {
+      if (cn.status === "VOID") continue;
+      const reason = (cn.reason || "—").trim() || "—";
+      const amt = Number(cn.amount);
+      byReason.set(reason, (byReason.get(reason) ?? 0) + amt);
+      creditedTotal += amt;
+    }
+    let topReason = "—";
+    let topReasonValue = 0;
+    byReason.forEach((amt, reason) => {
+      if (amt > topReasonValue) {
+        topReason = reason;
+        topReasonValue = amt;
+      }
+    });
+    const topReasonPct = creditedTotal > 0 ? Math.round((topReasonValue / creditedTotal) * 100) : 0;
+
+    return {
+      openCredit,
+      openCount: openNotes.length,
+      issued30Value,
+      issued30Count: issued30.length,
+      topReason,
+      topReasonPct,
+    };
+  }, [all]);
+
   const totalPages = meta?.totalPages ?? 1;
+  const hasActiveFilters = !!(search || statusFilter || dateFrom || dateTo);
+
+  function clearFilters() {
+    setSearch("");
+    setStatusFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  }
 
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Credit Notes"
+        subtitle="Issued from returns, disputes and manual adjustments, applied against invoices automatically."
         action={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
             New Credit Note
@@ -363,228 +395,254 @@ export default function CreditNotesPage() {
         }
       />
 
-      {/* KPI chips */}
-      <div className="flex flex-wrap items-center gap-2">
-        <KpiChip
-          label="All"
-          value={kpiCounts.total}
-          active={statusFilter === ""}
-          onClick={() => {
-            setStatusFilter("");
-            setPage(1);
-          }}
+      {/* Stat tiles */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatTile
+          label="Open Credit"
+          value={fmt(stats.openCredit)}
+          hint={`${stats.openCount} ${stats.openCount === 1 ? "note" : "notes"} with remaining balance`}
+          money
         />
-        <KpiChip
-          label="Draft"
-          value={kpiCounts.draft}
-          active={statusFilter === "DRAFT"}
-          onClick={() => {
-            setStatusFilter("DRAFT");
-            setPage(1);
-          }}
+        <StatTile
+          label="Issued, 30d"
+          value={fmt(stats.issued30Value)}
+          hint={`${stats.issued30Count} ${stats.issued30Count === 1 ? "note" : "notes"} in the last 30 days`}
+          money
         />
-        <KpiChip
-          label="Issued"
-          value={kpiCounts.issued}
-          active={statusFilter === "ISSUED"}
-          onClick={() => {
-            setStatusFilter("ISSUED");
-            setPage(1);
-          }}
-        />
-        <KpiChip
-          label="Applied"
-          value={kpiCounts.applied}
-          active={statusFilter === "APPLIED"}
-          onClick={() => {
-            setStatusFilter("APPLIED");
-            setPage(1);
-          }}
-        />
-        <KpiChip
-          label="Void"
-          value={kpiCounts.void}
-          danger
-          active={statusFilter === "VOID"}
-          onClick={() => {
-            setStatusFilter("VOID");
-            setPage(1);
-          }}
+        <StatTile
+          label="Top Reason"
+          value={stats.topReason}
+          hint={
+            stats.topReasonPct > 0
+              ? `${stats.topReasonPct}% of credited value`
+              : "No credited value yet"
+          }
         />
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="search"
-          placeholder="Search by CN # or customer…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          className="h-10 w-64 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <div className="w-44">
-          <Select
-            options={STATUS_OPTIONS}
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-        {/* Date range */}
-        <div className="flex items-center gap-1.5">
-          <Calendar className="h-4 w-4 text-navy/70" />
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => {
-              setDateFrom(e.target.value);
-              setPage(1);
-            }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Issue date from"
-          />
-          <span className="text-navy/70">–</span>
-          <input
-            type="date"
-            value={dateTo}
-            min={dateFrom || undefined}
-            onChange={(e) => {
-              setDateTo(e.target.value);
-              setPage(1);
-            }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            title="Issue date to"
-          />
-          {(dateFrom || dateTo) && (
-            <button
-              onClick={() => {
-                setDateFrom("");
-                setDateTo("");
+      {/* Filter + table card */}
+      <div className="rounded-lg border border-surface-border bg-white shadow-card">
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-surface-border px-4 py-3">
+          {STATUS_CHIPS.map((chip) => {
+            const count =
+              chip.value === ""
+                ? kpiCounts.total
+                : chip.value === "DRAFT"
+                  ? kpiCounts.draft
+                  : chip.value === "ISSUED"
+                    ? kpiCounts.issued
+                    : chip.value === "APPLIED"
+                      ? kpiCounts.applied
+                      : kpiCounts.void;
+            const showCount =
+              chip.value === "" || chip.value === "DRAFT" || chip.value === "ISSUED";
+            return (
+              <button
+                key={chip.value || "all"}
+                onClick={() => {
+                  setStatusFilter(chip.value);
+                  setPage(1);
+                }}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                  statusFilter === chip.value
+                    ? "border-navy bg-navy text-white"
+                    : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                )}
+              >
+                {chip.label}
+                {showCount && count > 0 && (
+                  <span
+                    className={cn(
+                      "font-mono text-[11px]",
+                      statusFilter === chip.value ? "text-white/60" : "text-navy/40",
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Date range */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <Calendar className="h-4 w-4 text-navy/70" />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
                 setPage(1);
               }}
-              className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
-              title="Clear dates"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Issue date from"
+            />
+            <span className="text-navy/70">–</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setPage(1);
+              }}
+              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              title="Issue date to"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => {
+                  setDateFrom("");
+                  setDateTo("");
+                  setPage(1);
+                }}
+                className="rounded p-1.5 text-navy/70 hover:text-danger transition-colors"
+                title="Clear dates"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Search */}
+          <div className="relative w-full sm:w-56">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-navy/40" />
+            <input
+              type="search"
+              placeholder="CN #, customer or invoice…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="h-8 w-full rounded-lg border border-surface-border bg-white pl-8 pr-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Credit Note
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Source</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Applied To</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                <th className="w-10 px-3 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                  </td>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load credit notes. Please try again.
+                  </td>
+                </tr>
+              ) : creditNotes.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    {hasActiveFilters ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching credit notes"
+                        description="No credit notes match your current search and filters."
+                        action={
+                          <Button variant="secondary" size="sm" onClick={clearFilters}>
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No credit notes yet"
+                        description="Issue a credit note to refund or adjust a customer's balance."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            New credit note
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                creditNotes.map((cn: CreditNote) => (
+                  <tr
+                    key={cn.id}
+                    onClick={() => router.push(`/credit-notes/${cn.id}`)}
+                    className="cursor-pointer transition-colors hover:bg-surface-raised"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {cn.creditNoteNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {cn.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy/70">
+                      <span className="line-clamp-1">{cn.reason || "—"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right money text-navy">
+                      {fmt(Number(cn.amount))}
+                    </td>
+                    <td className="px-4 py-3">
+                      {cn.invoiceId ? (
+                        <span className="font-mono text-xs text-brand-600">{cn.invoiceId}</span>
+                      ) : (
+                        <span className="text-xs text-navy/40">next invoice (auto)</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={cn.status} />
+                    </td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="View credit note"
+                        onClick={() => router.push(`/credit-notes/${cn.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Compliance note + count */}
+        <div className="flex items-center gap-2.5 border-t border-surface-border px-4 py-3">
+          <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0 text-accent-deep" />
+          <span className="text-xs text-navy/70">
+            Credits on regulated lines reverse category tax and post to the category ledger.
+          </span>
+          {meta && (
+            <span className="ml-auto text-xs text-navy/70">
+              {meta.total > 0
+                ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total}`
+                : "Showing 0 of 0"}
+            </span>
           )}
         </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">CN #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Invoice #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
-              </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load credit notes. Please try again.
-                </td>
-              </tr>
-            ) : creditNotes.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching credit notes"
-                      description="No credit notes match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setDateFrom("");
-                            setDateTo("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No credit notes yet"
-                      description="Issue a credit note to refund or adjust a customer's balance."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          New credit note
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              creditNotes.map((cn: CreditNote) => (
-                <tr
-                  key={cn.id}
-                  onClick={() => router.push(`/credit-notes/${cn.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-surface-raised"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {cn.creditNoteNumber}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {cn.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy/70">
-                    {cn.invoiceId ? <span className="text-brand-600">{cn.invoiceId}</span> : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy/70">
-                    {fmtDate((cn as any).issueDate ?? cn.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt(Number(cn.amount))}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={cn.status} />
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      title="View credit note"
-                      onClick={() => router.push(`/credit-notes/${cn.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
       {/* Pagination */}
       {meta && (
-        <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <p className="text-sm text-navy/70">
               {meta.total > 0
@@ -599,7 +657,7 @@ export default function CreditNotesPage() {
                   setLimit(Number(e.target.value));
                   setPage(1);
                 }}
-                className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               >
                 {[10, 20, 50, 100].map((n) => (
                   <option key={n} value={n}>

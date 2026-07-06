@@ -811,7 +811,8 @@ function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: ()
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-navy">{item.description}</p>
               <p className="text-xs text-navy/70">
-                Qty: {item.qty} · Current: {fmt(Number(item.unitPrice))}
+                Qty: {item.qty} · Current:{" "}
+                <span className="money">{fmt(Number(item.unitPrice))}</span>
               </p>
             </div>
             <div className="flex items-center gap-1.5">
@@ -1286,10 +1287,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       </Link>
 
       {/* Header row */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-navy">{invoice.invoiceNumber}</h1>
-          <Badge status={status} />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <h1 className="font-mono text-xl font-semibold tracking-tight text-navy">
+              {invoice.invoiceNumber}
+            </h1>
+            <Badge status={status} />
+          </div>
+          <p className="mt-1 text-sm text-navy/70">
+            {invoice.customer?.businessName ?? "—"}
+            {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
+            {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+            {invoice.dueDate ? ` · due ${fmtDate(invoice.dueDate)}` : ""}
+          </p>
         </div>
 
         {/* Zoho-style action toolbar */}
@@ -1392,7 +1403,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {canRecordPayment && (
             <DropdownMenu
               trigger={
-                <button className="flex items-center gap-1.5 rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-sm transition-colors hover:bg-surface-raised">
+                <button className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised">
                   <CreditCard className="h-3.5 w-3.5" />
                   Record Payment
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -1428,7 +1439,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* More actions (...) */}
           <DropdownMenu
             trigger={
-              <button className="flex items-center justify-center rounded border border-surface-border bg-white p-1.5 shadow-sm transition-colors hover:bg-surface-raised">
+              <button className="flex items-center justify-center rounded-lg border border-surface-border bg-white p-1.5 shadow-card transition-colors hover:bg-surface-raised">
                 <MoreHorizontal className="h-4 w-4 text-navy/70" />
               </button>
             }
@@ -1466,7 +1477,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
       {/* Pending mirror: explain that the invoice tracks the order until delivery. */}
       {isPendingMirror && (
-        <div className="flex items-start gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
+        <div className="flex items-start gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3">
           <Info className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
           <div className="text-sm text-navy/80">
             This invoice mirrors{" "}
@@ -1485,36 +1496,32 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* ── Invoice document (2/3) ── */}
         <div className="lg:col-span-2">
-          <div className="relative overflow-hidden rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.08)]">
+          <div className="relative overflow-hidden rounded-lg border border-surface-border bg-white p-8 shadow-card">
             {/* Status ribbon */}
             <StatusRibbon status={status} />
 
             {/* Invoice letterhead */}
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
-                <div className="flex items-center gap-2">
-                  <TenantLogo
-                    className="h-8 w-8"
-                    showName
-                    nameClassName="text-lg font-bold text-navy"
-                  />
-                </div>
+                <p className="font-display text-2xl text-navy">Invoice</p>
+                <p className="mt-1 font-mono text-xs text-navy/70">
+                  {invoice.invoiceNumber} · {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                </p>
               </div>
-              <div className="text-right">
-                <p className="text-xl font-bold uppercase tracking-wide text-navy">Invoice</p>
-                <p className="mt-0.5 font-mono text-sm text-navy/70">{invoice.invoiceNumber}</p>
+              <div className="flex flex-col items-end gap-2">
+                <TenantLogo
+                  className="h-8 w-8"
+                  showName
+                  nameClassName="text-base font-semibold text-navy"
+                />
                 {balanceDue > 0 && (
-                  <div className="mt-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                      Balance Due
-                    </p>
-                    <p className="text-2xl font-bold text-danger">{fmt(balanceDue)}</p>
+                  <div className="text-right">
+                    <p className="overline">Balance Due</p>
+                    <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
                 {balanceDue === 0 && status === "PAID" && (
-                  <div className="mt-2">
-                    <p className="text-lg font-bold text-green-600">Paid in Full</p>
-                  </div>
+                  <p className="text-lg font-semibold text-success">Paid in Full</p>
                 )}
               </div>
             </div>
@@ -1522,9 +1529,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Billing + dates */}
             <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
               <div>
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Bill To
-                </p>
+                <p className="overline mb-1.5">Bill To</p>
                 <p className="text-sm font-semibold text-navy">
                   {invoice.customer?.businessName ?? "—"}
                 </p>
@@ -1538,9 +1543,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 )}
               </div>
               <div className="text-right space-y-1">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Invoice Details
-                </p>
+                <p className="overline mb-1.5">Invoice Details</p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
                   {fmtDate(invoice.issueDate ?? invoice.createdAt)}
@@ -1548,7 +1551,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 {invoice.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
-                    {fmtDate(invoice.dueDate)}
+                    <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
+                      {fmtDate(invoice.dueDate)}
+                    </span>
                   </p>
                 )}
                 {(invoice as any).terms && (
@@ -1558,44 +1563,38 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 )}
                 {(invoice as any).orderNumber && (
                   <p className="text-sm text-navy/70">
-                    <span className="font-medium text-navy">Order #:</span>{" "}
+                    <span className="font-medium text-navy">Reference:</span>{" "}
                     {(invoice as any).orderNumber}
                   </p>
                 )}
               </div>
             </div>
 
-            {/* Line items table — dark navy header (Zoho style) */}
-            <div className="-mx-8 overflow-hidden">
+            {/* Line items table — Ledger surface header */}
+            <div className="-mx-8 overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-[#1B3A5C]">
-                    <th className="px-8 py-3 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
-                      Description
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                      Qty
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                      Rate
-                    </th>
-                    <th className="px-8 py-3 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                      Amount
-                    </th>
+                <thead className="border-y border-surface-border bg-surface-raised">
+                  <tr>
+                    <th className="overline px-8 py-2.5 text-left">Item</th>
+                    <th className="overline px-4 py-2.5 text-right">Qty</th>
+                    <th className="overline px-4 py-2.5 text-right">Unit Price</th>
+                    <th className="overline px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {(invoice.items ?? []).map((item, idx) => (
-                    <tr key={item.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
-                      <td className="px-8 py-3 text-navy">{item.description}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
+                  {(invoice.items ?? []).map((item) => (
+                    <tr key={item.id} className="hover:bg-surface-raised">
+                      <td className="px-8 py-3 font-medium text-navy">{item.description}</td>
+                      <td className="px-4 py-3 text-right">
+                        <span className="mono text-navy/70">{item.qty}</span>
+                      </td>
                       <td className="px-4 py-3 text-right">
                         {item.priceType === "SPECIAL" ? (
                           <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-xs text-navy/70 line-through">
+                            <span className="strike text-xs">
                               {fmt(Number(item.originalPrice))}
                             </span>
-                            <span className="font-medium text-success">
+                            <span className="money text-success">
                               {fmt(Number(item.unitPrice))}
                             </span>
                             <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
@@ -1604,10 +1603,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           </div>
                         ) : item.priceType === "DISCOUNTED" ? (
                           <div className="flex flex-col items-end gap-0.5">
-                            <span className="text-xs text-navy/70 line-through">
+                            <span className="strike text-xs">
                               {fmt(Number(item.originalPrice))}
                             </span>
-                            <span className="font-medium text-warning">
+                            <span className="money text-warning">
                               {fmt(Number(item.unitPrice))}
                             </span>
                             <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
@@ -1615,11 +1614,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             </span>
                           </div>
                         ) : (
-                          <span className="text-navy/70">{fmt(Number(item.unitPrice))}</span>
+                          <span className="money text-navy/70">{fmt(Number(item.unitPrice))}</span>
                         )}
                       </td>
-                      <td className="px-8 py-3 text-right font-medium text-navy">
-                        {fmt(Number(item.qty) * Number(item.unitPrice))}
+                      <td className="px-8 py-3 text-right">
+                        <span className="money text-navy">
+                          {fmt(Number(item.qty) * Number(item.unitPrice))}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -1628,48 +1629,44 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             </div>
 
             {/* Totals footer */}
-            <div className="mt-4 border-t border-surface-border pt-4">
-              <div className="ml-auto w-64 space-y-2 text-sm">
-                <div className="flex justify-between text-navy/70">
-                  <span>Subtotal</span>
-                  <span>{fmt(Number(invoice.subtotal))}</span>
+            <div className="mt-4 flex justify-end">
+              <div className="w-72 space-y-1.5 text-sm">
+                <div className="flex justify-between py-0.5">
+                  <span className="text-navy/70">Subtotal</span>
+                  <span className="money text-navy">{fmt(Number(invoice.subtotal))}</span>
                 </div>
                 {discount > 0 && (
-                  <div className="flex justify-between text-success">
+                  <div className="flex justify-between py-0.5 text-success">
                     <span>Discount</span>
-                    <span>-{fmt(discount)}</span>
+                    <span className="money">-{fmt(discount)}</span>
                   </div>
                 )}
                 {Number(invoice.taxAmount ?? 0) > 0 && (
-                  <div className="flex justify-between text-navy/70">
-                    <span>Tax</span>
-                    <span>{fmt(Number(invoice.taxAmount))}</span>
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-navy/70">Tax</span>
+                    <span className="money text-navy">{fmt(Number(invoice.taxAmount))}</span>
                   </div>
                 )}
                 {shippingFee > 0 && (
-                  <div className="flex justify-between text-navy/70">
-                    <span>Shipping</span>
-                    <span>{fmt(shippingFee)}</span>
+                  <div className="flex justify-between py-0.5">
+                    <span className="text-navy/70">Shipping</span>
+                    <span className="money text-navy">{fmt(shippingFee)}</span>
                   </div>
                 )}
-                <div className="flex justify-between border-t border-surface-border pt-2 text-base font-bold text-navy">
-                  <span>Total</span>
-                  <span>{fmt(total)}</span>
-                </div>
                 {amountPaid > 0 && (
-                  <div className="flex justify-between text-success">
-                    <span className="font-medium">Amount Paid</span>
-                    <span className="font-bold">-{fmt(amountPaid)}</span>
+                  <div className="flex justify-between py-0.5 text-success">
+                    <span>Paid to date</span>
+                    <span className="money">-{fmt(amountPaid)}</span>
                   </div>
                 )}
                 <div
                   className={cn(
-                    "flex justify-between border-t border-surface-border pt-2 text-base font-bold",
+                    "mt-1.5 flex items-center justify-between border-t border-navy pt-2.5 text-base font-semibold",
                     balanceDue > 0 ? "text-danger" : "text-success",
                   )}
                 >
-                  <span>Balance Due</span>
-                  <span>{fmt(balanceDue)}</span>
+                  <span>Balance due</span>
+                  <span className="money">{fmt(balanceDue)}</span>
                 </div>
               </div>
             </div>
@@ -1677,9 +1674,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             {/* Notes */}
             {invoice.notes && (
               <div className="mt-6 border-t border-surface-border pt-4">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Notes
-                </p>
+                <p className="overline mb-1.5">Notes</p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
@@ -1722,7 +1717,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* Payment history */}
           <Card title="Payment History">
             {payments.length === 0 ? (
-              <p className="text-sm text-navy/70">No payments recorded.</p>
+              <div className="flex flex-col items-center gap-2 py-6 text-center">
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-surface-raised">
+                  <CreditCard className="h-5 w-5 text-navy/30" />
+                </div>
+                <p className="font-display text-base text-navy">No payments yet</p>
+                <p className="max-w-[240px] text-xs text-navy/70">
+                  Record a payment to apply it against this balance.
+                </p>
+              </div>
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {payments.map((pmt) => {
@@ -1739,7 +1742,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-navy">
+                          <span className="money text-sm font-semibold text-navy">
                             {fmt(Number(pmt.amount))}
                           </span>
                           <div className="flex items-center gap-1">
@@ -1802,22 +1805,22 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* Balance summary */}
           <Card>
             <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between">
                 <dt className="text-navy/70">Invoice Total</dt>
-                <dd className="font-medium text-navy">{fmt(total)}</dd>
+                <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between">
                 <dt className="text-navy/70">Paid</dt>
-                <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
+                <dd className="money font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
               <div
                 className={cn(
-                  "flex justify-between border-t border-surface-border pt-2 font-bold",
+                  "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",
                   balanceDue > 0 ? "text-danger" : "text-success",
                 )}
               >
                 <dt>Balance Due</dt>
-                <dd>{fmt(balanceDue)}</dd>
+                <dd className="money">{fmt(balanceDue)}</dd>
               </div>
             </dl>
           </Card>

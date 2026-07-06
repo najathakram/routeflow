@@ -34,7 +34,9 @@ export async function loginAsSuperAdmin(page: Page) {
  */
 export async function loginAsOperator(page: Page) {
   await page.goto("/login");
-  await page.getByPlaceholder("Enter your username").fill("admin");
+  // The reskinned login form labels the username field "Username or email"
+  // (placeholder "you@company.com"); match by label, like auth.setup does.
+  await page.getByLabel("Username or email").fill("admin");
   await page.getByPlaceholder("Enter your password").fill("Admin@123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 30_000 });
@@ -46,7 +48,7 @@ export async function loginAsOperator(page: Page) {
  */
 export async function loginAsCustomer(page: Page) {
   await page.goto("/login");
-  await page.getByPlaceholder("Enter your username").fill("harbor_cafe");
+  await page.getByLabel("Username or email").fill("harbor_cafe");
   await page.getByPlaceholder("Enter your password").fill("Customer1!");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/dashboard", { timeout: 30_000 });

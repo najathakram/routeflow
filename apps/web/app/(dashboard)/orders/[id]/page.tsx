@@ -828,17 +828,27 @@ function EditableLineItems({
 
             {/* Qty input */}
             {!item.cancelled && (
-              <input
-                type="number"
-                min={1}
-                step={1}
-                className="w-20 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                value={item.qty}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (!isNaN(v) && v > 0) update(item.id, { qty: v });
-                }}
-              />
+              <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
+                Qty
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  className="mono w-16 rounded border border-surface-border bg-surface-raised px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  value={item.qty}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v) && v > 0) update(item.id, { qty: v });
+                  }}
+                />
+              </label>
+            )}
+
+            {/* Live line total */}
+            {!item.cancelled && (
+              <span className="money w-20 shrink-0 text-right text-sm font-semibold text-navy">
+                ${computeLineSubtotal({ unitPrice: item.unitPrice, qty: item.qty }).toFixed(2)}
+              </span>
             )}
 
             {/* Action buttons */}
@@ -1438,49 +1448,50 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          {order.urgent && (
-            <div className="mt-1 flex items-center gap-1.5 rounded-full bg-danger-bg px-2.5 py-1 text-xs font-semibold text-danger">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              URGENT
-            </div>
-          )}
-          <div>
-            <h1 className="text-2xl font-bold text-navy">{order.orderNumber}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-navy/70">
-              <span>
-                Created{" "}
-                {new Date(order.createdAt).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+        <div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
+              {order.orderNumber}
+            </h1>
+            {order.urgent && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-bg px-2.5 py-1 text-xs font-semibold text-danger">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Urgent
               </span>
-              {order.requestedDeliveryDate && (
-                <span className="flex items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700">
-                  <Calendar className="h-3.5 w-3.5" />
-                  Delivery:{" "}
-                  {(() => {
-                    const [y, m, d] = order
-                      .requestedDeliveryDate!.split("T")[0]
-                      .split("-")
-                      .map(Number);
-                    return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    });
-                  })()}
-                </span>
-              )}
-            </div>
+            )}
+            <Badge status={localStatus as BadgeStatus} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
+            <span>
+              Created{" "}
+              {new Date(order.createdAt).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </span>
+            {order.requestedDeliveryDate && (
+              <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-surface-border bg-white px-2.5 text-xs font-medium text-navy">
+                <Calendar className="h-3.5 w-3.5 text-navy/40" />
+                Delivery:{" "}
+                {(() => {
+                  const [y, m, d] = order
+                    .requestedDeliveryDate!.split("T")[0]
+                    .split("-")
+                    .map(Number);
+                  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  });
+                })()}
+              </span>
+            )}
           </div>
         </div>
 
         {/* Action bar */}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge status={localStatus as BadgeStatus} />
-
           {/* Edit Items button */}
           {canEdit && !isEditing && (
             <Button
@@ -1767,7 +1778,23 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         {/* ── Main content ── */}
         <div className="space-y-5 lg:col-span-2">
           {/* Line items */}
-          <Card title={isEditing ? "Edit Line Items" : "Line Items"}>
+          <div className="rounded-lg bg-white p-6 shadow-card">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2.5 text-base font-semibold text-navy">
+                Line Items
+                {isEditing && (
+                  <Badge variant="info" label="Editing" className="normal-case tracking-normal" />
+                )}
+              </h3>
+              {isEditing && (
+                <span className="text-xs text-navy/70">
+                  Prices &amp; quantities save on{" "}
+                  <b className="font-semibold text-navy">
+                    {localStatus === "DRAFT" ? "Save Draft" : "Save Changes"}
+                  </b>
+                </span>
+              )}
+            </div>
             {isEditing ? (
               <div className="space-y-4">
                 <p className="text-sm text-navy/70">
@@ -1785,18 +1812,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 />
 
                 {/* Live total preview */}
-                <div className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
+                <div className="ml-auto w-full max-w-xs rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
                   <div className="flex justify-between text-sm text-navy/70">
                     <span>Subtotal</span>
-                    <span>${editSubtotal.toFixed(2)}</span>
+                    <span className="money text-navy/70">${editSubtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-navy/70 mt-1">
                     <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
-                    <span>${editTax.toFixed(2)}</span>
+                    <span className="money text-navy/70">${editTax.toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between text-base font-bold text-navy border-t border-surface-border mt-2 pt-2">
+                  <div className="flex justify-between text-base font-semibold text-navy border-t border-surface-border mt-2 pt-2">
                     <span>New total</span>
-                    <span>${editTotal.toFixed(2)}</span>
+                    <span className="money text-[15px] text-navy">${editTotal.toFixed(2)}</span>
                   </div>
                 </div>
 
@@ -1888,25 +1915,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 </div>
               </div>
             ) : (
-              <div className="-mx-6 -mb-6 overflow-hidden">
+              <div className="-mx-6 -mb-6 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="border-b border-surface-border bg-surface-raised">
                     <tr>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
-                        Product
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Qty
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Unit Price
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Total
-                      </th>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
-                        Status
-                      </th>
+                      <th className="overline px-6 py-2.5 text-left">Product</th>
+                      <th className="overline px-4 py-2.5 text-right">Qty</th>
+                      <th className="overline px-4 py-2.5 text-right">Unit Price</th>
+                      <th className="overline px-4 py-2.5 text-right">Line Total</th>
+                      <th className="overline px-6 py-2.5 text-left">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-surface-border">
@@ -1945,17 +1962,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                               {li.pieces ? ` + ${li.pieces} pcs` : ""}
                             </span>
                           ) : (
-                            Number(li.qty)
+                            <span className="mono">{Number(li.qty)}</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex flex-col items-end gap-0.5">
                             {li.priceType === "SPECIAL" ? (
                               <>
-                                <span className="text-xs text-navy/70 line-through">
+                                <span className="strike text-xs">
                                   ${Number(li.originalPrice).toFixed(2)}
                                 </span>
-                                <span className="font-medium text-emerald-600">
+                                <span className="money text-emerald-600">
                                   ${Number(li.unitPrice).toFixed(2)}
                                 </span>
                                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
@@ -1965,10 +1982,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             ) : (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
                               li.originalPrice != null ? (
                               <>
-                                <span className="text-xs text-navy/70 line-through">
+                                <span className="strike text-xs">
                                   ${Number(li.originalPrice).toFixed(2)}
                                 </span>
-                                <span className="font-medium text-amber-600">
+                                <span className="money text-amber-600">
                                   ${Number(li.unitPrice).toFixed(2)}
                                 </span>
                                 <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
@@ -1976,22 +1993,27 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                 </span>
                               </>
                             ) : (
-                              <span className="text-navy/70">
+                              <span className="money text-navy/70">
                                 ${Number(li.unitPrice).toFixed(2)}
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right font-medium text-navy">
-                          {li.status === "CANCELLED"
-                            ? "—"
-                            : `$${computeLineSubtotal({
+                        <td className="px-4 py-3 text-right">
+                          {li.status === "CANCELLED" ? (
+                            <span className="text-navy/40">—</span>
+                          ) : (
+                            <span className="money text-navy">
+                              $
+                              {computeLineSubtotal({
                                 unitPrice: Number(li.unitPrice),
                                 qty: Number(li.qty),
                                 boxes: li.boxes ?? null,
                                 pieces: li.pieces ?? null,
                                 unitsPerBox: li.product?.unitsPerBox ?? null,
-                              }).toFixed(2)}`}
+                              }).toFixed(2)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-3">
                           <Badge status={li.status as BadgeStatus} />
@@ -2007,8 +2029,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                       >
                         Order Total
                       </td>
-                      <td className="px-4 py-3 text-right text-base font-bold text-navy">
-                        ${total.toFixed(2)}
+                      <td className="px-4 py-3 text-right">
+                        <span className="money text-[15px] font-semibold text-navy">
+                          ${total.toFixed(2)}
+                        </span>
                       </td>
                       <td />
                     </tr>
@@ -2016,7 +2040,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 </table>
               </div>
             )}
-          </Card>
+          </div>
 
           {/* Notes */}
           {order.notes && !isEditing && (
@@ -2032,34 +2056,41 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         {/* ── Sidebar ── */}
         <div className="space-y-4">
           {/* Customer info */}
-          <Card title="Customer">
-            <div className="space-y-3">
-              <div className="flex items-start gap-2">
-                <User className="mt-0.5 h-4 w-4 shrink-0 text-navy/70" />
-                <div>
-                  <p className="text-sm font-semibold text-navy">
-                    {order.customer?.businessName ?? "—"}
-                  </p>
-                  {order.customer?.contactName && (
-                    <p className="text-xs text-navy/70">{order.customer.contactName}</p>
-                  )}
-                </div>
-              </div>
+          <div className="rounded-lg bg-white p-6 shadow-card">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-navy">Customer</h3>
               <Link
                 href={`/customers/${order.customerId}`}
-                className="mt-1 block text-xs text-brand-500 hover:underline"
+                className="text-xs font-medium text-brand-500 hover:underline"
               >
-                View customer profile →
+                View profile
               </Link>
             </div>
-          </Card>
+            <div className="flex items-start gap-2">
+              <User className="mt-0.5 h-4 w-4 shrink-0 text-navy/40" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-navy">
+                  {order.customer?.businessName ?? "—"}
+                </p>
+                {(order.customer?.contactName ||
+                  order.customer?.mobile ||
+                  order.customer?.phone) && (
+                  <p className="mt-0.5 text-xs text-navy/70">
+                    {[order.customer?.contactName, order.customer?.mobile || order.customer?.phone]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Order summary */}
           <Card title="Summary">
-            <dl className="space-y-2 text-sm">
+            <dl className="space-y-2.5 text-sm">
               {order.requestedDeliveryDate && (
-                <div className="flex justify-between">
-                  <dt className="text-navy/70">Delivery Date</dt>
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Delivery date</dt>
                   <dd className="font-medium text-navy">
                     {(() => {
                       const [y, m, d] = order
@@ -2075,32 +2106,32 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   </dd>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Line items</dt>
-                <dd className="font-medium text-navy">
+                <dd className="mono font-medium text-navy">
                   {order.lineItems.filter((li) => li.status !== "CANCELLED").length}
                 </dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-navy/70">Total qty</dt>
-                <dd className="font-medium text-navy">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-navy/70">Total quantity</dt>
+                <dd className="mono font-medium text-navy">
                   {order.lineItems
                     .filter((li) => li.status !== "CANCELLED")
                     .reduce((s, li) => s + Number(li.qty), 0)
                     .toFixed(1)}
                 </dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Subtotal</dt>
-                <dd className="font-medium text-navy">${Number(order.subtotal).toFixed(2)}</dd>
+                <dd className="money text-navy">${Number(order.subtotal).toFixed(2)}</dd>
               </div>
-              <div className="flex justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Tax</dt>
-                <dd className="font-medium text-navy">${Number(order.tax).toFixed(2)}</dd>
+                <dd className="money text-navy">${Number(order.tax).toFixed(2)}</dd>
               </div>
-              <div className="flex justify-between border-t border-surface-border pt-2">
+              <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
                 <dt className="font-semibold text-navy">Order total</dt>
-                <dd className="font-bold text-navy">${total.toFixed(2)}</dd>
+                <dd className="money text-[15px] font-semibold text-navy">${total.toFixed(2)}</dd>
               </div>
             </dl>
           </Card>
@@ -2125,7 +2156,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                     <div key={inv.id} className="space-y-1">
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-brand-500" />
-                        <span className="text-sm font-medium text-navy">{inv.invoiceNumber}</span>
+                        <span className="mono text-sm font-medium text-navy">
+                          {inv.invoiceNumber}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge status={inv.status as BadgeStatus} />
@@ -2156,14 +2189,20 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 return (
                   <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
                     {hasNoInvoiceYet && (
-                      <Button
-                        size="sm"
-                        leftIcon={<FileText className="h-4 w-4" />}
-                        loading={createInvoiceFromOrder.isPending}
-                        onClick={() => createInvoiceFromOrder.mutate(order.id)}
-                      >
-                        Generate Invoice (full order)
-                      </Button>
+                      <>
+                        <p className="text-xs text-navy/70">
+                          No invoice has been generated for this order.
+                        </p>
+                        <Button
+                          size="sm"
+                          className="w-full justify-center"
+                          leftIcon={<FileText className="h-4 w-4" />}
+                          loading={createInvoiceFromOrder.isPending}
+                          onClick={() => createInvoiceFromOrder.mutate(order.id)}
+                        >
+                          Generate Invoice (full order)
+                        </Button>
+                      </>
                     )}
                     {hasRemaining && (
                       <Button

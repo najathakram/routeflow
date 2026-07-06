@@ -29,7 +29,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, Card, Modal, cn } from "@routeflow/ui/web";
+import { Badge, Button, Modal, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -104,8 +104,8 @@ function getStockStatus(currentStock: number, isActive: boolean): StockStatus {
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
-      <p className="text-xs text-navy/70">{label}</p>
-      <div className="mt-0.5 text-sm font-medium text-navy">{value}</div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">{label}</p>
+      <div className="mt-1 text-sm font-medium text-navy">{value}</div>
     </div>
   );
 }
@@ -140,58 +140,65 @@ function CostHistoryCard({ productId }: { productId: string }) {
   }));
 
   return (
-    <Card title="Purchase Cost History">
-      <p className="mb-3 text-xs text-navy/70">
-        Unit cost of each purchase (and manual cost-basis entries) with the running average cost.
-      </p>
-      <ResponsiveContainer width="100%" height={200}>
-        <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-          <XAxis
-            dataKey="date"
-            tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(v: number) => `$${v}`}
-          />
-          <Tooltip
-            contentStyle={{
-              borderRadius: 8,
-              border: "1px solid #e2e8f0",
-              fontSize: 12,
-              boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-            }}
-            labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
-            formatter={
-              ((v: number, name: string) => [
-                `$${Number(v).toFixed(4)}`,
-                name === "purchaseCost" ? "Purchase cost" : "Avg cost after",
-              ]) as any
-            }
-          />
-          <Line
-            type="stepAfter"
-            dataKey="avgCost"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey="purchaseCost"
-            stroke="#f59e0b"
-            strokeWidth={0}
-            dot={{ r: 3, fill: "#f59e0b" }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </Card>
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div className="border-b border-surface-border px-5 py-3.5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+          Purchase Cost History
+        </h3>
+      </div>
+      <div className="p-5">
+        <p className="mb-3 text-xs text-navy/70">
+          Unit cost of each purchase (and manual cost-basis entries) with the running average cost.
+        </p>
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+              tickLine={false}
+              axisLine={false}
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v: number) => `$${v}`}
+            />
+            <Tooltip
+              contentStyle={{
+                borderRadius: 8,
+                border: "1px solid #e2e8f0",
+                fontSize: 12,
+                boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+              }}
+              labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
+              formatter={
+                ((v: number, name: string) => [
+                  `$${Number(v).toFixed(4)}`,
+                  name === "purchaseCost" ? "Purchase cost" : "Avg cost after",
+                ]) as any
+              }
+            />
+            <Line
+              type="stepAfter"
+              dataKey="avgCost"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dot={false}
+              connectNulls
+            />
+            <Line
+              type="monotone"
+              dataKey="purchaseCost"
+              stroke="#f59e0b"
+              strokeWidth={0}
+              dot={{ r: 3, fill: "#f59e0b" }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
@@ -737,315 +744,360 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         {/* Back */}
         <Link
           href="/products"
-          className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-navy/70 hover:text-navy transition-colors"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-3.5 w-3.5" />
           Products
         </Link>
+
+        {/* Page header — name, status badges, provenance line */}
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-2xl font-bold tracking-[-0.01em] text-navy">{product.name}</h1>
+              <Badge
+                variant={product.isActive ? "success" : "neutral"}
+                label={product.isActive ? "Active" : "Inactive"}
+              />
+              {stockStatus === "OUT_OF_STOCK" ? (
+                <Badge variant="danger" label="Out of Stock" />
+              ) : stockStatus === "LOW" ? (
+                <Badge variant="warning" label="Low Stock" />
+              ) : null}
+              {(product as any).isTobacco && <Badge variant="warning" label="Tobacco" />}
+            </div>
+            <p className="mt-1.5 text-sm text-navy/70">
+              {product.sku && <span className="font-mono">{product.sku}</span>}
+              {product.sku && (product.category || product.parent) ? " · " : ""}
+              {product.parent ? `Variant of ${product.parent.name}` : product.category}
+            </p>
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* ── Left: image gallery + stock card ── */}
           <div className="space-y-4">
             {/* ── Image gallery ── */}
-            {(() => {
-              const images: string[] = (product as any).imageUrls ?? [];
-              const hasImages = images.length > 0;
-              const safeIdx = Math.min(activeImageIdx, images.length - 1);
+            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+              <div className="border-b border-surface-border px-4 py-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  Image
+                </h3>
+              </div>
+              <div className="p-4">
+                {(() => {
+                  const images: string[] = (product as any).imageUrls ?? [];
+                  const hasImages = images.length > 0;
+                  const safeIdx = Math.min(activeImageIdx, images.length - 1);
 
-              const handleUpload = (files: FileList | null) => queueForCrop(files);
+                  const handleUpload = (files: FileList | null) => queueForCrop(files);
 
-              const toggleSelectImage = (i: number) => {
-                setSelectedImages((prev) => {
-                  const next = new Set(prev);
-                  next.has(i) ? next.delete(i) : next.add(i);
-                  return next;
-                });
-              };
+                  const toggleSelectImage = (i: number) => {
+                    setSelectedImages((prev) => {
+                      const next = new Set(prev);
+                      next.has(i) ? next.delete(i) : next.add(i);
+                      return next;
+                    });
+                  };
 
-              const deleteSelected = async () => {
-                const keys = (product as any).imageKeys ?? [];
-                const toDelete = Array.from(selectedImages)
-                  .map((i) => keys[i])
-                  .filter(Boolean);
-                try {
-                  // Delete sequentially — concurrent Prisma array-pull calls race
-                  // against each other and only some keys end up removed.
-                  for (const k of toDelete) {
-                    await deleteImage.mutateAsync(k);
-                  }
-                  setSelectedImages(new Set());
-                  setSelectMode(false);
-                  setActiveImageIdx(0);
-                  toast({
-                    title: `${toDelete.length} image${toDelete.length !== 1 ? "s" : ""} deleted`,
-                    variant: "success",
-                  });
-                } catch {
-                  toast({ title: "Delete failed", variant: "error" });
-                }
-              };
+                  const deleteSelected = async () => {
+                    const keys = (product as any).imageKeys ?? [];
+                    const toDelete = Array.from(selectedImages)
+                      .map((i) => keys[i])
+                      .filter(Boolean);
+                    try {
+                      // Delete sequentially — concurrent Prisma array-pull calls race
+                      // against each other and only some keys end up removed.
+                      for (const k of toDelete) {
+                        await deleteImage.mutateAsync(k);
+                      }
+                      setSelectedImages(new Set());
+                      setSelectMode(false);
+                      setActiveImageIdx(0);
+                      toast({
+                        title: `${toDelete.length} image${toDelete.length !== 1 ? "s" : ""} deleted`,
+                        variant: "success",
+                      });
+                    } catch {
+                      toast({ title: "Delete failed", variant: "error" });
+                    }
+                  };
 
-              return (
-                <div className="space-y-2">
-                  {/* Main image / drop zone — 4:5 portrait viewport matching the
+                  return (
+                    <div className="space-y-2">
+                      {/* Main image / drop zone — 4:5 portrait viewport matching the
                     upload ratio. object-cover + object-position uses each
                     image's stored focal point to keep the right area visible
                     even when the image is from before the focal-point
                     feature (those default to centre). */}
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setIsDragging(true);
-                    }}
-                    onDragLeave={() => setIsDragging(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setIsDragging(false);
-                      handleUpload(e.dataTransfer.files);
-                    }}
-                    className={cn(
-                      "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
-                      isDragging && "ring-2 ring-brand-500",
-                      !hasImages && "cursor-pointer",
-                      stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
-                      stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
-                      stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
-                    )}
-                    onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
-                  >
-                    {hasImages ? (
-                      <>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={images[safeIdx]}
-                          alt={`${product.name} — image ${safeIdx + 1}`}
-                          className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
-                          style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setLightboxIdx(safeIdx);
-                            setLightboxOpen(true);
-                          }}
-                        />
-                        {/* Delete current image (single) */}
-                        {!selectMode && (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              const key = (product as any).imageKeys?.[safeIdx];
-                              if (!key) return;
-                              try {
-                                await deleteImage.mutateAsync(key);
-                                setActiveImageIdx(0);
-                                toast({ title: "Image deleted", variant: "success" });
-                              } catch {
-                                toast({ title: "Delete failed", variant: "error" });
-                              }
-                            }}
-                            className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
-                            title="Delete this image"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDragging(true);
+                        }}
+                        onDragLeave={() => setIsDragging(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragging(false);
+                          handleUpload(e.dataTransfer.files);
+                        }}
+                        className={cn(
+                          "relative aspect-[4/5] w-full overflow-hidden rounded-xl border",
+                          isDragging && "ring-2 ring-brand-500",
+                          !hasImages && "cursor-pointer",
+                          stockStatus === "LOW" && "border-warning/30 bg-warning-bg",
+                          stockStatus === "OUT_OF_STOCK" && "border-danger/30 bg-danger-bg",
+                          stockStatus === "IN_STOCK" && "border-surface-border bg-surface-raised",
                         )}
-                        {/* Prev / next arrows */}
-                        {images.length > 1 && !selectMode && (
+                        onClick={!hasImages ? () => fileInputRef.current?.click() : undefined}
+                      >
+                        {hasImages ? (
                           <>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveImageIdx((i) => (i - 1 + images.length) % images.length);
-                              }}
-                              className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
-                            >
-                              <ChevronLeft className="h-4 w-4" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveImageIdx((i) => (i + 1) % images.length);
-                              }}
-                              className="absolute right-8 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
-                            >
-                              <ChevronRight className="h-4 w-4" />
-                            </button>
-                          </>
-                        )}
-                        {/* Page indicator */}
-                        {images.length > 1 && !selectMode && (
-                          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
-                            {safeIdx + 1} / {images.length}
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-2">
-                        <Package
-                          className={cn(
-                            "h-14 w-14",
-                            stockStatus === "LOW" && "text-warning/30",
-                            stockStatus === "OUT_OF_STOCK" && "text-danger/30",
-                            stockStatus === "IN_STOCK" && "text-navy/15",
-                          )}
-                        />
-                        <p className="text-xs text-navy/70">Drop images here or click to upload</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Thumbnail strip with checkboxes in select mode */}
-                  {images.length > 0 && (
-                    <div className="flex gap-1.5 overflow-x-auto pb-1">
-                      {images.map((url, i) => (
-                        <div key={i} className="relative shrink-0">
-                          <button
-                            onClick={() =>
-                              selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
-                            }
-                            className={cn(
-                              "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
-                              selectMode && selectedImages.has(i) && "border-danger",
-                              !selectMode && i === safeIdx
-                                ? "border-brand-500"
-                                : !selectMode
-                                  ? "border-transparent opacity-60 hover:opacity-100"
-                                  : "border-surface-border",
-                            )}
-                          >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={url}
-                              alt={`thumb ${i + 1}`}
-                              className="h-full w-full object-cover"
-                              style={{ objectPosition: objectPositionForUrl(url) }}
+                              src={images[safeIdx]}
+                              alt={`${product.name} — image ${safeIdx + 1}`}
+                              className="absolute inset-0 h-full w-full object-cover cursor-zoom-in"
+                              style={{ objectPosition: objectPositionForUrl(images[safeIdx]) }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setLightboxIdx(safeIdx);
+                                setLightboxOpen(true);
+                              }}
                             />
-                          </button>
-                          {selectMode && (
-                            <input
-                              type="checkbox"
-                              checked={selectedImages.has(i)}
-                              onChange={() => toggleSelectImage(i)}
-                              className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
+                            {/* Delete current image (single) */}
+                            {!selectMode && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const key = (product as any).imageKeys?.[safeIdx];
+                                  if (!key) return;
+                                  try {
+                                    await deleteImage.mutateAsync(key);
+                                    setActiveImageIdx(0);
+                                    toast({ title: "Image deleted", variant: "success" });
+                                  } catch {
+                                    toast({ title: "Delete failed", variant: "error" });
+                                  }
+                                }}
+                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
+                                title="Delete this image"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {/* Prev / next arrows */}
+                            {images.length > 1 && !selectMode && (
+                              <>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveImageIdx(
+                                      (i) => (i - 1 + images.length) % images.length,
+                                    );
+                                  }}
+                                  className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                >
+                                  <ChevronLeft className="h-4 w-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveImageIdx((i) => (i + 1) % images.length);
+                                  }}
+                                  className="absolute right-8 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                >
+                                  <ChevronRight className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                            {/* Page indicator */}
+                            {images.length > 1 && !selectMode && (
+                              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">
+                                {safeIdx + 1} / {images.length}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex h-full flex-col items-center justify-center gap-2">
+                            <Package
+                              className={cn(
+                                "h-14 w-14",
+                                stockStatus === "LOW" && "text-warning/30",
+                                stockStatus === "OUT_OF_STOCK" && "text-danger/30",
+                                stockStatus === "IN_STOCK" && "text-navy/15",
+                              )}
                             />
-                          )}
+                            <p className="text-xs text-navy/70">
+                              Drop images here or click to upload
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Thumbnail strip with checkboxes in select mode */}
+                      {images.length > 0 && (
+                        <div className="flex gap-1.5 overflow-x-auto pb-1">
+                          {images.map((url, i) => (
+                            <div key={i} className="relative shrink-0">
+                              <button
+                                onClick={() =>
+                                  selectMode ? toggleSelectImage(i) : setActiveImageIdx(i)
+                                }
+                                className={cn(
+                                  "h-14 w-14 overflow-hidden rounded-lg border-2 transition-all",
+                                  selectMode && selectedImages.has(i) && "border-danger",
+                                  !selectMode && i === safeIdx
+                                    ? "border-brand-500"
+                                    : !selectMode
+                                      ? "border-transparent opacity-60 hover:opacity-100"
+                                      : "border-surface-border",
+                                )}
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={url}
+                                  alt={`thumb ${i + 1}`}
+                                  className="h-full w-full object-cover"
+                                  style={{ objectPosition: objectPositionForUrl(url) }}
+                                />
+                              </button>
+                              {selectMode && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedImages.has(i)}
+                                  onChange={() => toggleSelectImage(i)}
+                                  className="absolute left-0.5 top-0.5 h-3.5 w-3.5 cursor-pointer accent-danger"
+                                />
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Operator-only controls for the active image */}
-                  {isOperator && !selectMode && hasImages && (
-                    <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
-                      {/* Move left / right */}
-                      <button
-                        onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
-                        disabled={safeIdx === 0 || updateProduct.isPending}
-                        title="Move left"
-                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
-                      >
-                        <ChevronLeft className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
-                        disabled={safeIdx === images.length - 1 || updateProduct.isPending}
-                        title="Move right"
-                        className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
-                      >
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </button>
-
-                      {/* Default / Set default */}
-                      {safeIdx === 0 ? (
-                        <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
-                          <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
-                          Default
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => handleSetDefault(safeIdx)}
-                          disabled={updateProduct.isPending}
-                          title="Set as default image (move to first position)"
-                          className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
-                        >
-                          <Star className="h-3 w-3" />
-                          Set default
-                        </button>
                       )}
 
-                      {/* Crop / re-set focal — re-runs the crop + focal-point
+                      {/* Operator-only controls for the active image */}
+                      {isOperator && !selectMode && hasImages && (
+                        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border pt-2">
+                          {/* Move left / right */}
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
+                            disabled={safeIdx === 0 || updateProduct.isPending}
+                            title="Move left"
+                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                          >
+                            <ChevronLeft className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
+                            disabled={safeIdx === images.length - 1 || updateProduct.isPending}
+                            title="Move right"
+                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                          >
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+
+                          {/* Default / Set default */}
+                          {safeIdx === 0 ? (
+                            <span className="flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-600 select-none">
+                              <Star className="h-3 w-3 fill-brand-500 text-brand-500" />
+                              Default
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleSetDefault(safeIdx)}
+                              disabled={updateProduct.isPending}
+                              title="Set as default image (move to first position)"
+                              className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:border-brand-200 hover:text-brand-500 disabled:opacity-30 transition-colors"
+                            >
+                              <Star className="h-3 w-3" />
+                              Set default
+                            </button>
+                          )}
+
+                          {/* Crop / re-set focal — re-runs the crop + focal-point
                         flow on the existing image and replaces the original. */}
-                      <button
-                        onClick={() =>
-                          handleCropExisting(images[safeIdx], (product as any).imageKeys?.[safeIdx])
-                        }
-                        disabled={!!cropState || uploadImages.isPending}
-                        title="Re-crop and/or move the focal point (replaces the original image)"
-                        className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
-                      >
-                        <Scissors className="h-3 w-3" />
-                        Crop / focal
-                      </button>
-                    </div>
-                  )}
+                          <button
+                            onClick={() =>
+                              handleCropExisting(
+                                images[safeIdx],
+                                (product as any).imageKeys?.[safeIdx],
+                              )
+                            }
+                            disabled={!!cropState || uploadImages.isPending}
+                            title="Re-crop and/or move the focal point (replaces the original image)"
+                            className="flex items-center gap-1 rounded-lg border border-surface-border px-2.5 py-1 text-xs text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                          >
+                            <Scissors className="h-3 w-3" />
+                            Crop / focal
+                          </button>
+                        </div>
+                      )}
 
-                  {/* Action row: select-mode toggle + bulk delete + upload */}
-                  <div className="flex items-center gap-2">
-                    {hasImages &&
-                      (selectMode ? (
-                        <>
-                          <button
-                            onClick={deleteSelected}
-                            disabled={selectedImages.size === 0 || deleteImage.isPending}
-                            className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
-                            selected
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectMode(false);
-                              setSelectedImages(new Set());
-                            }}
-                            className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
+                      {/* Action row: select-mode toggle + bulk delete + upload */}
+                      <div className="flex items-center gap-2">
+                        {hasImages &&
+                          (selectMode ? (
+                            <>
+                              <button
+                                onClick={deleteSelected}
+                                disabled={selectedImages.size === 0 || deleteImage.isPending}
+                                className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white hover:bg-danger/90 disabled:opacity-40 transition-colors"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Delete {selectedImages.size > 0 ? `${selectedImages.size} ` : ""}
+                                selected
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectMode(false);
+                                  setSelectedImages(new Set());
+                                }}
+                                className="rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => setSelectMode(true)}
+                              className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Select to delete
+                            </button>
+                          ))}
                         <button
-                          onClick={() => setSelectMode(true)}
-                          className="flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-1.5 text-xs text-navy/70 hover:text-navy transition-colors"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploadImages.isPending || !!cropState}
+                          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          Select to delete
+                          <Upload className="h-3.5 w-3.5" />
+                          {uploadImages.isPending ? "Uploading…" : "Upload images"}
                         </button>
-                      ))}
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadImages.isPending || !!cropState}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-dashed border-surface-border bg-white py-1.5 text-xs text-navy/70 hover:border-brand-500/50 hover:text-brand-500 transition-colors disabled:opacity-50"
-                    >
-                      <Upload className="h-3.5 w-3.5" />
-                      {uploadImages.isPending ? "Uploading…" : "Upload images"}
-                    </button>
-                  </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => handleUpload(e.target.files)}
-                  />
-                </div>
-              );
-            })()}
+                      </div>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => handleUpload(e.target.files)}
+                      />
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
 
-            <Card>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-navy/70">Stock status</span>
+            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+              <div className="border-b border-surface-border px-4 py-3">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  Stock &amp; Cost
+                </h3>
+              </div>
+              <div className="px-4">
+                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+                  <span className="text-navy/70">Stock status</span>
                   {stockStatus === "OUT_OF_STOCK" ? (
                     <Badge variant="danger" label="Out of Stock" />
                   ) : stockStatus === "LOW" ? (
@@ -1054,16 +1106,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <Badge variant="success" label="In Stock" />
                   )}
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-navy/70">On hand</span>
-                  <span className="font-medium text-navy">
+                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+                  <span className="text-navy/70">On hand</span>
+                  <span className="font-mono font-medium tabular-nums text-navy">
                     {currentStock.toFixed(2)} {product.unit}
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-navy/70">Avg cost</span>
+                <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+                  <span className="text-navy/70">Avg cost</span>
                   {product.averageCost != null ? (
-                    <span className="font-medium text-navy">
+                    <span className="font-mono font-medium tabular-nums text-navy">
                       ${parseFloat(String(product.averageCost)).toFixed(2)}
                     </span>
                   ) : (
@@ -1077,57 +1129,22 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 </div>
                 <Link
                   href={`/inventory/movements?product=${product.id}`}
-                  className="block text-xs text-brand-500 hover:underline"
+                  className="block py-3 text-xs font-semibold text-brand-600 hover:underline"
                 >
                   View stock movements →
                 </Link>
               </div>
-            </Card>
+            </div>
           </div>
 
           {/* ── Right: details + chart ── */}
           <div className="space-y-5 lg:col-span-2">
             {/* Product details */}
-            <Card>
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  {isEditing ? (
-                    (() => {
-                      const editParent = (editDraft.parentProductId as string)
-                        ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
-                        : null;
-                      const previewName =
-                        editParent && (editDraft.variantName as string)?.trim()
-                          ? `${(editParent as any).name} - ${(editDraft.variantName as string).trim()}`
-                          : null;
-                      return editParent ? (
-                        <div>
-                          <p className="w-full rounded border border-surface-border bg-surface-raised px-2 py-1 text-lg font-bold text-navy/70 select-none">
-                            {previewName ?? (
-                              <span className="text-navy/30 italic text-sm font-normal">
-                                auto-composed from parent + flavor
-                              </span>
-                            )}
-                          </p>
-                          <p className="mt-0.5 text-xs text-navy/70 italic">
-                            Name auto-composed from parent + flavor
-                          </p>
-                        </div>
-                      ) : (
-                        <input
-                          value={(editDraft.name as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                      );
-                    })()
-                  ) : (
-                    <h1 className="text-2xl font-bold text-navy">{product.name}</h1>
-                  )}
-                  {!isEditing && (
-                    <p className="mt-1 font-mono text-xs text-navy/70">{product.sku}</p>
-                  )}
-                </div>
+            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  Details
+                </h3>
                 <div className="flex shrink-0 items-center gap-2">
                   {isEditing ? (
                     <>
@@ -1196,347 +1213,401 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )}
                 </div>
               </div>
+              <div className="p-5">
+                {/* Edit-mode name field — view mode shows the name in the page header */}
+                {isEditing && (
+                  <div className="mb-4">
+                    {(() => {
+                      const editParent = (editDraft.parentProductId as string)
+                        ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                        : null;
+                      const previewName =
+                        editParent && (editDraft.variantName as string)?.trim()
+                          ? `${(editParent as any).name} - ${(editDraft.variantName as string).trim()}`
+                          : null;
+                      return editParent ? (
+                        <div>
+                          <p className="w-full rounded border border-surface-border bg-surface-raised px-2 py-1 text-lg font-bold text-navy/70 select-none">
+                            {previewName ?? (
+                              <span className="text-navy/30 italic text-sm font-normal">
+                                auto-composed from parent + flavor
+                              </span>
+                            )}
+                          </p>
+                          <p className="mt-0.5 text-xs text-navy/70 italic">
+                            Name auto-composed from parent + flavor
+                          </p>
+                        </div>
+                      ) : (
+                        <input
+                          value={(editDraft.name as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                          className="w-full rounded border border-surface-border px-2 py-1 text-lg font-bold text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      );
+                    })()}
+                  </div>
+                )}
 
-              {/* Tobacco compliance banner */}
-              {(product as any).isTobacco && (
-                <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2">
-                  <p className="text-sm text-amber-900">
-                    <span className="font-semibold">Tobacco product</span> — purchases and sales are
-                    tracked separately for monthly tax reports.
-                  </p>
-                  <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
-                    Tobacco section →
-                  </Link>
-                </div>
-              )}
-
-              {/* Parent link banner for variants */}
-              {product.parentProductId && product.parent && (
-                <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
-                  <p className="text-sm text-blue-700">
-                    This is a variant of{" "}
-                    <Link
-                      href={`/products/${product.parentProductId}`}
-                      className="font-medium underline"
-                    >
-                      {product.parent.name}
+                {/* Tobacco compliance banner */}
+                {(product as any).isTobacco && (
+                  <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-2">
+                    <p className="text-sm text-amber-900">
+                      <span className="font-semibold">Tobacco product</span> — purchases and sales
+                      are tracked separately for monthly tax reports.
+                    </p>
+                    <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
+                      Tobacco section →
                     </Link>
-                  </p>
-                  {isOperator && (
-                    <button
-                      onClick={handleUnlinkFromParent}
-                      className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                    >
-                      Unlink
-                    </button>
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
 
-              <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-                <InfoRow
-                  label="SKU / Barcode"
-                  value={
-                    isEditing ? (
-                      <input
-                        value={(editDraft.sku as string) ?? ""}
-                        onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
-                        className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    ) : (
-                      (product.sku ?? <span className="text-navy/30">—</span>)
-                    )
-                  }
-                />
-                <InfoRow
-                  label="Category"
-                  value={
-                    isEditing ? (
-                      <>
-                        <input
-                          list="edit-category-options"
-                          value={(editDraft.category as string) ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({ ...d, category: e.target.value }))
-                          }
-                          placeholder="Select or type a category"
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        <datalist id="edit-category-options">
-                          {catalogCategories.map((c) => (
-                            <option key={c} value={c} />
-                          ))}
-                        </datalist>
-                      </>
-                    ) : (
-                      product.category
-                    )
-                  }
-                />
-                <InfoRow
-                  label="Unit of Measure"
-                  value={
-                    isEditing ? (
-                      <>
-                        <input
-                          list="edit-unit-options"
-                          value={(editDraft.unit as string) ?? ""}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
-                          placeholder="Select or type a unit"
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        <datalist id="edit-unit-options">
-                          {catalogUnits.map((u) => (
-                            <option key={u} value={u} />
-                          ))}
-                        </datalist>
-                      </>
-                    ) : (
-                      product.unit
-                    )
-                  }
-                />
-                <InfoRow
-                  label="Tier 1 Price (List)"
-                  value={
-                    isEditing ? (
-                      <EditableNumber
-                        value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                        onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
-                      />
-                    ) : (
-                      `$${priceNumber.toFixed(2)}`
-                    )
-                  }
-                />
-                {/* Variant of — always show when editing; in view mode show only if product has a parent */}
-                {(isEditing || product.parentProductId) && (
+                {/* Parent link banner for variants */}
+                {product.parentProductId && product.parent && (
+                  <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 mb-4">
+                    <p className="text-sm text-blue-700">
+                      This is a variant of{" "}
+                      <Link
+                        href={`/products/${product.parentProductId}`}
+                        className="font-medium underline"
+                      >
+                        {product.parent.name}
+                      </Link>
+                    </p>
+                    {isOperator && (
+                      <button
+                        onClick={handleUnlinkFromParent}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        Unlink
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
                   <InfoRow
-                    label="Variant of"
+                    label="SKU / Barcode"
                     value={
                       isEditing ? (
-                        <select
-                          value={(editDraft.parentProductId as string) ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({
-                              ...d,
-                              parentProductId: e.target.value,
-                              variantName: e.target.value ? (d.variantName as string) : "",
-                            }))
-                          }
+                        <input
+                          value={(editDraft.sku as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, sku: e.target.value }))}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          <option value="">None (standalone product)</option>
-                          {variantOfCandidates.map((p: any) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.sku ? ` — ${p.sku}` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      ) : product.parent ? (
-                        <Link
-                          href={`/products/${product.parentProductId}`}
-                          className="text-brand-600 underline text-sm"
-                        >
-                          {product.parent.name}
-                        </Link>
+                        />
                       ) : (
-                        "—"
+                        (product.sku ?? <span className="text-navy/30">—</span>)
                       )
                     }
                   />
-                )}
-                {/* Flavor / variety — only when a parent is selected */}
-                {isEditing && (editDraft.parentProductId as string) && (
                   <InfoRow
-                    label="Flavor / variety"
+                    label="Category"
                     value={
-                      <div>
-                        <input
-                          value={(editDraft.variantName as string) ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({ ...d, variantName: e.target.value }))
-                          }
-                          placeholder="e.g. Large, Strawberry, Red…"
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        />
-                        {(editDraft.variantName as string)?.trim() &&
-                          (() => {
-                            const p = allProducts.find(
-                              (x: any) => x.id === editDraft.parentProductId,
-                            ) as any;
-                            return p ? (
-                              <p className="mt-1 text-xs text-navy/70 italic">
-                                Name will be: &ldquo;{p.name} -{" "}
-                                {(editDraft.variantName as string).trim()}&rdquo;
-                              </p>
-                            ) : null;
-                          })()}
-                      </div>
+                      isEditing ? (
+                        <>
+                          <input
+                            list="edit-category-options"
+                            value={(editDraft.category as string) ?? ""}
+                            onChange={(e) =>
+                              setEditDraft((d) => ({ ...d, category: e.target.value }))
+                            }
+                            placeholder="Select or type a category"
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          <datalist id="edit-category-options">
+                            {catalogCategories.map((c) => (
+                              <option key={c} value={c} />
+                            ))}
+                          </datalist>
+                        </>
+                      ) : (
+                        product.category
+                      )
                     }
                   />
-                )}
-              </div>
-
-              {/* Tier Prices */}
-              <div className="mt-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-medium text-navy/70">Pricing Tiers</p>
-                  {isEditing && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const t1 = editDraft.pricePerUnit as string;
-                        setEditDraft((d) => ({
-                          ...d,
-                          priceTier2: t1,
-                          priceTier3: t1,
-                          priceTier4: t1,
-                          priceTier5: t1,
-                        }));
-                      }}
-                      className="text-xs text-brand-600 hover:underline"
-                    >
-                      Set all to Tier 1
-                    </button>
+                  <InfoRow
+                    label="Unit of Measure"
+                    value={
+                      isEditing ? (
+                        <>
+                          <input
+                            list="edit-unit-options"
+                            value={(editDraft.unit as string) ?? ""}
+                            onChange={(e) => setEditDraft((d) => ({ ...d, unit: e.target.value }))}
+                            placeholder="Select or type a unit"
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          <datalist id="edit-unit-options">
+                            {catalogUnits.map((u) => (
+                              <option key={u} value={u} />
+                            ))}
+                          </datalist>
+                        </>
+                      ) : (
+                        product.unit
+                      )
+                    }
+                  />
+                  <InfoRow
+                    label="Tier 1 Price (List)"
+                    value={
+                      isEditing ? (
+                        <EditableNumber
+                          value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                          onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
+                        />
+                      ) : (
+                        <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
+                      )
+                    }
+                  />
+                  {/* Variant of — always show when editing; in view mode show only if product has a parent */}
+                  {(isEditing || product.parentProductId) && (
+                    <InfoRow
+                      label="Variant of"
+                      value={
+                        isEditing ? (
+                          <select
+                            value={(editDraft.parentProductId as string) ?? ""}
+                            onChange={(e) =>
+                              setEditDraft((d) => ({
+                                ...d,
+                                parentProductId: e.target.value,
+                                variantName: e.target.value ? (d.variantName as string) : "",
+                              }))
+                            }
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          >
+                            <option value="">None (standalone product)</option>
+                            {variantOfCandidates.map((p: any) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                                {p.sku ? ` — ${p.sku}` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        ) : product.parent ? (
+                          <Link
+                            href={`/products/${product.parentProductId}`}
+                            className="text-brand-600 underline text-sm"
+                          >
+                            {product.parent.name}
+                          </Link>
+                        ) : (
+                          "—"
+                        )
+                      }
+                    />
+                  )}
+                  {/* Flavor / variety — only when a parent is selected */}
+                  {isEditing && (editDraft.parentProductId as string) && (
+                    <InfoRow
+                      label="Flavor / variety"
+                      value={
+                        <div>
+                          <input
+                            value={(editDraft.variantName as string) ?? ""}
+                            onChange={(e) =>
+                              setEditDraft((d) => ({ ...d, variantName: e.target.value }))
+                            }
+                            placeholder="e.g. Large, Strawberry, Red…"
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                          {(editDraft.variantName as string)?.trim() &&
+                            (() => {
+                              const p = allProducts.find(
+                                (x: any) => x.id === editDraft.parentProductId,
+                              ) as any;
+                              return p ? (
+                                <p className="mt-1 text-xs text-navy/70 italic">
+                                  Name will be: &ldquo;{p.name} -{" "}
+                                  {(editDraft.variantName as string).trim()}&rdquo;
+                                </p>
+                              ) : null;
+                            })()}
+                        </div>
+                      }
+                    />
                   )}
                 </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {(
-                    [
-                      ["Tier 2", "priceTier2", product.priceTier2],
-                      ["Tier 3", "priceTier3", product.priceTier3],
-                      ["Tier 4", "priceTier4", product.priceTier4],
-                      ["Tier 5", "priceTier5", product.priceTier5],
-                    ] as [string, string, any][]
-                  ).map(([label, field, productVal], idx) => {
-                    const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
-                    const prevField = prevFields[idx];
-                    const curVal = isEditing
-                      ? parseFloat(
-                          String(editDraft[field] ?? parseFloat(String(productVal ?? priceNumber))),
-                        )
-                      : parseFloat(String(productVal ?? priceNumber));
-                    const prevVal = isEditing
-                      ? parseFloat(String(editDraft[prevField] ?? priceNumber))
-                      : parseFloat(
-                          String(
-                            idx === 0 ? priceNumber : ((product as any)[prevField] ?? priceNumber),
-                          ),
-                        );
-                    const warn = isEditing && curVal > prevVal;
-                    return (
-                      <div key={field}>
-                        <p
-                          className={cn(
-                            "mb-1 text-xs",
-                            warn ? "text-warning font-medium" : "text-navy/70",
-                          )}
-                        >
-                          {label}
-                          {warn ? " ⚠" : ""}
-                        </p>
-                        {isEditing ? (
-                          <EditableNumber
-                            value={curVal}
-                            onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
-                          />
-                        ) : (
-                          <p className="text-sm font-medium text-navy">
-                            ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {isEditing &&
-                  (() => {
-                    const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
-                    const t2 = parseFloat(
-                      String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1),
-                    );
-                    const t3 = parseFloat(
-                      String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1),
-                    );
-                    const t4 = parseFloat(
-                      String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1),
-                    );
-                    const t5 = parseFloat(
-                      String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1),
-                    );
-                    const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
-                    return hasViolation ? (
-                      <p className="mt-1.5 text-xs text-warning">
-                        Higher tier prices should be ≤ the tier above (volume discounts are lower).
-                      </p>
-                    ) : null;
-                  })()}
-              </div>
 
-              <div className="mt-4">
-                <p className="mb-1 text-xs text-navy/70">Description</p>
-                {isEditing ? (
-                  <textarea
-                    value={(editDraft.description as string) ?? ""}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
-                    rows={3}
-                    className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                ) : (
-                  <p className="text-sm text-navy/80">{product.description}</p>
-                )}
+                {/* Tier Prices */}
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                      Pricing Tiers
+                    </p>
+                    {isEditing && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const t1 = editDraft.pricePerUnit as string;
+                          setEditDraft((d) => ({
+                            ...d,
+                            priceTier2: t1,
+                            priceTier3: t1,
+                            priceTier4: t1,
+                            priceTier5: t1,
+                          }));
+                        }}
+                        className="text-xs text-brand-600 hover:underline"
+                      >
+                        Set all to Tier 1
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {(
+                      [
+                        ["Tier 2", "priceTier2", product.priceTier2],
+                        ["Tier 3", "priceTier3", product.priceTier3],
+                        ["Tier 4", "priceTier4", product.priceTier4],
+                        ["Tier 5", "priceTier5", product.priceTier5],
+                      ] as [string, string, any][]
+                    ).map(([label, field, productVal], idx) => {
+                      const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
+                      const prevField = prevFields[idx];
+                      const curVal = isEditing
+                        ? parseFloat(
+                            String(
+                              editDraft[field] ?? parseFloat(String(productVal ?? priceNumber)),
+                            ),
+                          )
+                        : parseFloat(String(productVal ?? priceNumber));
+                      const prevVal = isEditing
+                        ? parseFloat(String(editDraft[prevField] ?? priceNumber))
+                        : parseFloat(
+                            String(
+                              idx === 0
+                                ? priceNumber
+                                : ((product as any)[prevField] ?? priceNumber),
+                            ),
+                          );
+                      const warn = isEditing && curVal > prevVal;
+                      return (
+                        <div key={field}>
+                          <p
+                            className={cn(
+                              "mb-1 text-xs",
+                              warn ? "text-warning font-medium" : "text-navy/70",
+                            )}
+                          >
+                            {label}
+                            {warn ? " ⚠" : ""}
+                          </p>
+                          {isEditing ? (
+                            <EditableNumber
+                              value={curVal}
+                              onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
+                            />
+                          ) : (
+                            <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                              ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {isEditing &&
+                    (() => {
+                      const t1 = parseFloat(String(editDraft.pricePerUnit ?? priceNumber));
+                      const t2 = parseFloat(
+                        String(editDraft.priceTier2 ?? (product as any).priceTier2 ?? t1),
+                      );
+                      const t3 = parseFloat(
+                        String(editDraft.priceTier3 ?? (product as any).priceTier3 ?? t1),
+                      );
+                      const t4 = parseFloat(
+                        String(editDraft.priceTier4 ?? (product as any).priceTier4 ?? t1),
+                      );
+                      const t5 = parseFloat(
+                        String(editDraft.priceTier5 ?? (product as any).priceTier5 ?? t1),
+                      );
+                      const hasViolation = t2 > t1 || t3 > t2 || t4 > t3 || t5 > t4;
+                      return hasViolation ? (
+                        <p className="mt-1.5 text-xs text-warning">
+                          Higher tier prices should be ≤ the tier above (volume discounts are
+                          lower).
+                        </p>
+                      ) : null;
+                    })()}
+                </div>
+
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    Description
+                  </p>
+                  {isEditing ? (
+                    <textarea
+                      value={(editDraft.description as string) ?? ""}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, description: e.target.value }))}
+                      rows={3}
+                      className="w-full resize-y rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                  ) : (
+                    <p className="text-sm text-navy/80">{product.description}</p>
+                  )}
+                </div>
               </div>
-            </Card>
+            </div>
 
             {/* 30-day demand chart */}
-            <Card title="30-Day Order Demand">
-              <p className="mb-3 text-xs text-navy/70 italic">
-                Demo data — historical order demand coming soon.
-              </p>
-              {isMounted ? (
-                <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={demandData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                    <XAxis
-                      dataKey="day"
-                      tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-                      tickLine={false}
-                      axisLine={false}
-                      interval={4}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        borderRadius: 8,
-                        border: "1px solid #e2e8f0",
-                        fontSize: 12,
-                        boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-                      }}
-                      labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
-                      formatter={((v: number) => [`${v} units`, "Ordered"]) as any}
-                    />
-                    <Bar dataKey="units" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-[200px] animate-pulse rounded-lg bg-surface-raised" />
-              )}
-            </Card>
+            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+              <div className="border-b border-surface-border px-5 py-3.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                  30-Day Order Demand
+                </h3>
+              </div>
+              <div className="p-5">
+                <p className="mb-3 text-xs text-navy/70 italic">
+                  Demo data — historical order demand coming soon.
+                </p>
+                {isMounted ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <BarChart data={demandData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                      <XAxis
+                        dataKey="day"
+                        tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+                        tickLine={false}
+                        axisLine={false}
+                        interval={4}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fill: "#1B3A5C99" }}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: 8,
+                          border: "1px solid #e2e8f0",
+                          fontSize: 12,
+                          boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+                        }}
+                        labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
+                        formatter={((v: number) => [`${v} units`, "Ordered"]) as any}
+                      />
+                      <Bar dataKey="units" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-[200px] animate-pulse rounded-lg bg-surface-raised" />
+                )}
+              </div>
+            </div>
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
 
             {/* Variants section — only for non-variant (parent) products */}
             {!product.parentProductId && (
-              <Card>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-semibold text-navy">Variants</h3>
+              <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    Variants
+                  </h3>
                   {isOperator && (
                     <div className="flex items-center gap-2">
                       <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
@@ -1554,28 +1625,40 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 </div>
 
                 {(!product.variants || product.variants.length === 0) && !product.variantName ? (
-                  <p className="text-sm text-navy/70 text-center py-8">
+                  <p className="text-sm text-navy/70 text-center py-10">
                     No variants yet. Add flavors, sizes, or other variations.
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-surface-border text-left">
-                          <th className="pb-2 pr-4 text-xs font-medium text-navy/70">Variant</th>
-                          <th className="pb-2 pr-4 text-xs font-medium text-navy/70">SKU</th>
-                          <th className="pb-2 pr-4 text-xs font-medium text-navy/70">Tier 1</th>
-                          <th className="pb-2 pr-4 text-xs font-medium text-navy/70">Tier 2</th>
-                          <th className="pb-2 pr-4 text-xs font-medium text-navy/70">Status</th>
+                        <tr className="text-left">
+                          <th className="border-b-2 border-navy px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                            Variant
+                          </th>
+                          <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                            SKU
+                          </th>
+                          <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                            Tier 1
+                          </th>
+                          <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                            Tier 2
+                          </th>
+                          <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                            Status
+                          </th>
                           {isOperator && (
-                            <th className="pb-2 text-xs font-medium text-navy/70">Actions</th>
+                            <th className="border-b-2 border-navy px-5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
+                              Actions
+                            </th>
                           )}
                         </tr>
                       </thead>
                       <tbody>
                         {/* Parent product itself as first row */}
                         <tr className="border-b border-surface-border bg-surface-raised/30">
-                          <td className="py-2.5 pr-4">
+                          <td className="px-5 py-2.5">
                             <span className="font-medium text-navy">
                               {product.variantName || (
                                 <span className="italic text-navy/70">this product</span>
@@ -1590,24 +1673,26 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                               </button>
                             )}
                           </td>
-                          <td className="py-2.5 pr-4 font-mono text-xs text-navy/70">
+                          <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
                             {product.sku || <span className="text-navy/30">&mdash;</span>}
                           </td>
-                          <td className="py-2.5 pr-4 text-navy">${priceNumber.toFixed(2)}</td>
-                          <td className="py-2.5 pr-4 text-navy">
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
+                            ${priceNumber.toFixed(2)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
                             $
                             {parseFloat(String((product as any).priceTier2 ?? priceNumber)).toFixed(
                               2,
                             )}
                           </td>
-                          <td className="py-2.5 pr-4">
+                          <td className="px-3 py-2.5">
                             <Badge
                               variant={product.isActive ? "success" : "neutral"}
                               label={product.isActive ? "Active" : "Inactive"}
                             />
                           </td>
                           {isOperator && (
-                            <td className="py-2.5">
+                            <td className="px-5 py-2.5 text-right">
                               <button
                                 onClick={startEdit}
                                 title="Edit this product"
@@ -1623,7 +1708,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             key={variant.id}
                             className="border-b border-surface-border last:border-0"
                           >
-                            <td className="py-2.5 pr-4">
+                            <td className="px-5 py-2.5">
                               <Link
                                 href={`/products/${variant.id}`}
                                 className="font-medium text-brand-600 hover:underline"
@@ -1631,27 +1716,27 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                                 {variant.variantName || variant.name}
                               </Link>
                             </td>
-                            <td className="py-2.5 pr-4 font-mono text-xs text-navy/70">
+                            <td className="px-3 py-2.5 font-mono text-xs text-navy/70">
                               {variant.sku || <span className="text-navy/30">&mdash;</span>}
                             </td>
-                            <td className="py-2.5 pr-4 text-navy">
+                            <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
                               ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
                             </td>
-                            <td className="py-2.5 pr-4 text-navy">
+                            <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
                               $
                               {parseFloat(
                                 String((variant as any).priceTier2 ?? variant.pricePerUnit),
                               ).toFixed(2)}
                             </td>
-                            <td className="py-2.5 pr-4">
+                            <td className="px-3 py-2.5">
                               <Badge
                                 variant={variant.isActive ? "success" : "neutral"}
                                 label={variant.isActive ? "Active" : "Inactive"}
                               />
                             </td>
                             {isOperator && (
-                              <td className="py-2.5">
-                                <div className="flex items-center gap-1.5">
+                              <td className="px-5 py-2.5">
+                                <div className="flex items-center justify-end gap-1.5">
                                   <button
                                     onClick={() => openVariantModal(variant)}
                                     title="Edit variant"
@@ -1680,7 +1765,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     </table>
                   </div>
                 )}
-              </Card>
+              </div>
             )}
           </div>
         </div>

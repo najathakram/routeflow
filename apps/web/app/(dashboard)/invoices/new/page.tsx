@@ -37,6 +37,9 @@ import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
+import { computeLineSubtotal } from "@/lib/pricing";
+import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
+import { MarginHint } from "@/components/MarginHint";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -379,6 +382,7 @@ interface LineItemState {
   regularPrice?: number; // original product price before special pricing
   isSpecialPrice?: boolean; // true if a customer-specific price was applied
   avgCost?: number; // average cost of the product (display only, never submitted)
+  category?: string; // product category — for the per-category margin floor
   unitsPerBox?: number; // set when product has box packaging
   boxes?: number; // whole boxes (only when unitsPerBox is set)
   pieces?: number; // extra loose pieces (only when unitsPerBox is set)
@@ -397,7 +401,17 @@ function createEmptyItem(): LineItemState {
 }
 
 function lineTotal(item: LineItemState): number {
-  return Math.max(0, Number(item.qty) * Number(item.unitPrice) - Number(item.discount));
+  // Use the shared boxed-proration helper (same as the backend + order builder).
+  // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
+  // total pieces while unitPrice is the box price (money-discipline rule).
+  const subtotal = computeLineSubtotal({
+    unitPrice: Number(item.unitPrice),
+    qty: Number(item.qty),
+    boxes: item.boxes ?? null,
+    pieces: item.pieces ?? null,
+    unitsPerBox: item.unitsPerBox ?? null,
+  });
+  return Math.max(0, subtotal - Number(item.discount));
 }
 
 // ─── Basis chooser ────────────────────────────────────────────────────────────
@@ -622,6 +636,9 @@ export default function NewInvoicePage() {
     return d.toISOString().slice(0, 10);
   });
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
+  // Live cost/margin — the negotiation floor (pos-cost-roles-spec §1).
+  const { data: marginConfig } = useMarginConfig();
+  const [floorAcked, setFloorAcked] = React.useState<Set<string>>(new Set());
   // Scroll the just-scanned invoice line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
   const [scrollToKey, setScrollToKey] = React.useState<string | null>(null);
@@ -750,6 +767,7 @@ export default function NewInvoicePage() {
       regularPrice: specialPrice !== undefined ? listPrice : undefined,
       isSpecialPrice: specialPrice !== undefined,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
+      category: product.category ?? undefined,
       unitsPerBox: upb,
       boxes: upb ? 1 : undefined,
       pieces: upb ? 0 : undefined,
@@ -1604,6 +1622,23 @@ export default function NewInvoicePage() {
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
                           ${(item.unitPrice / item.unitsPerBox).toFixed(2)}/pc
                         </p>
+                      )}
+                      {/* Live cost & margin — the negotiation floor (shared component) */}
+                      {item.productId && (
+                        <div className="mt-0.5">
+                          <MarginHint
+                            unitPrice={item.unitPrice}
+                            unitCost={item.avgCost}
+                            unitsPerBox={item.unitsPerBox}
+                            productId={item.productId}
+                            floor={floorForCategory(marginConfig, item.category)}
+                            acked={floorAcked.has(item.key)}
+                            onSetToFloor={(fp) => updateItem(item.key, { unitPrice: fp })}
+                            onSellAnyway={() =>
+                              setFloorAcked((prev) => new Set(prev).add(item.key))
+                            }
+                          />
+                        </div>
                       )}
                     </div>
 

@@ -12,12 +12,10 @@ import {
   Clock,
   CheckCircle2,
   ArrowRight,
-  TrendingUp,
   Package,
   DollarSign,
   FileMinus,
   Plus,
-  AlertCircle,
   ExternalLink,
   Briefcase,
   type LucideIcon,
@@ -39,7 +37,7 @@ import { useInvoices, type Invoice } from "@/lib/api/invoices";
 const routeColumns: ColumnDef<RouteRun, unknown>[] = [
   {
     accessorKey: "route.name",
-    header: "Route Name",
+    header: "Route",
     cell: ({ row }) => (
       <span className="font-medium text-navy">{row.original.route?.name ?? "—"}</span>
     ),
@@ -65,15 +63,15 @@ const routeColumns: ColumnDef<RouteRun, unknown>[] = [
       const done = stops.filter((s) => s.status === "COMPLETED").length;
       const total = row.original._count?.stops ?? stops.length;
       return (
-        <span className="text-sm text-navy/70">
-          {done} / {total}
+        <span className="mono text-sm text-navy/70">
+          {done}/{total}
         </span>
       );
     },
   },
   {
     id: "startTime",
-    header: "Start Time",
+    header: "Start",
     enableSorting: false,
     cell: ({ row }) => (
       <span className="text-navy/70">
@@ -118,7 +116,7 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "total",
     header: "Total",
     cell: ({ row }) => (
-      <span className="font-medium text-navy">
+      <span className="money text-navy">
         ${Number(row.original.total ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}
       </span>
     ),
@@ -223,26 +221,21 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   ].filter((b) => b.value > 0);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-navy/70" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-            AR Aging
-          </span>
-        </div>
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
+        <h3 className="text-base font-semibold text-navy">AR Aging</h3>
         <Link
           href="/finance/reports/ar-aging"
-          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+          className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
           Full report <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
 
-      <div className="p-4 space-y-3">
+      <div className="p-5 space-y-4">
         {/* Total */}
-        <div className="flex items-baseline justify-between">
-          <span className="text-2xl font-bold text-navy">
+        <div className="flex items-baseline gap-2">
+          <span className="money text-2xl text-navy">
             $
             {totalValue.toLocaleString("en-US", {
               minimumFractionDigits: 2,
@@ -253,7 +246,7 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
         </div>
 
         {/* Stacked bar */}
-        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-surface-border">
+        <div className="flex h-3.5 w-full overflow-hidden rounded-full bg-sunken">
           {buckets.map((b) => (
             <div
               key={b.label}
@@ -264,14 +257,12 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
         </div>
 
         {/* Legend */}
-        <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
+        <div className="grid grid-cols-3 gap-x-4 gap-y-2.5">
           {buckets.map((b) => (
-            <div key={b.label} className="flex items-center gap-1.5">
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", b.color)} />
-              <div className="min-w-0">
-                <p className="text-xs text-navy/70 truncate">{b.label}</p>
-                <p className={cn("text-xs font-semibold", b.textColor)}>{fmtMoney(b.value)}</p>
-              </div>
+            <div key={b.label} className="flex flex-col gap-0.5">
+              <span className={cn("h-2.5 w-2.5 rounded-[3px]", b.color)} />
+              <p className="text-[11.5px] text-navy/70 truncate">{b.label}</p>
+              <p className="money text-xs text-navy">{fmtMoney(b.value)}</p>
             </div>
           ))}
         </div>
@@ -291,11 +282,11 @@ function OverdueInvoicesPanel({
 }) {
   if (isLoading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-        <div className="border-b border-surface-border px-4 py-2.5">
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+        <div className="border-b border-surface-border px-5 py-3.5">
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
-        <div className="space-y-3 p-4">
+        <div className="space-y-3 p-5">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-12 animate-pulse rounded bg-navy/10" />
           ))}
@@ -305,29 +296,22 @@ function OverdueInvoicesPanel({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-danger" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-            Overdue Invoices
-          </span>
-          {invoices.length > 0 && (
-            <span className="rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-              {invoices.length}
-            </span>
-          )}
+          <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
+          {invoices.length > 0 && <Badge variant="danger" label={`${invoices.length}`} />}
         </div>
         <Link
           href="/invoices?status=OVERDUE"
-          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+          className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
           View all <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
 
       {invoices.length === 0 ? (
-        <div className="flex items-center gap-3 px-4 py-5">
+        <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <div>
             <p className="text-sm font-semibold text-success">No overdue invoices</p>
@@ -340,30 +324,26 @@ function OverdueInvoicesPanel({
             const days = daysOverdue(inv.dueDate);
             const balance = Number(inv.balanceDue ?? inv.total ?? 0);
             return (
-              <li key={inv.id} className="flex items-center gap-3 px-4 py-3">
+              <li key={inv.id} className="flex items-center gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-navy">
+                  <p className="truncate text-sm font-semibold text-navy">
                     {inv.customer?.businessName ?? "Unknown"}
                   </p>
-                  <p className="mt-0.5 text-xs text-navy/70">
-                    #{inv.invoiceNumber} &middot;{" "}
-                    <span className="font-semibold text-danger">{days}d overdue</span>
-                  </p>
+                  <p className="mono mt-0.5 text-xs text-navy/70">#{inv.invoiceNumber}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold text-danger">
-                    $
-                    {(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", {
-                      minimumFractionDigits: 2,
-                    })}
-                  </p>
-                  <Link
-                    href={`/invoices/${inv.id}`}
-                    className="flex items-center gap-0.5 text-xs text-brand-500 hover:underline"
-                  >
-                    View <ExternalLink className="h-2.5 w-2.5" />
-                  </Link>
-                </div>
+                <Badge variant="danger" label={`${days}d overdue`} />
+                <span className="money text-sm text-navy">
+                  $
+                  {(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                  })}
+                </span>
+                <Link
+                  href={`/invoices/${inv.id}`}
+                  className="flex items-center gap-0.5 text-xs font-medium text-brand-500 hover:underline"
+                >
+                  View <ExternalLink className="h-2.5 w-2.5" />
+                </Link>
               </li>
             );
           })}
@@ -394,11 +374,11 @@ function LowStockPanel({
 }) {
   if (isLoading) {
     return (
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-        <div className="border-b border-surface-border px-4 py-2.5">
+      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+        <div className="border-b border-surface-border px-5 py-3.5">
           <div className="h-4 w-32 animate-pulse rounded bg-navy/10" />
         </div>
-        <div className="space-y-3 p-4">
+        <div className="space-y-3 p-5">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-10 animate-pulse rounded bg-navy/10" />
           ))}
@@ -408,29 +388,22 @@ function LowStockPanel({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-      <div className="flex items-center justify-between border-b border-surface-border px-4 py-2.5">
+    <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+      <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-warning" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-            Low Stock
-          </span>
-          {total > 0 && (
-            <span className="rounded-full bg-warning px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-              {fmt(total)}
-            </span>
-          )}
+          <h3 className="text-base font-semibold text-navy">Low Stock</h3>
+          {total > 0 && <Badge variant="warning" label={fmt(total)} />}
         </div>
         <Link
           href="/products?lowStock=true"
-          className="flex items-center gap-1 text-xs text-brand-500 hover:underline"
+          className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
         >
-          View all <ArrowRight className="h-3 w-3" />
+          Inventory <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
 
       {products.length === 0 ? (
-        <div className="flex items-center gap-3 px-4 py-5">
+        <div className="flex items-center gap-3 px-5 py-5">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
           <p className="text-sm font-semibold text-success">All stock levels healthy</p>
         </div>
@@ -442,21 +415,24 @@ function LowStockPanel({
             const threshold = p.lowStockThreshold ?? 5;
             const pct = stockUnset ? 0 : Math.min(100, Math.max(0, (qty / (threshold * 2)) * 100));
             return (
-              <li key={p.id} className="px-4 py-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm font-medium text-navy truncate max-w-[60%]">
-                    {p.name}
-                  </span>
+              <li key={p.id} className="px-5 py-3">
+                <p className="truncate text-sm font-semibold text-navy">{p.name}</p>
+                <div className="mt-1 flex items-center justify-between text-xs text-navy/70">
                   <span
                     className={cn(
-                      "text-xs font-semibold",
+                      "font-medium",
                       stockUnset ? "text-navy/70" : qty === 0 ? "text-danger" : "text-warning",
                     )}
                   >
                     {stockUnset ? "Not set" : `${qty} ${p.unit ?? "units"}`}
                   </span>
+                  {!stockUnset && (
+                    <span className="mono text-navy/70">
+                      {qty}/{threshold}
+                    </span>
+                  )}
                 </div>
-                <div className="h-1 w-full overflow-hidden rounded-full bg-surface-border">
+                <div className="mt-1.5 h-[5px] w-full overflow-hidden rounded-full bg-sunken">
                   <div
                     className={cn(
                       "h-full rounded-full transition-all",
@@ -647,32 +623,31 @@ export default function DashboardPage() {
 
       {/* ── Greeting ── */}
       {isOperator && (
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
           <div>
-            <h2 className="text-xl font-bold text-navy">
+            <h2 className="display text-[25px] leading-tight text-navy">
               {greeting}
-              {ownerName ? `, ${ownerName}` : ""}!
+              {ownerName ? `, ${ownerName}` : ""}.
             </h2>
             {businessName && (
-              <p className="text-sm text-navy/70">
+              <p className="mt-0.5 text-sm text-navy/70">
                 Here&apos;s what&apos;s happening at {businessName} today.
               </p>
             )}
           </div>
           {/* Quick-create shortcuts */}
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-navy/70 hidden sm:block">Quick create</span>
-            <Button href="/orders?action=new" size="sm" variant="secondary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Order
+            <Button href="/invoices/new" size="sm" variant="secondary">
+              <FileMinus className="mr-1.5 h-3.5 w-3.5" />
+              New Invoice
             </Button>
             <Button href="/routes/create" size="sm" variant="secondary">
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
+              <Truck className="mr-1.5 h-3.5 w-3.5" />
               New Route
             </Button>
-            <Button href="/invoices/new" size="sm" variant="secondary">
+            <Button href="/orders?action=new" size="sm" variant="primary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              New Invoice
+              New Order
             </Button>
           </div>
         </div>
@@ -787,19 +762,7 @@ export default function DashboardPage() {
 
       {/* ── Order pipeline strip (operator only) ── */}
       {isOperator && !ordersLoading && (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-          <div className="flex items-center gap-2 border-b border-surface-border px-4 py-2.5">
-            <TrendingUp className="h-4 w-4 text-navy/70" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-              Order Pipeline
-            </span>
-            <Link
-              href="/orders"
-              className="ml-auto flex items-center gap-1 text-xs text-brand-500 hover:underline"
-            >
-              View all <ArrowRight className="h-3 w-3" />
-            </Link>
-          </div>
+        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
           <div className="grid grid-cols-5 divide-x divide-surface-border">
             {[
               {
@@ -832,19 +795,19 @@ export default function DashboardPage() {
                 key={key}
                 href={`/orders?status=${key}`}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-3 py-4 text-center transition-colors hover:bg-surface-raised",
+                  "flex flex-col gap-1 px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
                   bg && orderPipeline[key] > 0 && bg,
                 )}
               >
                 <span
                   className={cn(
-                    "text-2xl font-bold",
+                    "text-xl font-semibold tabular-nums",
                     orderPipeline[key] > 0 ? color : "text-navy/20",
                   )}
                 >
                   {orderPipeline[key]}
                 </span>
-                <span className="text-xs text-navy/70">{label}</span>
+                <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
               </Link>
             ))}
           </div>
@@ -881,24 +844,25 @@ export default function DashboardPage() {
                   <div className="h-4 w-48 rounded bg-navy/10" />
                 </div>
               ) : urgentOrders.length > 0 ? (
-                <div className="overflow-hidden rounded-lg border border-danger/30 bg-danger-bg">
-                  <div className="flex items-center gap-2 border-b border-danger/20 bg-danger/10 px-4 py-3">
-                    <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
-                    <h2 className="text-sm font-semibold text-danger">
-                      {urgentOrders.length} Urgent Order{urgentOrders.length !== 1 ? "s" : ""}{" "}
-                      Require Attention
-                    </h2>
+                <div className="overflow-hidden rounded-lg border border-danger/40 bg-danger-bg/40 shadow-card">
+                  <div className="flex items-center justify-between border-b border-danger/30 px-5 py-3.5">
+                    <h3 className="flex items-center gap-2 text-base font-semibold text-[#B91C1C]">
+                      <AlertTriangle className="h-4 w-4 shrink-0" />
+                      Urgent Orders
+                    </h3>
+                    <Badge variant="danger" label={`${urgentOrders.length} open`} />
                   </div>
-                  <ul className="divide-y divide-danger/10">
+                  <ul className="divide-y divide-danger/20">
                     {urgentOrders.map((order) => (
-                      <li key={order.id} className="flex items-center gap-4 px-4 py-3">
+                      <li key={order.id} className="flex items-center gap-4 px-5 py-3">
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-navy">
+                          <p className="truncate text-sm font-semibold text-navy">
                             {order.customer?.businessName ?? "Unknown Customer"}
                           </p>
                           <p className="mt-0.5 flex items-center gap-1 text-xs text-navy/70">
                             <Clock className="h-3 w-3" />
-                            {order.lineItems?.length ?? 0} items &middot; {timeAgo(order.createdAt)}
+                            {order.lineItems?.length ?? 0} items &middot; placed{" "}
+                            {timeAgo(order.createdAt)}
                           </p>
                         </div>
                         <Button variant="secondary" size="sm" href={`/orders/${order.id}`}>
@@ -909,7 +873,7 @@ export default function DashboardPage() {
                   </ul>
                 </div>
               ) : (
-                <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-4 py-5">
+                <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success-bg px-5 py-5 shadow-card">
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
                   <div>
                     <p className="text-sm font-semibold text-success">All clear</p>
@@ -919,7 +883,16 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            <Card title="Scheduled Route Runs">
+            <Card>
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
+                <Link
+                  href="/routes"
+                  className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
+                >
+                  All routes <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
               {runsLoading ? (
                 <div className="animate-pulse space-y-3 py-4">
                   {[1, 2, 3].map((i) => (

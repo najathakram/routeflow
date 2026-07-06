@@ -167,7 +167,7 @@ function ProductCard({
       {/* Info */}
       <div className="flex flex-1 flex-col gap-2 p-3" onClick={selectionMode ? undefined : onClick}>
         <div>
-          <p className="text-xs text-navy/70">{product.sku}</p>
+          <p className="font-mono text-[11px] text-navy/40">{product.sku}</p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
             {/* Variants display just their flavor / variety name. Parent
                 context is rendered below as a small caption. Falls back to
@@ -177,9 +177,11 @@ function ProductCard({
           </p>
         </div>
         <div className="mt-auto flex items-end justify-between gap-1">
-          <p className="text-base font-bold text-navy">
+          <p className="font-mono tabular-nums text-base font-bold text-navy">
             ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
-            <span className="ml-1 text-xs font-normal text-navy/70">/ {product.unit}</span>
+            <span className="ml-1 font-sans text-xs font-normal text-navy/70">
+              / {product.unit}
+            </span>
           </p>
           {product.variants && product.variants.length > 0 && (
             <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
@@ -270,19 +272,54 @@ function makeTableColumns(
     {
       accessorKey: "name",
       header: "Product",
-      cell: ({ row }) => (
-        <p className="font-medium text-navy">
-          {row.original.name}
-          {(row.original as any).isTobacco && (
-            <span
-              title="Tobacco product — tracked separately for monthly tax reports"
-              className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+      cell: ({ row }) => {
+        const p = row.original;
+        const status = getStockStatus(p);
+        return (
+          <div className="flex items-center gap-3">
+            <div
+              className={cn(
+                "flex h-11 w-9 flex-none items-center justify-center overflow-hidden rounded-md border",
+                status === "LOW"
+                  ? "border-warning/40 bg-warning-bg"
+                  : status === "OUT_OF_STOCK"
+                    ? "border-danger/40 bg-danger-bg"
+                    : "border-surface-border bg-surface-raised",
+              )}
             >
-              tobacco
-            </span>
-          )}
-        </p>
-      ),
+              {p.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={p.thumbnailUrl}
+                  alt={p.name}
+                  className="h-full w-full object-cover"
+                  style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
+                  draggable={false}
+                />
+              ) : (
+                <Package className="h-4 w-4 text-navy/20" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold text-navy">
+                {p.name}
+                {(p as any).isTobacco && (
+                  <span
+                    title="Tobacco product — tracked separately for monthly tax reports"
+                    className="ml-2 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-800"
+                  >
+                    tobacco
+                  </span>
+                )}
+              </p>
+              <p className="text-[11px] text-navy/40">
+                {p.sku ? `${p.sku} · ` : ""}
+                {p.unitsPerBox && p.unitsPerBox > 1 ? "box + piece" : p.unit}
+              </p>
+            </div>
+          </div>
+        );
+      },
     },
     {
       accessorKey: "sku",
@@ -398,7 +435,7 @@ function makeTableColumns(
         }
         return (
           <div className="group flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-            <span className="font-medium text-navy">
+            <span className="font-mono tabular-nums font-medium text-navy">
               ${parseFloat(String(p.pricePerUnit)).toFixed(2)}
             </span>
             <button
@@ -428,7 +465,7 @@ function makeTableColumns(
             </span>
           );
         }
-        return <span className="text-navy/70">{`$${cost.toFixed(2)}`}</span>;
+        return <span className="font-mono tabular-nums text-navy/70">{`$${cost.toFixed(2)}`}</span>;
       },
     },
     {
@@ -477,7 +514,7 @@ function makeTableColumns(
         }
         // Normal view: read-only display
         return (
-          <span className="text-sm text-navy/70">
+          <span className="font-mono tabular-nums text-sm text-navy/70">
             {val && parseFloat(String(val)) > 0 ? (
               `$${parseFloat(String(val)).toFixed(2)}`
             ) : (
@@ -857,6 +894,7 @@ function CreateProductModal({
                   <option value="FIFO">FIFO — First In, First Out</option>
                   <option value="LIFO">LIFO — Last In, First Out</option>
                   <option value="AVCO">AVCO — Weighted Average Cost</option>
+                  <option value="LAST_COST">Last Cost — most recent purchase price</option>
                   <option value="STANDARD">Standard Cost</option>
                 </select>
               </div>
@@ -1230,7 +1268,11 @@ export default function ProductsPage() {
     <div className="space-y-5 p-6">
       <PageHeader
         title="Products"
-        subtitle="Manage your product catalog"
+        subtitle={
+          totalItems > 0
+            ? `${totalItems} SKU${totalItems !== 1 ? "s" : ""} across ${categories.length} ${categories.length === 1 ? "category" : "categories"}.`
+            : "Manage your product catalog"
+        }
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -1315,8 +1357,8 @@ export default function ProductsPage() {
         />
       )}
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Toolbar — Ledger filter bar */}
+      <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-surface-border bg-white px-4 py-3 shadow-card">
         {/* Select all checkbox — only shown in selection mode */}
         {selectMode && (
           <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -1335,15 +1377,36 @@ export default function ProductsPage() {
           </label>
         )}
 
+        {/* Stock status filter chips */}
+        {[
+          { value: "", label: "All" },
+          { value: "IN_STOCK", label: "In Stock" },
+          { value: "LOW", label: "Low Stock" },
+          { value: "OUT_OF_STOCK", label: "Out of Stock" },
+        ].map((o) => (
+          <button
+            key={o.value || "all"}
+            onClick={() => setStockFilter(o.value)}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+              stockFilter === o.value
+                ? "border-navy bg-navy text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+
         <input
           ref={searchInputRef}
           type="search"
-          placeholder="Search by name, SKU or scan barcode…"
+          placeholder="Name, SKU or scan barcode…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
-        <div className="w-44">
+        <div className="w-40">
           <Select
             options={[
               { value: "", label: "All Categories" },
@@ -1351,18 +1414,6 @@ export default function ProductsPage() {
             ]}
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-          />
-        </div>
-        <div className="w-40">
-          <Select
-            options={[
-              { value: "", label: "All Stock" },
-              { value: "IN_STOCK", label: "In Stock" },
-              { value: "LOW", label: "Low Stock" },
-              { value: "OUT_OF_STOCK", label: "Out of Stock" },
-            ]}
-            value={stockFilter}
-            onChange={(e) => setStockFilter(e.target.value)}
           />
         </div>
 
@@ -1382,7 +1433,7 @@ export default function ProductsPage() {
         </div>
 
         {/* View toggle */}
-        <div className="ml-auto flex items-center rounded-lg border border-surface-border bg-white p-1">
+        <div className="flex items-center rounded-lg border border-surface-border bg-white p-1">
           <button
             onClick={() => setViewMode("grid")}
             className={cn(
