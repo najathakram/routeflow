@@ -48,25 +48,48 @@ different Claude profile won't have prior-session memory — rely on this + the 
     Workflow, each `preservedOk=true` (every hook/handler/route preserved; presentation-only), types+lint
     green. **Still need post-deploy VISUAL verification on the `test` tenant** (functionally reviewed only).
 - Phase 3 (Finance) — **batch F1 SHIPPED with #121**: reskinned `finance/dashboard`, `invoices/[id]`,
-  `credit-notes` 1:1 vs `unified/*.html` (reskin+review Workflow, all `preservedOk`+`moneyOk`; one
-  reskin-introduced TS error fixed). Known follow-up: `invoices/[id]` line "Amount" cell derives
-  `qty*unitPrice` (PRE-EXISTING money-discipline bug, flagged, not yet fixed). Remaining Phase 3
-  (payments, bills/purchasing, reports, remaining reskins + actual wiring): not started.
+  `credit-notes` 1:1 vs `unified/*.html`. Remaining Phase 3 (payments, bills/purchasing, reports,
+  remaining reskins + actual wiring): not started.
 - Phases 4–10: not started.
+- **Money-discipline remediation (boxed-line over-charge) — OPEN PRs, NOT deployed:**
+  - **PR #122** (`fix/invoice-estimate-line-amount-money`): invoice + estimate DETAIL "Amount" now
+    renders stored `item.subtotal` (was `qty*unitPrice`); **invoice EDIT** (`invoices/[id]/edit`) now
+    tracks `unitsPerBox`, seeds it from the product, and sends boxes/pieces so the server prorates
+    boxed lines (was over-charging by `unitsPerBox` on save). `findOne` exposes `product.unitsPerBox`.
+    Adversarially reviewed → SHIP (no real bugs). Regression specs green. Also carries this doc + the
+    IMPLEMENTATION-PLAN status bumps.
+  - **PR #123** (`fix/order-edit-boxed-overcharge`): same bug class in the **operator order-edit
+    builder** (client) + **buyer-portal order edit** (client) + the **buyer/CUSTOMER server branch**
+    of `orders.service.updateOrderItems` (did raw `qty*unitPrice`, wiped the split). Key nuance: a
+    **denomination gate** — re-split qty as pieces ONLY when the stored line was box-aware
+    (`boxes/pieces != null`); selling-unit lines (mobile cart, operator add-line, `boxes=null`) keep
+    `qty*unitPrice`. Adversarially reviewed; the review CAUGHT a HIGH under-charge regression (fixed by
+    the gate) + preview mismatches (fixed). Regression specs green (38 orders + 21 invoice).
+  - **Pre-existing boxed over-charges flagged as separate tasks (NOT fixed):** (a) order
+    merge/consolidate `mergeAllPendingForCustomer`/`forceConsolidateCustomer` re-derive
+    `qty*unitPrice` (HIGH, live on auto-merge); (b) mobile customer cart is box-unaware (MEDIUM, root
+    of the denomination mismatch). Both have spawned-task chips.
 
 ## 2. DO NEXT (in order)
 
 1. **DEPLOY PR #121 — DONE (2026-07-06).** Migration applied to prod + merged + CI green (incl. E2E) +
-   private + smoke passed. Nothing left here.
-2. **VISUAL verification on the `test` tenant** (deferred — needs an authenticated browser session;
-   headless OAuth login is not possible here). Verify against `unified/*.html`: cost popover / boxed
-   invoice totals / analytics label (Ph2 §1); drive-mode field layout (§4); at-door sheet on BOTH
-   dispatch and the live-run stop view (§3); all 10 operator reskins; and the 3 Phase-3 finance reskins
-   (finance dashboard, invoice detail, credit notes). Fix any visual drift, then re-verify.
-3. **Phase 3 (Finance) continuation → Phases 4–10.** Same cadence (§4): one branch/PR per batch,
+   private + smoke passed.
+2. **VISUAL verification of #121 — DONE (2026-07-06, via connected Chrome on the `test` tenant).**
+   Confirmed live + correct: dashboard/products/product-detail/analytics/finance-overview reskins;
+   #121 cost accounting (**Purchase Cost History** card + Avg cost on product detail; analytics
+   **costing-method label** "COGS costed using weighted average"); **§4 drive mode** (badge + exit +
+   my-runs field layout); Phase-1 i18n toggle. NOT verifiable on the sparse `test` tenant (no data):
+   boxed invoice totals, at-door sheet (needs an active run), order-builder cost popover — create test
+   data to exercise these if needed.
+3. **DEPLOY the money-discipline PRs #122 + #123** (both open, verified, adversarially reviewed; no
+   prod migration needed — presentation/logic only). Deploy via the **rebuild** routine. They're
+   independent (different files) so either order is fine. After deploy, spot-check a boxed invoice/order
+   edit on the `test` tenant (needs a boxed product — create one).
+4. **Fix the flagged pre-existing boxed over-charges** (task chips): order merge/consolidate
+   `qty*unitPrice` (HIGH) + box-unaware mobile cart (MEDIUM).
+5. **Phase 3 (Finance) continuation → Phases 4–10.** Same cadence (§4): one branch/PR per batch,
    reskin+review Workflow, verify each, adversarial review before deploy. Next Finance work: remaining
-   finance screen reskins + wiring (payments/bills/reports) AND fix the pre-existing `invoices/[id]`
-   `qty*unitPrice` money-display bug (route line totals through `pricing.ts`). Plan:
+   finance screen reskins + wiring (payments/bills/reports). Plan:
    `docs/design-package/IMPLEMENTATION-PLAN.md`; design source `project/unified/*.html` +
    `project/specs/*.md`; endpoint map `project/specs/backend-wiring-index.md`.
 
