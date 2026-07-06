@@ -9,6 +9,7 @@ import { useCartStore } from "../../../store/cartStore";
 import { useBuyerCreateOrder } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { computeLineSubtotal } from "../../../lib/pricing";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -39,7 +40,7 @@ function addDays(n: number): string {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { items, setQty, remove, clear, total } = useCartStore();
+  const { items, step, clear, total } = useCartStore();
   const createMut = useBuyerCreateOrder();
   const [notes, setNotes] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -52,7 +53,11 @@ export default function CartScreen() {
 
     createMut.mutate(
       {
-        items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+        items: items.map((i) => ({
+          productId: i.productId,
+          qty: i.qty,
+          ...(Number(i.unitsPerBox ?? 0) > 1 ? { boxes: i.boxes ?? 0, pieces: i.pieces ?? 0 } : {}),
+        })),
         notes: notes.trim() || undefined,
         requestedDeliveryDate: deliveryDate.trim() || undefined,
       },
@@ -109,50 +114,65 @@ export default function CartScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Items</Text>
               <View style={styles.itemsCard}>
-                {items.map((item, i) => (
-                  <View
-                    key={item.productId}
-                    style={[
-                      styles.itemRow,
-                      i > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: ios.separator,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.itemName} numberOfLines={1}>
-                        {item.name}
-                      </Text>
-                      <Text style={styles.itemPrice}>
-                        ${item.unitPrice.toFixed(2)}
-                        {item.unit ? ` / ${item.unit}` : ""}
-                      </Text>
+                {items.map((item, i) => {
+                  const boxed = Number(item.unitsPerBox ?? 0) > 1;
+                  // Selling units: boxes for a boxed product, else pieces.
+                  const units = boxed ? (item.boxes ?? 0) : item.qty;
+                  const lineTotal = computeLineSubtotal({
+                    unitPrice: item.unitPrice,
+                    qty: item.qty,
+                    boxes: item.boxes ?? null,
+                    pieces: item.pieces ?? null,
+                    unitsPerBox: item.unitsPerBox ?? null,
+                  });
+                  return (
+                    <View
+                      key={item.productId}
+                      style={[
+                        styles.itemRow,
+                        i > 0 && {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: ios.separator,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.itemName} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <Text style={styles.itemPrice}>
+                          ${item.unitPrice.toFixed(2)}
+                          {boxed ? " / box" : item.unit ? ` / ${item.unit}` : ""}
+                        </Text>
+                      </View>
+                      <View style={styles.qtyRow}>
+                        <Pressable
+                          style={styles.qtyBtn}
+                          onPress={() => step(item.productId, -1)}
+                          hitSlop={4}
+                        >
+                          <Ionicons
+                            name={units === 1 ? "trash-outline" : "remove"}
+                            size={14}
+                            color={units === 1 ? ios.system.redInk : ios.brand}
+                          />
+                        </Pressable>
+                        <Text style={styles.qtyText}>
+                          {units}
+                          {boxed ? (units === 1 ? " box" : " bx") : ""}
+                        </Text>
+                        <Pressable
+                          style={styles.qtyBtn}
+                          onPress={() => step(item.productId, 1)}
+                          hitSlop={4}
+                        >
+                          <Ionicons name="add" size={14} color={ios.brand} />
+                        </Pressable>
+                      </View>
+                      <Text style={styles.itemTotal}>${lineTotal.toFixed(2)}</Text>
                     </View>
-                    <View style={styles.qtyRow}>
-                      <Pressable
-                        style={styles.qtyBtn}
-                        onPress={() => setQty(item.productId, item.qty - 1)}
-                        hitSlop={4}
-                      >
-                        <Ionicons
-                          name={item.qty === 1 ? "trash-outline" : "remove"}
-                          size={14}
-                          color={item.qty === 1 ? ios.system.redInk : ios.brand}
-                        />
-                      </Pressable>
-                      <Text style={styles.qtyText}>{item.qty}</Text>
-                      <Pressable
-                        style={styles.qtyBtn}
-                        onPress={() => setQty(item.productId, item.qty + 1)}
-                        hitSlop={4}
-                      >
-                        <Ionicons name="add" size={14} color={ios.brand} />
-                      </Pressable>
-                    </View>
-                    <Text style={styles.itemTotal}>${(item.qty * item.unitPrice).toFixed(2)}</Text>
-                  </View>
-                ))}
+                  );
+                })}
               </View>
             </View>
 
