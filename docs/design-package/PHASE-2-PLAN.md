@@ -36,6 +36,11 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      line; red on below-cost/below-floor; **"Set to floor $Y"** one-tap fix (sets discounted price via
      `priceForMarginFloor`); **"Sell anyway"** dismisses the warning. `unitCost`(averageCost)+`category`
      threaded into the line. Verified: typecheck + lint + `/orders` compiles 200.
+  - ✅ Admin **Settings → Costing tab** (`CostingTab` in settings/page.tsx): costing method +
+     default margin floor, via `useMarginConfig`/`useUpdateMarginConfig` (admin-gated). Closes the
+     "cost method configurable (tenant)" acceptance line. (PR #117)
+  - ✅ **Drive mode entry (§4)**: avatar-menu one-tap → `/routes/my-runs` for `canActAsDriver`
+     (capability already enforced by RolesGuard). MVP entry point; full field-layout swap = follow-on. (PR #117)
   - Follow-on (TRACKED, not done): (a) same hint in `orders/[id]` `PriceEditRow` + `invoices/new`
      (needs `averageCost`/`unitsPerBox`/`category` threaded through the order-item DTO → `EditItemState`;
      `overrideReason` already persists there so "Sell anyway" can log server-side + AuditLog SALE_BELOW_FLOOR);
@@ -46,8 +51,18 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.
-- **§2 Minimize & resume drafts** — NOT STARTED. Needs `sale_drafts` store + endpoints + web DraftDock
-  provider in shell + autosave + scan-to-draft. (Analysis agent failed on size; analyze lightly when reached.)
+- **§2 Minimize & resume drafts** — BACKEND DONE + VERIFIED; UI next.
+  - ✅ Schema: `SaleDraft` model (per-user, tenant-scoped, `payload` Json) + **additive** migration
+    `20260705120000_add_sale_drafts` (CREATE TABLE only — touches no existing table/rows). Applied to
+    local Docker DB; **prod needs `railway run npx prisma migrate deploy` before the drafts UI ships**
+    (safe to deploy the code first — nothing queries `SaleDraft` until the dock lands).
+  - ✅ Backend: `drafts` module — `DraftsService` (list/create/update/get/remove, per-user ownership +
+    tenant scoping) + `DraftsController` (`/drafts` CRUD, OPERATOR/DRIVER) + `SaveDraftDto`; registered
+    in `app.module`. 5-test spec (`drafts.service.spec.ts`) incl. cross-user ownership rejection.
+  - ✅ Web hooks: `lib/api/drafts.ts` (`useDrafts`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft`).
+  - **Next (UI):** DraftDock (bottom-left, lists/resume/delete) in the shell + Minimize button in the
+    builders (park current state) + resume-hydrate the builder from `payload` + autosave-per-keystroke +
+    scan-to-draft prompt. Needs authed runtime to verify — do with a local login.
 - **§3 At-the-door actions** — NOT STARTED. Arrived-stop sheet (adjust/new/collect-payment) on dispatch.
 - **§4 Roles / Drive mode** — NOT STARTED. `canActAsDriver`, avatar Drive-mode toggle, server-side
   driver capability set, admin's own run in Live Dispatch.

@@ -59,6 +59,8 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 import { useTenant } from "@/components/tenant-provider";
+import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
+import { useAuth } from "@/lib/auth-context";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2424,6 +2426,106 @@ function MyAccountTab() {
   );
 }
 
+// ─── TAB: Costing & margins (pos-cost-roles-spec §1) ──────────────────────────
+
+function CostingTab() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const { data: config, isLoading } = useMarginConfig();
+  const update = useUpdateMarginConfig();
+
+  const [method, setMethod] = React.useState<"WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST">(
+    "WEIGHTED_AVERAGE",
+  );
+  const [floorPct, setFloorPct] = React.useState("15");
+
+  React.useEffect(() => {
+    if (config) {
+      setMethod(config.costingMethod);
+      setFloorPct(String(Math.round((config.defaultMarginFloor ?? 0.15) * 1000) / 10));
+    }
+  }, [config]);
+
+  const save = () => {
+    const floor = Math.max(0, Math.min(99, parseFloat(floorPct) || 0)) / 100;
+    update.mutate(
+      { costingMethod: method, defaultMarginFloor: floor },
+      {
+        onSuccess: () => toast({ title: "Costing settings saved", variant: "success" }),
+        onError: () =>
+          toast({
+            title: "Could not save",
+            description: "Only admins can change costing settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  if (isLoading) return <p className="text-sm text-navy/70">Loading…</p>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-navy">Costing &amp; margins</h2>
+        <p className="mt-1 text-sm text-navy/70">
+          How product cost is figured, and the minimum margin the sale builder warns below.
+        </p>
+      </div>
+
+      <div className="space-y-5 rounded-card border border-line bg-paper p-5 shadow-card">
+        <div className="max-w-xs">
+          <Select
+            label="Costing method"
+            value={method}
+            onChange={(e) => setMethod(e.target.value as typeof method)}
+            disabled={!isAdmin}
+            options={[
+              { value: "WEIGHTED_AVERAGE", label: "Weighted average" },
+              { value: "FIFO", label: "FIFO (first in, first out)" },
+              { value: "LAST_COST", label: "Last cost" },
+            ]}
+          />
+          <p className="mt-1.5 text-xs text-navy/50">
+            Weighted average, in one line: buy 50 more at a new price and every unit re-averages.
+            History never rewrites.
+          </p>
+        </div>
+
+        <div className="max-w-xs">
+          <label className="text-xs font-semibold text-navy">Default margin floor</label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={99}
+              step="0.5"
+              value={floorPct}
+              onChange={(e) => setFloorPct(e.target.value)}
+              disabled={!isAdmin}
+              className="w-24 rounded-ctl border border-line-strong bg-paper px-2.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+            />
+            <span className="text-sm text-navy/70">%</span>
+          </div>
+          <p className="mt-1.5 text-xs text-navy/50">
+            The sale builder turns a line red below this margin and offers a one-tap fix. Set
+            per-category floors from a product&apos;s category later.
+          </p>
+        </div>
+
+        {isAdmin ? (
+          <Button variant="primary" loading={update.isPending} onClick={save}>
+            Save changes
+          </Button>
+        ) : (
+          <p className="text-xs text-navy/50">Only admins can change costing settings.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
 const TERMS_OPTIONS = [
@@ -2672,6 +2774,9 @@ export default function SettingsPage() {
           <TabTrigger value="invoicing" icon={<FileText className="h-4 w-4" />}>
             Invoicing
           </TabTrigger>
+          <TabTrigger value="costing" icon={<BarChart3 className="h-4 w-4" />}>
+            Costing
+          </TabTrigger>
           <TabTrigger value="integrations" icon={<Sparkles className="h-4 w-4" />}>
             Integrations
           </TabTrigger>
@@ -2702,6 +2807,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="invoicing" className="mt-6 max-w-3xl focus:outline-none">
           <InvoicingTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="costing" className="mt-6 max-w-3xl focus:outline-none">
+          <CostingTab />
         </Tabs.Content>
 
         <Tabs.Content value="integrations" className="mt-6 max-w-3xl focus:outline-none">
