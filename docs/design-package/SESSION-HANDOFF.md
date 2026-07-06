@@ -28,19 +28,24 @@ different Claude profile won't have prior-session memory — rely on this + the 
 ## 1. Program state
 
 - Phase 1 (Foundation): SHIPPED (#116).
-- Phase 2 (Operator core) — IN PROGRESS:
-  - §1 negotiation-floor core: SHIPPED (#117/#118).
-  - §2 minimize/resume drafts: SHIPPED + live-verified (#119).
-  - §1 cost-history popover + shared-MarginHint dedup + analytics method label: SHIPPED (#120).
-  - **§1 is now COMPLETE** — all of the following are on **PR #121** (branch `feat/last-cost-costing`),
-    verified locally (types + lint + 339 api tests + 70/0 e2e) but **NOT deployed** (blocked on the one
-    pending prod migration `20260706040000_add_costing_last_cost`):
-    - **LAST_COST** costing method (enum + `recordSale` + review-clean; 2 HIGH review bugs fixed).
-    - **Tenant-default costing** for new products (`products.service.create` → tenant `costing.method`).
-    - **invoices/new** boxed line-total money-display fix + the shared `<MarginHint>` (§1a).
-    - **E2E CI regression fixed** (login-reskin selectors + 6 data/API/expectation bugs; see §3).
-    - Project **skills** made repo-local + this handoff doc.
-- Phases 3–10: not started. Phase 2 remaining: §3 at-door, §4 drive-mode, the 10 Ledger reskins.
+- Phase 2 (Operator core) — **CODE-COMPLETE** (on `feat/last-cost-costing` / PR #121), full-branch
+  `npm run verify` green (18/18 tasks: types + lint 0-err + all api tests + 70/0 e2e). **NOT deployed**
+  — blocked on the one pending prod migration `20260706040000_add_costing_last_cost` (see §2.1):
+  - §1 negotiation-floor core: SHIPPED (#117/#118). §2 minimize/resume drafts: SHIPPED + live-verified
+    (#119). §1 cost-history popover + shared-MarginHint dedup + analytics method label: SHIPPED (#120).
+  - **§1 COMPLETE** on #121: **LAST_COST** costing (enum + `recordSale`; 2 HIGH review bugs fixed) ·
+    **tenant-default costing** for new products (`products.service.create`) · **invoices/new** boxed
+    line-total money-display fix + shared `<MarginHint>` (§1a) · **E2E CI regression fixed** (login-reskin
+    selectors + 6 data/API/expectation bugs; see §3) · project **skills** made repo-local + this doc.
+  - **§4 drive mode — DONE** (`lib/drive-mode.tsx` + avatar toggle + topbar exit + my-runs field layout).
+  - **§3 at-the-door — DONE on BOTH surfaces**: dispatch packing-list page AND the live-run driver view
+    `routes/[id]/page.tsx` (StopItem gained an `onAtDoorActions` prop + "At-door actions" button on the
+    IN_PROGRESS stop → shared `components/ArrivedStopSheet.tsx`).
+  - **All 10 operator Ledger reskins — DONE** (returns, dashboard, customers, customer-detail, inventory,
+    orders-list, order-detail, products, product-detail, dispatch) — done in batches via a reskin+review
+    Workflow, each `preservedOk=true` (every hook/handler/route preserved; presentation-only), types+lint
+    green. **Still need post-deploy VISUAL verification on the `test` tenant** (functionally reviewed only).
+- Phases 3–10: not started.
 
 ## 2. DO NEXT (in order)
 
@@ -51,17 +56,14 @@ different Claude profile won't have prior-session memory — rely on this + the 
    the prod-write — the user runs it or grants a Bash allow-rule. THEN the **rebuild** routine (verify
    → public → merge → CI → private → post-deploy-check). After deploy, visually verify the cost
    popover / boxed invoice totals / analytics label on the `test` tenant, and confirm CI E2E is green.
-2. **§4 drive mode — DONE** (`lib/drive-mode.tsx` hook + avatar toggle + topbar exit + my-runs field
-   layout). **§3 at-the-door — DONE** (`components/ArrivedStopSheet.tsx` + a guarded trigger on the
-   dispatch packing-list page; NOTE: also wire it on the live-run view `routes/[id]/page.tsx` — the
-   real driver-at-door surface — and verify post-deploy).
-3. **Ledger reskins (10 operator screens)** — IN PROGRESS. **Returns DONE.** Being done in batches via
-   a reskin+review workflow (match `unified/*.html`, preserve every hook/handler/route, verify
-   typecheck+lint). Remaining: dashboard, customers, customer-detail (batch 1 running), then products,
-   product-detail, inventory-hub, orders-list, order-detail, dispatch. All need **post-deploy visual
-   verification** on the `test` tenant — they are functionally reviewed + typecheck-green but not
-   visually confirmed.
-4. Then **phases 3 (Finance) → 10 (Mobile)**.
+2. **§3/§4 + all 10 reskins — DONE** (see §1). After #121 deploys, **visually verify on the `test`
+   tenant**: cost popover / boxed invoice totals / analytics label (§1); drive-mode field layout (§4);
+   at-door sheet on both dispatch and the live-run stop view (§3); and every reskinned screen 1:1 vs
+   `unified/*.html`. Fix any visual drift, then re-verify.
+3. **Phases 3 (Finance) → 10 (Mobile)** — the remaining program. Same cadence (§4): one branch/PR per
+   batch, reskin+review Workflow, verify each, adversarial review before deploy. Work the plan in
+   `docs/design-package/IMPLEMENTATION-PLAN.md`; design source `project/unified/*.html` +
+   `project/specs/*.md`; endpoint map `project/specs/backend-wiring-index.md`.
 
 ## 3. E2E CI status (worked on this session)
 
