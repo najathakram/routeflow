@@ -39,7 +39,11 @@ export default function CustomerCatalogScreen() {
   });
   const products = data?.data ?? [];
   const cart = useCartStore((s) => s.items);
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  // Count selling units: boxes for a boxed line (qty is pieces), else pieces.
+  const cartCount = cart.reduce(
+    (s, i) => s + (Number(i.unitsPerBox ?? 0) > 1 ? (i.boxes ?? 0) : i.qty),
+    0,
+  );
   const cartTotal = useCartStore((s) => s.total());
 
   const { data: favoritesData } = useBuyerFavorites();
