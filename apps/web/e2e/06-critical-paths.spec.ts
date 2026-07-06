@@ -145,10 +145,13 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
   test("CP-03 invoice detail — total equals subtotal + tax (within $0.01)", async ({ page }) => {
     await page.goto("/invoices");
 
-    // Wait for the list to load a row before clicking (avoids racing the data fetch).
-    const firstRow = page.locator("table tbody tr").first();
+    // Target a real DATA row (one carrying a $ amount), not a loading skeleton
+    // row: invoice rows navigate via an onClick handler, and skeleton <tr>s have
+    // none — clicking one before the data loads never navigates (a race that
+    // intermittently timed out waitForURL).
+    const firstRow = page.locator("table tbody tr", { hasText: /\$\d/ }).first();
     try {
-      await firstRow.waitFor({ timeout: 15_000 });
+      await firstRow.waitFor({ timeout: 20_000 });
     } catch {
       test.skip(true, "No invoices to inspect");
       return;
