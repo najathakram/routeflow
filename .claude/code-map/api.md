@@ -59,7 +59,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   AdvancePayment, Supplier, StockLot, StockMovement, OrderTemplate, PurchaseOrder,
   DeliveryMutation, Transaction(+Item), Expense, ExpenseCategory, MileageRate, ContactPerson,
   Customer{Tag,Address,Document,Comment,Price}, Message, RecurringInvoice, BuyerAccount,
-  CustomerLink, BuyerMergeRequest, SystemConfig, PlatformConfig, AuditLog. All tenant-scoped.
+  CustomerLink, BuyerMergeRequest, SystemConfig, PlatformConfig, AuditLog,
+  **TrackedCategory, CustomerAuthorization, AuthorizationOverride, RegulatedSalesLedger**
+  (Phase-4 regulated items — migration `20260706120000_regulated_items_foundation`). All tenant-scoped.
 
 ## Feature modules (`src/<module>/`)
 
@@ -170,7 +172,18 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 - **controller** `tobacco` — class-level `@UseGuards(JwtAuthGuard, RolesGuard, AddonGuard)` + `@RequireAddon("tobacco_dealer")`: overview, inventory, purchases (PURCHASE movements of `isTobacco` products w/ supplier `tobaccoLicenseNo`), sales (InvoiceItems on non-DRAFT/VOID/WRITTEN_OFF invoices w/ customer license, tax = subtotal×taxRate), monthly, reports list/generate/:id/{csv,pdf}, settings (GET; PATCH = TENANT_ADMIN, writes SystemConfig `tobacco.excludeFromMainAnalytics`, audit-logged).
 - **`tobacco-report.service.ts`** — `generateForPeriod(year,month,{userId?})` (past months only): per-product rows + totals, ending stock = `currentStock − Σ(movements after periodEnd)` (SALE rows negative), ending value at CURRENT averageCost (disclosed); CSV + react-pdf PDF at deterministic keys `tobacco-reports/<tenantId>/<yyyy-MM>.{csv,pdf}`; upsert per (tenant,period) via findFirst+create/update (forTenant can't composite-upsert), `generationCount` bump + audit on regen. `@Cron("0 2 1 * *")`: active tenants ∩ active addons, per-tenant `tenantCtx.run`, idempotent skip, FAILED rows on error. Template `tobacco-report-pdf.tsx` (jest-mocked via moduleNameMapper like the invoice template).
-- **Analytics exclusion** — see `analytics/` note; helper `tobaccoExclusionActive()` = addon active AND config key true. Schema: `Product.isTobacco`, `TobaccoReport`, `Supplier.tobaccoLicenseNo`, `Customer.tobaccoLicenseNo/Expiry` (migration `20260704100000_tobacco_compliance`).
+- **Analytics exclusion** — see `analytics/` note; helper `tobaccoExclusionActive()` = addon active AND config key true. Schema: `Product.isTobacco`, `TobaccoReport`, `Supplier.tobaccoLicenseNo`, `Customer.tobaccoLicenseNo/Expiry` (migration `20260704100000_tobacco_compliance`). **Phase 4 (W1) generalizes `isTobacco` → `Product.trackedCategoryId` (FK to `TrackedCategory`); `isTobacco` is kept as a SHADOW column for one release, so all reads here still use it until W2 flips them.**
+
+### tracked-categories / regulated (Phase 4 — generalizes tobacco)
+
+- **Schema (W1, migration `20260706120000_regulated_items_foundation`)** — 4 new tenant-scoped models + 6 enums, all ADDITIVE:
+  - **`TrackedCategory`** — tenant-defined regulated class (tobacco=seed row #1). Fields: `name`, `taxType` (EXCISE_PER_UNIT|PERCENT_OF_SALE|PER_VOLUME|DEPOSIT_PER_CONTAINER|NONE), `rate` Decimal(12,4), `unitBasis`, `priceIncludesTax`, `invoiceTreatment` (SEPARATE_INVOICE|SEPARATE_SECTION|LINE_TAX), `appliesScope` Json, `requiresLicense`, `reportTemplate`, `reportCadence`, `active`. `@@unique([tenantId,name])`.
+  - **`CustomerAuthorization`** — per-customer, per-category license state for one seller. `status` (NONE|PENDING_REVIEW|VERIFIED|EXPIRED|REJECTED), `source` (RETAILER_SUBMITTED|WHOLESALER_ADDED), `licenseNumber`, `expiresAt`, `documentKey`, `verifiedBy{Id,Name}/At` (FK-less actor SNAPSHOT). `@@unique([customerId,trackedCategoryId])`.
+  - **`AuthorizationOverride`** — seller "sold under responsibility" audit record (`scope`, `reason`, `acknowledgedTenant`, `acceptedBy{Id,Name}/At`); append-only, FK-less actor snapshot survives user deletion.
+  - **`RegulatedSalesLedger`** — immutable per-line regulated-sales ledger (source of truth for filings). `entryType` (SALE|REVERSAL, amounts negative on reversal), order/invoice/invoiceItem/creditNote pointers (plain, no FK), `qty`, `unitBasisQty`, `netSales`, `categoryTax`, `soldAt`, `periodBucket` ("YYYY-MM").
+  - **New columns**: `Product.trackedCategoryId` (FK, SetNull); `OrderItem`/`InvoiceItem`.{`trackedCategoryId`(FK,SetNull),`categoryTaxAmount`}; `Invoice.invoiceGroupId` (paired siblings); `Order.hasRegulated`; `RouteRunStop.{ageCheckRequired,identityCheckRequired}`.
+  - **Backfill** (in-migration, idempotent): one Tobacco category per tenant with `isTobacco` products; link those products; flag orders with a tobacco line `hasRegulated`. Tobacco seed = `taxType=NONE` + `requiresLicense=false` (**exact current warn-only behavior preserved** — enabling tax/license is an explicit W2/W6 per-tenant action, never an auto-flip), CA_CDTFA/MONTHLY.
+- **Not yet wired** (later W-blocks): W2 CRUD API (`tracked-categories/`), W3 category tax calc, W4 invoice-split-by-category, W5 ledger writer + filings, W6 authorization lifecycle + license guard, W7 expiry/POD/buyer-gate. See `docs/design-package/PHASE-4-PLAN.md`.
 
 ### `recurring-invoices/`
 

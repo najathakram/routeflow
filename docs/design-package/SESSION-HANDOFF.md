@@ -63,10 +63,23 @@ different Claude profile won't have prior-session memory — rely on this + the 
   **#128**). Each reskin+review Workflow → `preservedOk`+`fidelityOk`. **SKIPPED** (current app > mockup):
   Financial Reports (22-report explorer), Recurring invoices. **Post-deploy VISUAL verification still
   pending** (operator session was replaced by a buyer login; needs operator Google login on `test`).
-- Phase 4 (Regulated items) — **SCOPED, NOT STARTED**. XL / HIGH money+compliance risk / **multi-session**.
+- Phase 4 (Regulated items) — **IN PROGRESS**. XL / HIGH money+compliance risk / **multi-session**.
   Full W1–W7 plan in **`PHASE-4-PLAN.md`**. Generalize `isTobacco` → a `TrackedCategory` model; W3/W4
   (category tax calc + invoice-split-by-category) are the widest money change in the codebase — separate,
   pair-programmed, money-reviewed sessions. Multiple prod migrations (each needs user approval).
+  - **W1 (schema foundation) — BUILT** on branch `feat/regulated-items-w1-schema` (migration
+    `20260706120000_regulated_items_foundation`): 4 tenant-scoped models (`TrackedCategory`,
+    `CustomerAuthorization`, `AuthorizationOverride`, `RegulatedSalesLedger`) + 6 enums + FK/snapshot
+    columns (`Product.trackedCategoryId`; `OrderItem`/`InvoiceItem`.{`trackedCategoryId`,`categoryTaxAmount`};
+    `Invoice.invoiceGroupId`; `Order.hasRegulated`; `RouteRunStop`.{`ageCheckRequired`,`identityCheckRequired`})
+    + idempotent tobacco→category backfill. `isTobacco` kept as shadow column (no W1 read changes).
+    `npm run verify` 18/18; adversarially reviewed (5-dim workflow → **GO, no blockers**; follow-ups tracked
+    in PHASE-4-PLAN "W1 review follow-ups"). **Tobacco seed `requiresLicense=false`** (behavior-preserving).
+    **PENDING: user approval to apply the migration to prod** (via `railway run npx prisma migrate deploy`);
+    local docker apply-test not run (Docker unavailable this session — `migrate deploy` is transactional/fail-safe).
+  - **W2 (tracked-categories CRUD) + B1 reskins** next, then W3→W4 (separate money-reviewed sessions), W5, W6, W7.
+  - **W2 sync note:** `products.service` still writes only `isTobacco`; W2 must also set `trackedCategoryId`
+    on tobacco-flag writes (and re-sync any products flagged between W1 apply and W2).
 - Phases 5–10: not started (several are major feature builds, not reskins — buyer portal, messaging,
   plans/billing, migration/import).
 
@@ -79,9 +92,9 @@ Next up:
    payment receipt, bills-hub + PO tab, vendor-bill detail) were reviewed + CI-green but not eyeballed post
    deploy (the operator session had been replaced by a buyer login). Log into the operator app (`test` →
    Continue with Google) and spot-check vs `unified/*.html`; fix any drift.
-2. **Phase 4 (Regulated items) — the big one.** Follow **`PHASE-4-PLAN.md`**. Start with **W1** (schema:
-   `TrackedCategory`/`CustomerAuthorization`/`AuthorizationOverride`/`RegulatedSalesLedger` + FKs + the
-   additive tobacco→category backfill migration, keeping `isTobacco` as a shadow column). Then **W2** (CRUD)
+2. **Phase 4 (Regulated items) — the big one.** Follow **`PHASE-4-PLAN.md`**. **W1 (schema) is BUILT on
+   `feat/regulated-items-w1-schema` — pending your approval to apply migration `20260706120000_regulated_items_foundation`
+   to prod, then merge/deploy.** After that: **W2** (CRUD)
    + **B1** reskins. **W3** (category tax calc) and **W4** (invoice-split-by-category) are the widest money
    change in the codebase — do them in **separate, pair-programmed sessions with adversarial money review**
    and don't release until `06-critical-paths.spec.ts` money invariants pass. W5 (ledger+filings), W6 (auth
