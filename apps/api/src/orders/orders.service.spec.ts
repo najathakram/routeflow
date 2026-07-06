@@ -731,6 +731,186 @@ describe("OrdersService", () => {
 
   // ─── updateShipment (carrier tracking on the order + its invoices) ──────────
 
+  // ─── updateOrderItems — boxed line proration (edit over-charge fix) ─────────
+  // A boxed product prices by the BOX (unitPrice = box price, qty = piece count),
+  // so an edited boxed line must prorate as unitPrice*(boxes + pieces/unitsPerBox).
+  // Regression guard against dropping boxes/pieces → unitPrice*qty over-charge.
+
+  describe("updateOrderItems — boxed line proration", () => {
+    it("customer edit of a PIECE-denominated boxed line re-prorates (not unitPrice*qty)", async () => {
+      // The existing line was stored box-aware (boxes/pieces set) → qty is pieces.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-box",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 12,
+            unitPrice: 28.35,
+            subtotal: 28.35,
+            status: "PENDING",
+            boxes: 1,
+            pieces: 0,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", pricePerUnit: 28.35, unitsPerBox: 12 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      // Buyer sets qty = 27 pieces (= 2 boxes + 3) of a 12-per-box product.
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-box", qty: 27 }] },
+        customerPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      // 28.35 * (2 + 3/12) = 63.7875 → 63.79 — NOT 28.35 * 27 = 765.45.
+      expect(created.subtotal).toBeCloseTo(63.79, 2);
+      expect(created.subtotal).not.toBeCloseTo(765.45, 2);
+      expect(created.qty).toBe(27);
+      expect(created.boxes).toBe(2);
+      expect(created.pieces).toBe(3);
+    });
+
+    it("customer edit of a SELLING-UNIT boxed line (boxes null) does NOT re-prorate", async () => {
+      // Regression guard: a box-UNAWARE line (e.g. from the mobile cart) stores
+      // qty as a box count with boxes=null. Re-splitting it as pieces would
+      // UNDER-charge (e.g. a $120 / 2-box line → $20). It must stay unitPrice*qty.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-boxunaware",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 2,
+            unitPrice: 60,
+            subtotal: 120,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-box", qty: 2 }] },
+        customerPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      // 2 boxes * $60 = $120 — must NOT become $60*(2/6) = $20.
+      expect(created.subtotal).toBeCloseTo(120, 2);
+      expect(created.subtotal).not.toBeCloseTo(20, 2);
+      expect(created.qty).toBe(2);
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBeNull();
+    });
+
+    it("customer edit of a non-boxed product still charges unitPrice*qty", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-plain", pricePerUnit: 3.5, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-plain", qty: 5 }] },
+        customerPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.subtotal).toBeCloseTo(17.5, 2); // 3.5 * 5
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBeNull();
+    });
+
+    it("operator UPDATE prorates a boxed line when the client sends boxes/pieces", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 12,
+            unitPrice: 28.35,
+            subtotal: 28.35,
+            status: "PENDING",
+            boxes: 1,
+            pieces: 0,
+          },
+        ],
+      });
+      prisma.product.findUnique.mockResolvedValue({ id: "prod-box", unitsPerBox: 12 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 63.79, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 27, boxes: 2, pieces: 3 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      const updated = prisma.orderItem.update.mock.calls[0][0].data;
+      expect(updated.subtotal).toBeCloseTo(63.79, 2);
+      expect(updated.subtotal).not.toBeCloseTo(765.45, 2);
+      expect(updated.qty).toBe(27);
+      expect(updated.boxes).toBe(2);
+      expect(updated.pieces).toBe(3);
+    });
+
+    it("operator replaceAll prorates a boxed line from boxes/pieces", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT",
+        lineItems: [],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", pricePerUnit: 28.35, unitsPerBox: 12 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ productId: "prod-box", qty: 27, boxes: 2, pieces: 3 }],
+          replaceAll: true,
+        },
+        operatorPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.subtotal).toBeCloseTo(63.79, 2);
+      expect(created.subtotal).not.toBeCloseTo(765.45, 2);
+      expect(created.qty).toBe(27);
+      expect(created.boxes).toBe(2);
+      expect(created.pieces).toBe(3);
+    });
+  });
+
   describe("updateShipment", () => {
     it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
       prisma.order.findUnique.mockResolvedValue({ id: "ord-1", shippedAt: null });

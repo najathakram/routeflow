@@ -1265,6 +1265,17 @@ export class OrdersService implements OnApplicationBootstrap {
         .product.findMany({ where: { id: { in: productIds } } });
       const productMap = new Map(products.map((p) => [p.id, p]));
 
+      // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
+      // existing line was stored with a box/piece split (box-aware create). Lines
+      // created box-UNAWARE (mobile cart, operator add-line) store `qty` as a
+      // selling-unit/box count with boxes=null — for those we must NOT re-split,
+      // or a $120 (2-box) line would drop to $20 (2-piece) on any edit.
+      const pieceDenominated = new Set(
+        (order.lineItems ?? [])
+          .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
+          .map((li) => li.productId as string),
+      );
+
       await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
       for (const item of dto.items) {
         if (!item.productId) {
@@ -1293,13 +1304,27 @@ export class OrdersService implements OnApplicationBootstrap {
         const product = productMap.get(item.productId);
         if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
         const unitPrice = Number(product.pricePerUnit);
+        // Boxed + piece-denominated line: `qty` is the piece count, so re-split it
+        // and prorate by the BOX price (mirrors createOrder + the operator path).
+        // Without this a plain qty*unitPrice over-charges boxed lines by
+        // unitsPerBox. Selling-unit lines (see pieceDenominated) keep qty*price.
+        const upb = Number(product.unitsPerBox ?? 0);
+        const shouldSplit = upb > 1 && pieceDenominated.has(item.productId);
+        const split = shouldSplit
+          ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
+          : null;
+        const boxes = split ? split.boxes : null;
+        const pieces = split ? split.pieces : null;
+        const qty = split ? split.qty : item.qty;
         await this.prisma.forTenant().orderItem.create({
           data: {
             orderId,
             productId: item.productId,
-            qty: item.qty,
+            qty,
             unitPrice,
-            subtotal: item.qty * unitPrice,
+            subtotal: computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: upb }),
+            boxes,
+            pieces,
             status: "PENDING",
             notes: item.notes,
           },

@@ -247,6 +247,10 @@ export interface ItemUpdate {
   name?: string;
   action?: "CANCEL" | "DELETE" | "UPDATE";
   qty?: number;
+  /** Boxed split so the server prorates by BOX price (unitPrice is the box price).
+   *  Omit for non-boxed lines — the server then charges unitPrice * qty. */
+  boxes?: number;
+  pieces?: number;
   substituteProductId?: string;
   notes?: string;
   unitPrice?: number; // one-time per-line price override (DRAFT only, operator)

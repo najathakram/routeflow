@@ -26,6 +26,7 @@ import {
   useBuyerUpdateOrderItems,
   useBuyerProducts,
 } from "@/lib/api/buyer";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@/lib/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,34 @@ const STATUS_STEPS = [
   "PARTIALLY_DELIVERED",
   "DELIVERED",
 ];
+
+/**
+ * Boxed-aware line amount for the edit preview: a boxed line prices by the BOX
+ * (unitPrice is the box price, qty is the piece count), so it prorates as
+ * `unitPrice * (boxes + pieces / unitsPerBox)`. Matches the server on save; a
+ * plain unitPrice*qty over-shows boxed lines by unitsPerBox.
+ */
+function buyerLineAmount(item: {
+  unitPrice: number;
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+}): number {
+  const upb = Number(item.unitsPerBox ?? 0);
+  // Only prorate lines the server will prorate: those stored box-aware
+  // (boxSplit). Selling-unit and newly-added lines stay unitPrice*qty, matching
+  // the server's denomination gate — otherwise the preview and the saved total
+  // would disagree.
+  const split =
+    upb > 1 && item.boxSplit ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb }) : null;
+  return computeLineSubtotal({
+    unitPrice: item.unitPrice,
+    qty: item.qty,
+    boxes: split?.boxes ?? null,
+    pieces: split?.pieces ?? null,
+    unitsPerBox: upb,
+  });
+}
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "DELIVERED" || s === "COMPLETED") return "success";
@@ -140,7 +169,15 @@ export default function BuyerOrderDetailPage() {
 
   const [editMode, setEditMode] = React.useState(false);
   const [editItems, setEditItems] = React.useState<
-    Array<{ productId: string; qty: number; name: string; unit: string; unitPrice: number }>
+    Array<{
+      productId: string;
+      qty: number;
+      name: string;
+      unit: string;
+      unitPrice: number;
+      unitsPerBox?: number | null;
+      boxSplit?: boolean;
+    }>
   >([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -189,6 +226,8 @@ export default function BuyerOrderDetailPage() {
           name: li.product.name,
           unit: li.product.unit,
           unitPrice: Number(li.unitPrice),
+          unitsPerBox: li.product.unitsPerBox ?? null,
+          boxSplit: li.boxes != null || li.pieces != null,
         })),
     );
     setEditMode(true);
@@ -421,7 +460,7 @@ export default function BuyerOrderDetailPage() {
                       {item.unitPrice ? fmt(item.unitPrice) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {item.unitPrice ? fmt(item.unitPrice * item.qty) : "—"}
+                      {item.unitPrice ? fmt(buyerLineAmount(item)) : "—"}
                     </td>
                   </tr>
                 ))

@@ -57,7 +57,7 @@ export interface BuyerOrder {
     deliveredQty: number;
     boxes: number | null;
     pieces: number | null;
-    product: { id: string; name: string; unit: string };
+    product: { id: string; name: string; unit: string; unitsPerBox?: number | null };
   }>;
   invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
 }
