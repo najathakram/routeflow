@@ -9,13 +9,12 @@ import {
   X,
   Loader2,
   ChevronDown,
-  CreditCard,
   ChevronUp,
   ChevronsUpDown,
   Trash2,
   Download,
 } from "lucide-react";
-import { Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -119,7 +118,63 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
   );
 }
 
-// ─── Payment Summary Bar (Zoho-style) ─────────────────────────────────────────
+// ─── Stat tile (Ledger idiom: overline · value · hint) ─────────────────────────
+
+function StatTile({
+  label,
+  value,
+  hint,
+  money,
+  valueClass,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  money?: boolean;
+  valueClass?: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
+      <span className="overline block">{label}</span>
+      <span
+        className={cn(
+          "mt-1.5 block text-2xl text-navy",
+          money ? "money" : "font-semibold tracking-[-0.02em]",
+          valueClass,
+        )}
+      >
+        {value}
+      </span>
+      {hint && <span className="mt-1 block text-xs text-navy/70">{hint}</span>}
+    </>
+  );
+
+  const base = "rounded-lg border bg-white p-4 text-left shadow-card";
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          base,
+          "transition-all hover:bg-surface-raised",
+          active ? "border-brand-200 ring-1 ring-inset ring-brand-200" : "border-surface-border",
+        )}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={cn(base, "border-surface-border")}>{content}</div>;
+}
+
+// ─── Payment Summary (KPI stat tiles) ─────────────────────────────────────────
 
 function PaymentSummaryBar({
   activeFilter,
@@ -201,56 +256,55 @@ function PaymentSummaryBar({
       label: "Total Outstanding",
       value: fmt(kpis.totalOutstanding),
       filter: "SENT",
-      valueClass: "text-navy font-bold",
+      money: true,
+      valueClass: undefined as string | undefined,
     },
     {
       label: "Due Today",
       value: fmt(kpis.dueToday),
       filter: "",
-      valueClass: kpis.dueToday > 0 ? "text-orange-500 font-bold" : "text-navy font-bold",
+      money: true,
+      valueClass: kpis.dueToday > 0 ? "text-orange-500" : undefined,
     },
     {
       label: "Due Within 30 Days",
       value: fmt(kpis.dueIn30),
       filter: "",
-      valueClass: "text-navy font-bold",
+      money: true,
+      valueClass: undefined as string | undefined,
     },
     {
       label: "Overdue",
       value: fmt(kpis.overdue),
       filter: "OVERDUE",
-      valueClass: kpis.overdue > 0 ? "text-red-600 font-bold" : "text-navy font-bold",
+      money: true,
+      valueClass: kpis.overdue > 0 ? "text-red-600" : undefined,
     },
     {
       label: "Avg. Days to Get Paid",
       value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
       filter: "PAID",
-      valueClass: "text-navy font-bold",
+      money: false,
+      valueClass: undefined as string | undefined,
     },
   ];
 
   return (
-    <div className="flex overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-      {items.map((item, i) => (
-        <React.Fragment key={item.label}>
-          {i > 0 && <div className="w-px self-stretch bg-surface-border" />}
-          <button
-            onClick={() => item.filter && onFilter(item.filter === activeFilter ? "" : item.filter)}
-            className={cn(
-              "flex flex-1 flex-col items-start gap-0.5 px-5 py-4 transition-all hover:bg-surface-raised",
-              item.filter ? "cursor-pointer hover:shadow-inner" : "cursor-default",
-              item.filter &&
-                item.filter === activeFilter &&
-                "bg-brand-50 ring-1 ring-inset ring-brand-200",
-            )}
-          >
-            <span className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-              {item.label}
-              {item.filter && <span className="text-navy/30">↓</span>}
-            </span>
-            <span className={cn("text-xl", item.valueClass)}>{item.value}</span>
-          </button>
-        </React.Fragment>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {items.map((item) => (
+        <StatTile
+          key={item.label}
+          label={item.label}
+          value={item.value}
+          money={item.money}
+          valueClass={item.valueClass}
+          active={!!item.filter && item.filter === activeFilter}
+          onClick={
+            item.filter
+              ? () => onFilter(item.filter === activeFilter ? "" : item.filter)
+              : undefined
+          }
+        />
       ))}
     </div>
   );
@@ -385,53 +439,56 @@ export default function InvoicesPage() {
   }
 
   return (
-    <div className="space-y-4 p-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-bold text-navy">All Invoices</h1>
-          <ChevronDown className="h-4 w-4 text-navy/70" />
-        </div>
-        {!isCustomer && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={
-                isExporting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" />
-                )
-              }
-              onClick={handleExport}
-              disabled={isExporting}
-              title="Export filtered invoices as CSV"
-            >
-              {isExporting ? "Exporting…" : "Export"}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => router.push("/invoices/payments")}>
-              Payments Received
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => router.push("/invoices/recurring")}
-            >
-              Recurring
-            </Button>
-            <Button
-              size="sm"
-              leftIcon={<Plus className="h-4 w-4" />}
-              onClick={() => router.push("/invoices/new")}
-            >
-              New Invoice
-            </Button>
-          </div>
-        )}
-      </div>
+    <div className="space-y-5 p-6">
+      <PageHeader
+        title="Invoices"
+        subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
+        action={
+          !isCustomer ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={
+                  isExporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )
+                }
+                onClick={handleExport}
+                disabled={isExporting}
+                title="Export filtered invoices as CSV"
+              >
+                {isExporting ? "Exporting…" : "Export"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => router.push("/invoices/payments")}
+              >
+                Payments Received
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => router.push("/invoices/recurring")}
+              >
+                Recurring
+              </Button>
+              <Button
+                size="sm"
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => router.push("/invoices/new")}
+              >
+                New Invoice
+              </Button>
+            </div>
+          ) : undefined
+        }
+      />
 
-      {/* Payment Summary Bar */}
+      {/* Payment Summary — KPI stat tiles */}
       <PaymentSummaryBar activeFilter={statusFilter} onFilter={handleFilterChange} />
 
       {/* Status filter tabs */}
