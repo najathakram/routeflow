@@ -48,13 +48,20 @@ function CostHistoryPopover({
       if (ref.current && !ref.current.contains(t) && !anchor.contains(t)) onClose();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      // The builder is a Radix Dialog whose Escape-to-close listener runs on
+      // `document` in the capture phase. A window capture-phase listener fires
+      // BEFORE that, so we stop propagation here — Escape closes only this
+      // popover, never the whole sale builder (which would discard the order).
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
     };
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [anchor, onClose]);
 
