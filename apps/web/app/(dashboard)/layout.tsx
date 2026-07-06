@@ -41,6 +41,7 @@ import {
   Check,
   Languages,
   Cigarette,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -727,11 +728,18 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
   const navStructure = React.useMemo(() => {
     const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver);
-    // Tobacco compliance section only for tenants with the addon
+    // Regulated-items compliance section. Gated on the tobacco addon for now — the
+    // generic Regulated Items hub (Phase 4) and the tobacco detail coexist during
+    // the transition; visibility generalizes when the B2 category manager ships.
     if (!hasTobacco || user?.role === "CUSTOMER" || user?.role === "DRIVER") return nav;
     const idx = nav.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
-    const leaf: NavEntry = { kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette };
-    return idx === -1 ? [...nav, leaf] : [...nav.slice(0, idx + 1), leaf, ...nav.slice(idx + 1)];
+    const leaves: NavEntry[] = [
+      { kind: "leaf", label: "Regulated Items", href: "/compliance", icon: ShieldCheck },
+      { kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette },
+    ];
+    return idx === -1
+      ? [...nav, ...leaves]
+      : [...nav.slice(0, idx + 1), ...leaves, ...nav.slice(idx + 1)];
   }, [user, hasTobacco]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {

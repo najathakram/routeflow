@@ -167,6 +167,9 @@ export class ProductsService {
       include: {
         variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
         parent: true,
+        // Phase 4: the assigned regulated ("separately handled") category, shown
+        // on the product detail. Null for standard products.
+        trackedCategory: { select: { id: true, name: true } },
       },
     });
     if (!product) throw new NotFoundException("Product not found");
