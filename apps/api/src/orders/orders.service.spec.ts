@@ -970,6 +970,70 @@ describe("OrdersService", () => {
       expect(upd.subtotal).toBeCloseTo(120, 2);
       expect(upd.qty).toBe(12);
       expect(upd.boxes).toBe(2);
+      expect(upd.pieces).toBe(0);
+    });
+
+    it("merges MIXED denominations (box-split winner + selling-unit loser) correctly", async () => {
+      // Winner: box-split 1 box + 2 loose (qty 8 pieces). Loser: selling-unit 1 box (qty 1).
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: "w1",
+          customerId: "cust-1",
+          status: "PENDING",
+          lineItems: [boxLine("wl1", { qty: 8, boxes: 1, pieces: 2 })],
+        },
+        {
+          id: "l1",
+          customerId: "cust-1",
+          status: "PENDING",
+          lineItems: [boxLine("ll1", { qty: 1, boxes: null, pieces: null })],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]);
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const upd = prisma.orderItem.update.mock.calls[0][0].data;
+      // 8 pieces + (1 box * 6) = 14 pieces → 2 boxes + 2 loose → 60*(2 + 2/6) = $140.
+      expect(upd.subtotal).toBeCloseTo(140, 2);
+      expect(upd.qty).toBe(14);
+      expect(upd.boxes).toBe(2);
+      expect(upd.pieces).toBe(2);
+    });
+
+    it("sums MULTIPLE losers for one product (contributions array, not overwrite)", async () => {
+      prisma.order.findMany.mockResolvedValue([
+        { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [boxLine("wl1")] },
+        { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [boxLine("ll1")] },
+        { id: "l2", customerId: "cust-1", status: "PENDING", lineItems: [boxLine("ll2")] },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]);
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const upd = prisma.orderItem.update.mock.calls[0][0].data;
+      // 6 + 6 + 6 = 18 pieces → 3 boxes → $180 (all three contributions counted).
+      expect(upd.subtotal).toBeCloseTo(180, 2);
+      expect(upd.qty).toBe(18);
+      expect(upd.boxes).toBe(3);
+    });
+
+    it("recomputes the order header total from the prorated line subtotals", async () => {
+      prisma.order.findMany.mockResolvedValue([
+        { id: "w1", customerId: "cust-1", status: "PENDING", lineItems: [boxLine("wl1")] },
+        { id: "l1", customerId: "cust-1", status: "PENDING", lineItems: [boxLine("ll1")] },
+      ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]);
+      // The in-tx recompute reads the (now merged) active line — return the $120 line.
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 120, status: "PENDING" }]);
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const orderUpd = prisma.order.update.mock.calls.find((c) => c[0]?.data?.subtotal != null);
+      expect(orderUpd).toBeDefined();
+      // taxRate mock = 0 (systemConfig.get → null), so subtotal 120, tax 0, total 120 — NOT $720-based.
+      expect(orderUpd![0].data.subtotal).toBeCloseTo(120, 2);
+      expect(orderUpd![0].data.total).toBeCloseTo(120, 2);
     });
 
     it("creates a boxed winner line from a loser-only product, prorated", async () => {
