@@ -2,10 +2,11 @@
 
 import React from "react";
 import { useParams, useRouter } from "next/navigation";
-import { usePageTitle } from "@/lib/page-title-context";
-import { useInvoicePayments, useVoidPayment } from "@/lib/api/invoices";
-import { useToast } from "@routeflow/ui/web";
 import Link from "next/link";
+import { ArrowLeft, Ban, Printer } from "lucide-react";
+import { usePageTitle } from "@/lib/page-title-context";
+import { useInvoice, useInvoicePayments, useVoidPayment } from "@/lib/api/invoices";
+import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
 import { fmt, fmtDate } from "@/lib/formatting";
 
 const METHOD_LABELS: Record<string, string> = {
@@ -16,11 +17,6 @@ const METHOD_LABELS: Record<string, string> = {
   OTHER: "Other",
   CREDIT_NOTE: "Credit Note",
   ADVANCE: "Advance",
-};
-const STATUS_STYLES: Record<string, string> = {
-  PAID: "bg-success-bg text-success",
-  DRAFT: "bg-warning-bg text-warning",
-  VOID: "bg-surface-raised text-navy/70",
 };
 
 export default function PaymentDetailPage() {
@@ -40,6 +36,10 @@ export default function PaymentDetailPage() {
   }, [setTitle]);
 
   const payment = data?.data.find((p) => p.id === id);
+
+  // Enrich the "Applied Invoice" card with the invoice's own total / balance /
+  // status. Guarded below for loading/undefined so the card degrades gracefully.
+  const { data: invoice } = useInvoice(payment?.invoice.id ?? "");
 
   const handleVoid = async () => {
     if (!payment) return;
@@ -75,125 +75,196 @@ export default function PaymentDetailPage() {
   }
 
   const status = payment.status ?? "PAID";
+  const date = fmtDate(payment.paidAt ?? payment.createdAt);
+  const hasBankCharges = payment.bankCharges != null && payment.bankCharges > 0;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
-      {/* Back + actions */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => router.push("/finance/payments")}
-          className="text-sm text-navy/70 hover:text-navy"
-        >
-          ← Back to Payments
-        </button>
-        <div className="flex gap-2">
+    <div className="space-y-5 p-6">
+      {/* Back */}
+      <Link
+        href="/finance/payments"
+        className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Payments
+      </Link>
+
+      {/* Header (ph-row) */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="font-mono text-2xl font-bold text-navy">
+              {payment.paymentNumber ?? "Payment"}
+            </h1>
+            <Badge status={status as "PAID" | "DRAFT" | "VOID"} />
+          </div>
+          <p className="mt-1 text-sm text-navy/70">
+            Payment received · {payment.invoice.customer?.businessName ?? "—"} · {date}
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-2">
           {status !== "VOID" && (
-            <button
+            <Button
+              size="sm"
+              variant="danger"
+              leftIcon={<Ban className="h-4 w-4" />}
               onClick={handleVoid}
-              disabled={voidPayment.isPending}
-              className="rounded-lg border border-danger px-3 py-1.5 text-sm text-danger hover:bg-danger-bg transition-colors disabled:opacity-50"
+              loading={voidPayment.isPending}
             >
-              {voidPayment.isPending ? "Voiding..." : "Void Payment"}
-            </button>
+              Void Payment
+            </Button>
           )}
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Printer className="h-4 w-4" />}
+            onClick={() => window.print()}
+          >
+            Print receipt
+          </Button>
         </div>
       </div>
 
-      {/* Receipt card */}
-      <div className="rounded-2xl border border-surface-border bg-white shadow-card overflow-hidden">
-        {/* Receipt header */}
-        <div className="bg-surface-raised border-b border-surface-border px-6 py-5 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-navy">Payment Receipt</h1>
-            {payment.paymentNumber && (
-              <p className="font-mono text-sm text-navy/70 mt-0.5">{payment.paymentNumber}</p>
-            )}
+      {/* Body: doc (1.5fr) + sidebar (1fr) */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
+        {/* ── Receipt document ── */}
+        <Card className="p-8">
+          <div className="mb-6">
+            <h2 className="display text-[26px]">Payment Receipt</h2>
+            <p className="mono mt-1 text-[12.5px] text-navy/70">
+              {payment.paymentNumber ? `${payment.paymentNumber} · ` : ""}
+              {date}
+            </p>
           </div>
-          <span
-            className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${STATUS_STYLES[status]}`}
-          >
-            {status}
-          </span>
-        </div>
 
-        {/* Customer + date row */}
-        <div className="grid grid-cols-2 gap-6 px-6 py-5 border-b border-surface-border">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-              Received From
-            </p>
-            <p className="mt-1 font-semibold text-navy">
-              {payment.invoice.customer?.businessName ?? "—"}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">Payment Date</p>
-            <p className="mt-1 font-semibold text-navy">
-              {fmtDate(payment.paidAt ?? payment.createdAt)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70">Payment Mode</p>
-            <p className="mt-1 font-semibold text-navy">
-              {METHOD_LABELS[payment.method] ?? payment.method}
-            </p>
-          </div>
-          {payment.reference && (
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-navy/70">
-                Reference #
-              </p>
-              <p className="mt-1 font-semibold text-navy">{payment.reference}</p>
+          {/* KV grid */}
+          <div className="grid grid-cols-1 gap-x-10 sm:grid-cols-2">
+            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+              <span className="text-navy/70">Received from</span>
+              <span className="text-right font-medium text-navy">
+                {payment.invoice.customer?.businessName ?? "—"}
+              </span>
             </div>
-          )}
-        </div>
-
-        {/* Applied to invoice(s) */}
-        <div className="px-6 py-5 border-b border-surface-border">
-          <p className="text-xs font-medium uppercase tracking-wide text-navy/70 mb-3">
-            Applied to Invoice
-          </p>
-          <div className="flex items-center justify-between rounded-lg bg-surface-raised px-4 py-3">
-            <div>
+            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+              <span className="text-navy/70">Payment date</span>
+              <span className="text-right font-medium text-navy">{date}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+              <span className="text-navy/70">Payment mode</span>
+              <span className="text-right font-medium text-navy">
+                {METHOD_LABELS[payment.method] ?? payment.method}
+              </span>
+            </div>
+            {payment.reference && (
+              <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+                <span className="text-navy/70">Reference</span>
+                <span className="mono text-right font-medium text-navy">{payment.reference}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+              <span className="text-navy/70">Applied to</span>
               <Link
                 href={`/invoices/${payment.invoice.id}`}
-                className="font-medium text-brand-600 hover:underline"
+                className="text-right font-medium text-brand-600 hover:underline"
               >
                 {payment.invoice.invoiceNumber}
               </Link>
-              <p className="text-xs text-navy/70 mt-0.5">
-                {payment.invoice.customer?.businessName}
-              </p>
             </div>
-            <span className="font-semibold text-navy">{fmt(payment.amount)}</span>
           </div>
-        </div>
 
-        {/* Totals */}
-        <div className="px-6 py-5 space-y-2">
-          <div className="flex justify-between text-sm text-navy/70">
-            <span>Amount Received</span>
-            <span>{fmt(payment.amount)}</span>
-          </div>
-          {payment.bankCharges && payment.bankCharges > 0 && (
-            <div className="flex justify-between text-sm text-navy/70">
-              <span>Bank Charges</span>
-              <span className="text-danger">− {fmt(payment.bankCharges)}</span>
+          {/* Notes */}
+          {payment.notes && (
+            <div className="mt-6 border-t border-surface-border pt-4">
+              <p className="overline mb-1">Notes</p>
+              <p className="text-sm text-navy/70 whitespace-pre-line">{payment.notes}</p>
             </div>
           )}
-          <div className="flex justify-between border-t border-surface-border pt-2 font-semibold text-navy">
-            <span>Total Applied</span>
-            <span className="text-success">{fmt(payment.amount)}</span>
-          </div>
-        </div>
 
-        {/* Notes */}
-        {payment.notes && (
-          <div className="border-t border-surface-border px-6 py-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-navy/70 mb-1">Notes</p>
-            <p className="text-sm text-navy/70">{payment.notes}</p>
+          {/* Totals */}
+          <div className="mt-6 flex justify-end">
+            <div className="w-full max-w-[300px]">
+              <div className="flex justify-between py-1.5 text-[13.5px] text-navy/70">
+                <span>Amount received</span>
+                <span className="money text-navy">{fmt(payment.amount)}</span>
+              </div>
+              {hasBankCharges && (
+                <div className="flex justify-between py-1.5 text-[13.5px] text-navy/70">
+                  <span>Bank charges</span>
+                  <span className="money text-danger">− {fmt(payment.bankCharges!)}</span>
+                </div>
+              )}
+              <div className="mt-1.5 flex justify-between border-t border-navy pt-3 text-base font-semibold text-navy">
+                <span>Total applied</span>
+                <span className="money">{fmt(payment.amount)}</span>
+              </div>
+            </div>
           </div>
-        )}
+        </Card>
+
+        {/* ── Sidebar ── */}
+        <div className="space-y-4">
+          <Card title="Applied Invoice">
+            <dl className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <dt className="text-navy/70">Invoice</dt>
+                <dd>
+                  <Link
+                    href={`/invoices/${payment.invoice.id}`}
+                    className="mono text-brand-600 hover:underline"
+                  >
+                    {payment.invoice.invoiceNumber}
+                  </Link>
+                </dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-navy/70">Applied</dt>
+                <dd className="money text-success">{fmt(payment.amount)}</dd>
+              </div>
+              {invoice && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <dt className="text-navy/70">Invoice total</dt>
+                    <dd className="money text-navy">{fmt(invoice.total)}</dd>
+                  </div>
+                  {invoice.balanceDue != null && (
+                    <div className="flex items-center justify-between">
+                      <dt className="text-navy/70">Remaining balance</dt>
+                      <dd className="money text-navy">{fmt(invoice.balanceDue)}</dd>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <dt className="text-navy/70">Invoice status</dt>
+                    <dd>
+                      <Badge status={invoice.status} />
+                    </dd>
+                  </div>
+                </>
+              )}
+            </dl>
+          </Card>
+
+          {status !== "VOID" && (
+            <Card className="border border-danger-bg">
+              <h3 className="mb-2 text-base font-semibold text-danger">Void</h3>
+              <p className="text-[12.5px] leading-relaxed text-navy/70">
+                Voiding reverses the application, returns the invoice to its prior balance, and
+                keeps this receipt for the audit trail.
+              </p>
+              <Button
+                variant="danger"
+                size="sm"
+                className="mt-3 w-full"
+                leftIcon={<Ban className="h-4 w-4" />}
+                onClick={handleVoid}
+                loading={voidPayment.isPending}
+              >
+                Void Payment…
+              </Button>
+            </Card>
+          )}
+        </div>
       </div>
     </div>
   );

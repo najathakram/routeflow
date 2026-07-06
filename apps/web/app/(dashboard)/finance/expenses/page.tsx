@@ -22,7 +22,16 @@ import {
   PackageCheck,
   CheckCircle2,
 } from "lucide-react";
-import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
+import {
+  PageHeader,
+  Button,
+  cn,
+  Modal,
+  useToast,
+  EmptyState,
+  Badge,
+  type BadgeVariant,
+} from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBills,
@@ -75,40 +84,62 @@ function dueThisWeek(bill: VendorBill) {
   return due >= now && due <= weekEnd;
 }
 
-// ─── KPI chip ─────────────────────────────────────────────────────────────────
+// ─── Stat tile (Ledger idiom: overline · value · hint) ──────────────────────────
 
-function KpiChip({
+function StatTile({
   label,
   value,
-  sub,
-  danger,
+  hint,
+  money,
+  ring,
 }: {
   label: string;
   value: string;
-  sub?: string;
-  danger?: boolean;
+  hint?: string;
+  money?: boolean;
+  ring?: "warning" | "danger";
 }) {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-lg border px-4 py-3 min-w-[160px]",
-        danger && Number(value.replace(/[^0-9.]/g, "")) > 0
-          ? "border-red-200 bg-red-50"
-          : "border-surface-border bg-white",
+        "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+        ring === "warning" && "border-warning",
+        ring === "danger" && "border-danger",
       )}
     >
-      <span className="text-xs font-medium text-navy/70 uppercase tracking-wider">{label}</span>
+      <span className="overline block">{label}</span>
       <span
         className={cn(
-          "mt-1 text-xl font-bold",
-          danger && Number(value.replace(/[^0-9.]/g, "")) > 0 ? "text-red-700" : "text-navy",
+          "mt-1.5 block text-2xl text-navy",
+          money ? "money" : "font-semibold tracking-[-0.02em]",
+          ring === "warning" && "text-[#B45309]",
+          ring === "danger" && "text-danger",
         )}
       >
         {value}
       </span>
-      {sub && <span className="text-xs text-navy/70 mt-0.5">{sub}</span>}
+      {hint && <span className="mt-1 block text-xs text-navy/70">{hint}</span>}
     </div>
   );
+}
+
+// ─── Purchase-order status → Badge props (PO enum isn't in the shared Badge map) ─
+
+function poBadge(status: string): { variant: BadgeVariant; label: string } {
+  switch (status) {
+    case "DRAFT":
+      return { variant: "neutral", label: "Draft" };
+    case "SENT":
+      return { variant: "warning", label: "Sent" };
+    case "PARTIALLY_RECEIVED":
+      return { variant: "info", label: "Partial" };
+    case "RECEIVED":
+      return { variant: "success", label: "Received" };
+    case "CLOSED":
+      return { variant: "neutral", label: "Closed" };
+    default:
+      return { variant: "neutral", label: status };
+  }
 }
 
 // ─── Status filter options ─────────────────────────────────────────────────────
@@ -761,14 +792,28 @@ function InventoryPurchasesTab() {
 
   const kpis = React.useMemo(() => {
     let outstanding = 0;
+    let unpaidCount = 0;
     let dueThisWeekCount = 0;
+    let dueThisWeekAmount = 0;
+    let spend30d = 0;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
     for (const b of all) {
       const owed = Number((b as any).totalOwed ?? (b as any).total ?? 0);
       const paid = Number((b as any).totalPaid ?? (b as any).amountPaid ?? 0);
-      outstanding += Math.max(0, owed - paid);
-      if (dueThisWeek(b)) dueThisWeekCount++;
+      const bal = Math.max(0, owed - paid);
+      outstanding += bal;
+      if (bal > 0 && (b as any).status !== "VOID") unpaidCount++;
+      if (dueThisWeek(b)) {
+        dueThisWeekCount++;
+        dueThisWeekAmount += bal;
+      }
+      const billDate = (b as any).billDate ?? (b as any).createdAt;
+      if (billDate && new Date(billDate) >= cutoff && (b as any).status !== "VOID") {
+        spend30d += owed;
+      }
     }
-    return { outstanding, dueThisWeekCount };
+    return { outstanding, unpaidCount, dueThisWeekCount, dueThisWeekAmount, spend30d };
   }, [all]);
 
   const totalPages = meta?.totalPages ?? 1;
@@ -813,40 +858,54 @@ function InventoryPurchasesTab() {
       </div>
 
       {/* KPI row */}
-      <div className="flex flex-wrap items-start gap-3">
-        <KpiChip
-          label="Total Outstanding"
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile
+          label="Open Bills"
           value={fmt(kpis.outstanding)}
-          sub="unpaid balance"
-          danger={kpis.outstanding > 0}
+          hint={`${kpis.unpaidCount} bill${kpis.unpaidCount === 1 ? "" : "s"} unpaid`}
+          money
         />
-        <KpiChip
+        <StatTile
           label="Due This Week"
-          value={String(kpis.dueThisWeekCount)}
-          sub="bills due in 7 days"
+          value={fmt(kpis.dueThisWeekAmount)}
+          hint={`${kpis.dueThisWeekCount} bill${kpis.dueThisWeekCount === 1 ? "" : "s"} due in 7 days`}
+          money
+          ring={kpis.dueThisWeekCount > 0 ? "warning" : undefined}
         />
-        {needsMappingCount > 0 && (
-          <button
-            type="button"
-            onClick={() => {
-              setNeedsMappingOnly((v) => !v);
-              setPage(1);
-            }}
-            title="Draft bills with no items or unmapped lines — their costs won't reach inventory until items are mapped and the bill is received"
+        <button
+          type="button"
+          onClick={() => {
+            setNeedsMappingOnly((v) => !v);
+            setPage(1);
+          }}
+          disabled={needsMappingCount === 0 && !needsMappingOnly}
+          title="Draft bills with no items or unmapped lines — their costs won't reach inventory until items are mapped and the bill is received"
+          className={cn(
+            "rounded-lg border p-4 text-left shadow-card transition-colors disabled:cursor-default",
+            needsMappingOnly
+              ? "border-danger bg-danger-bg"
+              : needsMappingCount > 0
+                ? "border-danger bg-white hover:bg-danger-bg/40"
+                : "border-surface-border bg-white",
+          )}
+        >
+          <span className="overline block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
+          <span
             className={cn(
-              "rounded-xl border px-4 py-2.5 text-left transition-colors",
-              needsMappingOnly
-                ? "border-amber-500 bg-amber-100"
-                : "border-amber-300 bg-amber-50 hover:bg-amber-100",
+              "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",
+              needsMappingCount > 0 ? "text-danger" : "text-navy",
             )}
           >
-            <p className="text-[11px] font-medium text-amber-800/80">
-              Needs Item Mapping{needsMappingOnly ? " ✕" : ""}
-            </p>
-            <p className="text-lg font-bold text-amber-900">{needsMappingCount}</p>
-            <p className="text-[11px] text-amber-800/80">bills not updating costs</p>
-          </button>
-        )}
+            {needsMappingCount}
+          </span>
+          <span className="mt-1 block text-xs text-navy/70">bills awaiting item mapping</span>
+        </button>
+        <StatTile
+          label="Spend, 30d"
+          value={fmt(kpis.spend30d)}
+          hint="vendor bills in the last 30 days"
+          money
+        />
       </div>
 
       {/* Filter bar */}
@@ -1162,6 +1221,144 @@ function InventoryPurchasesTab() {
           setScanOpen(false);
         }}
       />
+    </div>
+  );
+}
+
+// ─── Purchase Orders Tab ──────────────────────────────────────────────────────
+
+interface PORow {
+  id: string;
+  poNumber: string;
+  status: string;
+  supplier?: { id: string; name: string };
+  expectedDate?: string;
+  createdAt?: string;
+  totalAmount?: number;
+  items?: Array<{ qtyOrdered: number; unitCost: number }>;
+}
+
+const PO_STATUS_FILTERS = [
+  { value: "", label: "All" },
+  { value: "DRAFT", label: "Draft" },
+  { value: "SENT", label: "Sent" },
+  { value: "PARTIALLY_RECEIVED", label: "Partial" },
+  { value: "RECEIVED", label: "Received" },
+  { value: "CLOSED", label: "Closed" },
+];
+
+function poTotal(po: PORow): number {
+  if (po.totalAmount != null) return Number(po.totalAmount);
+  return (po.items ?? []).reduce(
+    (sum, i) => sum + Number(i.qtyOrdered ?? 0) * Number(i.unitCost ?? 0),
+    0,
+  );
+}
+
+function PurchaseOrdersTab() {
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const { data, isLoading, isError } = usePurchaseOrders(
+    statusFilter ? { status: statusFilter } : undefined,
+  );
+  const orders: PORow[] = (data as any)?.data ?? [];
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+        Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock; the
+        resulting supplier bill appears under <strong>Vendor Bills</strong>.
+      </div>
+
+      {/* Chip-style status filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        {PO_STATUS_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            onClick={() => setStatusFilter(f.value)}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              statusFilter === f.value
+                ? "border-brand-500 bg-brand-500 text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      <div className="overflow-hidden rounded-lg border border-surface-border">
+        <table className="w-full text-sm">
+          <thead className="border-b border-surface-border bg-surface-raised">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">PO #</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Supplier</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Date</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-border bg-white">
+            {isLoading ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-12 text-center">
+                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                </td>
+              </tr>
+            ) : isError ? (
+              <tr>
+                <td colSpan={5} className="px-4 py-12 text-center text-sm text-danger">
+                  Failed to load. Please try again.
+                </td>
+              </tr>
+            ) : orders.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="p-0">
+                  <EmptyState
+                    variant="data"
+                    title="No purchase orders"
+                    description={
+                      statusFilter
+                        ? "No purchase orders match this status."
+                        : "Purchase orders you raise with suppliers will appear here."
+                    }
+                    action={
+                      statusFilter ? (
+                        <Button variant="secondary" size="sm" onClick={() => setStatusFilter("")}>
+                          Clear filter
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                </td>
+              </tr>
+            ) : (
+              orders.map((po) => {
+                const b = poBadge(po.status);
+                return (
+                  <tr key={po.id} className="transition-colors hover:bg-surface-raised">
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {po.poNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">{po.supplier?.name ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtDate(po.createdAt ?? po.expectedDate)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={b.variant} label={b.label} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">
+                      {fmt(poTotal(po))}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1773,49 +1970,74 @@ function ExpenseDetailModal({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+type ExpensesTab = "inventory" | "pos" | "other";
+
 function ExpensesContent() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => {
-    setTitle("Expenses");
+    setTitle("Bills & Purchasing");
   }, [setTitle]);
 
   const searchParams = useSearchParams();
   const router = useRouter();
-  const activeTab = (searchParams.get("tab") ?? "inventory") as "inventory" | "other";
+  const activeTab = (searchParams.get("tab") ?? "inventory") as ExpensesTab;
 
-  const setTab = (tab: "inventory" | "other") => {
+  const setTab = (tab: ExpensesTab) => {
     router.push(`/finance/expenses?tab=${tab}`);
   };
 
+  // Count badges for the tab strip — read-only, reuses existing list hooks.
+  const { data: billsData } = useVendorBills({ limit: 999 });
+  const billsCount = billsData?.meta?.total ?? billsData?.data?.length;
+  const { data: posData } = usePurchaseOrders();
+  const posCount = (posData as any)?.meta?.total ?? (posData as any)?.data?.length;
+
+  const TabButton = ({
+    tab,
+    label,
+    count,
+  }: {
+    tab: ExpensesTab;
+    label: string;
+    count?: number;
+  }) => (
+    <button
+      onClick={() => setTab(tab)}
+      className={cn(
+        "flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium transition-colors",
+        activeTab === tab ? "bg-white text-navy shadow-sm" : "text-navy/70 hover:text-navy",
+      )}
+    >
+      {label}
+      {count != null && (
+        <span className={cn("money text-xs", activeTab === tab ? "text-navy/70" : "text-navy/40")}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+
   return (
     <div className="space-y-6 p-6">
-      <PageHeader title="Expenses" subtitle="Inventory purchases and other business expenses" />
+      <PageHeader
+        title="Bills & Purchasing"
+        subtitle="One hub for vendor bills, purchase orders and inventory spend — supplier payments happen here."
+      />
 
       {/* Tab switcher */}
       <div className="flex gap-1 rounded-xl border border-surface-border bg-surface-raised p-1 w-fit">
-        <button
-          onClick={() => setTab("inventory")}
-          className={cn(
-            "rounded-lg px-5 py-2 text-sm font-medium transition-colors",
-            activeTab === "inventory"
-              ? "bg-white text-navy shadow-sm"
-              : "text-navy/70 hover:text-navy",
-          )}
-        >
-          Inventory Purchases
-        </button>
-        <button
-          onClick={() => setTab("other")}
-          className={cn(
-            "rounded-lg px-5 py-2 text-sm font-medium transition-colors",
-            activeTab === "other" ? "bg-white text-navy shadow-sm" : "text-navy/70 hover:text-navy",
-          )}
-        >
-          Other Expenses
-        </button>
+        <TabButton tab="inventory" label="Vendor Bills" count={billsCount} />
+        <TabButton tab="pos" label="Purchase Orders" count={posCount} />
+        <TabButton tab="other" label="Other Expenses" />
       </div>
 
-      {activeTab === "inventory" ? <InventoryPurchasesTab /> : <OtherExpensesTab />}
+      {activeTab === "inventory" ? (
+        <InventoryPurchasesTab />
+      ) : activeTab === "pos" ? (
+        <PurchaseOrdersTab />
+      ) : (
+        <OtherExpensesTab />
+      )}
     </div>
   );
 }
