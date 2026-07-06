@@ -46,7 +46,7 @@
 | 1 | Foundation (tokens, shell, overlays, undo, re-auth, i18n) | ux-standards, overlays | **COMPLETE** |
 | 2 | Operator core (dashboard, orders, sale builder, customers, products, inventory, dispatch, returns) | pos-cost-roles | **SHIPPED & DEPLOYED** (#121, 2026-07-06 — see PHASE-2-PLAN.md) |
 | 3 | Finance (invoices, payments, credit notes, bills/purchasing, reports, overview) | pos-cost-roles, guardrails §9 | **RESKINS DONE** — F1 (finance dashboard, invoice detail, credit-notes; #121) + F2 (invoices-list KPIs, payment receipt, bills-hub + new PO tab, vendor-bill detail; branch `feat/phase3-reskin-safe`). SKIPPED (current > mockup): Financial Reports (22-report explorer), Recurring invoices. DEFERRED to Phase 4 (backend absent, not stubbed): vendor-bill `supplierInvoiceNumber`/`creditApplied`/OCR-activity/Effect-on-Costs dry-run; payment `recordedBy`/company block |
-| 4 | Regulated items (categories, authorizations, override, invoice split, ledgers, filings, POD) | regulated-items | not started |
+| 4 | Regulated items (categories, authorizations, override, invoice split, ledgers, filings, POD) | regulated-items | **SCOPED, not started** — XL / high money+compliance risk / multi-session. Full W1–W7 plan in `PHASE-4-PLAN.md` (generalize `isTobacco` → `TrackedCategory`) |
 | 5 | Buyer portal (catalogue v2, shelf, cart/checkout, order edit + change requests, tracking, finances, standing, licenses, messages) | buyer-experience | not started |
 | 6 | Messaging (threads, WA/SMS adapters, rules matrix, opt-outs, quiet hours, metering, act-from-chat) | messaging | not started |
 | 7 | Plans & billing (signup, trial, choose-plan, settings billing, admin plans editor, admin MRR) | pricing-plans, plan-gating-wiring | not started |
