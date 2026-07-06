@@ -1293,13 +1293,24 @@ export class OrdersService implements OnApplicationBootstrap {
         const product = productMap.get(item.productId);
         if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
         const unitPrice = Number(product.pricePerUnit);
+        // Boxed products price by the BOX: `qty` is the piece count, so re-split it
+        // and prorate (mirrors createOrder + the operator path). A plain
+        // qty*unitPrice over-charged boxed lines by unitsPerBox and left the
+        // boxes/pieces columns unset on every buyer edit.
+        const upb = Number(product.unitsPerBox ?? 0);
+        const split = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb });
+        const boxes = upb > 1 ? split.boxes : null;
+        const pieces = upb > 1 ? split.pieces : null;
+        const qty = upb > 1 ? split.qty : item.qty;
         await this.prisma.forTenant().orderItem.create({
           data: {
             orderId,
             productId: item.productId,
-            qty: item.qty,
+            qty,
             unitPrice,
-            subtotal: item.qty * unitPrice,
+            subtotal: computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: upb }),
+            boxes,
+            pieces,
             status: "PENDING",
             notes: item.notes,
           },

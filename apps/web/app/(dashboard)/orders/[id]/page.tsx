@@ -42,7 +42,7 @@ import {
 } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal, roundMoney } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -311,6 +311,57 @@ interface EditItemState {
   unitCost?: number | null;
   unitsPerBox?: number | null;
   category?: string | null;
+  /** True when the loaded line was stored with a box/piece split (qty is in
+   *  pieces). Gates boxed proration so selling-unit lines aren't misread. */
+  boxSplit?: boolean;
+}
+
+// ─── Boxed proration helpers ──────────────────────────────────────────────────
+// A boxed line's `qty` is the total piece count while `unitPrice` is the BOX
+// price. Derive boxes/pieces from qty so both the preview and the save payload
+// prorate as `unitPrice * (boxes + pieces / unitsPerBox)` — a plain qty*unitPrice
+// over-charges boxed lines by unitsPerBox (money-discipline rule).
+
+// `boxSplit` gates proration: only lines that were STORED with a box/piece split
+// have `qty` denominated in pieces. A boxed line added via this builder without a
+// split keeps `qty` in selling units (boxes) — re-deriving pieces from it would
+// under-charge, so we leave those as a plain unitPrice*qty line.
+function editBoxedSplit(it: { qty: number; unitsPerBox?: number | null; boxSplit?: boolean }): {
+  boxes: number | null;
+  pieces: number | null;
+} {
+  const upb = Number(it.unitsPerBox ?? 0);
+  if (upb > 1 && it.boxSplit) {
+    const s = normalizeBoxesPieces({ qty: it.qty, unitsPerBox: upb });
+    return { boxes: s.boxes, pieces: s.pieces };
+  }
+  return { boxes: null, pieces: null };
+}
+
+/** DTO fragment: send boxes/pieces ONLY for boxed, box-split lines so the server prorates. */
+function boxedDtoFields(it: { qty: number; unitsPerBox?: number | null; boxSplit?: boolean }): {
+  boxes?: number;
+  pieces?: number;
+} {
+  const { boxes, pieces } = editBoxedSplit(it);
+  return boxes != null ? { boxes, pieces: pieces ?? 0 } : {};
+}
+
+/** Boxed-aware line subtotal for the edit preview (matches server pricing). */
+function editLineSubtotal(it: {
+  unitPrice: number;
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+}): number {
+  const { boxes, pieces } = editBoxedSplit(it);
+  return computeLineSubtotal({
+    unitPrice: it.unitPrice,
+    qty: it.qty,
+    boxes,
+    pieces,
+    unitsPerBox: it.unitsPerBox ?? null,
+  });
 }
 
 // ─── Demote reason modal ──────────────────────────────────────────────────────
@@ -847,7 +898,7 @@ function EditableLineItems({
             {/* Live line total */}
             {!item.cancelled && (
               <span className="money w-20 shrink-0 text-right text-sm font-semibold text-navy">
-                ${computeLineSubtotal({ unitPrice: item.unitPrice, qty: item.qty }).toFixed(2)}
+                ${editLineSubtotal(item).toFixed(2)}
               </span>
             )}
 
@@ -1180,6 +1231,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
                 unitsPerBox: li.product?.unitsPerBox ?? null,
                 category: li.product?.category ?? null,
+                boxSplit: li.boxes != null || li.pieces != null,
               };
             }),
         );
@@ -1235,6 +1287,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             cancelled: false,
             notes: li.notes,
             overrideReason: li.overrideReason ?? undefined,
+            // unitsPerBox + boxSplit drive boxed proration on save (money fix).
+            unitsPerBox: li.product?.unitsPerBox ?? null,
+            boxSplit: li.boxes != null || li.pieces != null,
           };
         }),
     );
@@ -1283,6 +1338,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           updates.push({
             productId: edited.productId,
             qty: edited.qty,
+            ...boxedDtoFields(edited),
             ...(overridden
               ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
               : {}),
@@ -1319,6 +1375,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           id: edited.id,
           action: "UPDATE",
           qty: edited.qty,
+          ...boxedDtoFields(edited),
           ...(priceChanged
             ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
             : {}),
@@ -1425,9 +1482,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   const editSubtotal = isEditing
     ? roundMoney(
-        editItems
-          .filter((it) => !it.cancelled)
-          .reduce((s, it) => s + computeLineSubtotal({ unitPrice: it.unitPrice, qty: it.qty }), 0),
+        editItems.filter((it) => !it.cancelled).reduce((s, it) => s + editLineSubtotal(it), 0),
       )
     : Number(order.subtotal);
 
@@ -1847,7 +1902,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           const updates: any[] = [];
                           for (const edited of editItems) {
                             if (edited.isNew) {
-                              updates.push({ productId: edited.productId, qty: edited.qty });
+                              updates.push({
+                                productId: edited.productId,
+                                qty: edited.qty,
+                                ...boxedDtoFields(edited),
+                              });
                               continue;
                             }
                             const orig = original.find((li) => li.id === edited.id);
@@ -1855,13 +1914,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             if (edited.cancelled) {
                               updates.push({ id: edited.id, action: "CANCEL" });
                             } else if (edited.substituteProductId) {
+                              // Substitute proration is keyed to the SUBSTITUTE product's
+                              // unitsPerBox (resolved server-side), not this line's — so we
+                              // don't derive boxes/pieces from the original product here.
                               updates.push({
                                 id: edited.id,
                                 substituteProductId: edited.substituteProductId,
                                 qty: edited.qty,
                               });
                             } else if (Math.abs(edited.qty - Number(orig.qty)) > 0.0001) {
-                              updates.push({ id: edited.id, action: "UPDATE", qty: edited.qty });
+                              updates.push({
+                                id: edited.id,
+                                action: "UPDATE",
+                                qty: edited.qty,
+                                ...boxedDtoFields(edited),
+                              });
                             }
                           }
                           const doPublish = () =>
