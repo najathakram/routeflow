@@ -59,9 +59,11 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      could be an adjustment/stock-count lot stamped at avg cost; the money-path review caught this), fallback
      averageCost; not lot-consuming. 2 new inventory.spec tests (335 api tests pass). Selectable per-product (products/page.tsx picker option); DTO auto-accepts via
      `@IsEnum(CostingMethod)`. Effective-dating is intrinsic (per-line `cost_at_sale` snapshot immutable;
-     method changes affect only future sales). **Deferred follow-on:** propagate the tenant `costing.method`
-     to NEW products at creation (cross-module wiring — the tenant setting is stored + selectable but doesn't
-     auto-apply to products yet; see QUESTIONS.md #10).
+     method changes affect only future sales). **Tenant-default→product propagation DONE:**
+     `products.service.create` defaults a new product's `costingMethod` to the tenant `costing.method`
+     (mapped WEIGHTED_AVERAGE→AVCO) via `resolveCostingMethod()` (ProductsModule now imports
+     SystemConfigModule); explicit per-product choice wins; unset tenant → Prisma default (existing behavior
+     unchanged). 4 new products.service.spec cases. **§1 is now COMPLETE except invoices/new (see (a)).**
   - **(a) invoices/new hint — STILL TODO, blocked on a box-model finding:** invoices/new's boxed `unitPrice`
      semantics are ambiguous (`qty` is total pieces and `lineTotal = qty×unitPrice`, yet the `/pc` display
      divides `unitPrice` by `unitsPerBox` — they disagree on per-box vs per-piece). Adding a margin hint on

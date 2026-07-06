@@ -81,8 +81,10 @@ Genuine ambiguities found while wiring the Unified design package. Each has a **
     product's own `costingMethod` — now including the new `LAST_COST` (cost = most recent purchase lot's
     unit cost), selectable per product. Existing products keep their method (no retroactive re-costing —
     safe on the money path), and the per-line `cost_at_sale` snapshot makes history immutable regardless
-    (so a method change is naturally effective-dated). Propagating the tenant default to NEW products at
-    creation is a small follow-on (cross-module wiring); until then the tenant-level method selector is
-    stored + shown but only the per-product picker actually drives costing.
+    (so a method change is naturally effective-dated). **DONE:** `products.service.create` now defaults a
+    new product's `costingMethod` to the tenant `costing.method` (mapped WEIGHTED_AVERAGE→AVCO) when the
+    operator didn't pick one — `resolveCostingMethod()` returns `undefined` (Prisma default FIFO) only when
+    the tenant never set one, so existing behavior/products are unchanged. An explicit per-product choice
+    still wins. Spec: `products.service.spec` (4 cases).
 
 _(add new questions below as they arise, grouped by phase)_
