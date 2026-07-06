@@ -41,13 +41,17 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      "cost method configurable (tenant)" acceptance line. (PR #117)
   - ✅ **Drive mode entry (§4)**: avatar-menu one-tap → `/routes/my-runs` for `canActAsDriver`
      (capability already enforced by RolesGuard). MVP entry point; full field-layout swap = follow-on. (PR #117)
-  - Follow-on (TRACKED, not done): (a) same hint in `orders/[id]` `PriceEditRow` + `invoices/new`
-     (needs `averageCost`/`unitsPerBox`/`category` threaded through the order-item DTO → `EditItemState`;
-     `overrideReason` already persists there so "Sell anyway" can log server-side + AuditLog SALE_BELOW_FLOOR);
-     (b) LAST_COST costing method in `recordSale` (latest PURCHASE movement); (c) cost-tap → cost-history
-     popover (`useCostHistory` → existing `GET /analytics/cost-history/:id`); (d) customer-detail Price
-     Memory margin column; (e) admin Settings "Costing & Margins" tab (method + default + per-category
-     floors via `useUpdateMarginConfig`); (f) analytics label costing method + effective-date changes.
+  - ✅ Edit-path margin hint (PR #118): `orders/[id]` `PriceEditRow` renders the shared
+     `components/MarginHint.tsx` (also the at-door adjust path); order `findOne` selects product
+     `averageCost`+`category`; "Sell anyway" persists `overrideReason` (logged). Reused across builders.
+  - ✅ Customer Price Memory margin column (PR #118): customer detail > Special Prices shows margin
+     (their price vs cost now), colored vs the tenant floor; `getCustomerPrices` selects `averageCost`+
+     `unitsPerBox`. Closes §1 bullet 3.
+  - Follow-on (TRACKED, not done): (a) same hint in `invoices/new`; (b) LAST_COST costing method in
+     `recordSale` (latest PURCHASE movement) — touches the critical sale-costing path, do carefully;
+     (c) cost-tap → cost-history popover (`useCostHistory` → existing `GET /analytics/cost-history/:id`;
+     no reusable hook yet, only an inline query in `products/[id]`); (d) dedup: point `CreateOrderModal`
+     at the shared `MarginHint`; (e) analytics label costing method + effective-date changes.
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.

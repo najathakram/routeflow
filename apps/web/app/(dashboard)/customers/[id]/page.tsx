@@ -56,7 +56,8 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { fmt, fmtDate } from "@/lib/formatting";
-import { getTierPrice } from "@/lib/pricing";
+import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
+import { useMarginConfig } from "@/lib/api/margin";
 import {
   useCustomer,
   useCustomerOrders,
@@ -738,6 +739,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: prices, isLoading } = useCustomerPrices(customerId);
   const upsertPrice = useUpsertCustomerPrice();
   const deletePrice = useDeleteCustomerPrice();
+  // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
+  const { data: marginConfig } = useMarginConfig();
+  const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
   const { data: productsData } = useProducts({ isActive: true, limit: 200 });
   const allProducts: any[] = productsData?.data ?? [];
 
@@ -846,6 +850,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Tier Price
                   </th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                    Margin
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Notes
                   </th>
@@ -875,6 +882,25 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs">
+                        {(() => {
+                          const margin = computeMarginFraction(
+                            tierPrice,
+                            cp.product?.averageCost != null ? Number(cp.product.averageCost) : null,
+                            cp.product?.unitsPerBox,
+                          );
+                          if (margin == null)
+                            return <span className="text-navy/30">{"\u2014"}</span>;
+                          const cls = classifyMargin(margin, marginFloor);
+                          const color =
+                            cls === "belowFloor" || cls === "belowCost"
+                              ? "text-danger"
+                              : cls === "warn"
+                                ? "text-amber-600"
+                                : "text-success";
+                          return <span className={color}>{(margin * 100).toFixed(1)}%</span>;
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">{cp.notes ?? "\u2014"}</td>
                       <td className="px-6 py-3 text-right">
