@@ -31,6 +31,7 @@ import {
   Download,
 } from "lucide-react";
 import {
+  Avatar,
   Badge,
   Button,
   Card,
@@ -38,6 +39,7 @@ import {
   Select,
   Modal,
   Input,
+  StatCard,
   cn,
   useToast,
   type BadgeStatus,
@@ -1705,35 +1707,60 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </Link>
       </div>
 
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
-                customer.customerType === "individual"
-                  ? "bg-purple-100 text-purple-700"
-                  : "bg-blue-100 text-blue-700",
-              )}
-            >
-              {customer.customerType === "individual" ? (
-                <>
-                  <User className="h-3 w-3" /> Individual
-                </>
-              ) : (
-                <>
-                  <Building2 className="h-3 w-3" /> Business
-                </>
-              )}
-            </span>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <Avatar name={customer.businessName} size="lg" className="h-[42px] w-[42px] text-sm" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
+              <Badge status={currentStatus} />
+              <Badge variant="info" label={`Tier ${customer.pricingTier ?? 1} pricing`} />
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                  customer.customerType === "individual"
+                    ? "bg-purple-100 text-purple-700"
+                    : "bg-blue-100 text-blue-700",
+                )}
+              >
+                {customer.customerType === "individual" ? (
+                  <>
+                    <User className="h-3 w-3" /> Individual
+                  </>
+                ) : (
+                  <>
+                    <Building2 className="h-3 w-3" /> Business
+                  </>
+                )}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-navy/70">
+              {[
+                customer.contactName,
+                `Customer since ${fmtDate(customer.createdAt)}`,
+                (customerRoutes ?? [])[0]?.name,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
           </div>
-          <p className="mt-1 text-sm text-navy/70">{customer.contactName}</p>
         </div>
-        <div className="flex items-center gap-3">
-          <Badge status={currentStatus} />
-          <Button variant="secondary" size="sm" onClick={() => setIsEditOpen(true)}>
+        <div className="flex shrink-0 items-center gap-2.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Pencil className="h-3.5 w-3.5" />}
+            onClick={() => setIsEditOpen(true)}
+          >
             Edit
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<FileText className="h-3.5 w-3.5" />}
+            href={`/invoices/new?customerId=${params.id}`}
+          >
+            New Invoice
           </Button>
         </div>
       </div>
@@ -1773,6 +1800,26 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         {/* ── Profile tab ────────────────────────────────────────── */}
         <Tabs.Content value="profile" className="mt-5 focus:outline-none">
           <div className="space-y-5">
+            {/* Stat cards — key numbers foregrounded, all from already-loaded data */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard
+                label="Orders"
+                value={allOrders.length}
+                icon={<FileText className="h-5 w-5" />}
+              />
+              <StatCard
+                label="Open Balance"
+                value={fmt(statement?.outstandingAmount ?? 0)}
+                icon={<TrendingDown className="h-5 w-5" />}
+                className={(statement?.outstandingAmount ?? 0) > 0 ? "border-danger/40" : undefined}
+              />
+              <StatCard
+                label="Advance Balance"
+                value={fmt(statement?.advanceBalance ?? 0)}
+                icon={<DollarSign className="h-5 w-5" />}
+              />
+            </div>
+
             {/* New fields & tags row */}
             <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
               <div className="lg:col-span-2">

@@ -51,16 +51,17 @@ different Claude profile won't have prior-session memory — rely on this + the 
    the prod-write — the user runs it or grants a Bash allow-rule. THEN the **rebuild** routine (verify
    → public → merge → CI → private → post-deploy-check). After deploy, visually verify the cost
    popover / boxed invoice totals / analytics label on the `test` tenant, and confirm CI E2E is green.
-2. **§4** full drive-mode field layout (avatar entry → `/routes/my-runs` exists; swap to the field
-   layout — bigger targets, today's run first, scanner shortcut; design: `unified/my-runs.html` +
-   pos-cost-roles §4).
-3. **§3** at-the-door actions — arrived-stop sheet (adjust / new order / collect payment) on dispatch;
-   reuses existing order-edit / order-create / record-payment endpoints (pos-cost-roles §3).
-4. **Ledger-reskin the 10 operator-core screens** 1:1 vs `unified/*.html` (dashboard, orders
-   list/detail, customers, customer-detail, products, product-detail, inventory-hub, dispatch,
-   returns). Tokens already match from Phase 1; structural/column/copy deltas — needs post-deploy
-   visual verification, so best done when the user can approve deploys.
-5. Then **phases 3 (Finance) → 10 (Mobile)**.
+2. **§4 drive mode — DONE** (`lib/drive-mode.tsx` hook + avatar toggle + topbar exit + my-runs field
+   layout). **§3 at-the-door — DONE** (`components/ArrivedStopSheet.tsx` + a guarded trigger on the
+   dispatch packing-list page; NOTE: also wire it on the live-run view `routes/[id]/page.tsx` — the
+   real driver-at-door surface — and verify post-deploy).
+3. **Ledger reskins (10 operator screens)** — IN PROGRESS. **Returns DONE.** Being done in batches via
+   a reskin+review workflow (match `unified/*.html`, preserve every hook/handler/route, verify
+   typecheck+lint). Remaining: dashboard, customers, customer-detail (batch 1 running), then products,
+   product-detail, inventory-hub, orders-list, order-detail, dispatch. All need **post-deploy visual
+   verification** on the `test` tenant — they are functionally reviewed + typecheck-green but not
+   visually confirmed.
+4. Then **phases 3 (Finance) → 10 (Mobile)**.
 
 ## 3. E2E CI status (worked on this session)
 

@@ -379,7 +379,7 @@ export default function CustomersPage() {
       <ArrowUpDown
         className={cn(
           "h-3 w-3 transition-colors",
-          sortBy === col ? "text-white" : "text-white/40 group-hover:text-white/70",
+          sortBy === col ? "text-navy" : "text-navy/30 group-hover:text-navy/70",
         )}
       />
     </button>
@@ -449,7 +449,24 @@ export default function CustomersPage() {
       {
         accessorKey: "businessName",
         header: () => <SortHeader col="businessName">Business Name</SortHeader>,
-        cell: ({ row }) => <span className="text-navy/80">{row.original.businessName}</span>,
+        cell: ({ row }) => {
+          const name = row.original.businessName ?? "";
+          const initials =
+            name
+              .split(/\s+/)
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((w) => w[0]?.toUpperCase() ?? "")
+              .join("") || "—";
+          return (
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-600">
+                {initials}
+              </span>
+              <span className="text-navy/80">{name}</span>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "email",
@@ -468,7 +485,11 @@ export default function CustomersPage() {
         accessorKey: "phone",
         header: "Phone",
         enableSorting: false,
-        cell: ({ row }) => <span className="text-navy/70">{row.original.phone ?? "—"}</span>,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs tabular-nums text-navy/70">
+            {row.original.phone ?? "—"}
+          </span>
+        ),
       },
       {
         id: "receivables",
@@ -477,7 +498,10 @@ export default function CustomersPage() {
           const val = row.original.receivables ?? 0;
           return (
             <span
-              className={cn("text-right font-medium", val > 0 ? "text-danger" : "text-navy/70")}
+              className={cn(
+                "block text-right font-medium tabular-nums",
+                val > 0 ? "text-danger" : "text-navy/70",
+              )}
             >
               {val > 0 ? fmt(val) : "—"}
             </span>
@@ -492,7 +516,10 @@ export default function CustomersPage() {
           const val = row.original.unusedCredits ?? 0;
           return (
             <span
-              className={cn("text-right font-medium", val > 0 ? "text-success" : "text-navy/70")}
+              className={cn(
+                "block text-right font-medium tabular-nums",
+                val > 0 ? "text-success" : "text-navy/70",
+              )}
             >
               {val > 0 ? fmt(val) : "—"}
             </span>
@@ -596,6 +623,11 @@ export default function CustomersPage() {
     <div className="space-y-5 p-6">
       <PageHeader
         title="Customers"
+        subtitle={
+          meta?.total != null
+            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · filters live in the URL, so views are shareable.`
+            : "Filters live in the URL, so views are shareable."
+        }
         action={
           <div className="flex items-center gap-2">
             <Button
@@ -742,90 +774,105 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="search"
-          placeholder="Search by name, business, or phone…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <div className="w-36">
-          <Select
-            options={[
-              { value: "", label: "All Statuses" },
-              { value: "ACTIVE", label: "Active" },
-              { value: "INACTIVE", label: "Inactive" },
-              { value: "SUSPENDED", label: "Suspended" },
-            ]}
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          />
-        </div>
-        <div className="w-36">
-          <Select
-            options={[
-              { value: "", label: "All Types" },
-              { value: "BUSINESS", label: "Business" },
-              { value: "INDIVIDUAL", label: "Individual" },
-            ]}
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-          />
-        </div>
-        {tags && tags.length > 0 && (
-          <div className="w-36">
+      {/* Filter + table card */}
+      <div className="rounded-lg border border-surface-border bg-white shadow-card">
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-surface-border px-4 py-3">
+          {/* Status filter chips */}
+          {[
+            { value: "", label: "All" },
+            { value: "ACTIVE", label: "Active" },
+            { value: "INACTIVE", label: "Inactive" },
+            { value: "SUSPENDED", label: "Suspended" },
+          ].map((o) => (
+            <button
+              key={o.value || "all"}
+              onClick={() => setStatusFilter(o.value)}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                statusFilter === o.value
+                  ? "border-navy bg-navy text-white"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+              )}
+            >
+              {o.label}
+            </button>
+          ))}
+
+          {/* Type filter */}
+          <div className="w-32">
             <Select
               options={[
-                { value: "", label: "All Tags" },
-                ...tags.map((t) => ({ value: t.id, label: t.name })),
+                { value: "", label: "All Types" },
+                { value: "BUSINESS", label: "Business" },
+                { value: "INDIVIDUAL", label: "Individual" },
               ]}
-              value={tagFilter}
-              onChange={(e) => setTagFilter(e.target.value)}
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
             />
           </div>
-        )}
 
-        {/* Unassigned only toggle chip */}
-        <button
-          onClick={() => setUnassignedOnly((v) => !v)}
-          className={cn(
-            "flex h-10 items-center gap-1.5 rounded border px-3 text-sm font-medium transition-colors",
-            unassignedOnly
-              ? "border-brand-500 bg-brand-50 text-brand-600"
-              : "border-surface-border bg-white text-navy/70 hover:border-brand-300 hover:text-navy",
+          {/* Tag filter */}
+          {tags && tags.length > 0 && (
+            <div className="w-32">
+              <Select
+                options={[
+                  { value: "", label: "All Tags" },
+                  ...tags.map((t) => ({ value: t.id, label: t.name })),
+                ]}
+                value={tagFilter}
+                onChange={(e) => setTagFilter(e.target.value)}
+              />
+            </div>
           )}
-        >
-          <span
+
+          {/* Unassigned only toggle chip */}
+          <button
+            onClick={() => setUnassignedOnly((v) => !v)}
             className={cn(
-              "inline-flex h-4 w-4 items-center justify-center rounded-full border text-xs",
-              unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+              unassignedOnly
+                ? "border-brand-500 bg-brand-50 text-brand-600"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
             )}
           >
-            {unassignedOnly && "✓"}
-          </span>
-          Unassigned only
-        </button>
-      </div>
+            <span
+              className={cn(
+                "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
+                unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+              )}
+            >
+              {unassignedOnly && "✓"}
+            </span>
+            Unassigned only
+          </button>
 
-      {/* Loading / Error / Table */}
-      {isLoading ? (
-        <div className="animate-pulse space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-12 rounded bg-surface-raised" />
-          ))}
+          {/* Search — pushed to the right */}
+          <input
+            type="search"
+            placeholder="Name, business or phone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
         </div>
-      ) : isError ? (
-        <div className="flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
-          <span className="text-sm text-danger">
-            Failed to load customers. Please try refreshing the page.
-          </span>
-        </div>
-      ) : (
-        /* Table */
-        <>
+
+        {/* Loading / Error / Table */}
+        {isLoading ? (
+          <div className="animate-pulse space-y-3 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-12 rounded bg-surface-raised" />
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="m-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+            <span className="text-sm text-danger">
+              Failed to load customers. Please try refreshing the page.
+            </span>
+          </div>
+        ) : (
           <Table
+            className="border-0 rounded-none"
             data={visibleCustomers}
             columns={columns}
             onRowClick={(row) => {
@@ -878,74 +925,75 @@ export default function CustomersPage() {
               )
             }
           />
-          {/* Pagination */}
-          {meta && (
-            <div className="flex items-center justify-between gap-4 flex-wrap mt-4">
-              <div className="flex items-center gap-3">
-                <p className="text-sm text-navy/70">
-                  {meta.total > 0
-                    ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} customers`
-                    : "No customers found"}
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-navy/70">Per page:</span>
-                  <select
-                    value={limit}
-                    onChange={(e) => {
-                      setLimit(Number(e.target.value));
-                      setPage(1);
-                    }}
-                    className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  >
-                    {[10, 20, 50, 100].map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+        )}
+
+        {/* Pagination footer */}
+        {!isLoading && !isError && meta && (
+          <div className="flex items-center justify-between gap-4 flex-wrap border-t border-surface-border px-4 py-3">
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-navy/70">
+                {meta.total > 0
+                  ? `Showing ${(page - 1) * limit + 1}–${Math.min(page * limit, meta.total)} of ${meta.total} customers`
+                  : "No customers found"}
+              </p>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-navy/70">Per page:</span>
+                <select
+                  value={limit}
+                  onChange={(e) => {
+                    setLimit(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded border border-surface-border bg-white px-2 text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                >
+                  {[10, 20, 50, 100].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
               </div>
-              {(meta.totalPages ?? 1) > 1 && (
-                <div className="flex items-center gap-1">
-                  <button
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                    className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Previous
-                  </button>
-                  {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
-                    const totalPages = meta.totalPages ?? 1;
-                    const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
-                    if (p < 1 || p > totalPages) return null;
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => setPage(p)}
-                        className={cn(
-                          "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
-                          p === page
-                            ? "border-brand-500 bg-brand-500 text-white"
-                            : "border-surface-border bg-white text-navy hover:bg-surface-raised",
-                        )}
-                      >
-                        {p}
-                      </button>
-                    );
-                  })}
-                  <button
-                    disabled={page >= (meta.totalPages ?? 1)}
-                    onClick={() => setPage((p) => p + 1)}
-                    className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
             </div>
-          )}
-        </>
-      )}
+            {(meta.totalPages ?? 1) > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => p - 1)}
+                  className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Previous
+                </button>
+                {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+                  const totalPages = meta.totalPages ?? 1;
+                  const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+                  if (p < 1 || p > totalPages) return null;
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        "rounded border px-3 py-1.5 text-sm font-medium transition-colors",
+                        p === page
+                          ? "border-brand-500 bg-brand-500 text-white"
+                          : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+                      )}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+                <button
+                  disabled={page >= (meta.totalPages ?? 1)}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="rounded border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Deactivate confirmation modal */}
       <Modal
