@@ -420,10 +420,20 @@ export default function ReturnsPage() {
   const meta = Array.isArray(data) ? undefined : data?.meta;
   const totalPages = meta?.totalPages ?? 1;
 
+  const hasActiveFilters = !!(statusFilter || reasonFilter || search);
+
+  function clearFilters() {
+    setStatusFilter("");
+    setReasonFilter("");
+    setSearch("");
+    setPage(1);
+  }
+
   return (
     <div className="space-y-5 p-6">
       <PageHeader
         title="Returns"
+        subtitle="Return requests against delivered orders, approve, restock, and credit."
         action={
           <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
             New Return
@@ -433,201 +443,231 @@ export default function ReturnsPage() {
 
       {/* KPI summary */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-surface-border bg-white p-4">
+        <div
+          className={cn(
+            "rounded-lg border border-surface-border bg-white p-4 shadow-card",
+            pendingCount > 0 && "border-warning/40 ring-2 ring-warning/10",
+          )}
+        >
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">
-              Pending Review
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+              Awaiting Review
             </p>
-            <RotateCcw className="h-4 w-4 text-yellow-500" />
+            <RotateCcw className="h-4 w-4 text-warning" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-navy">{pendingCount}</p>
+          <p className="mt-1.5 text-2xl font-semibold tabular-nums text-navy">{pendingCount}</p>
           <p className="text-xs text-navy/70">awaiting approval</p>
         </div>
-        <div className="rounded-xl border border-surface-border bg-white p-4">
+        <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
               Total Return Value
             </p>
             <DollarSign className="h-4 w-4 text-brand-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-navy">${totalReturnValue.toFixed(2)}</p>
+          <p className="mt-1.5 text-2xl font-semibold tabular-nums text-navy">
+            ${totalReturnValue.toFixed(2)}
+          </p>
           <p className="text-xs text-navy/70">across all returns</p>
         </div>
-        <div className="rounded-xl border border-surface-border bg-white p-4">
+        <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">This Month</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+              This Month
+            </p>
             <Calendar className="h-4 w-4 text-brand-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-navy">{thisMonthCount}</p>
+          <p className="mt-1.5 text-2xl font-semibold tabular-nums text-navy">{thisMonthCount}</p>
           <p className="text-xs text-navy/70">returns created</p>
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          type="search"
-          placeholder="Search by return # or customer / order…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
-          className="h-10 w-72 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <select
-          value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value);
-            setPage(1);
-          }}
-          className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        >
+      {/* Filter + table card */}
+      <div className="rounded-lg border border-surface-border bg-white shadow-card">
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-surface-border px-4 py-3">
           {STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
+            <button
+              key={o.value || "all"}
+              onClick={() => {
+                setStatusFilter(o.value);
+                setPage(1);
+              }}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+                statusFilter === o.value
+                  ? "border-navy bg-navy text-white"
+                  : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+              )}
+            >
               {o.label}
-            </option>
+              {o.value === "PENDING" && pendingCount > 0 && (
+                <span
+                  className={cn(
+                    "font-mono text-[11px]",
+                    statusFilter === o.value ? "text-white/60" : "text-navy/40",
+                  )}
+                >
+                  {pendingCount}
+                </span>
+              )}
+            </button>
           ))}
-        </select>
-        <select
-          value={reasonFilter}
-          onChange={(e) => {
-            setReasonFilter(e.target.value);
-            setPage(1);
-          }}
-          className="h-10 rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-        >
-          {REASON_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {(statusFilter || reasonFilter || search) && (
-          <button
-            onClick={() => {
-              setStatusFilter("");
-              setReasonFilter("");
-              setSearch("");
+
+          <select
+            value={reasonFilter}
+            onChange={(e) => {
+              setReasonFilter(e.target.value);
               setPage(1);
             }}
-            className="text-sm text-navy/70 hover:text-danger transition-colors"
+            className="h-8 rounded-lg border border-surface-border bg-white px-2.5 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            Clear filters
-          </button>
-        )}
-      </div>
+            {REASON_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Return #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Order #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Date</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-navy/70">Items</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Reason</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+          <input
+            type="search"
+            placeholder="Return #, order # or customer…"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className="ml-auto h-8 w-64 rounded-lg border border-surface-border bg-white px-3 text-xs text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+
+          {hasActiveFilters && (
+            <button
+              onClick={clearFilters}
+              className="text-xs text-navy/70 hover:text-danger transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
+        {/* Table */}
+        <div className="overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Return #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Order</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Reason</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Date</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Items</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Value</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                <th className="w-10 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <p className="text-sm text-danger">Failed to load returns.</p>
-                  <button
-                    onClick={() => refetch()}
-                    className="mt-2 text-sm text-brand-500 hover:underline"
-                  >
-                    Try again
-                  </button>
-                </td>
-              </tr>
-            ) : returns.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <div className="flex flex-col items-center gap-2">
-                    <FileText className="h-8 w-8 text-navy/20" />
-                    {statusFilter || reasonFilter || search ? (
-                      <>
-                        <p className="text-sm text-navy/70">No returns match your filters.</p>
-                        <button
-                          className="text-sm text-brand-500 hover:underline"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setReasonFilter("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <EmptyState
-                          variant="returns"
-                          title="No returns yet"
-                          description="Returns will appear here when customers report damaged, wrong, or excess items."
-                          action={
-                            <button
-                              className="text-sm text-brand-600 hover:underline"
-                              onClick={() => setIsCreateOpen(true)}
-                            >
-                              Create a return
-                            </button>
-                          }
-                        />
-                      </>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ) : (
-              returns.map((ret: Return) => (
-                <tr
-                  key={ret.id}
-                  onClick={() => router.push(`/returns/${ret.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-surface-raised"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {ret.returnNumber}
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                   </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {ret.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy/70">
-                    {ret.order?.orderNumber ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy/70">{fmtDate(ret.createdAt)}</td>
-                  <td className="px-4 py-3 text-center text-navy/70">{ret.items.length}</td>
-                  <td className="px-4 py-3 text-navy/70">{REASON_LABELS[ret.reason]}</td>
-                  <td className="px-4 py-3">
-                    <Badge status={ret.status} />
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-12 text-center">
+                    <p className="text-sm text-danger">Failed to load returns.</p>
                     <button
-                      title="View return"
-                      onClick={() => router.push(`/returns/${ret.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      onClick={() => refetch()}
+                      className="mt-2 text-sm text-brand-500 hover:underline"
                     >
-                      <Eye className="h-4 w-4" />
+                      Try again
                     </button>
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : returns.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <FileText className="h-8 w-8 text-navy/20" />
+                      {hasActiveFilters ? (
+                        <>
+                          <p className="text-sm text-navy/70">No returns match your filters.</p>
+                          <button
+                            className="text-sm text-brand-500 hover:underline"
+                            onClick={clearFilters}
+                          >
+                            Clear filters
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <EmptyState
+                            variant="returns"
+                            title="No returns yet"
+                            description="Returns will appear here when customers report damaged, wrong, or excess items."
+                            action={
+                              <button
+                                className="text-sm text-brand-600 hover:underline"
+                                onClick={() => setIsCreateOpen(true)}
+                              >
+                                Create a return
+                              </button>
+                            }
+                          />
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                returns.map((ret: Return) => {
+                  const returnValue = ret.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.qty, 0);
+                  return (
+                    <tr
+                      key={ret.id}
+                      onClick={() => router.push(`/returns/${ret.id}`)}
+                      className="cursor-pointer transition-colors hover:bg-surface-raised"
+                    >
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                        {ret.returnNumber}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {ret.customer?.businessName ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-navy/70">
+                        {ret.order?.orderNumber ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-navy/70">{REASON_LABELS[ret.reason]}</td>
+                      <td className="px-4 py-3 text-navy/70">{fmtDate(ret.createdAt)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-navy/70">
+                        {ret.items.length}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-navy">
+                        ${returnValue.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge status={ret.status} />
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <Button
+                          variant={ret.status === "PENDING" ? "primary" : "ghost"}
+                          size="sm"
+                          leftIcon={
+                            ret.status !== "PENDING" ? <Eye className="h-3.5 w-3.5" /> : undefined
+                          }
+                          onClick={() => router.push(`/returns/${ret.id}`)}
+                        >
+                          {ret.status === "PENDING" ? "Review" : "View"}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}
