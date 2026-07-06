@@ -47,11 +47,15 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
   - ✅ Customer Price Memory margin column (PR #118): customer detail > Special Prices shows margin
      (their price vs cost now), colored vs the tenant floor; `getCustomerPrices` selects `averageCost`+
      `unitsPerBox`. Closes §1 bullet 3.
-  - Follow-on (TRACKED, not done): (a) same hint in `invoices/new`; (b) LAST_COST costing method in
-     `recordSale` (latest PURCHASE movement) — touches the critical sale-costing path, do carefully;
-     (c) cost-tap → cost-history popover (`useCostHistory` → existing `GET /analytics/cost-history/:id`;
-     no reusable hook yet, only an inline query in `products/[id]`); (d) dedup: point `CreateOrderModal`
-     at the shared `MarginHint`; (e) analytics label costing method + effective-date changes.
+  - Follow-on progress: **(c)(d)(e) DONE (branch `feat/unified-cost-hints`)** — `lib/api/cost-history.ts`
+     `useCostHistory(productId)` (products/[id] `CostHistoryCard` refactored onto it); shared `MarginHint`
+     gained a tap-the-cost **cost-history popover** (portaled to `<body>` to escape the builder modal's
+     transform+overflow); `CreateOrderModal` now uses the shared `MarginHint` (inline dup deleted, `productId`
+     threaded); analytics **Gross Margin** card states the tenant costing method (`useMarginConfig`,
+     effective-dated note). **Still TODO: (a) same hint in `invoices/new` (line is table-layout; avgCost
+     already threaded); (b) LAST_COST costing method in `recordSale`** (latest PURCHASE lot cost) — the
+     critical sale-costing path, needs the `CostingMethod` enum value (migration) + tenant-default-for-new-
+     products wiring + spec; do carefully.
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.

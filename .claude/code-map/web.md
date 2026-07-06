@@ -60,8 +60,12 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (box-vs-piece aware; the sale-builder "negotiation floor"). Mirror of `apps/api/src/common/pricing.ts`
   (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
 - **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
-  margin floors via `/settings/margin`) + `floorForCategory()`. `CreateOrderModal.tsx` renders
-  `<MarginHint>` (cost·margin under each line, red below floor, Set-to-floor / Sell-anyway).
+  margin floors via `/settings/margin`) + `floorForCategory()`. Shared **`components/MarginHint.tsx`**
+  (cost·margin under a line, red below floor, Set-to-floor / Sell-anyway) is used by both the order-detail
+  edit path AND `CreateOrderModal` (inline dup removed); with a `productId` the cost text opens a
+  **cost-history popover** (portaled to `<body>` to clear the modal's transform+overflow) via
+  **`lib/api/cost-history.ts`** `useCostHistory(productId)` (also backs products/[id] `CostHistoryCard`;
+  `GET /analytics/cost-history/:id`). Analytics **Gross Margin** card states the configured costing method.
 - **Minimize & resume drafts (Phase 2 §2, pos-cost-roles-spec).** `lib/api/drafts.ts` — `useDrafts`/
   `useDraft(id)`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft` over `/drafts` (per-user,
   tenant-scoped; OPERATOR/DRIVER, TENANT_ADMIN satisfies OPERATOR). `lib/drafts.ts` — `OrderDraftPayload`
