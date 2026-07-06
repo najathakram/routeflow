@@ -772,9 +772,10 @@ export function CreateOrderModal({
       setCustomerError("Select a customer");
       return;
     }
+    // Read Notes from react-hook-form (the <Textarea> renders id="notes", so the
+    // old getElementById("order-notes") always missed and dropped typed notes).
     const data: FormValues = {
-      notes:
-        (document.getElementById("order-notes") as HTMLTextAreaElement | null)?.value || undefined,
+      notes: notesValue || undefined,
       urgent: false,
     };
     if (activeOrderForCustomer) {

@@ -105,13 +105,18 @@ function DraftDockInner() {
 
   return (
     <>
-      <div className="absolute bottom-4 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
+      {/* pointer-events-none on the wrapper so its transparent gaps never block
+          clicks to page content underneath; each interactive chip re-enables them.
+          bottom-24 (not bottom-4) keeps the dock clear of the bottom-center PWA
+          install prompt (which lives in the bottom ~96px band, mirroring main's
+          pb-24) — they can no longer overlap and hide the Resume/Discard actions. */}
+      <div className="pointer-events-none absolute bottom-24 left-4 z-40 flex max-h-[70vh] w-[min(92vw,420px)] flex-col gap-2 overflow-y-auto">
         {/* Collapse control — a badge with the parked count (shown when >2). */}
         {list.length > 2 && (
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
-            className="flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
+            className="pointer-events-auto flex items-center gap-2 self-start rounded-full bg-navy px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-modal transition-colors hover:bg-navy/90"
           >
             <Layers className="h-3.5 w-3.5 text-brand-300" />
             {list.length} parked drafts
@@ -127,7 +132,7 @@ function DraftDockInner() {
             <div
               key={draft.id}
               className={cn(
-                "flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
+                "pointer-events-auto flex items-center gap-3 rounded-xl bg-navy px-3.5 py-2.5 text-white shadow-modal",
                 i > 0 && "opacity-90",
               )}
             >
