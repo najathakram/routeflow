@@ -114,15 +114,22 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-07 customers search filters list", async ({ page }) => {
     await page.goto("/customers");
+    const rows = page.locator("table tbody tr");
+    // The seeded tenant has customers; wait for the list to populate.
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 });
+    const before = await rows.count();
     const search = page
       .getByPlaceholder(/search/i)
       .or(page.getByRole("searchbox"))
       .first();
     await expect(search).toBeVisible({ timeout: 10_000 });
-    await search.fill("harbor");
-    await page.waitForTimeout(600);
-    // Should show harbor_cafe entry
-    await expect(page.getByText(/harbor/i).first()).toBeVisible({ timeout: 10_000 });
+    // Data-agnostic: a query that matches nothing must shrink the list, proving
+    // the search filter actually runs (no dependency on a specific customer name).
+    await search.fill("zzznomatch" + Date.now());
+    await page.waitForTimeout(800);
+    const after = await rows.count();
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBeLessThan(before);
   });
 
   test("OP-08 customer detail page loads", async ({ page }) => {

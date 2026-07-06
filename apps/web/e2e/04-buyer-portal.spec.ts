@@ -105,16 +105,12 @@ test.describe("Buyer Portal", () => {
     await setTenantCookie(context, baseURL, TENANT_SLUG);
     await loginAsOperator(page);
 
-    // Navigate to customers, find harbor_cafe, trigger invite
+    // Open the first available customer (data-agnostic — no dependency on a
+    // specific seeded customer) and trigger the portal invite from its detail page.
     await page.goto("/customers");
-    // Search for harbor_cafe
-    const search = page
-      .getByPlaceholder(/search/i)
-      .or(page.getByRole("searchbox"))
-      .first();
-    await search.fill("harbor");
-    await page.waitForTimeout(600);
-    await page.locator("table tbody tr, [class*='customer']").first().click();
+    const firstRow = page.locator("table tbody tr").first();
+    await expect(firstRow).toBeVisible({ timeout: 15_000 });
+    await firstRow.click();
     await page.waitForURL(/\/customers\/.+/);
 
     // Look for "Send Portal Invite" or "Invite" button

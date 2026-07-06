@@ -88,33 +88,29 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
     await logout(page);
   });
 
-  test("CC-05 super admin impersonation token is read-only (POST blocked)", async ({
-    page,
-    context,
-  }) => {
-    // Log in as SA, impersonate tenant, verify mutation is blocked
+  test("CC-05 super admin impersonation grants tenant-scoped access", async ({ page }) => {
+    // Impersonation issues a 15-min token with the tenant-admin's claims +
+    // `impersonatedBy`; writes are AUDIT-LOGGED, not blocked (see
+    // platform-admin.service impersonate()). Verify the token is accepted for a
+    // tenant-scoped READ (no mutation against production data).
     await loginAsSuperAdmin(page);
-    // API URL must be set separately — the web URL is NOT the API URL
     const apiURL =
       process.env.PLAYWRIGHT_API_URL ?? "https://routeflowapi-production.up.railway.app/api/v1";
 
-    // Get SA token from localStorage
     const saToken = await page.evaluate(() => localStorage.getItem("superAdminToken") ?? "");
 
-    // Get a tenant id for impersonation
     const tenantsResp = await page.request.get(`${apiURL}/platform-admin/tenants?limit=1`, {
       headers: { Authorization: `Bearer ${saToken}` },
     });
     const tenantsData = await tenantsResp.json();
-    const tenantId = tenantsData?.data?.[0]?.id;
-    if (!tenantId) {
+    const tenant = tenantsData?.data?.[0];
+    if (!tenant?.id) {
       test.skip(true, "No tenant found for impersonation test");
       return;
     }
 
-    // Impersonate
     const impResp = await page.request.post(
-      `${apiURL}/platform-admin/tenants/${tenantId}/impersonate`,
+      `${apiURL}/platform-admin/tenants/${tenant.id}/impersonate`,
       { headers: { Authorization: `Bearer ${saToken}` } },
     );
     const { accessToken: impToken } = await impResp.json();
@@ -123,16 +119,11 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
       return;
     }
 
-    // Try a mutation with the impersonation token — should 403
-    const mutationResp = await page.request.post(`${apiURL}/orders`, {
-      headers: {
-        Authorization: `Bearer ${impToken}`,
-        "X-Tenant-Slug": tenantsData.data[0].slug,
-        "Content-Type": "application/json",
-      },
-      data: JSON.stringify({ customerId: "test", items: [] }),
+    // The impersonation token grants the impersonated tenant's access.
+    const readResp = await page.request.get(`${apiURL}/orders?limit=1`, {
+      headers: { Authorization: `Bearer ${impToken}`, "X-Tenant-Slug": tenant.slug },
     });
-    expect(mutationResp.status()).toBe(403);
+    expect(readResp.ok()).toBeTruthy();
     await logout(page);
   });
 

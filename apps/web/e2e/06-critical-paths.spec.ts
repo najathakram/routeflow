@@ -55,17 +55,25 @@ function parseMoney(text: string): number | null {
   return isNaN(n) ? null : n;
 }
 
-/** Returns the API base URL by stripping the port-3001 web path and using :3000 */
-function apiBase(baseURL: string): string {
-  // The web runs on a different Railway service. We use the SMOKE_BASE_URL secret
-  // via env var, or fall back to a localhost port swap for local dev.
-  return (
-    process.env.SMOKE_BASE_URL ||
-    baseURL
-      .replace(/:3001\b/, ":3000")
-      .replace("routeflowweb-production", "routeflowapi-production")
-      .replace("routeflowmobile-production", "routeflowapi-production")
-  );
+/**
+ * The API service ORIGIN derived from the current web URL (the API runs on a
+ * separate Railway service). Uses SMOKE_BASE_URL when provided, else swaps the
+ * web host for the api host. MUST return an origin only — `new URL().origin`
+ * strips the page path so callers can append `/api/v1/...` without doubling it.
+ */
+function apiBase(webURL: string): string {
+  if (process.env.SMOKE_BASE_URL) return process.env.SMOKE_BASE_URL;
+  const origin = (() => {
+    try {
+      return new URL(webURL).origin;
+    } catch {
+      return webURL;
+    }
+  })();
+  return origin
+    .replace(/:3001\b/, ":3000")
+    .replace("routeflowweb-production", "routeflowapi-production")
+    .replace("routeflowmobile-production", "routeflowapi-production");
 }
 
 test.describe("Critical Paths — Money Math & Core Integrity", () => {
