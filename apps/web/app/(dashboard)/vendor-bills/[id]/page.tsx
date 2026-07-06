@@ -15,6 +15,7 @@ import {
   Plus,
   Trash2,
   Save,
+  AlertTriangle,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -518,6 +519,10 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     status !== "VOID" &&
     new Date(bill.dueDate) < new Date(new Date().toDateString());
 
+  // Lines not linked to a product don't update stock or average costs when received.
+  const billItems = bill.items ?? [];
+  const unlinkedCount = billItems.filter((i) => !i.productId).length;
+
   // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleReceive = (acknowledgeUnlinked = false) => {
@@ -670,14 +675,25 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-navy">{bill.billNumber}</h1>
-          <Badge status={status} />
-          {isOverdue && (
-            <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
-              Overdue
-            </span>
-          )}
+        <div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="mono text-2xl font-bold text-navy">{bill.billNumber}</h1>
+            {status === "DRAFT" && unlinkedCount > 0 && (
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                {unlinkedCount} unlinked {unlinkedCount === 1 ? "item" : "items"}
+              </span>
+            )}
+            <Badge status={status} />
+            {isOverdue && (
+              <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700">
+                Overdue
+              </span>
+            )}
+          </div>
+          <p className="mt-1.5 text-sm text-navy/70">
+            {bill.supplier?.name ?? "—"} · billed {fmtDate(bill.billDate ?? bill.createdAt)}
+            {bill.dueDate && ` · due ${fmtDate(bill.dueDate)}`}
+          </p>
         </div>
 
         {/* Action buttons based on status */}
@@ -895,44 +911,89 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 </div>
               </div>
             ) : (
-              <div className="-mx-6 overflow-hidden border-t border-surface-border">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-surface-border bg-surface-raised">
-                    <tr>
-                      <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
-                        Description
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Qty
-                      </th>
-                      <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Unit Cost
-                      </th>
-                      <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/70">
-                        Amount
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-border">
-                    {(bill.items ?? []).map((item) => (
-                      <tr key={item.id} className="hover:bg-surface-raised">
-                        <td className="px-6 py-3 text-navy">
-                          {item.description}
-                          {item.product && (
-                            <span className="ml-2 text-xs text-navy/70">({item.product.name})</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
-                        <td className="px-4 py-3 text-right text-navy/70">
-                          {fmt(Number(item.unitCost))}
-                        </td>
-                        <td className="px-6 py-3 text-right font-medium text-navy">
-                          {fmt(Number(item.qty) * Number(item.unitCost))}
-                        </td>
+              <div className="border-t border-surface-border pt-4">
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <p className="overline">Line Items</p>
+                  <span className="text-xs text-navy/70">
+                    unlinked lines don&apos;t update stock or costs until mapped
+                  </span>
+                </div>
+                <div className="-mx-6 overflow-x-auto">
+                  <table className="w-full min-w-[560px] border-t border-surface-border text-sm">
+                    <thead className="border-b border-surface-border bg-surface-raised">
+                      <tr>
+                        <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
+                          Bill Line (as scanned)
+                        </th>
+                        <th className="px-4 py-2.5 text-left text-xs font-medium text-navy/70">
+                          Mapped Product
+                        </th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
+                          Qty
+                        </th>
+                        <th className="px-4 py-2.5 text-right text-xs font-medium text-navy/70">
+                          Unit Cost
+                        </th>
+                        <th className="px-6 py-2.5 text-right text-xs font-medium text-navy/70">
+                          Amount
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-surface-border">
+                      {billItems.map((item) => {
+                        const unlinked = !item.productId;
+                        return (
+                          <tr
+                            key={item.id}
+                            className={cn(
+                              unlinked
+                                ? "bg-amber-50 shadow-[inset_3px_0_0_theme(colors.amber.400)]"
+                                : "hover:bg-surface-raised",
+                            )}
+                          >
+                            <td className="px-6 py-3 text-navy">
+                              <span className="inline-flex items-start gap-1.5">
+                                {unlinked && (
+                                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                                )}
+                                <span>{item.description}</span>
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {item.product ? (
+                                <span className="inline-flex items-center gap-1.5 text-navy">
+                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                                  {item.product.name}
+                                </span>
+                              ) : (
+                                <span className="text-xs font-medium text-amber-700">
+                                  Not mapped
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
+                            <td className="px-4 py-3 text-right text-navy/70">
+                              <span className="money">{fmt(Number(item.unitCost))}</span>
+                            </td>
+                            <td className="px-6 py-3 text-right text-navy">
+                              <span className="money">
+                                {fmt(Number(item.qty) * Number(item.unitCost))}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {unlinkedCount > 0 && (
+                  <p className="mt-3 flex items-start gap-1.5 text-xs text-navy/70">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    {unlinkedCount} {unlinkedCount === 1 ? "line is" : "lines are"} not mapped to a
+                    product. Use <span className="font-semibold text-navy">Edit</span> to map them
+                    so average costs stay accurate.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1020,29 +1081,45 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             )}
           </Card>
 
-          {/* Balance summary */}
-          <Card>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-navy/70">Bill Total</dt>
-                <dd className="font-medium text-navy">{fmt(isEditing ? editTotal : total)}</dd>
+          {/* Bill summary (KV) */}
+          <Card title="Bill">
+            <dl className="text-sm">
+              <div className="flex justify-between gap-3 border-b border-surface-border py-2">
+                <dt className="text-navy/70">Supplier</dt>
+                <dd className="text-right font-medium text-navy">{bill.supplier?.name ?? "—"}</dd>
+              </div>
+              <div className="flex justify-between gap-3 border-b border-surface-border py-2">
+                <dt className="text-navy/70">Bill date</dt>
+                <dd className="text-right font-medium text-navy">
+                  {fmtDate(bill.billDate ?? bill.createdAt)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3 border-b border-surface-border py-2">
+                <dt className="text-navy/70">Due date</dt>
+                <dd
+                  className={cn("text-right font-medium", isOverdue ? "text-danger" : "text-navy")}
+                >
+                  {fmtDate(bill.dueDate)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3 border-b border-surface-border py-2">
+                <dt className="text-navy/70">Total</dt>
+                <dd className="money text-right font-semibold text-navy">
+                  {fmt(isEditing ? editTotal : total)}
+                </dd>
               </div>
               {!isEditing && (
-                <>
-                  <div className="flex justify-between">
-                    <dt className="text-navy/70">Paid</dt>
-                    <dd className="font-medium text-success">{fmt(amountPaid)}</dd>
-                  </div>
-                  <div
+                <div className="flex justify-between gap-3 py-2">
+                  <dt className="text-navy/70">Balance</dt>
+                  <dd
                     className={cn(
-                      "flex justify-between border-t border-surface-border pt-2 font-bold",
+                      "money text-right font-semibold",
                       balance > 0 ? "text-danger" : "text-success",
                     )}
                   >
-                    <dt>Balance Due</dt>
-                    <dd>{fmt(balance)}</dd>
-                  </div>
-                </>
+                    {fmt(balance)}
+                  </dd>
+                </div>
               )}
             </dl>
           </Card>
