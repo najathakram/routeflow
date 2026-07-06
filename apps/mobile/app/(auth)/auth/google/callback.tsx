@@ -3,6 +3,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { apiClient } from "../../../../lib/api-client";
+import { getBuyerSellers } from "../../../../lib/buyer-auth";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY } from "../../../../lib/auth-keys";
 
 /**
@@ -52,6 +53,20 @@ export default function GoogleWebCallbackScreen() {
         setItem(BUYER_KEYS.accessToken, accessToken);
         setItem(BUYER_KEYS.refreshToken, refreshToken);
         setItem(CURRENT_ROLE_KEY, "buyer");
+        // The native onGoogleLogin fetches the buyer's sellers and selects the
+        // active one after sign-in; the web full-page-redirect flow skips that
+        // step, so without an activeSeller the (customer) layout bounces the
+        // buyer straight back to /customer-login. Mirror it here: auto-select the
+        // only linked seller (the common case). 0 or many → leave unset and let
+        // the app show its "no supplier" / seller-picker state.
+        try {
+          const sellers = await getBuyerSellers();
+          if (sellers.length === 1) {
+            setItem(BUYER_KEYS.activeSeller, JSON.stringify(sellers[0]));
+          }
+        } catch {
+          // Non-fatal — the app resolves the seller on the next load.
+        }
       } else {
         const staffKeys = role === "DRIVER" ? DRIVER_KEYS : OP_KEYS;
         setItem(staffKeys.accessToken, accessToken);
