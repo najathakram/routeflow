@@ -47,51 +47,54 @@ different Claude profile won't have prior-session memory — rely on this + the 
     orders-list, order-detail, products, product-detail, dispatch) — done in batches via a reskin+review
     Workflow, each `preservedOk=true` (every hook/handler/route preserved; presentation-only), types+lint
     green. **Still need post-deploy VISUAL verification on the `test` tenant** (functionally reviewed only).
-- Phase 3 (Finance) — **batch F1 SHIPPED with #121**: reskinned `finance/dashboard`, `invoices/[id]`,
-  `credit-notes` 1:1 vs `unified/*.html`. Remaining Phase 3 (payments, bills/purchasing, reports,
-  remaining reskins + actual wiring): not started.
-- Phases 4–10: not started.
-- **Money-discipline remediation (boxed-line over-charge) — OPEN PRs, NOT deployed:**
-  - **PR #122** (`fix/invoice-estimate-line-amount-money`): invoice + estimate DETAIL "Amount" now
-    renders stored `item.subtotal` (was `qty*unitPrice`); **invoice EDIT** (`invoices/[id]/edit`) now
-    tracks `unitsPerBox`, seeds it from the product, and sends boxes/pieces so the server prorates
-    boxed lines (was over-charging by `unitsPerBox` on save). `findOne` exposes `product.unitsPerBox`.
-    Adversarially reviewed → SHIP (no real bugs). Regression specs green. Also carries this doc + the
-    IMPLEMENTATION-PLAN status bumps.
-  - **PR #123** (`fix/order-edit-boxed-overcharge`): same bug class in the **operator order-edit
-    builder** (client) + **buyer-portal order edit** (client) + the **buyer/CUSTOMER server branch**
-    of `orders.service.updateOrderItems` (did raw `qty*unitPrice`, wiped the split). Key nuance: a
-    **denomination gate** — re-split qty as pieces ONLY when the stored line was box-aware
-    (`boxes/pieces != null`); selling-unit lines (mobile cart, operator add-line, `boxes=null`) keep
-    `qty*unitPrice`. Adversarially reviewed; the review CAUGHT a HIGH under-charge regression (fixed by
-    the gate) + preview mismatches (fixed). Regression specs green (38 orders + 21 invoice).
-  - **Pre-existing boxed over-charges flagged as separate tasks (NOT fixed):** (a) order
-    merge/consolidate `mergeAllPendingForCustomer`/`forceConsolidateCustomer` re-derive
-    `qty*unitPrice` (HIGH, live on auto-merge); (b) mobile customer cart is box-unaware (MEDIUM, root
-    of the denomination mismatch). Both have spawned-task chips.
+- **Money-discipline remediation (boxed-line over-charge) — ALL SHIPPED & DEPLOYED (2026-07-06):**
+  a boxed product prices by the BOX, so any `qty*unitPrice` over-charged by ~`unitsPerBox`. Fixed +
+  deployed everywhere, each adversarially money-reviewed with regression specs:
+  - **#122** invoice/estimate DETAIL display (stored `item.subtotal`) + invoice EDIT save (send boxes/pieces).
+  - **#123** operator + buyer order edit + the buyer/CUSTOMER server branch, with a **denomination gate**
+    (re-split as pieces ONLY when the stored line was box-aware; selling-unit/mobile lines keep `qty*unitPrice`).
+    The review caught a HIGH under-charge regression → fixed by the gate.
+  - **#124** order merge/consolidate (`mergeBoxedContributions` — normalize to pieces, re-split, prorate).
+  - **#125** mobile customer cart made box-aware (whole-box model). NOTE: mobile UI NOT runtime-verified
+    (Expo Go won't run this dev-client app; desktop can't reach the mobile cart with a Google-only buyer —
+    see the mobile-web-testing-constraints memory). Logic proven by Jest.
+- Phase 3 (Finance) — **RESKINS DONE & DEPLOYED**: F1 (finance dashboard, invoice detail, credit-notes; #121)
+  + F2 (invoices-list KPIs, payment receipt, bills-hub + new **Purchase Orders** tab, vendor-bill detail;
+  **#128**). Each reskin+review Workflow → `preservedOk`+`fidelityOk`. **SKIPPED** (current app > mockup):
+  Financial Reports (22-report explorer), Recurring invoices. **Post-deploy VISUAL verification still
+  pending** (operator session was replaced by a buyer login; needs operator Google login on `test`).
+- Phase 4 (Regulated items) — **SCOPED, NOT STARTED**. XL / HIGH money+compliance risk / **multi-session**.
+  Full W1–W7 plan in **`PHASE-4-PLAN.md`**. Generalize `isTobacco` → a `TrackedCategory` model; W3/W4
+  (category tax calc + invoice-split-by-category) are the widest money change in the codebase — separate,
+  pair-programmed, money-reviewed sessions. Multiple prod migrations (each needs user approval).
+- Phases 5–10: not started (several are major feature builds, not reskins — buyer portal, messaging,
+  plans/billing, migration/import).
 
 ## 2. DO NEXT (in order)
 
-1. **DEPLOY PR #121 — DONE (2026-07-06).** Migration applied to prod + merged + CI green (incl. E2E) +
-   private + smoke passed.
-2. **VISUAL verification of #121 — DONE (2026-07-06, via connected Chrome on the `test` tenant).**
-   Confirmed live + correct: dashboard/products/product-detail/analytics/finance-overview reskins;
-   #121 cost accounting (**Purchase Cost History** card + Avg cost on product detail; analytics
-   **costing-method label** "COGS costed using weighted average"); **§4 drive mode** (badge + exit +
-   my-runs field layout); Phase-1 i18n toggle. NOT verifiable on the sparse `test` tenant (no data):
-   boxed invoice totals, at-door sheet (needs an active run), order-builder cost popover — create test
-   data to exercise these if needed.
-3. **DEPLOY the money-discipline PRs #122 + #123** (both open, verified, adversarially reviewed; no
-   prod migration needed — presentation/logic only). Deploy via the **rebuild** routine. They're
-   independent (different files) so either order is fine. After deploy, spot-check a boxed invoice/order
-   edit on the `test` tenant (needs a boxed product — create one).
-4. **Fix the flagged pre-existing boxed over-charges** (task chips): order merge/consolidate
-   `qty*unitPrice` (HIGH) + box-unaware mobile cart (MEDIUM).
-5. **Phase 3 (Finance) continuation → Phases 4–10.** Same cadence (§4): one branch/PR per batch,
-   reskin+review Workflow, verify each, adversarial review before deploy. Next Finance work: remaining
-   finance screen reskins + wiring (payments/bills/reports). Plan:
-   `docs/design-package/IMPLEMENTATION-PLAN.md`; design source `project/unified/*.html` +
-   `project/specs/*.md`; endpoint map `project/specs/backend-wiring-index.md`.
+Everything through **Phase 3 + the boxed-line money remediation is SHIPPED & DEPLOYED** (#121–#125, #128).
+Next up:
+
+1. **(Optional) Phase-3 visual pass** on the `test` tenant — the reskinned finance screens (invoices list,
+   payment receipt, bills-hub + PO tab, vendor-bill detail) were reviewed + CI-green but not eyeballed post
+   deploy (the operator session had been replaced by a buyer login). Log into the operator app (`test` →
+   Continue with Google) and spot-check vs `unified/*.html`; fix any drift.
+2. **Phase 4 (Regulated items) — the big one.** Follow **`PHASE-4-PLAN.md`**. Start with **W1** (schema:
+   `TrackedCategory`/`CustomerAuthorization`/`AuthorizationOverride`/`RegulatedSalesLedger` + FKs + the
+   additive tobacco→category backfill migration, keeping `isTobacco` as a shadow column). Then **W2** (CRUD)
+   + **B1** reskins. **W3** (category tax calc) and **W4** (invoice-split-by-category) are the widest money
+   change in the codebase — do them in **separate, pair-programmed sessions with adversarial money review**
+   and don't release until `06-critical-paths.spec.ts` money invariants pass. W5 (ledger+filings), W6 (auth
+   guard, atomic, own session), W7 (expiry/POD/buyer-gate) after. Every migration needs user approval
+   (auto-mode classifier blocks the prod write) + the **db-migration** + **rebuild** skills.
+3. **Phases 5–10** — several are major feature builds (buyer portal, messaging, plans/billing,
+   migration/import), not reskins. Scope each with a gap-analysis Workflow first (as done for Phases 3/4).
+
+**Cadence (confirmed with user):** build + verify + adversarially review every batch; **deploy per phase**
+(group a phase's verified batches, check in before each deploy); money/compliance paths get the full
+adversarial money-review + E2E money-invariant gate before deploy. **Skip screens where the current app
+already beats the mockup** (don't 1:1-match at the cost of UX). Plan: `IMPLEMENTATION-PLAN.md` + `PHASE-4-PLAN.md`;
+design `project/unified/*.html` + `project/specs/*.md`; endpoints `project/specs/backend-wiring-index.md`.
 
 ## 3. E2E CI status — RESOLVED & CONFIRMED GREEN ON MASTER
 
