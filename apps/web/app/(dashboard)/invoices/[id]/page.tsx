@@ -1619,7 +1619,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                       </td>
                       <td className="px-8 py-3 text-right">
                         <span className="money text-navy">
-                          {fmt(Number(item.qty) * Number(item.unitPrice))}
+                          {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
+                              rounded via pricing.ts). NEVER re-derive qty*unitPrice — that
+                              over-charges boxed lines by unitsPerBox and ignores line discounts. */}
+                          {fmt(Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)))}
                         </span>
                       </td>
                     </tr>
