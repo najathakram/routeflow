@@ -360,6 +360,16 @@ export class InventoryService {
       lotConsumptions = plan.consumptions;
     } else if (product?.costingMethod === CostingMethod.STANDARD) {
       unitCost = costDecimal(product.standardCost ?? avgCost ?? 0);
+    } else if (product?.costingMethod === CostingMethod.LAST_COST) {
+      // Last cost — cost the sale at the most recent purchase lot's unit cost
+      // (pos-cost-roles-spec §1). Not lot-consuming; falls back to the average
+      // cost when the product has no purchase lots yet.
+      const latestLot = await tx.stockLot.findFirst({
+        where: { productId },
+        orderBy: { purchaseDate: "desc" },
+        select: { unitCost: true },
+      });
+      unitCost = costDecimal(latestLot?.unitCost ?? avgCost ?? 0);
     }
 
     const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).sub(quantity);

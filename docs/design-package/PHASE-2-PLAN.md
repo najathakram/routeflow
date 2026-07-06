@@ -47,15 +47,24 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
   - ✅ Customer Price Memory margin column (PR #118): customer detail > Special Prices shows margin
      (their price vs cost now), colored vs the tenant floor; `getCustomerPrices` selects `averageCost`+
      `unitsPerBox`. Closes §1 bullet 3.
-  - Follow-on progress: **(c)(d)(e) DONE (branch `feat/unified-cost-hints`)** — `lib/api/cost-history.ts`
-     `useCostHistory(productId)` (products/[id] `CostHistoryCard` refactored onto it); shared `MarginHint`
-     gained a tap-the-cost **cost-history popover** (portaled to `<body>` to escape the builder modal's
-     transform+overflow); `CreateOrderModal` now uses the shared `MarginHint` (inline dup deleted, `productId`
-     threaded); analytics **Gross Margin** card states the tenant costing method (`useMarginConfig`,
-     effective-dated note). **Still TODO: (a) same hint in `invoices/new` (line is table-layout; avgCost
-     already threaded); (b) LAST_COST costing method in `recordSale`** (latest PURCHASE lot cost) — the
-     critical sale-costing path, needs the `CostingMethod` enum value (migration) + tenant-default-for-new-
-     products wiring + spec; do carefully.
+  - Follow-on progress: **(c)(d)(e) DONE (PR #120)** — `lib/api/cost-history.ts` `useCostHistory(productId)`
+     (products/[id] `CostHistoryCard` refactored onto it); shared `MarginHint` gained a tap-the-cost
+     **cost-history popover** (portaled to `<body>` to escape the builder modal's transform+overflow);
+     `CreateOrderModal` now uses the shared `MarginHint` (inline dup deleted, `productId` threaded); analytics
+     **Gross Margin** card states the tenant costing method (`useMarginConfig`, effective-dated note).
+  - **(b) LAST_COST DONE (branch `feat/last-cost-costing`)** — `CostingMethod` enum gains `LAST_COST`
+     (**additive migration `20260706040000_add_costing_last_cost`** = `ALTER TYPE ... ADD VALUE`; touches no
+     table/row; **NOT yet applied to prod**). `recordSale` LAST_COST branch: cost = most recent StockLot
+     `unitCost` (by `purchaseDate desc`), fallback averageCost; not lot-consuming. 2 new inventory.spec tests
+     (335 api tests pass). Selectable per-product (products/page.tsx picker option); DTO auto-accepts via
+     `@IsEnum(CostingMethod)`. Effective-dating is intrinsic (per-line `cost_at_sale` snapshot immutable;
+     method changes affect only future sales). **Deferred follow-on:** propagate the tenant `costing.method`
+     to NEW products at creation (cross-module wiring — the tenant setting is stored + selectable but doesn't
+     auto-apply to products yet; see QUESTIONS.md #10).
+  - **(a) invoices/new hint — STILL TODO, blocked on a box-model finding:** invoices/new's boxed `unitPrice`
+     semantics are ambiguous (`qty` is total pieces and `lineTotal = qty×unitPrice`, yet the `/pc` display
+     divides `unitPrice` by `unitsPerBox` — they disagree on per-box vs per-piece). Adding a margin hint on
+     top risks a WRONG margin; pin down/fix that box model first, then add the hint.
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.
@@ -89,8 +98,8 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
 
 ## Acceptance (pos-cost-roles-spec §Acceptance) — track here
 - [~] Cost method configurable (tenant): tenant setting stored + API (`/settings/margin`) done; recordSale
-      still keys off per-Product method (LAST_COST + tenant-default precedence = follow-on). WAC ✓ + per-line
-      cost_at_sale snapshots ✓ (#111).
+      keys off per-Product method — now **incl. LAST_COST** (latest lot cost, spec'd). Tenant-default→product
+      propagation still a follow-on (QUESTIONS.md #10). WAC ✓ + per-line cost_at_sale snapshots ✓ (#111).
 - [~] Builder live cost/margin per line ✅ (create path); floor warning + one-tap fix ✅; overrides logged
       = client dismiss done, server AuditLog = follow-on (edit path has overrideReason). Edit/invoice
       builders = follow-on.

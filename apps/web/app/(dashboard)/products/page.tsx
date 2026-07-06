@@ -857,6 +857,7 @@ function CreateProductModal({
                   <option value="FIFO">FIFO — First In, First Out</option>
                   <option value="LIFO">LIFO — Last In, First Out</option>
                   <option value="AVCO">AVCO — Weighted Average Cost</option>
+                  <option value="LAST_COST">Last Cost — most recent purchase price</option>
                   <option value="STANDARD">Standard Cost</option>
                 </select>
               </div>

@@ -157,6 +157,31 @@ describe("InventoryService", () => {
       expect(result.unitCost.toString()).toBe("2.75");
     });
 
+    it("uses the most recent purchase lot's cost for LAST_COST products", async () => {
+      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      prisma.stockLot.findFirst.mockResolvedValue({ unitCost: D(3.5) });
+
+      const result = await service.recordSale("prod-1", D(2), null, null, tx());
+
+      expect(prisma.stockLot.findFirst).toHaveBeenCalledWith({
+        where: { productId: "prod-1" },
+        orderBy: { purchaseDate: "desc" },
+        select: { unitCost: true },
+      });
+      expect(result.unitCost.toString()).toBe("3.5");
+      // Last cost is not lot-consuming.
+      expect(prisma.stockLot.update).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the average cost for LAST_COST when there are no lots", async () => {
+      prisma.product.findUnique.mockResolvedValue(product({ costingMethod: "LAST_COST" }));
+      prisma.stockLot.findFirst.mockResolvedValue(null);
+
+      const result = await service.recordSale("prod-1", D(2), null, null, tx());
+
+      expect(result.unitCost.toString()).toBe("2"); // averageCost fallback
+    });
+
     it("never throws when stock goes negative", async () => {
       prisma.product.findUnique.mockResolvedValue(product({ currentStock: D(1) }));
 

@@ -73,4 +73,16 @@ Genuine ambiguities found while wiring the Unified design package. Each has a **
    (Finance). Since only the order builder can _create_ drafts today, no `INVOICE` draft exists yet,
    so the dock's invoice routing is inert until then.
 
+10. **Does the tenant costing method retroactively re-cost existing products?** The spec frames costing
+    method as a tenant setting, but the schema has a per-product `Product.costingMethod` (default FIFO) and
+    `recordSale` keys off it. Re-costing existing products mid-stream would rewrite ongoing COGS behavior on
+    the critical sale-costing path.
+    **Chosen default:** the tenant `costing.method` is the tenant DEFAULT; `recordSale` respects each
+    product's own `costingMethod` — now including the new `LAST_COST` (cost = most recent purchase lot's
+    unit cost), selectable per product. Existing products keep their method (no retroactive re-costing —
+    safe on the money path), and the per-line `cost_at_sale` snapshot makes history immutable regardless
+    (so a method change is naturally effective-dated). Propagating the tenant default to NEW products at
+    creation is a small follow-on (cross-module wiring); until then the tenant-level method selector is
+    stored + shown but only the per-product picker actually drives costing.
+
 _(add new questions below as they arise, grouped by phase)_
