@@ -990,6 +990,11 @@ function EditableLineItems({
                   unitPrice: Number(p.pricePerUnit ?? 0),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
+                  // The substitute's box split is resolved server-side and the
+                  // substitute push omits boxes/pieces, so the server charges
+                  // unitPrice*qty. Clear boxSplit so the preview matches (no
+                  // proration with the ORIGINAL product's unitsPerBox).
+                  boxSplit: false,
                 });
                 setSubstituteOpenId(null);
               }}

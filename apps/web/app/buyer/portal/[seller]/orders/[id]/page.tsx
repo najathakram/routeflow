@@ -48,9 +48,15 @@ function buyerLineAmount(item: {
   unitPrice: number;
   qty: number;
   unitsPerBox?: number | null;
+  boxSplit?: boolean;
 }): number {
   const upb = Number(item.unitsPerBox ?? 0);
-  const split = upb > 1 ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb }) : null;
+  // Only prorate lines the server will prorate: those stored box-aware
+  // (boxSplit). Selling-unit and newly-added lines stay unitPrice*qty, matching
+  // the server's denomination gate — otherwise the preview and the saved total
+  // would disagree.
+  const split =
+    upb > 1 && item.boxSplit ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb }) : null;
   return computeLineSubtotal({
     unitPrice: item.unitPrice,
     qty: item.qty,
@@ -170,6 +176,7 @@ export default function BuyerOrderDetailPage() {
       unit: string;
       unitPrice: number;
       unitsPerBox?: number | null;
+      boxSplit?: boolean;
     }>
   >([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
@@ -220,6 +227,7 @@ export default function BuyerOrderDetailPage() {
           unit: li.product.unit,
           unitPrice: Number(li.unitPrice),
           unitsPerBox: li.product.unitsPerBox ?? null,
+          boxSplit: li.boxes != null || li.pieces != null,
         })),
     );
     setEditMode(true);

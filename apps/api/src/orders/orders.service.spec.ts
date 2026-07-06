@@ -737,11 +737,24 @@ describe("OrdersService", () => {
   // Regression guard against dropping boxes/pieces → unitPrice*qty over-charge.
 
   describe("updateOrderItems — boxed line proration", () => {
-    it("customer edit prorates a boxed product and persists boxes/pieces (not unitPrice*qty)", async () => {
+    it("customer edit of a PIECE-denominated boxed line re-prorates (not unitPrice*qty)", async () => {
+      // The existing line was stored box-aware (boxes/pieces set) → qty is pieces.
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "PENDING",
-        lineItems: [],
+        lineItems: [
+          {
+            id: "li-box",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 12,
+            unitPrice: 28.35,
+            subtotal: 28.35,
+            status: "PENDING",
+            boxes: 1,
+            pieces: 0,
+          },
+        ],
       });
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([
@@ -763,6 +776,48 @@ describe("OrdersService", () => {
       expect(created.qty).toBe(27);
       expect(created.boxes).toBe(2);
       expect(created.pieces).toBe(3);
+    });
+
+    it("customer edit of a SELLING-UNIT boxed line (boxes null) does NOT re-prorate", async () => {
+      // Regression guard: a box-UNAWARE line (e.g. from the mobile cart) stores
+      // qty as a box count with boxes=null. Re-splitting it as pieces would
+      // UNDER-charge (e.g. a $120 / 2-box line → $20). It must stay unitPrice*qty.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [
+          {
+            id: "li-boxunaware",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 2,
+            unitPrice: 60,
+            subtotal: 120,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+          },
+        ],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", pricePerUnit: 60, unitsPerBox: 6 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-box", qty: 2 }] },
+        customerPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      // 2 boxes * $60 = $120 — must NOT become $60*(2/6) = $20.
+      expect(created.subtotal).toBeCloseTo(120, 2);
+      expect(created.subtotal).not.toBeCloseTo(20, 2);
+      expect(created.qty).toBe(2);
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBeNull();
     });
 
     it("customer edit of a non-boxed product still charges unitPrice*qty", async () => {
@@ -825,6 +880,34 @@ describe("OrdersService", () => {
       expect(updated.qty).toBe(27);
       expect(updated.boxes).toBe(2);
       expect(updated.pieces).toBe(3);
+    });
+
+    it("operator replaceAll prorates a boxed line from boxes/pieces", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT",
+        lineItems: [],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box", pricePerUnit: 28.35, unitsPerBox: 12 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ productId: "prod-box", qty: 27, boxes: 2, pieces: 3 }],
+          replaceAll: true,
+        },
+        operatorPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.subtotal).toBeCloseTo(63.79, 2);
+      expect(created.subtotal).not.toBeCloseTo(765.45, 2);
+      expect(created.qty).toBe(27);
+      expect(created.boxes).toBe(2);
+      expect(created.pieces).toBe(3);
     });
   });
 
