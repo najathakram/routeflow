@@ -13,6 +13,7 @@ import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { displayProductName } from "@/lib/product-display";
+import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,12 @@ function ProductSearchInput({
   onBarcodeNotFound,
 }: {
   value: string;
-  onChange: (description: string, productId?: string, unitPrice?: number) => void;
+  onChange: (
+    description: string,
+    productId?: string,
+    unitPrice?: number,
+    unitsPerBox?: number,
+  ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
 }) {
@@ -77,7 +83,7 @@ function ProductSearchInput({
               .then((r) => r.data);
             if (product) {
               setQuery(product.name);
-              onChange(product.name, product.id, product.pricePerUnit);
+              onChange(product.name, product.id, product.pricePerUnit, product.unitsPerBox);
               setOpen(false);
               return;
             }
@@ -93,24 +99,34 @@ function ProductSearchInput({
             {products.length === 0 && (
               <li className="px-3 py-2 text-sm text-navy/70">No products found.</li>
             )}
-            {products.map((p: { id: string; name: string; pricePerUnit: number; sku?: string }) => (
-              <li key={p.id}>
-                <button
-                  className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
-                  onClick={() => {
-                    setQuery(p.name);
-                    onChange(p.name, p.id, p.pricePerUnit);
-                    setOpen(false);
-                  }}
-                >
-                  <div>
-                    <span className="text-sm font-medium text-navy">{p.name}</span>
-                    {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
-                  </div>
-                  <span className="text-xs text-navy/70">{fmt.format(Number(p.pricePerUnit))}</span>
-                </button>
-              </li>
-            ))}
+            {products.map(
+              (p: {
+                id: string;
+                name: string;
+                pricePerUnit: number;
+                sku?: string;
+                unitsPerBox?: number | null;
+              }) => (
+                <li key={p.id}>
+                  <button
+                    className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-surface-raised"
+                    onClick={() => {
+                      setQuery(p.name);
+                      onChange(p.name, p.id, p.pricePerUnit, p.unitsPerBox ?? undefined);
+                      setOpen(false);
+                    }}
+                  >
+                    <div>
+                      <span className="text-sm font-medium text-navy">{p.name}</span>
+                      {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
+                    </div>
+                    <span className="text-xs text-navy/70">
+                      {fmt.format(Number(p.pricePerUnit))}
+                    </span>
+                  </button>
+                </li>
+              ),
+            )}
             {onCreateProduct && (
               <li className="border-t border-surface-border">
                 <button
@@ -142,6 +158,40 @@ interface LineItemState {
   unitPrice: number;
   taxRate: number;
   discount: number;
+  /** Set when the product has box packaging (unitsPerBox > 1). `qty` stays in
+   *  total pieces; boxes/pieces are derived from it so boxed lines prorate. */
+  unitsPerBox?: number;
+}
+
+/**
+ * Boxed split for a line, derived from its `qty` (total pieces) + `unitsPerBox`.
+ * Returns nulls for non-boxed lines so callers pass through to `unitPrice * qty`.
+ * Mirrors the invoice CREATE page + the server, which prorate a boxed line as
+ * `unitPrice * (boxes + pieces / unitsPerBox)` (unitPrice is the BOX price).
+ */
+function lineSplit(it: { qty: number; unitsPerBox?: number }): {
+  boxes: number | null;
+  pieces: number | null;
+} {
+  const upb = Number(it.unitsPerBox ?? 0);
+  if (upb > 1) {
+    const s = normalizeBoxesPieces({ qty: it.qty, unitsPerBox: upb });
+    return { boxes: s.boxes, pieces: s.pieces };
+  }
+  return { boxes: null, pieces: null };
+}
+
+/** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
+function lineTotal(it: LineItemState): number {
+  const { boxes, pieces } = lineSplit(it);
+  const beforeDiscount = computeLineSubtotal({
+    unitPrice: Number(it.unitPrice),
+    qty: Number(it.qty),
+    boxes,
+    pieces,
+    unitsPerBox: it.unitsPerBox ?? null,
+  });
+  return roundMoney(beforeDiscount - Number(it.discount));
 }
 
 function createEmptyItem(): LineItemState {
@@ -198,15 +248,19 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       setSubject(invoice.subject ?? "");
       setItems(
         (invoice.items ?? []).length > 0
-          ? (invoice.items ?? []).map((it) => ({
-              key: it.id,
-              productId: it.productId,
-              description: it.description,
-              qty: Number(it.qty),
-              unitPrice: Number(it.unitPrice),
-              taxRate: Number(it.taxRate ?? 0),
-              discount: Number(it.discount ?? 0),
-            }))
+          ? (invoice.items ?? []).map((it) => {
+              const upb = Number(it.product?.unitsPerBox ?? 0);
+              return {
+                key: it.id,
+                productId: it.productId,
+                description: it.description,
+                qty: Number(it.qty),
+                unitPrice: Number(it.unitPrice),
+                taxRate: Number(it.taxRate ?? 0),
+                discount: Number(it.discount ?? 0),
+                unitsPerBox: upb > 1 ? upb : undefined,
+              };
+            })
           : [createEmptyItem()],
       );
       setInitialized(true);
@@ -215,14 +269,10 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
 
   // ── Calculations ─────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce(
-    (s, it) => s + Number(it.qty) * Number(it.unitPrice) - Number(it.discount),
-    0,
-  );
-  const taxTotal = items.reduce((s, it) => {
-    const lineSub = Number(it.qty) * Number(it.unitPrice) - Number(it.discount);
-    return s + lineSub * Number(it.taxRate);
-  }, 0);
+  // Boxed lines prorate via computeLineSubtotal (unitPrice is the BOX price); a
+  // plain qty*unitPrice would over-charge by unitsPerBox. Matches server pricing.
+  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
+  const taxTotal = items.reduce((s, it) => s + lineTotal(it) * Number(it.taxRate), 0);
   const invDiscount = parseFloat(discount) || 0;
   const shipping = parseFloat(shippingFee) || 0;
   const total = subtotal - invDiscount + shipping + taxTotal;
@@ -276,8 +326,11 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       terms: terms.trim() || undefined,
       referenceNumber: referenceNumber.trim() || undefined,
       subject: subject.trim() || undefined,
-      items: items.map(
-        (it): CreateInvoiceItem => ({
+      items: items.map((it): CreateInvoiceItem => {
+        // Send the boxed split so the server prorates (unitPrice is the BOX price).
+        // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
+        const { boxes, pieces } = lineSplit(it);
+        return {
           productId: it.productId,
           description: it.description,
           qty: Number(it.qty),
@@ -285,8 +338,9 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           taxRate: it.taxRate != null ? Number(it.taxRate) : undefined,
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
-        }),
-      ),
+          ...(it.unitsPerBox && it.productId ? { boxes: boxes ?? 0, pieces: pieces ?? 0 } : {}),
+        };
+      }),
     };
 
     updateInvoice.mutate(dto, {
@@ -420,11 +474,12 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                       setCreateProductTargetIdx(idx);
                       setCreateProductOpen(true);
                     }}
-                    onChange={(description, productId, unitPrice) => {
+                    onChange={(description, productId, unitPrice, unitsPerBox) => {
                       updateItem(item.key, {
                         description,
                         productId,
                         unitPrice: unitPrice !== undefined ? unitPrice : item.unitPrice,
+                        unitsPerBox: unitsPerBox && unitsPerBox > 1 ? unitsPerBox : undefined,
                       });
                     }}
                   />

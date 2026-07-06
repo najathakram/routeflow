@@ -187,6 +187,78 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ─── Boxed-line proration on update() — the invoice-edit over-charge fix ───
+  // When the invoice EDIT page saves a boxed line it now forwards boxes/pieces so
+  // update() prorates (unitPrice is the BOX price). Regression guard against the
+  // old bug where dropping boxes/pieces made the server charge unitPrice * qty
+  // (qty being the piece count → a unitsPerBox-fold over-charge).
+
+  describe("update() — boxed line proration", () => {
+    const draftInvoice = {
+      id: "inv-box",
+      orderId: null,
+      deliveryBatchId: null,
+      customerId: "cust-1",
+      invoiceNumber: "INV-2026-0099",
+      status: InvoiceStatus.DRAFT,
+      subtotal: 0,
+      taxAmount: 0,
+      discount: 0,
+      shippingFee: 0,
+      total: 0,
+      notes: null,
+      terms: null,
+      dueDate: null,
+      issueDate: new Date(),
+    };
+
+    it("prorates a boxed line by unitsPerBox instead of charging unitPrice*qty", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      // 2 boxes + 3 loose pieces of a 12-per-box product at $28.35 per BOX.
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-box",
+            description: "Boxed chips",
+            qty: 27, // total pieces = 2*12 + 3
+            unitPrice: 28.35,
+            boxes: 2,
+            pieces: 3,
+          },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      // Correct proration: 28.35 * (2 + 3/12) = 28.35 * 2.25 = 63.7875 → 63.79
+      expect(created.subtotal).toBeCloseTo(63.79, 2);
+      // Regression guard: NOT the qty*unitPrice over-charge (28.35 * 27 = 765.45).
+      expect(created.subtotal).not.toBeCloseTo(765.45, 2);
+      expect(created.boxes).toBe(2);
+      expect(created.pieces).toBe(3);
+      expect(created.qty).toBe(27);
+    });
+
+    it("charges unitPrice*qty for a non-boxed line (no boxes/pieces sent)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [{ productId: "prod-plain", description: "Loose", qty: 5, unitPrice: 3.5 }],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.subtotal).toBeCloseTo(17.5, 2); // 3.5 * 5
+      expect(created.boxes).toBeNull();
+      expect(created.pieces).toBeNull();
+    });
+  });
+
   // ─── RF-079: tax-exempt customer → invoice tax = 0 ────────────────────────
 
   describe("RF-079 — tax-exempt customer", () => {

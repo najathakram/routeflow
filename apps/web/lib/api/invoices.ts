@@ -19,7 +19,7 @@ export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED";
 export interface InvoiceItem {
   id: string;
   productId?: string;
-  product?: { id: string; name: string; unit?: string };
+  product?: { id: string; name: string; unit?: string; unitsPerBox?: number | null };
   description: string;
   qty: number;
   unitPrice: number;
@@ -28,6 +28,9 @@ export interface InvoiceItem {
   priceType?: PriceType;
   taxRate?: number;
   subtotal?: number;
+  /** Boxed split persisted server-side (unitsPerBox > 1 products). */
+  boxes?: number | null;
+  pieces?: number | null;
   taxable?: boolean;
   total?: number;
 }
