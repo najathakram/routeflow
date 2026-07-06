@@ -28,9 +28,11 @@ different Claude profile won't have prior-session memory — rely on this + the 
 ## 1. Program state
 
 - Phase 1 (Foundation): SHIPPED (#116).
-- Phase 2 (Operator core) — **CODE-COMPLETE** (on `feat/last-cost-costing` / PR #121), full-branch
-  `npm run verify` green (18/18 tasks: types + lint 0-err + all api tests + 70/0 e2e). **NOT deployed**
-  — blocked on the one pending prod migration `20260706040000_add_costing_last_cost` (see §2.1):
+- Phase 2 (Operator core) — **SHIPPED & DEPLOYED** (PR #121 squash-merged to master 2026-07-06).
+  Prod migration `20260706040000_add_costing_last_cost` applied via the public proxy (`migrate status`
+  = up to date); all 4 CI jobs green on master INCLUDING **E2E (Playwright)**; repo back to private;
+  authenticated post-deploy smoke passed (health/auth/orders/invoices/customers/products/drivers money
+  fields + invoice math all OK). Full-branch `npm run verify` was green (18/18 tasks). Included:
   - §1 negotiation-floor core: SHIPPED (#117/#118). §2 minimize/resume drafts: SHIPPED + live-verified
     (#119). §1 cost-history popover + shared-MarginHint dedup + analytics method label: SHIPPED (#120).
   - **§1 COMPLETE** on #121: **LAST_COST** costing (enum + `recordSale`; 2 HIGH review bugs fixed) ·
@@ -45,29 +47,58 @@ different Claude profile won't have prior-session memory — rely on this + the 
     orders-list, order-detail, products, product-detail, dispatch) — done in batches via a reskin+review
     Workflow, each `preservedOk=true` (every hook/handler/route preserved; presentation-only), types+lint
     green. **Still need post-deploy VISUAL verification on the `test` tenant** (functionally reviewed only).
-- Phases 3–10: not started.
+- Phase 3 (Finance) — **batch F1 SHIPPED with #121**: reskinned `finance/dashboard`, `invoices/[id]`,
+  `credit-notes` 1:1 vs `unified/*.html`. Remaining Phase 3 (payments, bills/purchasing, reports,
+  remaining reskins + actual wiring): not started.
+- Phases 4–10: not started.
+- **Money-discipline remediation (boxed-line over-charge) — OPEN PRs, NOT deployed:**
+  - **PR #122** (`fix/invoice-estimate-line-amount-money`): invoice + estimate DETAIL "Amount" now
+    renders stored `item.subtotal` (was `qty*unitPrice`); **invoice EDIT** (`invoices/[id]/edit`) now
+    tracks `unitsPerBox`, seeds it from the product, and sends boxes/pieces so the server prorates
+    boxed lines (was over-charging by `unitsPerBox` on save). `findOne` exposes `product.unitsPerBox`.
+    Adversarially reviewed → SHIP (no real bugs). Regression specs green. Also carries this doc + the
+    IMPLEMENTATION-PLAN status bumps.
+  - **PR #123** (`fix/order-edit-boxed-overcharge`): same bug class in the **operator order-edit
+    builder** (client) + **buyer-portal order edit** (client) + the **buyer/CUSTOMER server branch**
+    of `orders.service.updateOrderItems` (did raw `qty*unitPrice`, wiped the split). Key nuance: a
+    **denomination gate** — re-split qty as pieces ONLY when the stored line was box-aware
+    (`boxes/pieces != null`); selling-unit lines (mobile cart, operator add-line, `boxes=null`) keep
+    `qty*unitPrice`. Adversarially reviewed; the review CAUGHT a HIGH under-charge regression (fixed by
+    the gate) + preview mismatches (fixed). Regression specs green (38 orders + 21 invoice).
+  - **Pre-existing boxed over-charges flagged as separate tasks (NOT fixed):** (a) order
+    merge/consolidate `mergeAllPendingForCustomer`/`forceConsolidateCustomer` re-derive
+    `qty*unitPrice` (HIGH, live on auto-merge); (b) mobile customer cart is box-unaware (MEDIUM, root
+    of the denomination mismatch). Both have spawned-task chips.
 
 ## 2. DO NEXT (in order)
 
-1. **DEPLOY PR #121** (bundles all of §1 + the E2E fix — see §1 above). Money path. FIRST apply the
-   migration to prod: from `apps/api` build `DATABASE_URL` from the Railway public proxy
-   `gondola.proxy.rlwy.net:41006` (creds via `railway variables --service postgres --json`), then
-   `npx prisma migrate deploy`; confirm `migrate status` = up to date. The auto-mode classifier BLOCKS
-   the prod-write — the user runs it or grants a Bash allow-rule. THEN the **rebuild** routine (verify
-   → public → merge → CI → private → post-deploy-check). After deploy, visually verify the cost
-   popover / boxed invoice totals / analytics label on the `test` tenant, and confirm CI E2E is green.
-2. **§3/§4 + all 10 reskins — DONE** (see §1). After #121 deploys, **visually verify on the `test`
-   tenant**: cost popover / boxed invoice totals / analytics label (§1); drive-mode field layout (§4);
-   at-door sheet on both dispatch and the live-run stop view (§3); and every reskinned screen 1:1 vs
-   `unified/*.html`. Fix any visual drift, then re-verify.
-3. **Phases 3 (Finance) → 10 (Mobile)** — the remaining program. Same cadence (§4): one branch/PR per
-   batch, reskin+review Workflow, verify each, adversarial review before deploy. Work the plan in
+1. **DEPLOY PR #121 — DONE (2026-07-06).** Migration applied to prod + merged + CI green (incl. E2E) +
+   private + smoke passed.
+2. **VISUAL verification of #121 — DONE (2026-07-06, via connected Chrome on the `test` tenant).**
+   Confirmed live + correct: dashboard/products/product-detail/analytics/finance-overview reskins;
+   #121 cost accounting (**Purchase Cost History** card + Avg cost on product detail; analytics
+   **costing-method label** "COGS costed using weighted average"); **§4 drive mode** (badge + exit +
+   my-runs field layout); Phase-1 i18n toggle. NOT verifiable on the sparse `test` tenant (no data):
+   boxed invoice totals, at-door sheet (needs an active run), order-builder cost popover — create test
+   data to exercise these if needed.
+3. **DEPLOY the money-discipline PRs #122 + #123** (both open, verified, adversarially reviewed; no
+   prod migration needed — presentation/logic only). Deploy via the **rebuild** routine. They're
+   independent (different files) so either order is fine. After deploy, spot-check a boxed invoice/order
+   edit on the `test` tenant (needs a boxed product — create one).
+4. **Fix the flagged pre-existing boxed over-charges** (task chips): order merge/consolidate
+   `qty*unitPrice` (HIGH) + box-unaware mobile cart (MEDIUM).
+5. **Phase 3 (Finance) continuation → Phases 4–10.** Same cadence (§4): one branch/PR per batch,
+   reskin+review Workflow, verify each, adversarial review before deploy. Next Finance work: remaining
+   finance screen reskins + wiring (payments/bills/reports). Plan:
    `docs/design-package/IMPLEMENTATION-PLAN.md`; design source `project/unified/*.html` +
    `project/specs/*.md`; endpoint map `project/specs/backend-wiring-index.md`.
 
-## 3. E2E CI status (worked on this session)
+## 3. E2E CI status — RESOLVED & CONFIRMED GREEN ON MASTER
 
-The CI **E2E (Playwright)** job has been red. Root cause: the **Phase-1 login reskin** changed the
+**As of #121's merge (2026-07-06) the CI `E2E (Playwright)` job runs GREEN on master** alongside
+Lint / Type Check / Test. History below for reference.
+
+The CI **E2E (Playwright)** job had been red. Root cause: the **Phase-1 login reskin** changed the
 login page but the e2e selectors weren't updated. `auth.setup` itself passes (it already used
 `getByLabel`); individual tests broke. Fixed on `feat/last-cost-costing`:
 

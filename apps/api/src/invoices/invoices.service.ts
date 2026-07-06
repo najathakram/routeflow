@@ -1053,7 +1053,9 @@ export class InvoicesService {
             email: true,
           },
         },
-        items: { include: { product: { select: { id: true, name: true, unit: true } } } },
+        items: {
+          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+        },
         payments: { orderBy: { createdAt: "desc" } },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.

@@ -386,7 +386,10 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
                         {fmt(Number(item.unitPrice))}
                       </td>
                       <td className="px-6 py-3 text-right font-medium text-navy">
-                        {fmt(Number(item.qty) * Number(item.unitPrice))}
+                        {/* Stored line subtotal is authoritative (boxed-aware, rounded via
+                            pricing.ts). NEVER re-derive qty*unitPrice — it over-charges boxed
+                            lines by unitsPerBox. */}
+                        {fmt(Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)))}
                       </td>
                     </tr>
                   ))}
