@@ -256,6 +256,8 @@ export interface CustomerPrice {
     priceTier3?: number | string;
     priceTier4?: number | string;
     priceTier5?: number | string;
+    averageCost?: number | string | null;
+    unitsPerBox?: number | null;
   };
 }
 

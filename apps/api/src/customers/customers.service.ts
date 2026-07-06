@@ -718,6 +718,9 @@ export class CustomersService {
             priceTier3: true,
             priceTier4: true,
             priceTier5: true,
+            // For the Price Memory margin column (their price vs cost now).
+            averageCost: true,
+            unitsPerBox: true,
           },
         },
       },
