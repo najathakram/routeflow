@@ -29,6 +29,14 @@ import { PageHeader, StatCard, Card, Button, Select, cn } from "@routeflow/ui/we
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { apiClient } from "@/lib/api-client";
+import { useMarginConfig } from "@/lib/api/margin";
+
+/** Human label for the tenant's configured costing method (pos-cost-roles-spec §1). */
+const COSTING_METHOD_LABEL: Record<string, string> = {
+  WEIGHTED_AVERAGE: "weighted average",
+  FIFO: "FIFO",
+  LAST_COST: "last cost",
+};
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -291,6 +299,8 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
 
   const [grossMargin, setGrossMargin] = React.useState<GrossMarginData | null>(null);
   const [grossMarginLoading, setGrossMarginLoading] = React.useState(true);
+  // The tenant's configured costing method, to state how COGS was costed.
+  const { data: marginConfig } = useMarginConfig();
 
   const [salesByCategory, setSalesByCategory] = React.useState<SalesByCategory[]>([]);
   const [salesByCategoryLoading, setSalesByCategoryLoading] = React.useState(true);
@@ -460,6 +470,13 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
                   {pct(grossMargin.grossMarginPct)}
                 </dd>
               </div>
+              {marginConfig?.costingMethod && (
+                <p className="pt-1 text-[11px] text-navy/50">
+                  COGS costed using{" "}
+                  {COSTING_METHOD_LABEL[marginConfig.costingMethod] ?? marginConfig.costingMethod}.
+                  Method changes apply going forward (effective-dated).
+                </p>
+              )}
             </dl>
           ) : (
             <p className="text-sm text-navy/70">No margin data available</p>

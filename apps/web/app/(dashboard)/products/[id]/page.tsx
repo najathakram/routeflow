@@ -42,6 +42,7 @@ import {
   useCreateProduct,
   type ApiProduct,
 } from "@/lib/api/products";
+import { useCostHistory } from "@/lib/api/cost-history";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { useAuth } from "@/lib/auth-context";
@@ -127,12 +128,7 @@ function EditableNumber({ value, onChange }: { value: number; onChange: (v: numb
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 function CostHistoryCard({ productId }: { productId: string }) {
-  const { data: history = [] } = useQuery<
-    { date: string; unitCost: number; avgCostAfter: number | null; type: string }[]
-  >({
-    queryKey: ["products", productId, "cost-history"],
-    queryFn: () => apiClient.get(`/analytics/cost-history/${productId}`).then((r) => r.data),
-  });
+  const { data: history = [] } = useCostHistory(productId);
 
   if (history.length === 0) return null;
 
