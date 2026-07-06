@@ -62,6 +62,17 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
   margin floors via `/settings/margin`) + `floorForCategory()`. `CreateOrderModal.tsx` renders
   `<MarginHint>` (cost·margin under each line, red below floor, Set-to-floor / Sell-anyway).
+- **Minimize & resume drafts (Phase 2 §2, pos-cost-roles-spec).** `lib/api/drafts.ts` — `useDrafts`/
+  `useDraft(id)`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft` over `/drafts` (per-user,
+  tenant-scoped; OPERATOR/DRIVER, TENANT_ADMIN satisfies OPERATOR). `lib/drafts.ts` — `OrderDraftPayload`
+  (full builder state), `draftDeviceLabel()`, `parkedAgo()`, `draftSummary()`. `components/DraftDock.tsx`
+  — persistent dock at the bottom-left of the content column (mounted in `(dashboard)/layout.tsx`
+  right-column, non-CUSTOMER roles), lists parked drafts + Resume/Discard + a global scan-to-draft
+  wedge-listener (active only while a draft is parked; bails inside any open `[role=dialog]`).
+  `CreateOrderModal.tsx` gained a **Minimize** footer button + `resumeDraftId`/`initialScanCode` props:
+  parks/hydrates/autosaves (debounced, bound to a draft only after Minimize/Resume) + auto-adds a
+  scanned barcode on open + deletes the draft on successful submit. `orders/page.tsx` reads
+  `?resumeDraft`/`?scan`/`?action=new` reactively to open the builder. Backend: `api/src/drafts/`.
 - **`lib/product-display.ts`**, **`lib/image-focal.ts`** — product focal-point crop (4:5), image fit.
 - **`lib/barcode-resolve.ts`** — `BarcodeResolveHit<T>`/`Miss` types.
 - **`lib/formatting.ts`**, **`lib/export.ts`** (`downloadCsv()`), **`lib/report-export.ts`** — format + CSV/report export.
@@ -140,7 +151,8 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
   `BarcodeScannerButton.tsx`, `DocumentLetterhead.tsx` (PDF header), `ScanInvoiceModal.tsx` (OCR),
   `SearchableProductPicker.tsx`, `SupplierSelect.tsx`, `InlineCreate{Product,Supplier}Modal.tsx`,
   `AddressAutocomplete.tsx` (Google Maps), `UnitCombobox.tsx`, `GroupAsVariantsModal.tsx`,
-  `ConfirmDialog.tsx`, `SortableTh.tsx`, `ReportChart.tsx` (recharts), `ReportToolbar.tsx`,
+  `ConfirmDialog.tsx`, `DraftDock.tsx` (parked-draft dock + scan-to-draft, Phase 2 §2),
+  `SortableTh.tsx`, `ReportChart.tsx` (recharts), `ReportToolbar.tsx`,
   `TenantLogo.tsx`, `PwaInstallPrompt.tsx`/`InstallAppButton.tsx`, `ServiceWorkerRegistry.tsx`,
   `AutoRedirectIfAuthed.tsx`, `inventory/StockCount{Tab,Row,BulkBar,ReviewModal}.tsx`.
 

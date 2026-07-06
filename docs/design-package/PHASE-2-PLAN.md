@@ -55,18 +55,28 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.
-- **§2 Minimize & resume drafts** — BACKEND DONE + VERIFIED; UI next.
+- **§2 Minimize & resume drafts** — BACKEND DONE; **UI DONE (this increment), verify post-deploy.**
   - ✅ Schema: `SaleDraft` model (per-user, tenant-scoped, `payload` Json) + **additive** migration
     `20260705120000_add_sale_drafts` (CREATE TABLE only — touches no existing table/rows). Applied to
-    local Docker DB; **prod needs `railway run npx prisma migrate deploy` before the drafts UI ships**
-    (safe to deploy the code first — nothing queries `SaleDraft` until the dock lands).
+    local Docker DB; **prod needs `railway run npx prisma migrate deploy` BEFORE this UI deploys**
+    (the dock now queries `/drafts` on every operator screen).
   - ✅ Backend: `drafts` module — `DraftsService` (list/create/update/get/remove, per-user ownership +
-    tenant scoping) + `DraftsController` (`/drafts` CRUD, OPERATOR/DRIVER) + `SaveDraftDto`; registered
-    in `app.module`. 5-test spec (`drafts.service.spec.ts`) incl. cross-user ownership rejection.
-  - ✅ Web hooks: `lib/api/drafts.ts` (`useDrafts`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft`).
-  - **Next (UI):** DraftDock (bottom-left, lists/resume/delete) in the shell + Minimize button in the
-    builders (park current state) + resume-hydrate the builder from `payload` + autosave-per-keystroke +
-    scan-to-draft prompt. Needs authed runtime to verify — do with a local login.
+    tenant scoping) + `DraftsController` (`/drafts` CRUD, OPERATOR/DRIVER; TENANT_ADMIN satisfies
+    OPERATOR so the admin dock works) + `SaveDraftDto`; registered in `app.module`. 5-test spec.
+  - ✅ Web hooks: `lib/api/drafts.ts` (`useDrafts`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft`
+    + `useDraft(id)` for resume-hydration).
+  - ✅ **DraftDock** (`components/DraftDock.tsx`): bottom-left of the content area on every operator
+    screen (mounted in the shell right-column, non-CUSTOMER roles), lists parked drafts (2 shown +
+    collapse badge when >2), Resume → `/orders?resumeDraft=<id>`, Discard → confirm. Hosts the global
+    **scan-to-draft** wedge-listener (active only while a draft is parked, bails inside any open
+    dialog) → "Add scanned item to a draft?" prompt → resume with `&scan=<code>`.
+  - ✅ **Builder wiring** (`CreateOrderModal`): Minimize footer button (parks full state via
+    `lib/drafts.ts` `OrderDraftPayload`), resume-hydrate from `payload`, debounced autosave once bound
+    to a draft, auto-add the scanned barcode on open, delete the draft on successful submit.
+  - ✅ **Orders page**: reads `?resumeDraft` / `?scan` / `?action=new` (reactively, so Resume works
+    even when already on `/orders`), opens the builder hydrated, strips the params.
+  - **Autosave model:** binds on Minimize/Resume only (never auto-creates from a fresh builder) — see
+    QUESTIONS.md #8. Invoice-builder Minimize/resume deferred to Phase 3 (QUESTIONS.md #9).
 - **§3 At-the-door actions** — NOT STARTED. Arrived-stop sheet (adjust/new/collect-payment) on dispatch.
 - **§4 Roles / Drive mode** — NOT STARTED. `canActAsDriver`, avatar Drive-mode toggle, server-side
   driver capability set, admin's own run in Live Dispatch.
@@ -80,7 +90,9 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
 - [~] Builder live cost/margin per line ✅ (create path); floor warning + one-tap fix ✅; overrides logged
       = client dismiss done, server AuditLog = follow-on (edit path has overrideReason). Edit/invoice
       builders = follow-on.
-- [ ] Minimize/resume across screens/devices/offline; scan-to-draft prompt. _(§2, not started)_
+- [~] Minimize/resume across screens/devices/offline; scan-to-draft prompt. _(§2 web done: dock +
+      Minimize + resume-hydrate + autosave + scan-to-draft; offline sync rides autosave/react-query;
+      mobile + invoice-builder = follow-on. Verify on live `test` post-deploy.)_
 - [ ] At-door adjust → save & POD ≤2 taps; invoice regenerates incl. regulated split. _(§3, not started)_
 - [ ] Drive mode one-tap; driver capability set enforced server-side (RolesGuard already maps
       canActAsDriver→DRIVER); admin sees own run in Live Dispatch. _(§4, not started)_
