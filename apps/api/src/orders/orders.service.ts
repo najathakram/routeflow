@@ -130,7 +130,9 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         // Include `unitsPerBox` + `pricePerUnit` so the mobile/web edit UIs
         // can render the boxes/pieces split for boxed products and recompute
-        // line subtotals locally without a second roundtrip.
+        // line subtotals locally without a second roundtrip. `averageCost` +
+        // `category` feed the live cost/margin hint + floor in the edit builder
+        // (pos-cost-roles-spec §1).
         lineItems: {
           include: {
             product: {
@@ -140,6 +142,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 unit: true,
                 unitsPerBox: true,
                 pricePerUnit: true,
+                averageCost: true,
+                category: true,
               },
             },
           },

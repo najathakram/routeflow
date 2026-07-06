@@ -36,7 +36,14 @@ export interface OrderItem {
   id: string;
   /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */
   productId: string | null;
-  product?: { id: string; name: string; unit: string; unitsPerBox?: number | null };
+  product?: {
+    id: string;
+    name: string;
+    unit: string;
+    unitsPerBox?: number | null;
+    averageCost?: string | number | null;
+    category?: string | null;
+  };
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
   name?: string | null;
   qty: number;

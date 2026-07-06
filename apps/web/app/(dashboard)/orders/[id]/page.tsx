@@ -43,6 +43,8 @@ import {
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal, roundMoney } from "@/lib/pricing";
+import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
+import { MarginHint } from "@/components/MarginHint";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -305,6 +307,10 @@ interface EditItemState {
   cancelled: boolean;
   substituteProductId?: string;
   notes?: string;
+  /** Product cost (per piece) + packaging + category for the live margin hint. */
+  unitCost?: number | null;
+  unitsPerBox?: number | null;
+  category?: string | null;
 }
 
 // ─── Demote reason modal ──────────────────────────────────────────────────────
@@ -451,13 +457,22 @@ function PriceEditRow({
   overrideReason,
   onPriceChange,
   onReasonChange,
+  unitCost,
+  unitsPerBox,
+  floor,
 }: {
   basePrice: number;
   unitPrice: number;
   overrideReason?: string;
   onPriceChange: (netPrice: number) => void;
   onReasonChange: (reason: string) => void;
+  unitCost?: number | null;
+  unitsPerBox?: number | null;
+  floor?: number;
 }) {
+  // "Sell anyway" acknowledges a below-floor price for this session; the override
+  // is logged via overrideReason so reports can isolate below-floor sales.
+  const [floorAcked, setFloorAcked] = React.useState(false);
   const [priceText, setPriceText] = React.useState(unitPrice.toFixed(2));
   const [offText, setOffText] = React.useState(
     unitPrice < basePrice ? roundMoney(basePrice - unitPrice).toFixed(2) : "",
@@ -542,6 +557,23 @@ function PriceEditRow({
           />
         </>
       )}
+      {/* Live cost & margin — the negotiation floor (pos-cost-roles-spec §1) */}
+      {floor != null && (
+        <div className="basis-full">
+          <MarginHint
+            unitPrice={unitPrice}
+            unitCost={unitCost}
+            unitsPerBox={unitsPerBox}
+            floor={floor}
+            acked={floorAcked}
+            onSetToFloor={(floorPrice) => onPriceChange(floorPrice)}
+            onSellAnyway={() => {
+              setFloorAcked(true);
+              if (!overrideReason) onReasonChange("Below margin floor - approved");
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -568,6 +600,8 @@ function EditableLineItems({
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
+  // Live cost/margin floor for the edit builder (pos-cost-roles-spec §1).
+  const { data: marginConfig } = useMarginConfig();
   React.useEffect(() => {
     if (!scrollToId) return;
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -878,6 +912,9 @@ function EditableLineItems({
               overrideReason={item.overrideReason}
               onPriceChange={(net) => update(item.id, { unitPrice: net })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
+              unitCost={item.unitCost}
+              unitsPerBox={item.unitsPerBox}
+              floor={floorForCategory(marginConfig, item.category)}
             />
           )}
 
@@ -1130,6 +1167,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 cancelled: false,
                 notes: li.notes,
                 overrideReason: li.overrideReason ?? undefined,
+                unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
+                unitsPerBox: li.product?.unitsPerBox ?? null,
+                category: li.product?.category ?? null,
               };
             }),
         );
