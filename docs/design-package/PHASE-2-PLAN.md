@@ -54,9 +54,10 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      **Gross Margin** card states the tenant costing method (`useMarginConfig`, effective-dated note).
   - **(b) LAST_COST DONE (branch `feat/last-cost-costing`)** — `CostingMethod` enum gains `LAST_COST`
      (**additive migration `20260706040000_add_costing_last_cost`** = `ALTER TYPE ... ADD VALUE`; touches no
-     table/row; **NOT yet applied to prod**). `recordSale` LAST_COST branch: cost = most recent StockLot
-     `unitCost` (by `purchaseDate desc`), fallback averageCost; not lot-consuming. 2 new inventory.spec tests
-     (335 api tests pass). Selectable per-product (products/page.tsx picker option); DTO auto-accepts via
+     table/row; **NOT yet applied to prod**). `recordSale` LAST_COST branch: cost = most recent **PURCHASE
+     StockMovement** `unitCost` (typed, `orderBy [createdAt desc, id desc]` — NOT the latest StockLot, which
+     could be an adjustment/stock-count lot stamped at avg cost; the money-path review caught this), fallback
+     averageCost; not lot-consuming. 2 new inventory.spec tests (335 api tests pass). Selectable per-product (products/page.tsx picker option); DTO auto-accepts via
      `@IsEnum(CostingMethod)`. Effective-dating is intrinsic (per-line `cost_at_sale` snapshot immutable;
      method changes affect only future sales). **Deferred follow-on:** propagate the tenant `costing.method`
      to NEW products at creation (cross-module wiring — the tenant setting is stored + selectable but doesn't

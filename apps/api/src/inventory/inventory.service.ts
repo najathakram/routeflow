@@ -361,15 +361,19 @@ export class InventoryService {
     } else if (product?.costingMethod === CostingMethod.STANDARD) {
       unitCost = costDecimal(product.standardCost ?? avgCost ?? 0);
     } else if (product?.costingMethod === CostingMethod.LAST_COST) {
-      // Last cost — cost the sale at the most recent purchase lot's unit cost
-      // (pos-cost-roles-spec §1). Not lot-consuming; falls back to the average
-      // cost when the product has no purchase lots yet.
-      const latestLot = await tx.stockLot.findFirst({
-        where: { productId },
-        orderBy: { purchaseDate: "desc" },
+      // Last cost — cost the sale at the most recent PURCHASE's unit cost
+      // (pos-cost-roles-spec §1: "most recent bill's unit cost"). Read the typed
+      // PURCHASE movement, NOT the latest StockLot: positive adjustments and
+      // stock-counts create lots stamped at the AVERAGE cost, which would poison
+      // the last-cost source. Order by createdAt (true record time) + id so the
+      // pick is deterministic when same-day bills share a date. Falls back to the
+      // average cost when the product has no purchases yet. Not lot-consuming.
+      const lastPurchase = await tx.stockMovement.findFirst({
+        where: { productId, type: MovementType.PURCHASE },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: { unitCost: true },
       });
-      unitCost = costDecimal(latestLot?.unitCost ?? avgCost ?? 0);
+      unitCost = costDecimal(lastPurchase?.unitCost ?? avgCost ?? 0);
     }
 
     const stockAfter = (product?.currentStock ?? new Prisma.Decimal(0)).sub(quantity);
