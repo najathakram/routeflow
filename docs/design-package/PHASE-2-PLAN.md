@@ -64,10 +64,13 @@ Most screens already exist (mature app) → Phase 2 = reskin 1:1 + add the new b
      (mapped WEIGHTED_AVERAGE→AVCO) via `resolveCostingMethod()` (ProductsModule now imports
      SystemConfigModule); explicit per-product choice wins; unset tenant → Prisma default (existing behavior
      unchanged). 4 new products.service.spec cases. **§1 is now COMPLETE except invoices/new (see (a)).**
-  - **(a) invoices/new hint — STILL TODO, blocked on a box-model finding:** invoices/new's boxed `unitPrice`
-     semantics are ambiguous (`qty` is total pieces and `lineTotal = qty×unitPrice`, yet the `/pc` display
-     divides `unitPrice` by `unitsPerBox` — they disagree on per-box vs per-piece). Adding a margin hint on
-     top risks a WRONG margin; pin down/fix that box model first, then add the hint.
+  - **(a) invoices/new hint — DONE.** The box-model finding turned out to be a real **money-display bug**:
+     `lineTotal()` did `qty×unitPrice`, over-charging boxed lines by `unitsPerBox` (qty = total pieces,
+     unitPrice = box price) — the created invoice was always correct (submit sends `{unitPrice,boxes,pieces}`;
+     backend recomputes via `computeLineSubtotal`), but the operator saw inflated line totals / subtotal /
+     tax. Fixed `lineTotal()` to use the shared `computeLineSubtotal` (same as the order builder + backend),
+     then added the shared `<MarginHint>` under each catalog line (threads product `category` for the floor).
+     **§1 is now COMPLETE.**
   - **Verification limit:** the live hint can't be seen end-to-end locally (needs operator login + seeded
      products with cost). Correctness is covered by the pricing spec + typecheck + compile; the visual
      hint should be screenshot-verified once an authed session is available.

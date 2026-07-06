@@ -32,32 +32,35 @@ different Claude profile won't have prior-session memory — rely on this + the 
   - §1 negotiation-floor core: SHIPPED (#117/#118).
   - §2 minimize/resume drafts: SHIPPED + live-verified (#119).
   - §1 cost-history popover + shared-MarginHint dedup + analytics method label: SHIPPED (#120).
-  - §1(b) **LAST_COST**: DONE + adversarial-review-clean on **PR #121** (branch
-    `feat/last-cost-costing`), **NOT deployed** — its additive migration
-    `20260706040000_add_costing_last_cost` is the ONLY pending prod migration.
-  - **E2E CI selector fixes** (login reskin) — on `feat/last-cost-costing` (see §3).
-- Phases 3–10: not started.
+  - **§1 is now COMPLETE** — all of the following are on **PR #121** (branch `feat/last-cost-costing`),
+    verified locally (types + lint + 339 api tests + 70/0 e2e) but **NOT deployed** (blocked on the one
+    pending prod migration `20260706040000_add_costing_last_cost`):
+    - **LAST_COST** costing method (enum + `recordSale` + review-clean; 2 HIGH review bugs fixed).
+    - **Tenant-default costing** for new products (`products.service.create` → tenant `costing.method`).
+    - **invoices/new** boxed line-total money-display fix + the shared `<MarginHint>` (§1a).
+    - **E2E CI regression fixed** (login-reskin selectors + 6 data/API/expectation bugs; see §3).
+    - Project **skills** made repo-local + this handoff doc.
+- Phases 3–10: not started. Phase 2 remaining: §3 at-door, §4 drive-mode, the 10 Ledger reskins.
 
 ## 2. DO NEXT (in order)
 
-1. **DEPLOY PR #121 (LAST_COST)** — money path. FIRST apply the migration to prod: from `apps/api`
-   build `DATABASE_URL` from the Railway public proxy `gondola.proxy.rlwy.net:41006` (creds via
-   `railway variables --service postgres --json`), then `npx prisma migrate deploy`; confirm
-   `migrate status` = up to date. The auto-mode classifier BLOCKS the prod-write — the user runs it
-   or grants a Bash allow-rule. THEN the **rebuild** routine (verify → public → merge → CI → private
-   → post-deploy-check).
-2. Finish/verify the **E2E CI fix** (§3), commit, land it (folded into #121 or its own PR).
-3. **§1(a) invoices/new margin hint — BLOCKED**: `apps/web/app/(dashboard)/invoices/new/page.tsx`
-   has an ambiguous boxed `unitPrice` (qty is total pieces and `lineTotal = qty×unitPrice`, yet the
-   `/pc` display divides `unitPrice` by `unitsPerBox` — per-box vs per-piece disagree). A margin hint
-   on that model would show a WRONG margin. Pin down / fix that box model first, then add the hint.
+1. **DEPLOY PR #121** (bundles all of §1 + the E2E fix — see §1 above). Money path. FIRST apply the
+   migration to prod: from `apps/api` build `DATABASE_URL` from the Railway public proxy
+   `gondola.proxy.rlwy.net:41006` (creds via `railway variables --service postgres --json`), then
+   `npx prisma migrate deploy`; confirm `migrate status` = up to date. The auto-mode classifier BLOCKS
+   the prod-write — the user runs it or grants a Bash allow-rule. THEN the **rebuild** routine (verify
+   → public → merge → CI → private → post-deploy-check). After deploy, visually verify the cost
+   popover / boxed invoice totals / analytics label on the `test` tenant, and confirm CI E2E is green.
+2. **§4** full drive-mode field layout (avatar entry → `/routes/my-runs` exists; swap to the field
+   layout — bigger targets, today's run first, scanner shortcut; design: `unified/my-runs.html` +
+   pos-cost-roles §4).
+3. **§3** at-the-door actions — arrived-stop sheet (adjust / new order / collect payment) on dispatch;
+   reuses existing order-edit / order-create / record-payment endpoints (pos-cost-roles §3).
 4. **Ledger-reskin the 10 operator-core screens** 1:1 vs `unified/*.html` (dashboard, orders
    list/detail, customers, customer-detail, products, product-detail, inventory-hub, dispatch,
-   returns). Tokens already match from Phase 1; this is structural/column/copy deltas.
-5. **§3** at-the-door actions; **§4** full drive-mode field layout. Then **phases 3 (Finance) → 10
-   (Mobile)**.
-6. **§1 deferred (QUESTIONS.md #10):** propagate the tenant `costing.method` to NEW products at
-   creation (cross-module wiring). Existing products are never re-costed.
+   returns). Tokens already match from Phase 1; structural/column/copy deltas — needs post-deploy
+   visual verification, so best done when the user can approve deploys.
+5. Then **phases 3 (Finance) → 10 (Mobile)**.
 
 ## 3. E2E CI status (worked on this session)
 
@@ -71,26 +74,21 @@ login page but the e2e selectors weren't updated. `auth.setup` itself passes (it
 - OP-01 asserted `locator("h1")` which resolves to the reskin's `lg:hidden` mobile `<h1>` (hidden on
   the desktop viewport → `toBeVisible … 'hidden'`); now asserts the visible **Sign in** button.
 
-Also made OP-02 robust (assert "not on /dashboard" + login form still visible, instead of matching
-exact error copy). **A local read-only run against prod after these fixes: 64 passed, 6 failed**
-(was the whole auth-dependent suite failing). Verify anytime with:
-`cd apps/web && SKIP_E2E_SEED=true PLAYWRIGHT_TENANT_SLUG=e2e-routeflow npx playwright test`.
+**RESOLVED — the E2E suite is now 70/0** (local read-only run vs prod). After the login-selector
+fixes it was 64/6; the 6 (none of them the reskin) were then all fixed:
 
-The **6 remaining failures are NOT the reskin regression** — they are pre-existing data/behavior
-issues to pick up next:
+- **OP-07 / BY-07** (DATA): made data-agnostic — OP-07 asserts a no-match search shrinks the loaded
+  list; BY-07 opens the first available customer (no dependency on a seeded "harbor" customer). So the
+  CI e2e job's missing `DATABASE_URL` / failing seed no longer matters.
+- **CP-04 / CP-05**: `apiBase(page.url())` kept the page PATH → the call hit `.../invoices/api/v1/...`
+  (404). Fixed to use `new URL().origin`.
+- **CC-05**: the controller doc claimed "read-only" but impersonation has FULL WRITE access by design
+  (writes are audit-logged — `platform-admin.service`). The test asserted a non-existent 403; now it
+  verifies the token grants tenant-scoped access via a non-mutating read. Also fixed the stale doc string.
+- **CP-03**: a skeleton-row race (invoice rows navigate via onClick; loading skeleton `<tr>`s don't) —
+  now targets a row carrying a `$` amount.
 
-- **OP-07** + **BY-07** — DATA: both need a "harbor" customer in `e2e-routeflow` (`getByText(/harbor/i)`
-  not found). The CI e2e job sets **no `DATABASE_URL`**, so its global seed (`apps/api/scripts/e2e-seed.js`)
-  fails (non-fatal) and never refreshes the tenant. Fix by re-seeding the DEDICATED `e2e-routeflow`
-  tenant (run `e2e-seed.js` against prod via the proxy — a controlled write to a test-only tenant),
-  or make the tests robust to whatever customers exist. (BY-07 also hit a 30s login timeout once —
-  possibly Railway latency; re-check after seeding.)
-- **CP-04 / CP-05** — the invoices/orders API call returns `res.ok() === false` (NOT a float-artifact
-  assertion — the request itself fails). Investigate the token/tenant the test sends
-  (`apiBase(page.url())` + operator token + `x-tenant-slug: e2e-routeflow`) vs what the API expects;
-  this predates the reskin.
-- **CC-05** — impersonation POST expected `403`, got something else. Confirm the API's read-only
-  impersonation guard status code vs the test's expectation.
+Re-verify anytime: `cd apps/web && SKIP_E2E_SEED=true PLAYWRIGHT_TENANT_SLUG=e2e-routeflow npx playwright test`.
 
 ## 4. Verify / DB safety / cadence
 
