@@ -15,6 +15,8 @@ export interface BuyerProduct {
   basePrice?: number;
   imageUrl?: string;
   isFavorite?: boolean;
+  /** Box packaging: when > 1 the buyerPrice/basePrice is the BOX price. */
+  unitsPerBox?: number | null;
 }
 
 export interface BuyerOrder {
@@ -195,7 +197,7 @@ export function useBuyerCreateOrder() {
     BuyerOrder,
     Error,
     {
-      items: Array<{ productId: string; qty: number }>;
+      items: Array<{ productId: string; qty: number; boxes?: number; pieces?: number }>;
       notes?: string;
       urgent?: boolean;
       requestedDeliveryDate?: string;

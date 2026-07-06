@@ -39,7 +39,11 @@ export default function CustomerCatalogScreen() {
   });
   const products = data?.data ?? [];
   const cart = useCartStore((s) => s.items);
-  const cartCount = cart.reduce((s, i) => s + i.qty, 0);
+  // Count selling units: boxes for a boxed line (qty is pieces), else pieces.
+  const cartCount = cart.reduce(
+    (s, i) => s + (Number(i.unitsPerBox ?? 0) > 1 ? (i.boxes ?? 0) : i.qty),
+    0,
+  );
   const cartTotal = useCartStore((s) => s.total());
 
   const { data: favoritesData } = useBuyerFavorites();
@@ -151,8 +155,11 @@ function ProductCard({
 }) {
   const cartItem = useCartStore((s) => s.items.find((i) => i.productId === product.id));
   const add = useCartStore((s) => s.add);
-  const setQty = useCartStore((s) => s.setQty);
-  const qty = cartItem?.qty ?? 0;
+  const step = useCartStore((s) => s.step);
+  const upb = Number(product.unitsPerBox ?? 0);
+  const boxed = upb > 1;
+  // Selling units in the cart: boxes for a boxed product, else pieces.
+  const units = cartItem ? (boxed ? (cartItem.boxes ?? 0) : cartItem.qty) : 0;
 
   return (
     <View style={styles.productCard}>
@@ -176,7 +183,7 @@ function ProductCard({
         </Text>
       </View>
 
-      {qty === 0 ? (
+      {units === 0 ? (
         <Pressable
           style={styles.addBtn}
           onPress={() =>
@@ -185,6 +192,7 @@ function ProductCard({
               name: product.name,
               unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
               unit: product.unit,
+              unitsPerBox: product.unitsPerBox ?? null,
             })
           }
         >
@@ -192,11 +200,14 @@ function ProductCard({
         </Pressable>
       ) : (
         <View style={styles.qtyRow}>
-          <Pressable style={styles.qtyBtn} onPress={() => setQty(product.id, qty - 1)} hitSlop={4}>
+          <Pressable style={styles.qtyBtn} onPress={() => step(product.id, -1)} hitSlop={4}>
             <Ionicons name="remove" size={16} color={ios.brand} />
           </Pressable>
-          <Text style={styles.qtyText}>{qty}</Text>
-          <Pressable style={styles.qtyBtn} onPress={() => setQty(product.id, qty + 1)} hitSlop={4}>
+          <Text style={styles.qtyText}>
+            {units}
+            {boxed ? (units === 1 ? " box" : " boxes") : ""}
+          </Text>
+          <Pressable style={styles.qtyBtn} onPress={() => step(product.id, 1)} hitSlop={4}>
             <Ionicons name="add" size={16} color={ios.brand} />
           </Pressable>
         </View>
