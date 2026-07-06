@@ -18,6 +18,7 @@ import {
   MapPin,
   Clock,
   Sparkles,
+  DoorOpen,
 } from "lucide-react";
 import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -31,6 +32,7 @@ import {
   type RunPackingStop,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
+import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
 
 // ─── Change Driver Modal ──────────────────────────────────────────────────────
 
@@ -179,12 +181,19 @@ function CancelRunModal({
 
 // ─── Stop card (required) ─────────────────────────────────────────────────────
 
-function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
+function RequiredStopCard({
+  stop,
+  onAtDoorActions,
+}: {
+  stop: RunPackingStop;
+  onAtDoorActions?: (stop: RunPackingStop) => void;
+}) {
   const [expanded, setExpanded] = React.useState(false);
   const totalItems = stop.orders.reduce(
     (sum, o) => sum + o.lineItems.reduce((s, li) => s + Number(li.qty), 0),
     0,
   );
+  const isArrived = stop.status === "IN_PROGRESS";
 
   return (
     <div className="rounded-lg border border-brand-200 bg-brand-50">
@@ -227,6 +236,20 @@ function RequiredStopCard({ stop }: { stop: RunPackingStop }) {
           <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-navy/30" />
         )}
       </button>
+      {isArrived && onAtDoorActions && (
+        <div className="no-print border-t border-brand-200 px-4 py-2.5">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAtDoorActions(stop);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-brand-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-100"
+          >
+            <DoorOpen className="h-3.5 w-3.5" />
+            At-door actions
+          </button>
+        </div>
+      )}
       {expanded && (
         <div className="border-t border-brand-200 px-4 pb-4 pt-3 space-y-3">
           {stop.orders.map((order) => (
@@ -303,6 +326,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
 
   const [showDriverModal, setShowDriverModal] = React.useState(false);
   const [showCancelModal, setShowCancelModal] = React.useState(false);
+  const [atDoorStop, setAtDoorStop] = React.useState<RunPackingStop | null>(null);
 
   const handleOptimize = () => {
     optimizeRoute(params.id, {
@@ -390,6 +414,12 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
           onClose={() => setShowCancelModal(false)}
         />
       )}
+      <ArrivedStopSheet
+        open={!!atDoorStop}
+        onClose={() => setAtDoorStop(null)}
+        customerName={atDoorStop?.customer?.businessName ?? "Customer"}
+        orders={atDoorStop?.orders}
+      />
 
       {/* Print styles */}
       <style>{`
@@ -499,7 +529,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
               ) : (
                 <div className="space-y-2">
                   {requiredStops.map((stop) => (
-                    <RequiredStopCard key={stop.id} stop={stop} />
+                    <RequiredStopCard key={stop.id} stop={stop} onAtDoorActions={setAtDoorStop} />
                   ))}
                 </div>
               )}
