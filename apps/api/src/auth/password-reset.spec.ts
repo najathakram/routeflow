@@ -9,6 +9,7 @@ import { EmailService } from "../email/email.service";
 import { UsersService } from "../users/users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn(), genSalt: jest.fn() }));
 
@@ -63,6 +64,10 @@ describe("AuthService — password reset (RF-018)", () => {
         },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
         { provide: EmailService, useValue: emailService },
+        {
+          provide: EntitlementsService,
+          useValue: { claimsFor: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 

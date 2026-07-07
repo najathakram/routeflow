@@ -14,6 +14,7 @@ import { PlatformGoogleAuthController } from "./platform-google-auth.controller"
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { UsersModule } from "../users/users.module";
 import { EmailModule } from "../email/email.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 import { AppConfig } from "../config/configuration";
 
 @Module({
@@ -21,6 +22,7 @@ import { AppConfig } from "../config/configuration";
     PassportModule,
     forwardRef(() => UsersModule),
     EmailModule,
+    EntitlementsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
