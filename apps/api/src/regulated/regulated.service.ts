@@ -11,7 +11,7 @@ import { ListLedgerDto } from "./dto/list-ledger.dto";
 export class RegulatedService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getLedger(query: ListLedgerDto) {
+  async getLedger(query: ListLedgerDto, opts?: { exclusiveTo?: boolean }) {
     const where: any = {};
     if (query.category) where.trackedCategoryId = query.category;
     // from/to filter by TRANSACTION date (soldAt): a SALE at its issue date, a
@@ -19,10 +19,18 @@ export class RegulatedService {
     // derived from soldAt), so grouping by periodBucket over a full-month range
     // nets each period's booked activity. A partial range is a transaction-date
     // window, NOT a guarantee that cross-period reversals net within it.
+    //
+    // `to` is INCLUSIVE (.lte) for the user-facing /ledger endpoint. Filings pass
+    // exclusiveTo=true to get an exact half-open [from, to) window — a plain `.lt`
+    // is precision-exact at any granularity (a sub-millisecond boundary sale is
+    // never silently dropped, unlike a `to − 1ms` + `.lte` reconstruction).
     if (query.from || query.to) {
       where.soldAt = {};
       if (query.from) where.soldAt.gte = new Date(query.from);
-      if (query.to) where.soldAt.lte = new Date(query.to);
+      if (query.to) {
+        if (opts?.exclusiveTo) where.soldAt.lt = new Date(query.to);
+        else where.soldAt.lte = new Date(query.to);
+      }
     }
 
     const grouped = await this.prisma.forTenant().regulatedSalesLedger.groupBy({
