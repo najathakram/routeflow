@@ -7,6 +7,11 @@ import { BillingController } from "./billing.controller";
 import { BillingWebhookController } from "./billing-webhook.controller";
 import { PlanCatalogController } from "./plan-catalog.controller";
 import { PlanAdminController } from "./plan-admin.controller";
+import { SettingsBillingController } from "./settings-billing.controller";
+import { ProrationService } from "./proration.service";
+import { SubscriptionService } from "./subscription.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { BillingEventService } from "./billing-event.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 
@@ -17,8 +22,18 @@ import { EntitlementsModule } from "./entitlements.module";
     BillingWebhookController,
     PlanCatalogController,
     PlanAdminController,
+    SettingsBillingController,
   ],
-  providers: [StripeService, BillingService, AddonService, AddonGuard],
+  providers: [
+    StripeService,
+    BillingService,
+    AddonService,
+    AddonGuard,
+    ProrationService,
+    SubscriptionService,
+    SubscriptionMutationService,
+    BillingEventService,
+  ],
   exports: [StripeService, BillingService, AddonService, AddonGuard, EntitlementsModule],
 })
 export class BillingModule {}
