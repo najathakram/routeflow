@@ -11,6 +11,21 @@ const CLAUDE_MODELS = [
   "claude-3-opus-20240229",
 ];
 
+// Rough per-1M-token USD pricing (input, output) for the display-only "Est.
+// spend" figure — not billing.
+const AI_MODEL_PRICING: Record<string, { in: number; out: number }> = {
+  opus: { in: 15, out: 75 },
+  sonnet: { in: 3, out: 15 },
+  haiku: { in: 0.8, out: 4 },
+};
+
+function modelPrice(model: string): { in: number; out: number } {
+  const m = model.toLowerCase();
+  if (m.includes("opus")) return AI_MODEL_PRICING.opus;
+  if (m.includes("haiku")) return AI_MODEL_PRICING.haiku;
+  return AI_MODEL_PRICING.sonnet;
+}
+
 @Injectable()
 export class PlatformConfigService implements OnModuleInit {
   private readonly logger = new Logger(PlatformConfigService.name);
@@ -36,9 +51,27 @@ export class PlatformConfigService implements OnModuleInit {
           CONSTRAINT "PlatformConfig_key_key" UNIQUE ("key")
         )
       `;
-      this.logger.log("PlatformConfig table ready");
+      // AI usage/metering log — additive + idempotent (same auto-create pattern
+      // as PlatformConfig above, so no Prisma migration is required to ship).
+      await this.prisma.$executeRaw`
+        CREATE TABLE IF NOT EXISTS "AiUsageEvent" (
+          "id"           TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+          "tenantId"     TEXT,
+          "feature"      TEXT NOT NULL,
+          "model"        TEXT NOT NULL,
+          "inputTokens"  INTEGER NOT NULL DEFAULT 0,
+          "outputTokens" INTEGER NOT NULL DEFAULT 0,
+          "success"      BOOLEAN NOT NULL DEFAULT true,
+          "createdAt"    TIMESTAMP(3) NOT NULL DEFAULT now(),
+          CONSTRAINT "AiUsageEvent_pkey" PRIMARY KEY ("id")
+        )
+      `;
+      await this.prisma.$executeRaw`
+        CREATE INDEX IF NOT EXISTS "AiUsageEvent_createdAt_idx" ON "AiUsageEvent"("createdAt")
+      `;
+      this.logger.log("PlatformConfig + AiUsageEvent tables ready");
     } catch (err: any) {
-      this.logger.error(`PlatformConfig table setup failed: ${err?.message}`);
+      this.logger.error(`Platform table setup failed: ${err?.message}`);
     }
   }
 
@@ -69,10 +102,11 @@ export class PlatformConfigService implements OnModuleInit {
   // ─── AI / Claude config ─────────────────────────────────────────────────────
 
   async getAiConfig() {
-    const [storedKey, storedModel, storedMaxTokens] = await Promise.all([
+    const [storedKey, storedModel, storedMaxTokens, verifiedAt] = await Promise.all([
       this.getValue("claude.apiKey"),
       this.getValue("claude.model"),
       this.getValue("claude.maxTokens"),
+      this.getValue("claude.verifiedAt"),
     ]);
 
     const envKey = this.configService.get<string>("ANTHROPIC_API_KEY");
@@ -85,6 +119,7 @@ export class PlatformConfigService implements OnModuleInit {
       keyPreview: effectiveKey ? `${effectiveKey.slice(0, 14)}...${effectiveKey.slice(-4)}` : null,
       model: storedModel ?? "claude-sonnet-4-5",
       maxTokens: storedMaxTokens ? parseInt(storedMaxTokens) : 4096,
+      verifiedAt,
       availableModels: CLAUDE_MODELS,
     };
   }
@@ -133,5 +168,122 @@ export class PlatformConfigService implements OnModuleInit {
   async resolveMaxTokens(): Promise<number> {
     const v = await this.getValue("claude.maxTokens");
     return v ? parseInt(v) : 4096;
+  }
+
+  // ─── AI usage metering + connection test ────────────────────────────────────
+
+  /**
+   * Append a usage row. Exposed for the AI call sites (OCR / forecasting) to
+   * record token usage — those modules are out of this session's scope, so this
+   * isn't wired yet; the usage panel reports whatever has been recorded.
+   */
+  async recordAiUsage(evt: {
+    tenantId?: string | null;
+    feature: string;
+    model: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    success?: boolean;
+  }): Promise<void> {
+    try {
+      await this.prisma.$executeRaw`
+        INSERT INTO "AiUsageEvent"
+          ("id","tenantId","feature","model","inputTokens","outputTokens","success","createdAt")
+        VALUES (gen_random_uuid()::text, ${evt.tenantId ?? null}, ${evt.feature}, ${evt.model},
+                ${evt.inputTokens ?? 0}, ${evt.outputTokens ?? 0}, ${evt.success ?? true}, now())
+      `;
+    } catch (err: any) {
+      this.logger.warn(`recordAiUsage failed: ${err?.message}`);
+    }
+  }
+
+  /** 30-day AI usage rollup for the admin AI Settings panel. */
+  async getAiUsage(days = 30) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    let rows: Array<{
+      model: string;
+      feature: string;
+      calls: number;
+      inTok: number;
+      outTok: number;
+      failures: number;
+    }> = [];
+    try {
+      rows = await this.prisma.$queryRaw`
+        SELECT "model", "feature",
+               COUNT(*)::int AS calls,
+               COALESCE(SUM("inputTokens"), 0)::float8 AS "inTok",
+               COALESCE(SUM("outputTokens"), 0)::float8 AS "outTok",
+               SUM(CASE WHEN "success" THEN 0 ELSE 1 END)::int AS failures
+        FROM "AiUsageEvent"
+        WHERE "createdAt" >= ${cutoff}
+        GROUP BY "model", "feature"
+      `;
+    } catch {
+      rows = [];
+    }
+
+    let ocrScans = 0;
+    let forecastRuns = 0;
+    let tokensIn = 0;
+    let tokensOut = 0;
+    let totalCalls = 0;
+    let failures = 0;
+    let estSpendUsd = 0;
+    for (const r of rows) {
+      const calls = Number(r.calls);
+      const inTok = Number(r.inTok);
+      const outTok = Number(r.outTok);
+      totalCalls += calls;
+      failures += Number(r.failures);
+      tokensIn += inTok;
+      tokensOut += outTok;
+      if (r.feature === "ocr") ocrScans += calls;
+      if (r.feature === "forecast") forecastRuns += calls;
+      const price = modelPrice(r.model);
+      estSpendUsd += (inTok / 1e6) * price.in + (outTok / 1e6) * price.out;
+    }
+
+    return {
+      days,
+      ocrScans,
+      forecastRuns,
+      tokensIn,
+      tokensOut,
+      estSpendUsd: Math.round(estSpendUsd * 100) / 100,
+      errorRate: totalCalls > 0 ? Math.round((failures / totalCalls) * 1000) / 10 : 0,
+      totalCalls,
+    };
+  }
+
+  /** Ping Anthropic with the effective key; persist verifiedAt on success. */
+  async testConnection() {
+    const key = await this.resolveAnthropicKey();
+    if (!key) return { ok: false, error: "No API key configured" };
+    const model = await this.resolveModel();
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1,
+          messages: [{ role: "user", content: "ping" }],
+        }),
+      });
+      if (res.ok) {
+        const verifiedAt = new Date().toISOString();
+        await this.setValue("claude.verifiedAt", verifiedAt);
+        return { ok: true, model, verifiedAt };
+      }
+      const body: any = await res.json().catch(() => ({}));
+      return { ok: false, model, error: body?.error?.message ?? `HTTP ${res.status}` };
+    } catch (err: any) {
+      return { ok: false, model, error: err?.message ?? "Request failed" };
+    }
   }
 }
