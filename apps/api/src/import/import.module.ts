@@ -6,11 +6,13 @@ import { NumberingService } from "./numbering.service";
 import { AliasController } from "./alias.controller";
 import { ResolutionController } from "./resolution.controller";
 import { MigrationController } from "./migration.controller";
+import { BatchController } from "./batch.controller";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductAliasService } from "./product-alias.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 import { VariantResolutionService } from "./variant-resolution.service";
 import { MigrationService } from "./migration.service";
+import { BatchImportService } from "./batch-import.service";
 import { SourceConnectorRegistry } from "./connectors/source-connectors";
 import { PrismaModule } from "../prisma/prisma.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
@@ -24,6 +26,7 @@ import { ProductsModule } from "../products/products.module";
     AliasController,
     ResolutionController,
     MigrationController,
+    BatchController,
   ],
   providers: [
     ImportService,
@@ -33,6 +36,7 @@ import { ProductsModule } from "../products/products.module";
     DuplicateMatchService,
     VariantResolutionService,
     MigrationService,
+    BatchImportService,
     SourceConnectorRegistry,
   ],
   // NumberingService is exported so the deferred invoices/orders wiring (which

@@ -2496,3 +2496,78 @@ model MigrationStagingRecord {
   @@index([tenantId, jobId])
   @@index([jobId, status])
 }
+
+// ─── Migration & Batch Import (Phase 5: batch invoice import queue) ───────────
+
+enum ImportFileStatus {
+  QUEUED
+  PROCESSING
+  CLEAN // all lines matched, no dup — auto-ready to post
+  NEEDS_REVIEW // an unmatched line or low-confidence totals
+  DUPLICATE // matched an existing bill/invoice — skipped, linked
+  FAILED // extraction error; queue keeps the file
+  POSTED
+}
+
+enum ImportBatchStatus {
+  PROCESSING
+  READY
+  POSTED
+  PARTIALLY_POSTED
+}
+
+/// A batch of scanned invoices/bills processed in the background (spec §4):
+/// upload many, review later, "Finish: post N bills". Posting reuses the
+/// vendor-bill receive path (stock + costing). meteredScans feeds the AI-scan
+/// meter; the cap check integrates with billing (off-limits) as a follow-up.
+model ImportBatch {
+  id           String            @id @default(uuid())
+  tenantId     String
+  kind         String            @default("BATCH_BILLS")
+  status       ImportBatchStatus @default(PROCESSING)
+  totalFiles   Int               @default(0)
+  cleanCount   Int               @default(0)
+  reviewCount  Int               @default(0)
+  dupeCount    Int               @default(0)
+  postedCount  Int               @default(0)
+  meteredScans Int               @default(0)
+  createdById  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  postedAt     DateTime?
+
+  items ImportQueueItem[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+/// One file in a batch, with its per-file status + extracted payload. The
+/// duplicate pointer is a denormalized scalar (indexed, no FK) so this never
+/// edits the off-limits Invoice/VendorBill models.
+model ImportQueueItem {
+  id                   String           @id @default(uuid())
+  tenantId             String
+  batchId              String
+  filename             String?
+  mimeType             String?
+  status               ImportFileStatus @default(QUEUED)
+  extractedPayload     Json?
+  supplierMatchId      String?
+  supplierName         String?
+  invoiceNumber        String?
+  total                Decimal?         @db.Decimal(12, 2)
+  duplicateOfInvoiceId String?
+  confidence           Decimal?         @db.Decimal(5, 4)
+  unmatchedLines       Int              @default(0)
+  errorMessage         String?
+  vendorBillId         String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, batchId])
+  @@index([batchId, status])
+  @@index([duplicateOfInvoiceId])
+}
