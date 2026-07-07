@@ -2427,3 +2427,72 @@ model ProductAlias {
   @@index([tenantId, rawText])
   @@index([tenantId, supplierId])
 }
+
+// ─── Migration & Batch Import (Phase 4: migration staging + jobs + 24h undo) ──
+
+enum MigrationSource {
+  ZOHO
+  QUICKBOOKS
+  CSV
+  PAPER
+}
+
+enum MigrationJobStatus {
+  FETCHING
+  STAGED
+  CONFIRMED
+  UNDONE
+  FAILED
+}
+
+enum StagingRecordStatus {
+  PENDING // staged, awaiting confirm
+  DUPLICATE // matched an existing record; skipped on confirm, linked
+  COMMITTED // written live on confirm
+  SKIPPED // committer not wired for this type yet, or user-skipped
+  REVERSED // removed by a 24h undo
+}
+
+/// A migration run: fetch a source into a staging area, review, then confirm to
+/// live with a 24h undo window (spec §3). NOTHING is live until CONFIRMED.
+model MigrationJob {
+  id           String             @id @default(uuid())
+  tenantId     String
+  source       MigrationSource
+  status       MigrationJobStatus @default(FETCHING)
+  scopeCounts  Json               @default("{}") // {customers, products, invoices, ...}
+  createdById  String?
+  confirmedAt  DateTime?
+  undoDeadline DateTime? // confirmedAt + 24h
+  undoneAt     DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  records MigrationStagingRecord[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+/// One staged record (not live) of a MigrationJob. Carries the raw source payload,
+/// a dedup verdict, and — after confirm — the id of the live row it created (so a
+/// 24h undo reverses exactly what it added, and re-runs upsert by external id).
+model MigrationStagingRecord {
+  id              String              @id @default(uuid())
+  tenantId        String
+  jobId           String
+  entityType      ImportEntityType
+  externalId      String?
+  rawPayload      Json
+  status          StagingRecordStatus @default(PENDING)
+  flags           Json                @default("[]") // ["duplicate","unmatched-tax",...]
+  matchedEntityId String? // existing row this duplicates (for linking)
+  createdEntityId String? // live row created on confirm
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  job MigrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, jobId])
+  @@index([jobId, status])
+}

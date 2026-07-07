@@ -23,6 +23,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     "deleteMany",
     "count",
     "aggregate",
+    "groupBy",
     "upsert",
   ];
 
@@ -41,6 +42,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     deleteMany: { count: 0 },
     count: 0,
     aggregate: { _sum: {}, _count: {}, _avg: {} },
+    groupBy: [],
     upsert: {},
   };
 
@@ -113,6 +115,8 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     numberingSequence: modelProxy(),
     importExternalRef: modelProxy(),
     productAlias: modelProxy(),
+    migrationJob: modelProxy(),
+    migrationStagingRecord: modelProxy(),
   });
 
   const txModels = () => ({
@@ -145,6 +149,8 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     numberingSequence: modelProxy(),
     importExternalRef: modelProxy(),
     productAlias: modelProxy(),
+    migrationJob: modelProxy(),
+    migrationStagingRecord: modelProxy(),
     // Raw query support inside transactions
     $executeRaw: jest.fn().mockResolvedValue(0),
     $queryRaw: jest.fn().mockResolvedValue([]),
