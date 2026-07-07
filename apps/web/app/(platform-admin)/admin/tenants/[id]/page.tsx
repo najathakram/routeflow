@@ -51,6 +51,13 @@ interface TenantDetail {
   } | null;
 }
 
+interface AuditActor {
+  id: string;
+  username: string;
+  email: string;
+  isPlatform: boolean;
+}
+
 interface AuditLogEntry {
   id: string;
   action: string;
@@ -59,6 +66,9 @@ interface AuditLogEntry {
   userId: string | null;
   ip: string | null;
   createdAt: string;
+  // Enriched by the API (null for legacy interceptor rows / unresolvable ids).
+  actionLabel?: string | null;
+  actor?: AuditActor | null;
 }
 
 interface Addon {
@@ -651,10 +661,25 @@ function OverviewTab({
               <tbody className="divide-y divide-slate-700/50">
                 {recentLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-700/20">
-                    <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
+                    <td className="px-4 py-2 text-slate-300" title={log.action}>
+                      {log.actionLabel ?? log.action}
+                    </td>
                     <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
-                    <td className="px-4 py-2 font-mono text-slate-500">
-                      {log.userId?.slice(0, 8) ?? "—"}
+                    <td className="px-4 py-2 text-slate-400">
+                      {log.actor ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span>{log.actor.email || log.actor.username}</span>
+                          {log.actor.isPlatform && (
+                            <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+                              platform
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-slate-500">
+                          {log.userId?.slice(0, 8) ?? "—"}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-slate-500">
                       {new Date(log.createdAt).toLocaleString()}
@@ -1269,13 +1294,28 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
             <tbody className="divide-y divide-slate-700/50">
               {logs.map((log) => (
                 <tr key={log.id} className="hover:bg-slate-700/20">
-                  <td className="px-4 py-2 font-mono text-slate-300">{log.action}</td>
+                  <td className="px-4 py-2 text-slate-300" title={log.action}>
+                    {log.actionLabel ?? log.action}
+                  </td>
                   <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
                   <td className="px-4 py-2 font-mono text-slate-500">
                     {log.entityId?.slice(0, 8) ?? "—"}
                   </td>
-                  <td className="px-4 py-2 font-mono text-slate-500">
-                    {log.userId?.slice(0, 8) ?? "—"}
+                  <td className="px-4 py-2 text-slate-400">
+                    {log.actor ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>{log.actor.email || log.actor.username}</span>
+                        {log.actor.isPlatform && (
+                          <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+                            platform
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="font-mono text-slate-500">
+                        {log.userId?.slice(0, 8) ?? "—"}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-slate-500">
                     {new Date(log.createdAt).toLocaleString()}
