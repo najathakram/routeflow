@@ -79,7 +79,7 @@ export class ProductsService {
     }
   }
 
-  async findAll(query: ListProductsDto) {
+  async findAll(query: ListProductsDto, opts?: { excludeTrackedCategoryIds?: string[] }) {
     const page = Number(query.page ?? 1);
     // limit=0 is the internal "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -101,6 +101,12 @@ export class ProductsService {
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;
     if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
+    // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
+    // internally by BuyerCatalogService — never from buyer input). In the query so
+    // pagination counts stay correct.
+    if (opts?.excludeTrackedCategoryIds?.length) {
+      where.trackedCategoryId = { notIn: opts.excludeTrackedCategoryIds };
+    }
 
     // Server-side stock-status filtering so pagination counts are accurate
     if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {

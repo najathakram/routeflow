@@ -112,6 +112,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     regulatedSalesLedger: modelProxy(),
     regulatedFiling: modelProxy(),
     numberingSequence: modelProxy(),
+    buyerFavorite: modelProxy(),
   });
 
   const txModels = () => ({
