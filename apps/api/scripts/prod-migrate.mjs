@@ -1,15 +1,22 @@
 // Apply pending Prisma migrations to the Railway PROD database via the public
 // TCP proxy. Run it with `railway run` so the postgres service's variables are
 // injected into this process's env (avoids the Windows `railway variables --json`
-// TTY bug):
+// TTY bug). Works from ANY cwd — it runs prisma from apps/api itself:
 //
-//   cd apps/api
+//   railway run --service postgres node apps/api/scripts/prod-migrate.mjs   # from repo root
+//   # or, equivalently, from apps/api:
 //   railway run --service postgres node scripts/prod-migrate.mjs
 //
 // It builds a proxy DATABASE_URL (password URL-encoded) from the injected vars,
 // prints `migrate status`, then runs `migrate deploy`. It never prints the
 // password. Safe to delete after use.
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+// Run prisma from apps/api (this script lives in apps/api/scripts) so the schema +
+// prisma.config.ts resolve no matter what CWD the caller invoked us from.
+const apiDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const e = process.env;
 const need = [
@@ -34,7 +41,7 @@ const url =
 const env = { ...e, DATABASE_URL: url };
 console.log(`Target host: ${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}`);
 
-const run = (cmd) => execSync(cmd, { stdio: "inherit", env });
+const run = (cmd) => execSync(cmd, { stdio: "inherit", env, cwd: apiDir });
 
 console.log("\n=== prisma migrate status ===");
 try {

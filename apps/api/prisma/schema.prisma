@@ -271,29 +271,29 @@ enum DisconnectedBy {
 // ─── Tenant Models ────────────────────────────────────────────────────────────
 
 model Tenant {
-  id          String       @id @default(uuid())
-  slug        String       @unique
-  name        String
-  status      TenantStatus @default(TRIAL)
-  plan        TenantPlan   @default(STARTER)
-  trialEndsAt DateTime?
+  id             String       @id @default(uuid())
+  slug           String       @unique
+  name           String
+  status         TenantStatus @default(TRIAL)
+  plan           TenantPlan   @default(STARTER)
+  trialEndsAt    DateTime?
   // Billing plans-as-data: the published PlanVersion this tenant is pinned to
   // (the source of truth for entitlements; the `plan` enum stays a legacy shadow).
   planVersionId  String?
   readOnlyReason String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
-  users        User[]
-  config       TenantConfig?
-  googleOAuth  TenantGoogleOAuth?
-  subscription TenantSubscription?
-  addons       TenantAddon[]
-  planVersion  PlanVersion?  @relation(fields: [planVersionId], references: [id])
-  meterUsages  MeterUsage[]
+  users         User[]
+  config        TenantConfig?
+  googleOAuth   TenantGoogleOAuth?
+  subscription  TenantSubscription?
+  addons        TenantAddon[]
+  planVersion   PlanVersion?        @relation(fields: [planVersionId], references: [id])
+  meterUsages   MeterUsage[]
   billingEvents BillingEvent[]
-  rfInvoices   RfInvoice[]
+  rfInvoices    RfInvoice[]
 
   userPreferences        UserPreference[]
   customers              Customer[]
@@ -414,21 +414,21 @@ model TenantGoogleOAuth {
 }
 
 model TenantSubscription {
-  id                    String     @id @default(uuid())
-  tenantId              String     @unique
+  id                    String       @id @default(uuid())
+  tenantId              String       @unique
   stripeCustomerId      String?
   stripeSubId           String?
-  currentPlan           TenantPlan @default(STARTER)
+  currentPlan           TenantPlan   @default(STARTER)
   periodStart           DateTime?
   periodEnd             DateTime?
-  cancelAtPeriodEnd     Boolean    @default(false)
+  cancelAtPeriodEnd     Boolean      @default(false)
   // Plans-as-data + lifecycle (Plans & Billing). All nullable/defaulted so
   // existing rows are untouched; `planKey`/`planVersionId` are the new source of truth.
   planVersionId         String?
   planKey               String? // STARTER | TEAM | BUSINESS | ENTERPRISE
   cycle                 BillingCycle @default(MONTHLY)
-  basePriceSnapshot     Decimal?   @db.Decimal(10, 2)
-  discount              Decimal    @default(0) @db.Decimal(10, 2)
+  basePriceSnapshot     Decimal?     @db.Decimal(10, 2)
+  discount              Decimal      @default(0) @db.Decimal(10, 2)
   downgradeToPlanKey    String?
   downgradeEffectiveAt  DateTime?
   retainedUserIds       String[]
@@ -436,14 +436,14 @@ model TenantSubscription {
   graceMeter            MeterKey?
   trialConvertedAt      DateTime?
   nextChargeAt          DateTime?
-  failedPaymentCount    Int        @default(0)
+  failedPaymentCount    Int          @default(0)
   // External (non-Stripe) payment tracking
-  externalPayment       Boolean    @default(false)
+  externalPayment       Boolean      @default(false)
   externalPaymentMethod String? // ZELLE | BANK_TRANSFER | CHECK | CASH | WIRE | OTHER
   externalPaymentRef    String? // transaction ID or confirmation number
   externalPaymentNotes  String?
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
   tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   planVersion PlanVersion? @relation(fields: [planVersionId], references: [id])
@@ -2434,22 +2434,28 @@ model TrackedCategory {
 /// One row per customer+category. Two paths to VERIFIED: retailer-submitted
 /// (buyer adds → seller approves) or wholesaler-added (VERIFIED immediately).
 model CustomerAuthorization {
-  id                String              @id @default(uuid())
-  tenantId          String
-  customerId        String
-  trackedCategoryId String
-  status            AuthorizationStatus @default(NONE)
-  source            AuthorizationSource @default(WHOLESALER_ADDED)
-  licenseNumber     String?
-  expiresAt         DateTime?
-  documentKey       String?
+  id                         String              @id @default(uuid())
+  tenantId                   String
+  customerId                 String
+  trackedCategoryId          String
+  status                     AuthorizationStatus @default(NONE)
+  source                     AuthorizationSource @default(WHOLESALER_ADDED)
+  licenseNumber              String?
+  expiresAt                  DateTime?
+  documentKey                String?
   // Actor identity is stored as an immutable point-in-time SNAPSHOT (FK-less id +
   // display name) so the compliance audit survives the operator being deleted.
-  verifiedById      String?
-  verifiedByName    String?
-  verifiedAt        DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  verifiedById               String?
+  verifiedByName             String?
+  verifiedAt                 DateTime?
+  // W7 expiry-notification idempotency (no in-app notification store to dedupe
+  // against): the EXPIRED-flip notice fires once; expiringSoonNotifiedBucket holds
+  // the last-sent warning bucket (30/7/1) so each fires at most once. Both reset to
+  // null on renew()/create() so a re-verified→re-expired row notifies again.
+  expiryNotifiedAt           DateTime?
+  expiringSoonNotifiedBucket Int?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
 
   tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -2461,6 +2467,7 @@ model CustomerAuthorization {
   @@index([trackedCategoryId])
   @@index([status])
   @@index([expiresAt])
+  @@index([status, expiresAt])
 }
 
 /// Seller-side "sold under my responsibility" record when an operator sells a

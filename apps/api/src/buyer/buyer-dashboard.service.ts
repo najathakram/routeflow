@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "../utils/pricing";
 
 @Injectable()
@@ -8,6 +9,7 @@ export class BuyerDashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly visibility: RegulatedVisibilityService,
   ) {}
 
   /**
@@ -24,6 +26,13 @@ export class BuyerDashboardService {
       .forTenant()
       .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
+
+    // W7 gate: hide regulated products the buyer isn't licensed for on every product
+    // surface (featured / new / suggested / frequently-ordered), via the SAME shared
+    // visibility service the catalog uses — so the dashboard can't drift and re-expose
+    // a product the buyer would be blocked from buying at checkout.
+    const { hiddenIds } = await this.visibility.computeGate(customerId, now);
+    const gateWhere = hiddenIds.size > 0 ? { trackedCategoryId: { notIn: [...hiddenIds] } } : {};
 
     // Run all queries in parallel
     const [
@@ -99,14 +108,14 @@ export class BuyerDashboardService {
 
       // New products (last 30 days)
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, createdAt: { gte: thirtyDaysAgo } },
+        where: { isActive: true, createdAt: { gte: thirtyDaysAgo }, ...gateWhere },
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
 
       // Featured products
       this.prisma.forTenant().product.findMany({
-        where: { isActive: true, isFeatured: true },
+        where: { isActive: true, isFeatured: true, ...gateWhere },
         orderBy: { name: "asc" },
         take: 10,
       }),
@@ -149,7 +158,7 @@ export class BuyerDashboardService {
     const freqProducts =
       freqProductIds.length > 0
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: freqProductIds }, isActive: true },
+            where: { id: { in: freqProductIds }, isActive: true, ...gateWhere },
           })
         : [];
     const freqProductMap = new Map(freqProducts.map((p) => [p.id, p]));
@@ -278,6 +287,7 @@ export class BuyerDashboardService {
               isActive: true,
               category: { in: orderedCategories },
               id: { notIn: orderedProductIds },
+              ...gateWhere,
             },
             orderBy: { createdAt: "desc" },
             take: 8,

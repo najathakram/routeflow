@@ -2,6 +2,7 @@ import { Injectable, ConflictException, NotFoundException } from "@nestjs/common
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
+import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "../utils/pricing";
 
 export interface BuyerProduct {
@@ -28,6 +29,7 @@ export class BuyerCatalogService {
     private readonly prisma: PrismaService,
     private readonly productsService: ProductsService,
     private readonly storage: StorageService,
+    private readonly visibility: RegulatedVisibilityService,
   ) {}
 
   /**
@@ -45,14 +47,20 @@ export class BuyerCatalogService {
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
 
+    // W7 gate: hide products in regulated categories the buyer isn't licensed for.
+    const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
+
     // For price sorts, fetch ALL matching products (limit=0) so sorting is global
-    const result = await this.productsService.findAll({
-      search: query.search,
-      category: query.category,
-      isActive: true,
-      page: isPriceSort ? 1 : page,
-      limit: isPriceSort ? 0 : limit,
-    });
+    const result = await this.productsService.findAll(
+      {
+        search: query.search,
+        category: query.category,
+        isActive: true,
+        page: isPriceSort ? 1 : page,
+        limit: isPriceSort ? 0 : limit,
+      },
+      hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : undefined,
+    );
 
     // Load customer's pricing tier
     const customer = await this.prisma
@@ -121,10 +129,11 @@ export class BuyerCatalogService {
           limit,
           totalPages: Math.ceil(total / limit),
         },
+        hiddenCategories: locked,
       };
     }
 
-    return { data: products, meta: result.meta };
+    return { data: products, meta: result.meta, hiddenCategories: locked };
   }
 
   /**
@@ -136,6 +145,13 @@ export class BuyerCatalogService {
     // Buyers must not see inactive/discontinued products
     if (!(product as any).isActive) {
       throw new NotFoundException("Product not found");
+    }
+
+    // W7 gate: a buyer must not deep-link a product in a locked regulated category.
+    const catId = (product as any).trackedCategoryId as string | null;
+    if (catId) {
+      const { hiddenIds } = await this.visibility.computeGate(customerId);
+      if (hiddenIds.has(catId)) throw new NotFoundException("Product not found");
     }
 
     // Resolve buyer pricing
@@ -198,8 +214,14 @@ export class BuyerCatalogService {
       orderBy: { createdAt: "desc" },
     });
 
-    // Filter out inactive products
-    const activeFavorites = favorites.filter((f) => f.product.isActive);
+    // Filter out inactive products + W7-gated regulated products (categories the
+    // buyer isn't licensed for) so favorites never leak a hidden product.
+    const { hiddenIds } = await this.visibility.computeGate(customerId);
+    const activeFavorites = favorites.filter(
+      (f) =>
+        f.product.isActive &&
+        !(f.product.trackedCategoryId && hiddenIds.has(f.product.trackedCategoryId)),
+    );
 
     // Load customer pricing tier + overrides
     const customer = await this.prisma

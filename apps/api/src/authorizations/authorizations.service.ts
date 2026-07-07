@@ -41,6 +41,9 @@ export class AuthorizationsService {
       verifiedById: user.sub,
       verifiedByName: user.username,
       verifiedAt: new Date(),
+      // W7: a fresh verification re-arms the expiry notifications.
+      expiryNotifiedAt: null,
+      expiringSoonNotifiedBucket: null,
     };
     // forTenant() can't inject tenantId into a composite-unique upsert — findFirst + create/update.
     const existing = await this.prisma.forTenant().customerAuthorization.findUnique({
@@ -86,6 +89,8 @@ export class AuthorizationsService {
         verifiedById: user.sub,
         verifiedByName: user.username,
         verifiedAt: new Date(),
+        expiryNotifiedAt: null,
+        expiringSoonNotifiedBucket: null,
       },
     });
     await this.log(user, authId, "approved", { customerId });
@@ -116,7 +121,16 @@ export class AuthorizationsService {
       data: {
         status: "VERIFIED",
         ...(dto.licenseNumber !== undefined ? { licenseNumber: dto.licenseNumber } : {}),
-        ...(dto.expiresAt !== undefined ? { expiresAt: new Date(dto.expiresAt) } : {}),
+        // Re-arm expiry notifications ONLY when the expiry window actually moves —
+        // else a renew that only touches the license number would re-warn the same
+        // 30/7/1 bucket on the next sweep.
+        ...(dto.expiresAt !== undefined
+          ? {
+              expiresAt: new Date(dto.expiresAt),
+              expiryNotifiedAt: null,
+              expiringSoonNotifiedBucket: null,
+            }
+          : {}),
         ...(dto.documentKey !== undefined ? { documentKey: dto.documentKey } : {}),
         verifiedById: user.sub,
         verifiedByName: user.username,

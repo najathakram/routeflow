@@ -25,6 +25,7 @@ import { BuyerAdminService } from "./buyer-admin.service";
 import { BuyerMergeService } from "./buyer-merge.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
+import { RegulatedVisibilityService } from "./regulated-visibility.service";
 
 import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
@@ -69,6 +70,7 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     BuyerMergeService,
     BuyerCatalogService,
     BuyerDashboardService,
+    RegulatedVisibilityService,
     BuyerJwtStrategy,
     BuyerJwtAuthGuard,
     BuyerSellerContextGuard,
