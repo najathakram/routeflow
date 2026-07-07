@@ -87,6 +87,12 @@ export class SettingsBillingController {
     return this.proration.prorationPreview(this.tenantIdOf(user), sku);
   }
 
+  @Get("export")
+  @ApiOperation({ summary: "Export billing data (works while READ_ONLY)" })
+  export(@CurrentUser() user: AuthUser) {
+    return this.subscription.getExport(this.tenantIdOf(user));
+  }
+
   // ─── Mutations (money-moving — TENANT_ADMIN only, not plain OPERATOR) ────────
 
   @Post("subscribe")
