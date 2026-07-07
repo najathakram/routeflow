@@ -1,5 +1,10 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException, ForbiddenException, BadRequestException } from "@nestjs/common";
+import {
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 
@@ -29,6 +34,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -145,6 +151,13 @@ describe("OrdersService", () => {
               unitCost: new Prisma.Decimal(0),
               stockAfter: new Prisma.Decimal(0),
             }),
+          },
+        },
+        {
+          provide: AuthorizationGuardService,
+          useValue: {
+            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
           },
         },
       ],
@@ -355,6 +368,55 @@ describe("OrdersService", () => {
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
+
+  describe("W6 license guard blocks unlicensed regulated sales", () => {
+    const blocked = new ConflictException({
+      code: "REGULATED_AUTH_REQUIRED",
+      blockedCategories: [],
+    });
+
+    it("create is blocked BEFORE the order is persisted", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      (service as any).systemConfig.get.mockImplementation((k: string) =>
+        k === "settings.taxRate" ? "0.1" : null,
+      );
+      (service as any).authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(blocked);
+
+      await expect(
+        service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.order.create).not.toHaveBeenCalled(); // blocked before the stock tx
+    });
+
+    it("updateOrderItems is blocked on a non-draft order before mutating items", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [],
+      });
+      (service as any).authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(blocked);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 1 }] } as any,
+          operatorPayload,
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("changeStatus DRAFT→PENDING promotion is blocked before the transition commits", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "DRAFT" });
+      (service as any).authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(blocked);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "PENDING" as any }, operatorPayload),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+  });
 
   describe("createSale", () => {
     const user = { sub: "op-1", role: UserRole.OPERATOR, tenantId: "test-tenant" } as any;
