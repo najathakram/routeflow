@@ -30,6 +30,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       forcePasswordChange: payload.forcePasswordChange,
       tenantId: payload.tenantId ?? null,
       tenantSlug: payload.tenantSlug ?? null,
+      // Plans & Billing entitlement claims (client renders gates now; the
+      // PlanFlagGuard re-resolves server-side once plan-gating ships).
+      plan: payload.plan ?? null,
+      flags: payload.flags ?? [],
+      addons: payload.addons ?? [],
+      seats: payload.seats ?? null,
+      trialEnds: payload.trialEnds ?? null,
     };
   }
 }

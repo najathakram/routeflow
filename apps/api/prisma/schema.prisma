@@ -22,14 +22,46 @@ enum UserRole {
 enum TenantStatus {
   TRIAL
   ACTIVE
+  READ_ONLY
   SUSPENDED
   CANCELLED
 }
 
 enum TenantPlan {
   STARTER
+  TEAM
+  BUSINESS
   PROFESSIONAL
   ENTERPRISE
+}
+
+// ─── Billing / plans-as-data (Phase: Plans & Billing) ─────────────────────────
+// Plans are versioned reference data (PlanVersion → PlanDefinition + AddonSku);
+// entitlement logic is driven off the string `planKey`, NOT the TenantPlan enum
+// (kept as a legacy shadow). See docs/design-package/project/specs/pricing-plans.md.
+
+enum PlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum MeterKey {
+  SEATS
+  ROUTES
+  SCANS
+  MSGS
+}
+
+enum AddonUnit {
+  FLAT
+  PER_USER
+  PER_ROUTE
 }
 
 enum UserStatus {
@@ -245,6 +277,10 @@ model Tenant {
   status      TenantStatus @default(TRIAL)
   plan        TenantPlan   @default(STARTER)
   trialEndsAt DateTime?
+  // Billing plans-as-data: the published PlanVersion this tenant is pinned to
+  // (the source of truth for entitlements; the `plan` enum stays a legacy shadow).
+  planVersionId  String?
+  readOnlyReason String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   deletedAt   DateTime?
@@ -254,6 +290,10 @@ model Tenant {
   googleOAuth  TenantGoogleOAuth?
   subscription TenantSubscription?
   addons       TenantAddon[]
+  planVersion  PlanVersion?  @relation(fields: [planVersionId], references: [id])
+  meterUsages  MeterUsage[]
+  billingEvents BillingEvent[]
+  rfInvoices   RfInvoice[]
 
   userPreferences        UserPreference[]
   customers              Customer[]
@@ -323,6 +363,7 @@ model Tenant {
   @@index([slug])
   @@index([status])
   @@index([deletedAt])
+  @@index([planVersionId])
 }
 
 model TenantConfig {
@@ -380,6 +421,21 @@ model TenantSubscription {
   periodStart           DateTime?
   periodEnd             DateTime?
   cancelAtPeriodEnd     Boolean    @default(false)
+  // Plans-as-data + lifecycle (Plans & Billing). All nullable/defaulted so
+  // existing rows are untouched; `planKey`/`planVersionId` are the new source of truth.
+  planVersionId         String?
+  planKey               String? // STARTER | TEAM | BUSINESS | ENTERPRISE
+  cycle                 BillingCycle @default(MONTHLY)
+  basePriceSnapshot     Decimal?   @db.Decimal(10, 2)
+  discount              Decimal    @default(0) @db.Decimal(10, 2)
+  downgradeToPlanKey    String?
+  downgradeEffectiveAt  DateTime?
+  retainedUserIds       String[]
+  graceStartedAt        DateTime?
+  graceMeter            MeterKey?
+  trialConvertedAt      DateTime?
+  nextChargeAt          DateTime?
+  failedPaymentCount    Int        @default(0)
   // External (non-Stripe) payment tracking
   externalPayment       Boolean    @default(false)
   externalPaymentMethod String? // ZELLE | BANK_TRANSFER | CHECK | CASH | WIRE | OTHER
@@ -388,13 +444,23 @@ model TenantSubscription {
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planVersion PlanVersion? @relation(fields: [planVersionId], references: [id])
+
+  @@index([planVersionId])
+  @@index([downgradeEffectiveAt])
 }
 
 model TenantAddon {
   id            String   @id @default(uuid())
   tenantId      String
   addonKey      String // e.g. "ai_scanning", "advanced_routes", "api_access"
+  // Plans-as-data bridge: canonical SKU code (SEAT_EXTRA, BUYER_PORTAL, …). The
+  // legacy free-text `addonKey` stays authoritative for existing consumers
+  // (e.g. "tobacco_dealer") and is mapped to `sku="REGULATED_ITEMS"` additively.
+  sku           String?
+  quantity      Int      @default(1) // SEAT_EXTRA per-user, OCR_PACK_250 stacks
+  priceSnapshot Decimal? @db.Decimal(10, 2)
   stripePriceId String? // Stripe price for this add-on
   stripeItemId  String? // Stripe subscription item ID
   active        Boolean  @default(true)
@@ -405,6 +471,121 @@ model TenantAddon {
 
   @@unique([tenantId, addonKey])
   @@index([tenantId])
+  @@index([tenantId, sku])
+}
+
+// ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
+
+model PlanVersion {
+  id          String            @id @default(uuid())
+  version     Int               @unique
+  status      PlanVersionStatus @default(DRAFT)
+  effectiveAt DateTime?
+  publishedAt DateTime?
+  publishedBy String?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  definitions   PlanDefinition[]
+  addonSkus     AddonSku[]
+  tenants       Tenant[]
+  subscriptions TenantSubscription[]
+
+  @@index([status])
+}
+
+model PlanDefinition {
+  id               String   @id @default(uuid())
+  planVersionId    String
+  planKey          String // STARTER | TEAM | BUSINESS | ENTERPRISE
+  name             String
+  monthlyPrice     Decimal? @db.Decimal(10, 2) // null = custom (Enterprise)
+  annualPrice      Decimal? @db.Decimal(10, 2) // = monthlyPrice * 10
+  isCustom         Boolean  @default(false)
+  seatsIncluded    Int? // null = unlimited
+  routesConcurrent Int? // null = unlimited
+  scansIncluded    Int? // null = unlimited (Enterprise)
+  msgsIncluded     Int      @default(200)
+  featureFlags     String[] // subset of the 16 flag keys granted at this plan
+  sortOrder        Int      @default(0)
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([planVersionId, planKey])
+  @@index([planVersionId])
+}
+
+model AddonSku {
+  id              String    @id @default(uuid())
+  planVersionId   String
+  sku             String // SEAT_EXTRA | BUYER_PORTAL | REGULATED_ITEMS | OCR_PACK_250 | FORECASTING | ROUTE_EXTRA | MSG_BUNDLE_500
+  name            String
+  monthlyPrice    Decimal   @db.Decimal(10, 2)
+  unit            AddonUnit @default(FLAT)
+  includedAtPlan  String? // planKey at/above which this addon is bundled free
+  meteredKey      MeterKey? // capacity-adding: OCR_PACK→SCANS, MSG_BUNDLE→MSGS, SEAT_EXTRA→SEATS, ROUTE_EXTRA→ROUTES
+  capacityPerUnit Int? // meter capacity added per active quantity
+  stackable       Boolean   @default(false)
+  grantsFlags     String[] // flag keys this addon grants while active
+  sortOrder       Int       @default(0)
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([planVersionId, sku])
+  @@index([planVersionId])
+}
+
+// ─── Per-tenant metering (tenant-scoped) ──────────────────────────────────────
+
+model MeterUsage {
+  id          String   @id @default(uuid())
+  tenantId    String
+  meter       MeterKey
+  periodStart DateTime // billing-cycle bucket start
+  periodEnd   DateTime
+  used        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, meter, periodStart])
+  @@index([tenantId, meter])
+}
+
+// ─── Billing audit / MRR source of truth (tenant-scoped) ──────────────────────
+
+model BillingEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  type        String // plan.changed | addon.enabled/disabled | seat.added/freed | grace.started/expired | trial.converted/expired
+  payload     Json
+  amountDelta Decimal? @db.Decimal(10, 2) // MRR run-rate delta for reconciliation
+  actorId     String?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([type])
+}
+
+// ─── RouteFlow's own invoices to the tenant (platform billing) ────────────────
+
+model RfInvoice {
+  id       String       @id @default(uuid())
+  tenantId String
+  number   String       @unique // RF-YYYY-NNNN
+  amount   Decimal      @db.Decimal(10, 2)
+  status   String // PAID | OPEN | FAILED
+  cycle    BillingCycle @default(MONTHLY)
+  pdfKey   String?
+  issuedAt DateTime     @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, issuedAt])
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────────

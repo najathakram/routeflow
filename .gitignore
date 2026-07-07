@@ -70,6 +70,8 @@ yarn-error.log*
 # ─── Database backups (may contain real tenant PII — never commit) ──────────
 backups/
 *.sql
+# …but Prisma migrations ARE source, not backups — never let the *.sql rule drop them.
+!apps/api/prisma/migrations/**/*.sql
 
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/
