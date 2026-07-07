@@ -2368,3 +2368,57 @@ enum DocumentNumberType {
   CREDIT_NOTE
   PAYMENT
 }
+
+// ─── Migration & Batch Import (Phase 2: idempotency substrate) ────────────────
+
+/// Generic external-source reference for migrated/imported records (spec §2). A
+/// side table keyed by (source, externalId) so a re-run UPSERTS one local row and
+/// never duplicates — WITHOUT adding columns to off-limits finance models
+/// (Invoice/Payment/CreditNote/VendorBill). External value format: "zoho:inv_884412"
+/// (stored split as externalSource="zoho", externalId="inv_884412"). Pointers are
+/// plain scalars (no FK) so this stays an append-only addition.
+model ImportExternalRef {
+  id             String           @id @default(uuid())
+  tenantId       String
+  entityType     ImportEntityType
+  entityId       String
+  externalSource String
+  externalId     String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([tenantId, externalSource, externalId, entityType])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, entityType])
+}
+
+enum ImportEntityType {
+  CUSTOMER
+  INVOICE
+  PAYMENT
+  PRODUCT
+  SUPPLIER
+  CREDIT_NOTE
+  VENDOR_BILL
+}
+
+/// Learned mapping from a supplier's raw line text to a local product/variant or
+/// expense category (spec §5.3), so the next scan/import auto-matches. Tenant-scoped
+/// unique key fixes the cross-tenant collision in the older global ProductMapping.
+/// `supplierId=""` is the sentinel for "any supplier" (empty string, not NULL, so
+/// the unique constraint actually dedupes any-supplier aliases). Target pointers are
+/// plain scalars (no FK); resolve() verifies the target still exists.
+model ProductAlias {
+  id                String   @id @default(uuid())
+  tenantId          String
+  supplierId        String   @default("")
+  rawText           String
+  productId         String?
+  expenseCategoryId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([tenantId, supplierId, rawText])
+  @@index([tenantId, rawText])
+  @@index([tenantId, supplierId])
+}
