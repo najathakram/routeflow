@@ -254,6 +254,12 @@ export default function BillingPage() {
                   <td className="px-4 py-3 text-slate-400">
                     {s.pastDue ? (
                       <span className="font-medium text-red-400">Overdue</span>
+                    ) : s.cancelAtPeriodEnd ? (
+                      <span className="text-red-400">
+                        {s.periodEnd
+                          ? `ends ${new Date(s.periodEnd).toLocaleDateString()}`
+                          : "ending"}
+                      </span>
                     ) : s.tenantStatus === "TRIAL" ? (
                       <span className="text-slate-500">
                         {s.nextChargeAt

@@ -312,12 +312,12 @@ describe("PlatformAdminService — audit provenance", () => {
 
   describe("getBillingOverview", () => {
     beforeEach(() => {
-      (prisma.tenant as any).groupBy = jest
-        .fn()
-        .mockResolvedValue([{ plan: "PROFESSIONAL", _count: { plan: 1 } }]);
       (prisma as any).tenantSubscription = {
         findMany: jest.fn(),
         count: jest.fn().mockResolvedValue(1),
+        groupBy: jest
+          .fn()
+          .mockResolvedValue([{ currentPlan: "PROFESSIONAL", _count: { currentPlan: 1 } }]),
       };
     });
 
@@ -360,6 +360,10 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(res.estMrr).toBe(118);
       expect(res.pastDue).toEqual({ count: 0, amount: 0 });
       expect(res.meta.total).toBe(1);
+      // Base MRR groupBy excludes cancel-pending subs so the KPI reconciles with rows.
+      expect(
+        (prisma as any).tenantSubscription.groupBy.mock.calls[0][0].where.cancelAtPeriodEnd,
+      ).toBe(false);
     });
 
     it("zeroes MRR for a non-active (trial) subscription row", async () => {

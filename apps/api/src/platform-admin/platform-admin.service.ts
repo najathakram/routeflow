@@ -678,71 +678,94 @@ ${paymentSection}
     const skip = (page - 1) * limit;
     const now = new Date();
 
+    // Only apply the enum filters when valid — an unknown value would make
+    // Prisma throw (500) rather than filter.
+    const validPlan =
+      opts.plan && (Object.values(TenantPlan) as string[]).includes(opts.plan) ? opts.plan : null;
+    const validStatus =
+      opts.status && (Object.values(TenantStatus) as string[]).includes(opts.status)
+        ? opts.status
+        : null;
+
     // Filters apply to the paginated table only; KPIs are global.
     const where: Record<string, unknown> = {};
-    if (opts.plan) where.currentPlan = opts.plan;
-    if (opts.status) where.tenant = { is: { status: opts.status } };
+    if (validPlan) where.currentPlan = validPlan;
+    if (validStatus) where.tenant = { is: { status: validStatus } };
 
-    const [
-      rows,
-      total,
-      activePlanBreakdown,
-      activeAddons,
-      payingTenants,
-      trialTenants,
-      pastDueList,
-    ] = await Promise.all([
-      this.prisma.tenantSubscription.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { updatedAt: "desc" },
-        include: {
-          tenant: {
-            select: {
-              id: true,
-              slug: true,
-              name: true,
-              status: true,
-              plan: true,
-              trialEndsAt: true,
-              addons: { where: { active: true }, select: { addonKey: true } },
+    // "Paying" = an ACTIVE, non-deleted tenant whose subscription is not
+    // scheduled to cancel — the SAME definition the per-row `isActive` uses, so
+    // the KPI headline reconciles with the visible rows.
+    const payingSubWhere = {
+      cancelAtPeriodEnd: false,
+      tenant: { is: { status: TenantStatus.ACTIVE, deletedAt: null } },
+    };
+
+    const [rows, total, basePlanBreakdown, activeAddons, payingTenants, trialTenants, pastDueList] =
+      await Promise.all([
+        this.prisma.tenantSubscription.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { updatedAt: "desc" },
+          include: {
+            tenant: {
+              select: {
+                id: true,
+                slug: true,
+                name: true,
+                status: true,
+                plan: true,
+                trialEndsAt: true,
+                addons: { where: { active: true }, select: { addonKey: true } },
+              },
             },
           },
-        },
-      }),
-      this.prisma.tenantSubscription.count({ where }),
-      // Global MRR base = ACTIVE tenants by plan × stopgap price.
-      this.prisma.tenant.groupBy({
-        by: ["plan"],
-        where: { status: TenantStatus.ACTIVE, deletedAt: null },
-        _count: { plan: true },
-      }),
-      // Global add-on revenue = active add-ons on ACTIVE tenants × stopgap price.
-      this.prisma.tenantAddon.findMany({
-        where: { active: true, tenant: { is: { status: TenantStatus.ACTIVE, deletedAt: null } } },
-        select: { addonKey: true },
-      }),
-      this.prisma.tenant.count({ where: { status: TenantStatus.ACTIVE, deletedAt: null } }),
-      this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
-      // Past-due proxy: ACTIVE, not cancelling, renewal date already elapsed.
-      this.prisma.tenantSubscription.findMany({
-        where: {
-          periodEnd: { lt: now },
-          cancelAtPeriodEnd: false,
-          tenant: { is: { status: TenantStatus.ACTIVE, deletedAt: null } },
-        },
-        select: { currentPlan: true },
-      }),
-    ]);
+        }),
+        this.prisma.tenantSubscription.count({ where }),
+        // Base MRR = paying subscriptions grouped by their currentPlan (the same
+        // field the rows price off) × stopgap price.
+        this.prisma.tenantSubscription.groupBy({
+          by: ["currentPlan"],
+          where: payingSubWhere,
+          _count: { currentPlan: true },
+        }),
+        // Add-on revenue = active add-ons on paying tenants × stopgap price.
+        this.prisma.tenantAddon.findMany({
+          where: {
+            active: true,
+            tenant: {
+              is: {
+                status: TenantStatus.ACTIVE,
+                deletedAt: null,
+                subscription: { is: { cancelAtPeriodEnd: false } },
+              },
+            },
+          },
+          select: { addonKey: true },
+        }),
+        this.prisma.tenantSubscription.count({ where: payingSubWhere }),
+        this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
+        // Past-due proxy: a paying subscription whose renewal date has elapsed.
+        this.prisma.tenantSubscription.findMany({
+          where: { ...payingSubWhere, periodEnd: { lt: now } },
+          select: {
+            currentPlan: true,
+            tenant: { select: { addons: { where: { active: true }, select: { addonKey: true } } } },
+          },
+        }),
+      ]);
 
-    const activePlanCounts = Object.fromEntries(
-      activePlanBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
+    const basePlanCounts = Object.fromEntries(
+      basePlanBreakdown.map(({ currentPlan, _count }) => [currentPlan, _count.currentPlan]),
     );
-    const baseMrr = estimatePlatformMrrUsd(activePlanCounts);
+    const baseMrr = estimatePlatformMrrUsd(basePlanCounts);
     const addonRevenue = addonMonthlyUsd(activeAddons.map((a) => a.addonKey));
+    // "At risk" mirrors MRR (base + add-ons), not base alone.
     const pastDueAmount = pastDueList.reduce(
-      (sum, s) => sum + (STOPGAP_PLAN_MONTHLY_USD[s.currentPlan] ?? 0),
+      (sum, s) =>
+        sum +
+        (STOPGAP_PLAN_MONTHLY_USD[s.currentPlan] ?? 0) +
+        addonMonthlyUsd(s.tenant.addons.map((a) => a.addonKey)),
       0,
     );
 
@@ -762,8 +785,12 @@ ${paymentSection}
         addonMonthly,
         mrr: baseMonthly + addonMonthly,
         periodEnd: s.periodEnd,
-        // Trials "convert" on their trial end; active subs renew on periodEnd.
-        nextChargeAt: t.status === "TRIAL" ? t.trialEndsAt : s.periodEnd,
+        // Trials convert on trial end; a cancel-pending sub won't be charged again.
+        nextChargeAt: s.cancelAtPeriodEnd
+          ? null
+          : t.status === "TRIAL"
+            ? t.trialEndsAt
+            : s.periodEnd,
         cancelAtPeriodEnd: s.cancelAtPeriodEnd,
         pastDue: isActive && s.periodEnd != null && s.periodEnd < now,
         stripeCustomerId: s.stripeCustomerId,
