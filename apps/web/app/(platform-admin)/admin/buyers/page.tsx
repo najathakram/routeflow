@@ -348,8 +348,8 @@ export default function AdminBuyersPage() {
                   <div className="rounded-lg border border-slate-700 p-3">
                     <div className="font-medium text-white">{req.primary.email}</div>
                     <div className="mt-0.5 text-xs text-slate-500">
-                      kept · {plural(req.primary.sellers, "seller")} · {req.primary.orders90d}{" "}
-                      orders
+                      kept · {plural(req.primary.sellers, "seller")} ·{" "}
+                      {plural(req.primary.orders90d, "order")}
                     </div>
                   </div>
                   <ArrowLeft className="mx-auto hidden h-4 w-4 text-slate-500 sm:block" />
@@ -357,7 +357,7 @@ export default function AdminBuyersPage() {
                     <div className="font-medium text-white">{req.secondary.email}</div>
                     <div className="mt-0.5 text-xs text-slate-500">
                       absorbed · {plural(req.secondary.sellers, "seller")} ·{" "}
-                      {req.secondary.orders90d} orders
+                      {plural(req.secondary.orders90d, "order")}
                     </div>
                     {req.initiatorNotes && (
                       <div className="mt-1 text-xs italic text-slate-500">

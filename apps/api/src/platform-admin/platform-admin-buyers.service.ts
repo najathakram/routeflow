@@ -49,7 +49,13 @@ export class PlatformAdminBuyersService {
     // Buyer accounts with more than one ACTIVE seller link (for the Multi-seller chip).
     const multiSellerGroups = await this.prisma.customerLink.groupBy({
       by: ["buyerAccountId"],
-      where: { status: "ACTIVE", buyerAccountId: { not: null } },
+      where: {
+        status: "ACTIVE",
+        buyerAccountId: { not: null },
+        // Match the directory's baseWhere so the chip count agrees with the list
+        // (admin Delete sets the buyer DELETED but leaves its links ACTIVE).
+        buyerAccount: { is: { deletedAt: null, status: { not: "DELETED" } } },
+      },
       _count: { buyerAccountId: true },
       having: { buyerAccountId: { _count: { gt: 1 } } },
     });
@@ -85,6 +91,7 @@ export class PlatformAdminBuyersService {
           createdAt: true,
           customerLinks: {
             where: { status: "ACTIVE" },
+            orderBy: { createdAt: "asc" },
             select: {
               tenantId: true,
               customer: {
@@ -137,6 +144,7 @@ export class PlatformAdminBuyersService {
       name: true,
       customerLinks: {
         where: { status: "ACTIVE" as const },
+        orderBy: { createdAt: "asc" as const },
         select: {
           tenantId: true,
           customer: {

@@ -68,6 +68,11 @@ describe("PlatformAdminBuyersService", () => {
       expect(prisma.buyerAccount.findMany.mock.calls.at(-1)![0].where.id).toEqual({
         in: ["b1", "b2"],
       });
+      // The multi-seller groupBy must exclude deleted buyers so the chip count
+      // matches the (deleted-hidden) list.
+      expect(prisma.customerLink.groupBy.mock.calls.at(-1)![0].where.buyerAccount).toEqual({
+        is: { deletedAt: null, status: { not: "DELETED" } },
+      });
 
       await service.getBuyerDirectory({ segment: "unverified" });
       expect(prisma.buyerAccount.findMany.mock.calls.at(-1)![0].where.emailVerified).toBe(false);
