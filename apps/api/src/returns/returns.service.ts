@@ -16,12 +16,14 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 @Injectable()
 export class ReturnsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
+    private readonly ledger: RegulatedLedgerService,
   ) {}
 
   private generateReturnNumber(): string {
@@ -205,6 +207,19 @@ export class ReturnsService {
       throw new BadRequestException("Only IN_TRANSIT returns can be received");
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // Concurrency guard: atomically CLAIM the IN_TRANSIT→RECEIVED transition
+      // before any restock or ledger reversal. A racing receive() (double-click,
+      // retry, or two operators) matches 0 rows here and aborts, so the goods
+      // can't be double-restocked or double-reversed. Under READ COMMITTED the
+      // second writer re-checks the WHERE after the row lock, so exactly one wins.
+      const claimed = await tx.return.updateMany({
+        where: { id, status: "IN_TRANSIT" },
+        data: { status: "RECEIVED" },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException("Only IN_TRANSIT returns can be received");
+      }
+
       for (const item of ret.items) {
         if (item.restock) {
           // Restock at the current average — leaves the average unchanged but
@@ -232,7 +247,24 @@ export class ReturnsService {
           });
         }
       }
-      return tx.return.update({ where: { id }, data: { status: "RECEIVED" } });
+      // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
+      // idempotent per return). Independent of `restock` — a returned regulated
+      // sale must reverse for tax even if the goods aren't put back in stock.
+      const returnedByProduct = new Map<string, number>();
+      for (const item of ret.items) {
+        returnedByProduct.set(
+          item.productId,
+          (returnedByProduct.get(item.productId) ?? 0) + Number(item.qty),
+        );
+      }
+      await this.ledger.reverseReturnEntries({
+        returnId: ret.id,
+        orderId: ret.orderId,
+        returnedByProduct,
+        db: tx,
+      });
+      // Status already flipped to RECEIVED by the claim above; return the record.
+      return tx.return.findUnique({ where: { id } });
     });
   }
 
@@ -265,6 +297,17 @@ export class ReturnsService {
       throw new BadRequestException("Refunded returns cannot be cancelled");
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // Concurrency guard: claim the →CANCELLED transition atomically so two
+      // concurrent cancels can't both run the stock/ledger undo (double-decrement).
+      // The loser matches 0 rows and aborts. The RECEIVED/PROCESSED undo below is
+      // idempotent-safe under RECEIVED↔PROCESSED staleness (both branches undo).
+      const claimed = await tx.return.updateMany({
+        where: { id, status: { notIn: ["CANCELLED", "REFUNDED"] } },
+        data: { status: "CANCELLED" },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException("Return can no longer be cancelled");
+      }
       // Reverse stock movements if items were already received into stock
       if (ret.status === "RECEIVED" || ret.status === "PROCESSED") {
         const returnRef = `RET-${ret.id.slice(0, 8)}`;
@@ -279,8 +322,12 @@ export class ReturnsService {
             where: { productId: item.productId, reference: returnRef },
           });
         }
+        // W5c: undo the regulated ledger reversal written at receive() (symmetric
+        // to deleting the stock movements above). cancel() blocks REFUNDED returns,
+        // so a finalized reversal is never touched.
+        await this.ledger.unreverseReturnEntries({ returnId: ret.id, db: tx });
       }
-      return tx.return.update({ where: { id }, data: { status: "CANCELLED" } });
+      return tx.return.findUnique({ where: { id } });
     });
   }
 

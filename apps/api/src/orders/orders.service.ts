@@ -37,6 +37,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -50,6 +51,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly invoicesService: InvoicesService,
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
+    private readonly authGuard: AuthorizationGuardService,
   ) {}
 
   /**
@@ -977,6 +979,17 @@ export class OrdersService implements OnApplicationBootstrap {
     const tax = roundMoney(subtotal * (await this.getTaxRate()));
     const total = roundMoney(subtotal + tax - orderDiscount);
 
+    // W6: license guard — a real (non-draft) sale of a license-required category to
+    // a customer without a VERIFIED authorization (or active §8 override) throws a
+    // structured 409 BEFORE the stock transaction, so nothing is half-committed.
+    // Tobacco (requiresLicense=false) is never gated — its warn-only flow is intact.
+    if (!isDraft) {
+      await this.authGuard.assertAuthorizedOrThrow({
+        customerId,
+        lines: lineItemsData.map((li) => ({ trackedCategoryId: li.trackedCategoryId })),
+      });
+    }
+
     // RF-017 + RF-014: create the order inside a transaction so we can
     // (a) hold a pessimistic lock on product rows while checking/decrementing
     //     stock, preventing concurrent oversell, and
@@ -1248,6 +1261,33 @@ export class OrdersService implements OnApplicationBootstrap {
       ? `\n[${new Date().toLocaleDateString()} – status changed to ${dto.status}: ${dto.reason}]`
       : undefined;
 
+    // W6: promoting a DRAFT into a live order is when it becomes a real sale, so
+    // re-run the license guard (drafts are created/edited without it — that's the
+    // "draft escape"). Categories resolve from each line's snapshot or its product.
+    if (order.status === "DRAFT" && dto.status !== OrderStatus.CANCELLED) {
+      const items = await this.prisma.forTenant().orderItem.findMany({
+        where: { orderId: id, status: { not: "CANCELLED" } },
+        select: { productId: true, trackedCategoryId: true },
+      });
+      const pids = items.map((li) => li.productId).filter(Boolean) as string[];
+      const products = pids.length
+        ? await this.prisma.forTenant().product.findMany({
+            where: { id: { in: pids } },
+            select: { id: true, trackedCategoryId: true },
+          })
+        : [];
+      const catByProduct = new Map(products.map((p) => [p.id, p.trackedCategoryId]));
+      await this.authGuard.assertAuthorizedOrThrow({
+        customerId: order.customerId,
+        lines: items.map((li) => ({
+          trackedCategoryId:
+            li.trackedCategoryId ??
+            (li.productId ? (catByProduct.get(li.productId) ?? null) : null),
+        })),
+        orderId: id,
+      });
+    }
+
     const updated = await this.prisma.forTenant().order.update({
       where: { id },
       data: {
@@ -1374,6 +1414,30 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new BadRequestException(
         "Items can only be edited on DRAFT, PENDING, or CONFIRMED orders",
       );
+    }
+
+    // W6: license guard on edits. A regulated line added on edit (or via a buyer
+    // merge into an existing order) must be authorized just like at create — else
+    // it's a bypass. Non-draft only (a draft edit isn't a sale yet). Run BEFORE any
+    // mutation so a block can't leave a half-edited order. Categories resolve from
+    // the incoming products (edited lines carry no snapshot; invoicing categorizes
+    // via the product too). orderId is passed so ORDER-scoped §8 overrides apply.
+    if (order.status !== "DRAFT") {
+      const pids = (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[];
+      const products = pids.length
+        ? await this.prisma.forTenant().product.findMany({
+            where: { id: { in: pids } },
+            select: { id: true, trackedCategoryId: true },
+          })
+        : [];
+      const catByProduct = new Map(products.map((p) => [p.id, p.trackedCategoryId]));
+      await this.authGuard.assertAuthorizedOrThrow({
+        customerId: order.customerId,
+        lines: (dto.items ?? []).map((i) => ({
+          trackedCategoryId: i.productId ? (catByProduct.get(i.productId) ?? null) : null,
+        })),
+        orderId,
+      });
     }
 
     // Customer/Driver path: replace items by productId

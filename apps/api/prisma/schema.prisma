@@ -359,6 +359,7 @@ model Tenant {
   customerAuthorizations CustomerAuthorization[]
   authorizationOverrides AuthorizationOverride[]
   regulatedSalesLedger   RegulatedSalesLedger[]
+  regulatedFilings       RegulatedFiling[]
 
   @@index([slug])
   @@index([status])
@@ -2385,6 +2386,13 @@ enum LedgerEntryType {
   REVERSAL
 }
 
+/// A regulated filing is either successfully GENERATED (artifacts stored) or a
+/// FAILED attempt (recorded so the tenant still sees it in their filing list).
+enum RegulatedFilingStatus {
+  GENERATED
+  FAILED
+}
+
 /// A tenant-defined class of items handled separately for sales/tax/reporting
 /// (tobacco, alcohol, CRV deposits, city sugar taxes…). Deactivation
 /// (active=false) keeps historic sales/ledger data intact.
@@ -2415,6 +2423,7 @@ model TrackedCategory {
   authorizations CustomerAuthorization[]
   overrides      AuthorizationOverride[]
   ledgerEntries  RegulatedSalesLedger[]
+  filings        RegulatedFiling[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -2497,6 +2506,7 @@ model RegulatedSalesLedger {
   invoiceId         String?
   invoiceItemId     String?
   creditNoteId      String?
+  returnId          String? // W5c: set on return-driven REVERSAL rows (idempotency key)
   qty               Decimal         @db.Decimal(12, 3)
   unitBasisQty      Decimal         @default(0) @db.Decimal(12, 3) // qty expressed in the category's unitBasis
   netSales          Decimal         @default(0) @db.Decimal(12, 2)
@@ -2515,6 +2525,45 @@ model RegulatedSalesLedger {
   @@index([invoiceItemId])
   @@index([orderItemId])
   @@index([creditNoteId])
+  @@index([returnId])
+}
+
+/// A prepared regulatory filing for one category + period (the generic superset
+/// of TobaccoReport). Computed from the RegulatedSalesLedger's pre-signed nets,
+/// so a reversal-heavy period legitimately nets down. Keyed by a single
+/// `periodKey` string so MONTHLY / QUARTERLY / ANNUAL cadences share one column.
+model RegulatedFiling {
+  id                String                @id @default(uuid())
+  tenantId          String
+  trackedCategoryId String
+  reportTemplate    String // snapshot of category.reportTemplate at prepare time
+  cadence           ReportCadence         @default(MONTHLY) // snapshot of category.reportCadence
+  periodKey         String // "YYYY-MM" | "YYYY-Qn" | "YYYY"
+  periodStart       DateTime // UTC inclusive start
+  periodEnd         DateTime // UTC EXCLUSIVE end (half-open, matches period.ts)
+  status            RegulatedFilingStatus @default(GENERATED)
+  // Denormalized signed net totals (the pre-signed ledger already nets).
+  totalQty          Decimal               @default(0) @db.Decimal(12, 3)
+  totalUnitBasisQty Decimal               @default(0) @db.Decimal(12, 3)
+  totalNetSales     Decimal               @default(0) @db.Decimal(12, 2)
+  totalCategoryTax  Decimal               @default(0) @db.Decimal(12, 2)
+  rows              Json // per-(category, periodBucket) snapshot, drives the CSV
+  csvKey            String?
+  pdfKey            String? // reserved; W5b ships CSV only
+  generatedAt       DateTime              @default(now())
+  generatedById     String? // null = cron/system
+  generationCount   Int                   @default(1)
+  errorMessage      String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, trackedCategoryId, periodKey])
+  @@index([tenantId])
+  @@index([tenantId, trackedCategoryId])
+  @@index([trackedCategoryId])
 }
 
 // ─── Migration & Batch Import (Phase 1: numbering continuity) ─────────────────
