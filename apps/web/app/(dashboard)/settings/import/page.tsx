@@ -544,7 +544,7 @@ function FinishSetupRow({ product }: { product: IncompleteProduct }) {
     const p = parseFloat(price);
     if (Number.isFinite(p)) data.pricePerUnit = p;
     const u = parseInt(unitsPerBox, 10);
-    if (Number.isFinite(u)) data.unitsPerBox = u;
+    if (Number.isFinite(u) && u >= 1) data.unitsPerBox = u;
     setSaving(true);
     completeSetup.mutate(
       { id: product.id, data },

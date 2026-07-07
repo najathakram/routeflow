@@ -56,17 +56,21 @@ export default function BatchImportPage() {
         id = b.id;
         setBatchId(id);
       }
+      let ok = 0;
+      let failed = 0;
       for (const file of Array.from(files)) {
         try {
           await scanFile.mutateAsync({ batchId: id, file });
+          ok++;
         } catch {
-          /* per-file failures are recorded on the item; keep going */
+          failed++; // per-file failure is recorded as a FAILED queue item; keep going
         }
       }
       toast({
-        title: "Files processed",
-        description: `${files.length} scanned`,
-        variant: "success",
+        title: failed === 0 ? `${ok} scanned` : `${ok} scanned, ${failed} failed`,
+        description:
+          failed === 0 ? "Review and post the clean ones" : "Failed files are kept in the queue",
+        variant: failed === 0 ? "success" : ok === 0 ? "error" : "warning",
       });
     } finally {
       setUploading(false);
@@ -193,7 +197,7 @@ export default function BatchImportPage() {
                   key={item.id}
                   item={item}
                   onResolve={() => resolveItem.mutate({ batchId: batchId!, itemId: item.id })}
-                  resolving={resolveItem.isPending}
+                  resolving={resolveItem.isPending && resolveItem.variables?.itemId === item.id}
                 />
               ))
             )}

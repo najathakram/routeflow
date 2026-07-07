@@ -2,10 +2,9 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { ImportEntityType, MigrationSource, StagingRecordStatus } from "@prisma/client";
+import { ImportEntityType, MigrationSource, Prisma, StagingRecordStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ExternalRefService } from "./external-ref.service";
@@ -13,6 +12,24 @@ import { DuplicateMatchService } from "./duplicate-match.service";
 import { StagedRow } from "./connectors/source-connectors";
 
 const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Safely coerce an unknown JSON value to a string (objects/arrays → ""). */
+function str(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  return "";
+}
+/** Coerce to a non-empty string, or undefined. */
+function optStr(v: unknown): string | undefined {
+  const s = str(v);
+  return s.length > 0 ? s : undefined;
+}
+/** Coerce to a finite number, or undefined. */
+function optNum(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 /**
  * Two-phase migration (spec §3): fetch/parse a source into a STAGING area
@@ -25,8 +42,6 @@ const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
  */
 @Injectable()
 export class MigrationService {
-  private readonly logger = new Logger(MigrationService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly products: ProductsService,
@@ -192,22 +207,36 @@ export class MigrationService {
       where: { jobId, status: "COMMITTED", createdEntityId: { not: null } },
     });
 
-    let reversed = 0;
-    for (const rec of committed) {
-      await this.deleteCreated(
-        rec.entityType,
-        rec.createdEntityId as string,
-        job.source.toLowerCase(),
-      );
-      await this.prisma.forTenant().migrationStagingRecord.update({
-        where: { id: rec.id },
-        data: { status: "REVERSED" },
+    // Atomic: either the whole migration reverses or nothing changes. A row that
+    // can't be deleted (e.g. a migrated product already used on an order) rolls the
+    // undo back with a clear error rather than leaving a half-reversed, stuck job.
+    const reversed = await this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
+      let n = 0;
+      for (const rec of committed) {
+        const id = rec.createdEntityId as string;
+        try {
+          if (rec.entityType === "PRODUCT") await tx.product.delete({ where: { id } });
+          else if (rec.entityType === "SUPPLIER") await tx.supplier.delete({ where: { id } });
+        } catch {
+          throw new ConflictException(
+            `Cannot undo: a migrated ${rec.entityType.toLowerCase()} is already in use. Nothing was reversed.`,
+          );
+        }
+        // Drop the external ref so a fresh re-migration re-creates the row.
+        await tx.importExternalRef.deleteMany({
+          where: { entityType: rec.entityType, entityId: id },
+        });
+        await tx.migrationStagingRecord.update({
+          where: { id: rec.id },
+          data: { status: "REVERSED" },
+        });
+        n++;
+      }
+      await tx.migrationJob.update({
+        where: { id: jobId },
+        data: { status: "UNDONE", undoneAt: new Date() },
       });
-      reversed++;
-    }
-    await this.prisma.forTenant().migrationJob.update({
-      where: { id: jobId },
-      data: { status: "UNDONE", undoneAt: new Date() },
+      return n;
     });
     return { reversed };
   }
@@ -222,13 +251,13 @@ export class MigrationService {
     switch (entityType) {
       case "PRODUCT": {
         const created = await this.products.create({
-          name: String(payload.name ?? ""),
-          sku: payload.sku ? String(payload.sku) : undefined,
-          unit: payload.unit ? String(payload.unit) : "each",
-          pricePerUnit: String(payload.pricePerUnit ?? payload.price ?? "0"),
-          barcode: payload.barcode ? String(payload.barcode) : undefined,
-          category: payload.category ? String(payload.category) : undefined,
-          unitsPerBox: payload.unitsPerBox != null ? Number(payload.unitsPerBox) : undefined,
+          name: str(payload.name),
+          sku: optStr(payload.sku),
+          unit: str(payload.unit) || "each",
+          pricePerUnit: str(payload.pricePerUnit ?? payload.price) || "0",
+          barcode: optStr(payload.barcode),
+          category: optStr(payload.category),
+          unitsPerBox: optNum(payload.unitsPerBox),
         });
         return created.id;
       }
@@ -236,10 +265,10 @@ export class MigrationService {
         const created = await this.prisma.forTenant().supplier.create({
           data: {
             tenantId: this.requireTenant(),
-            name: String(payload.name ?? ""),
-            contactName: payload.contactName ? String(payload.contactName) : undefined,
-            email: payload.email ? String(payload.email) : undefined,
-            phone: payload.phone ? String(payload.phone) : undefined,
+            name: str(payload.name),
+            contactName: optStr(payload.contactName),
+            email: optStr(payload.email),
+            phone: optStr(payload.phone),
           },
         });
         return created.id;
@@ -248,20 +277,6 @@ export class MigrationService {
         // CUSTOMER / INVOICE / PAYMENT commit reuses the existing CSV importers.
         return null;
     }
-  }
-
-  private async deleteCreated(entityType: ImportEntityType, id: string, sourceKey: string) {
-    if (entityType === "PRODUCT") {
-      await this.prisma.forTenant().product.deleteMany({ where: { id } });
-    } else if (entityType === "SUPPLIER") {
-      await this.prisma.forTenant().supplier.deleteMany({ where: { id } });
-    }
-    // Drop the external ref so a re-migration re-creates the row rather than
-    // "upsert"-ing onto a now-deleted id.
-    await this.prisma.forTenant().importExternalRef.deleteMany({
-      where: { entityType, entityId: id },
-    });
-    this.logger.debug(`Reversed ${entityType} ${id} (source ${sourceKey}).`);
   }
 
   private async recomputeScope(jobId: string) {

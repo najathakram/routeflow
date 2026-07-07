@@ -119,7 +119,7 @@ describe("MigrationService", () => {
         { id: "r1", entityType: "PRODUCT", createdEntityId: "p1" },
       ]);
       const res = await service.undoJob("j1");
-      expect(prisma.product.deleteMany).toHaveBeenCalledWith({ where: { id: "p1" } });
+      expect(prisma.product.delete).toHaveBeenCalledWith({ where: { id: "p1" } });
       expect(prisma.importExternalRef.deleteMany).toHaveBeenCalledWith({
         where: { entityType: "PRODUCT", entityId: "p1" },
       });

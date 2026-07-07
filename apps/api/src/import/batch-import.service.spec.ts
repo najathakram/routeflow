@@ -39,12 +39,15 @@ describe("BatchImportService", () => {
     service.scanAndRecord("b1", files, "inv.pdf");
 
   describe("scanAndRecord classification", () => {
-    it("marks CLEAN when every line matched and confidence is high", async () => {
+    it("marks CLEAN when every line is matched at high confidence", async () => {
       vendorBills.scanInvoice.mockResolvedValue({
         invoiceNumber: "VB-1",
+        invoiceDate: "2026-07-01",
         total: 100,
-        confidence: 0.9,
-        lines: [{ productId: "p1" }, { productId: "p2" }],
+        items: [
+          { matchedProductId: "p1", confidence: "high" },
+          { matchedProductId: "p2", confidence: "high" },
+        ],
       });
       await scan();
       expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
@@ -55,9 +58,12 @@ describe("BatchImportService", () => {
     it("marks NEEDS_REVIEW when a line is unmatched", async () => {
       vendorBills.scanInvoice.mockResolvedValue({
         invoiceNumber: "VB-2",
+        invoiceDate: "2026-07-01",
         total: 50,
-        confidence: 0.95,
-        lines: [{ productId: "p1" }, { productId: null }],
+        items: [
+          { matchedProductId: "p1", confidence: "high" },
+          { matchedProductId: null, confidence: "none" },
+        ],
       });
       await scan();
       expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
@@ -67,12 +73,26 @@ describe("BatchImportService", () => {
       );
     });
 
+    it("marks NEEDS_REVIEW when a matched line is only low-confidence", async () => {
+      vendorBills.scanInvoice.mockResolvedValue({
+        invoiceNumber: "VB-2b",
+        invoiceDate: "2026-07-01",
+        total: 20,
+        items: [{ matchedProductId: "p1", confidence: "low" }],
+      });
+      await scan();
+      expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "NEEDS_REVIEW" }) }),
+      );
+    });
+
     it("marks DUPLICATE and links the matched invoice", async () => {
       dupMatch.findInvoiceDuplicate.mockResolvedValue({ id: "dup1", invoiceNumber: "VB-3" });
       vendorBills.scanInvoice.mockResolvedValue({
         invoiceNumber: "VB-3",
+        invoiceDate: "2026-07-01",
         total: 75,
-        lines: [{ productId: "p1" }],
+        items: [{ matchedProductId: "p1", confidence: "high" }],
       });
       await scan();
       expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
@@ -100,12 +120,17 @@ describe("BatchImportService", () => {
           supplierMatchId: "s1",
           invoiceNumber: "VB-1",
           total: "100.00",
-          extractedPayload: { lines: [{ productId: "p1" }] },
+          extractedPayload: {
+            items: [{ matchedProductId: "p1", extractedName: "Widget", qty: 2, unitCost: 5 }],
+          },
         },
       ]);
       const res = await service.postBatch("b1", "user-1");
       expect(vendorBills.create).toHaveBeenCalledWith(
-        expect.objectContaining({ requireSupplier: false, billNumber: "VB-1" }),
+        expect.objectContaining({
+          requireSupplier: false,
+          items: [expect.objectContaining({ productId: "p1", qty: 2, unitCost: 5 })],
+        }),
       );
       expect(vendorBills.receive).toHaveBeenCalledWith(
         "bill1",

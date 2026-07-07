@@ -51,6 +51,24 @@ export function useCreateMigrationJob() {
   });
 }
 
+export interface StageRow {
+  entityType: string;
+  externalId?: string;
+  payload: Record<string, unknown>;
+}
+
+export function useStageRecords() {
+  const qc = useQueryClient();
+  return useMutation<MigrationJobDetail, Error, { id: string; rows: StageRow[] }>({
+    mutationFn: ({ id, rows }) =>
+      apiClient.post(`/import/migration/${id}/stage`, { rows }).then((r) => r.data),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: [...KEY, id] });
+    },
+  });
+}
+
 export function useConfirmMigration() {
   const qc = useQueryClient();
   return useMutation<

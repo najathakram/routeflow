@@ -4,16 +4,55 @@ import React from "react";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { cn } from "@routeflow/ui/web";
-import { Database, FileText, Camera, Shield, Check, Undo2, ArrowRight } from "lucide-react";
+import { Database, FileText, Camera, Shield, Check, Undo2, ArrowRight, Upload } from "lucide-react";
 import {
   useMigrationJobs,
   useMigrationJob,
   useCreateMigrationJob,
+  useStageRecords,
   useConfirmMigration,
   useUndoMigration,
   type MigrationSource,
   type MigrationJob,
+  type StageRow,
 } from "@/lib/api/migration";
+
+/**
+ * Minimal products-CSV parser for the staging step. Expects a header row with
+ * name / sku / price / unit / category columns (case-insensitive). Naive comma
+ * split — a robust parser (quoted fields) is a follow-up; adequate for v1 catalog.
+ */
+function parseProductsCsv(text: string): StageRow[] {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ""));
+  const col = (name: string) => header.indexOf(name);
+  const iName = col("name");
+  const iSku = col("sku");
+  const iPrice = col("price") >= 0 ? col("price") : col("priceperunit");
+  const iUnit = col("unit");
+  const iCat = col("category");
+  const cell = (cols: string[], i: number) =>
+    i >= 0 ? cols[i]?.trim().replace(/^"|"$/g, "") : undefined;
+  return lines
+    .slice(1)
+    .map((line): StageRow => {
+      const cols = line.split(",");
+      const sku = cell(cols, iSku);
+      return {
+        entityType: "PRODUCT",
+        externalId: sku || undefined,
+        payload: {
+          name: cell(cols, iName),
+          sku,
+          pricePerUnit: cell(cols, iPrice),
+          unit: cell(cols, iUnit),
+          category: cell(cols, iCat),
+        },
+      };
+    })
+    .filter((r) => !!r.payload.name);
+}
 
 const SOURCES: {
   key: MigrationSource;
@@ -80,11 +119,44 @@ export default function MigrationHubPage() {
   const [source, setSource] = React.useState<MigrationSource>("CSV");
   const [activeJobId, setActiveJobId] = React.useState<string | undefined>();
 
+  const stageInputRef = React.useRef<HTMLInputElement>(null);
   const jobs = useMigrationJobs();
   const activeJob = useMigrationJob(activeJobId);
   const createJob = useCreateMigrationJob();
+  const stage = useStageRecords();
   const confirm = useConfirmMigration();
   const undo = useUndoMigration();
+
+  const stageCsv = async (file: File | undefined) => {
+    if (!file || !activeJobId) return;
+    const rows = parseProductsCsv(await file.text());
+    if (!rows.length) {
+      toast({
+        title: "No rows found",
+        description: "Expected a header with a name column",
+        variant: "error",
+      });
+      return;
+    }
+    stage.mutate(
+      { id: activeJobId, rows },
+      {
+        onSuccess: () =>
+          toast({
+            title: `Staged ${rows.length} products`,
+            description: "Review, then confirm",
+            variant: "success",
+          }),
+        onError: (e: any) =>
+          toast({
+            title: "Staging failed",
+            description: e?.response?.data?.message ?? e.message,
+            variant: "error",
+          }),
+      },
+    );
+    if (stageInputRef.current) stageInputRef.current.value = "";
+  };
 
   const start = () => {
     createJob.mutate(
@@ -229,11 +301,28 @@ export default function MigrationHubPage() {
                   linked.
                 </p>
               )}
+              {(detail.job.status === "FETCHING" || detail.job.status === "STAGED") && (
+                <button
+                  onClick={() => stageInputRef.current?.click()}
+                  disabled={stage.isPending}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-surface-border py-2 text-sm font-medium text-navy hover:bg-surface-raised disabled:opacity-40"
+                >
+                  <Upload className="h-4 w-4" />
+                  {stage.isPending ? "Staging…" : "Add products (CSV)"}
+                </button>
+              )}
+              <input
+                ref={stageInputRef}
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => stageCsv(e.target.files?.[0])}
+              />
               {detail.job.status === "STAGED" && (
                 <button
                   onClick={() => doConfirm(detail.job.id)}
                   disabled={confirm.isPending}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-success py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-success py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
                 >
                   <Check className="h-4 w-4" />
                   {confirm.isPending ? "Confirming…" : "Confirm — make it live"}

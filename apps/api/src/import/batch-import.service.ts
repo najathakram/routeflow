@@ -4,23 +4,30 @@ import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 
-/** Confidence at/above which a fully-matched scan is auto-CLEAN. */
-const CLEAN_CONFIDENCE = 0.7;
-
-/** Loosely-typed shape of the vendor-bills scan result we consume. */
-interface ExtractedInvoice {
-  supplierName?: string;
-  supplierId?: string;
-  invoiceNumber?: string;
-  billNumber?: string;
-  total?: number | string;
-  totalOwed?: number | string;
-  date?: string;
-  billDate?: string;
-  confidence?: number;
-  lines?: Array<{ productId?: string | null; matchedProductId?: string | null }>;
-  items?: Array<{ productId?: string | null; matchedProductId?: string | null }>;
+/** The actual shape vendor-bills.scanInvoice returns (see its prompt schema + line matcher). */
+type ScanConfidence = "high" | "medium" | "low" | "none";
+interface ScanLine {
+  extractedName?: string;
+  qty?: number;
+  unitCost?: number;
+  lineTotal?: number | null;
+  matchedProductId?: string | null;
+  matchedProductName?: string | null;
+  confidence?: ScanConfidence;
 }
+interface ExtractedInvoice {
+  supplier?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  subtotal?: number | null;
+  tax?: number | null;
+  total?: number | null;
+  items?: ScanLine[];
+  notes?: string | null;
+}
+
+/** Numeric confidence per line, to store a representative (worst-case) value. */
+const CONF_SCORE: Record<ScanConfidence, number> = { high: 1, medium: 0.66, low: 0.33, none: 0 };
 
 /**
  * Batch invoice import (spec §4): upload many files, process them into a queue
@@ -92,15 +99,20 @@ export class BatchImportService {
 
   /** Classify an extracted scan into CLEAN / NEEDS_REVIEW / DUPLICATE and persist. */
   private async classifyAndPersist(itemId: string, batchId: string, extracted: ExtractedInvoice) {
-    const invoiceNumber = extracted.invoiceNumber ?? extracted.billNumber ?? null;
-    const total = Number(extracted.total ?? extracted.totalOwed ?? 0);
-    const issueDate =
-      (extracted.date ?? extracted.billDate)
-        ? new Date(extracted.date ?? extracted.billDate!)
-        : new Date();
-    const lines = extracted.lines ?? extracted.items ?? [];
-    const unmatched = lines.filter((l) => !l.productId && !l.matchedProductId).length;
-    const confidence = extracted.confidence ?? null;
+    const invoiceNumber = extracted.invoiceNumber ?? null;
+    const total = Number(extracted.total ?? 0);
+    const issueDate = extracted.invoiceDate ? new Date(extracted.invoiceDate) : new Date();
+    const lines = extracted.items ?? [];
+
+    // A line is unmatched if the scanner found no product for it (confidence "none").
+    const unmatched = lines.filter((l) => !l.matchedProductId).length;
+    // Only auto-CLEAN when every matched line is a HIGH-confidence match; any
+    // weaker (medium/low) match on a line is a "low-confidence" flag for review.
+    const matched = lines.filter((l) => l.matchedProductId);
+    const lowConfidence = matched.some((l) => (l.confidence ?? "none") !== "high");
+    const overallConfidence = matched.length
+      ? Math.min(...matched.map((l) => CONF_SCORE[l.confidence ?? "none"]))
+      : null;
 
     const dup = await this.dupMatch.findInvoiceDuplicate({
       number: invoiceNumber,
@@ -111,7 +123,7 @@ export class BatchImportService {
     let status: ImportFileStatus;
     if (dup) {
       status = "DUPLICATE";
-    } else if (unmatched === 0 && (confidence == null || confidence >= CLEAN_CONFIDENCE)) {
+    } else if (unmatched === 0 && !lowConfidence) {
       status = "CLEAN";
     } else {
       status = "NEEDS_REVIEW";
@@ -122,12 +134,11 @@ export class BatchImportService {
       data: {
         status,
         extractedPayload: extracted as object,
-        supplierName: extracted.supplierName ?? null,
-        supplierMatchId: extracted.supplierId ?? null,
+        supplierName: extracted.supplier ?? null,
         invoiceNumber,
         total: total.toFixed(2),
         unmatchedLines: unmatched,
-        confidence: confidence != null ? confidence.toFixed(4) : null,
+        confidence: overallConfidence != null ? overallConfidence.toFixed(4) : null,
         duplicateOfInvoiceId: dup?.id ?? null,
       },
     });
@@ -181,15 +192,24 @@ export class BatchImportService {
     let posted = 0;
     for (const item of clean) {
       const payload = (item.extractedPayload ?? {}) as ExtractedInvoice;
-      const rawLines = payload.lines ?? payload.items ?? [];
+      // Map scan lines to the vendor-bill item shape: the scanner emits the
+      // resolved product under `matchedProductId`, which create() expects as
+      // `productId` (so receive() updates stock + costing).
+      const billItems = (payload.items ?? []).map((l) => ({
+        productId: l.matchedProductId ?? null,
+        name: l.extractedName,
+        description: l.extractedName,
+        qty: l.qty,
+        unitCost: l.unitCost,
+      }));
+      const supplierInv = item.invoiceNumber ? ` · supplier inv ${item.invoiceNumber}` : "";
       const bill = await this.vendorBills.create({
         requireSupplier: false,
         supplierId: item.supplierMatchId ?? undefined,
-        billNumber: item.invoiceNumber ?? undefined,
         totalOwed: item.total != null ? Number(item.total) : undefined,
         billDate: new Date(),
-        items: rawLines,
-        notes: "Batch import",
+        items: billItems,
+        notes: `Batch import${supplierInv}`,
       });
       const billId = (bill as { id: string }).id;
       await this.vendorBills.receive(billId, { acknowledgeUnlinked: true }, performedById);
