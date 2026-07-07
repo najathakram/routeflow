@@ -835,6 +835,10 @@ model Product {
   // Phase 4: going-forward regulated-category pointer (one max per product);
   // supersedes `isTobacco`, which is kept as a shadow column for one release.
   trackedCategoryId String?
+  // Migration & Batch Import (Phase 3): a brand-new product created from a scanned
+  // invoice line with only name+SKU+cost is flagged incomplete until price/units
+  // are confirmed. Surfaced under a "Finish setup" filter on the import surface.
+  detailsIncomplete Boolean       @default(false)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
   tenantId          String?
@@ -878,6 +882,7 @@ model Product {
   @@index([tenantId])
   @@index([tenantId, isTobacco])
   @@index([tenantId, trackedCategoryId])
+  @@index([tenantId, detailsIncomplete])
 }
 
 model Route {
@@ -2604,4 +2609,202 @@ enum DocumentNumberType {
   ESTIMATE
   CREDIT_NOTE
   PAYMENT
+}
+
+// ─── Migration & Batch Import (Phase 2: idempotency substrate) ────────────────
+
+/// Generic external-source reference for migrated/imported records (spec §2). A
+/// side table keyed by (source, externalId) so a re-run UPSERTS one local row and
+/// never duplicates — WITHOUT adding columns to off-limits finance models
+/// (Invoice/Payment/CreditNote/VendorBill). External value format: "zoho:inv_884412"
+/// (stored split as externalSource="zoho", externalId="inv_884412"). Pointers are
+/// plain scalars (no FK) so this stays an append-only addition.
+model ImportExternalRef {
+  id             String           @id @default(uuid())
+  tenantId       String
+  entityType     ImportEntityType
+  entityId       String
+  externalSource String
+  externalId     String
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([tenantId, externalSource, externalId, entityType])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, entityType])
+}
+
+enum ImportEntityType {
+  CUSTOMER
+  INVOICE
+  PAYMENT
+  PRODUCT
+  SUPPLIER
+  CREDIT_NOTE
+  VENDOR_BILL
+}
+
+/// Learned mapping from a supplier's raw line text to a local product/variant or
+/// expense category (spec §5.3), so the next scan/import auto-matches. Tenant-scoped
+/// unique key fixes the cross-tenant collision in the older global ProductMapping.
+/// `supplierId=""` is the sentinel for "any supplier" (empty string, not NULL, so
+/// the unique constraint actually dedupes any-supplier aliases). Target pointers are
+/// plain scalars (no FK); resolve() verifies the target still exists.
+model ProductAlias {
+  id                String   @id @default(uuid())
+  tenantId          String
+  supplierId        String   @default("")
+  rawText           String
+  productId         String?
+  expenseCategoryId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([tenantId, supplierId, rawText])
+  @@index([tenantId, rawText])
+  @@index([tenantId, supplierId])
+}
+
+// ─── Migration & Batch Import (Phase 4: migration staging + jobs + 24h undo) ──
+
+enum MigrationSource {
+  ZOHO
+  QUICKBOOKS
+  CSV
+  PAPER
+}
+
+enum MigrationJobStatus {
+  FETCHING
+  STAGED
+  CONFIRMED
+  UNDONE
+  FAILED
+}
+
+enum StagingRecordStatus {
+  PENDING // staged, awaiting confirm
+  DUPLICATE // matched an existing record; skipped on confirm, linked
+  COMMITTED // written live on confirm
+  SKIPPED // committer not wired for this type yet, or user-skipped
+  REVERSED // removed by a 24h undo
+}
+
+/// A migration run: fetch a source into a staging area, review, then confirm to
+/// live with a 24h undo window (spec §3). NOTHING is live until CONFIRMED.
+model MigrationJob {
+  id           String             @id @default(uuid())
+  tenantId     String
+  source       MigrationSource
+  status       MigrationJobStatus @default(FETCHING)
+  scopeCounts  Json               @default("{}") // {customers, products, invoices, ...}
+  createdById  String?
+  confirmedAt  DateTime?
+  undoDeadline DateTime? // confirmedAt + 24h
+  undoneAt     DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  records MigrationStagingRecord[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+/// One staged record (not live) of a MigrationJob. Carries the raw source payload,
+/// a dedup verdict, and — after confirm — the id of the live row it created (so a
+/// 24h undo reverses exactly what it added, and re-runs upsert by external id).
+model MigrationStagingRecord {
+  id              String              @id @default(uuid())
+  tenantId        String
+  jobId           String
+  entityType      ImportEntityType
+  externalId      String?
+  rawPayload      Json
+  status          StagingRecordStatus @default(PENDING)
+  flags           Json                @default("[]") // ["duplicate","unmatched-tax",...]
+  matchedEntityId String? // existing row this duplicates (for linking)
+  createdEntityId String? // live row created on confirm
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  job MigrationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, jobId])
+  @@index([jobId, status])
+}
+
+// ─── Migration & Batch Import (Phase 5: batch invoice import queue) ───────────
+
+enum ImportFileStatus {
+  QUEUED
+  PROCESSING
+  CLEAN // all lines matched, no dup — auto-ready to post
+  NEEDS_REVIEW // an unmatched line or low-confidence totals
+  DUPLICATE // matched an existing bill/invoice — skipped, linked
+  FAILED // extraction error; queue keeps the file
+  POSTED
+}
+
+enum ImportBatchStatus {
+  PROCESSING
+  READY
+  POSTED
+  PARTIALLY_POSTED
+}
+
+/// A batch of scanned invoices/bills processed in the background (spec §4):
+/// upload many, review later, "Finish: post N bills". Posting reuses the
+/// vendor-bill receive path (stock + costing). meteredScans feeds the AI-scan
+/// meter; the cap check integrates with billing (off-limits) as a follow-up.
+model ImportBatch {
+  id           String            @id @default(uuid())
+  tenantId     String
+  kind         String            @default("BATCH_BILLS")
+  status       ImportBatchStatus @default(PROCESSING)
+  totalFiles   Int               @default(0)
+  cleanCount   Int               @default(0)
+  reviewCount  Int               @default(0)
+  dupeCount    Int               @default(0)
+  postedCount  Int               @default(0)
+  meteredScans Int               @default(0)
+  createdById  String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  postedAt     DateTime?
+
+  items ImportQueueItem[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+}
+
+/// One file in a batch, with its per-file status + extracted payload. The
+/// duplicate pointer is a denormalized scalar (indexed, no FK) so this never
+/// edits the off-limits Invoice/VendorBill models.
+model ImportQueueItem {
+  id                   String           @id @default(uuid())
+  tenantId             String
+  batchId              String
+  filename             String?
+  mimeType             String?
+  status               ImportFileStatus @default(QUEUED)
+  extractedPayload     Json?
+  supplierMatchId      String?
+  supplierName         String?
+  invoiceNumber        String?
+  total                Decimal?         @db.Decimal(12, 2)
+  duplicateOfInvoiceId String?
+  confidence           Decimal?         @db.Decimal(5, 4)
+  unmatchedLines       Int              @default(0)
+  errorMessage         String?
+  vendorBillId         String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, batchId])
+  @@index([batchId, status])
+  @@index([duplicateOfInvoiceId])
 }

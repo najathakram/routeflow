@@ -17,6 +17,7 @@ import {
   ChevronUp,
   BarChart3,
   Hash,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import {
@@ -25,6 +26,11 @@ import {
   formatDocumentNumber,
   type DocumentNumberType,
 } from "@/lib/api/numbering";
+import {
+  useIncompleteProducts,
+  useCompleteSetup,
+  type IncompleteProduct,
+} from "@/lib/api/import-resolution";
 
 interface ImportResult {
   imported?: number;
@@ -524,6 +530,105 @@ function NumberingCard() {
   );
 }
 
+// ─── Finish setup (spec §5.2: brand-new products awaiting details) ────────────
+
+function FinishSetupRow({ product }: { product: IncompleteProduct }) {
+  const { toast } = useToast();
+  const completeSetup = useCompleteSetup();
+  const [price, setPrice] = React.useState(product.pricePerUnit ?? "");
+  const [unitsPerBox, setUnitsPerBox] = React.useState(product.unitsPerBox?.toString() ?? "");
+  const [saving, setSaving] = React.useState(false);
+
+  const confirm = () => {
+    const data: { pricePerUnit?: number; unitsPerBox?: number } = {};
+    const p = parseFloat(price);
+    if (Number.isFinite(p)) data.pricePerUnit = p;
+    const u = parseInt(unitsPerBox, 10);
+    if (Number.isFinite(u) && u >= 1) data.unitsPerBox = u;
+    setSaving(true);
+    completeSetup.mutate(
+      { id: product.id, data },
+      {
+        onSuccess: () => toast({ title: `${product.name} is set up`, variant: "success" }),
+        onError: (e: any) =>
+          toast({
+            title: "Could not finish setup",
+            description: e?.response?.data?.message ?? e.message,
+            variant: "error",
+          }),
+        onSettled: () => setSaving(false),
+      },
+    );
+  };
+
+  return (
+    <div className="grid grid-cols-[1fr_110px_90px_auto] items-center gap-3 border-b border-surface-border px-4 py-3 last:border-b-0">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-navy">{product.name}</p>
+        <p className="font-mono text-xs text-navy/50">
+          {product.sku} · cost {product.standardCost ?? "—"}
+        </p>
+      </div>
+      <label className="flex flex-col text-[10px] font-semibold uppercase tracking-wide text-navy/50">
+        Sell price
+        <input
+          type="number"
+          min={0}
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          className="mt-1 rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
+        />
+      </label>
+      <label className="flex flex-col text-[10px] font-semibold uppercase tracking-wide text-navy/50">
+        Units/box
+        <input
+          type="number"
+          min={1}
+          value={unitsPerBox}
+          onChange={(e) => setUnitsPerBox(e.target.value)}
+          className="mt-1 rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
+        />
+      </label>
+      <button
+        onClick={confirm}
+        disabled={saving}
+        className="self-end rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+      >
+        {saving ? "Saving…" : "Confirm"}
+      </button>
+    </div>
+  );
+}
+
+function FinishSetupCard() {
+  const { data: products, isLoading } = useIncompleteProducts();
+  // Hide entirely when there is nothing to finish (keeps the import page tidy).
+  if (isLoading || !products || products.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-warning/40 bg-warning-bg/30 overflow-hidden">
+      <div className="flex items-start gap-3 border-b border-warning/30 p-4">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning">
+          <ClipboardList className="h-5 w-5" />
+        </span>
+        <div className="flex-1">
+          <p className="font-semibold text-navy">
+            Finish setup · {products.length} product{products.length === 1 ? "" : "s"}
+          </p>
+          <p className="text-xs text-navy/70 mt-0.5 leading-relaxed">
+            Products created from scanned invoices with only a name, SKU and cost. They can sell now
+            at cost + margin — confirm the sell price and case size to finish them.
+          </p>
+        </div>
+      </div>
+      <div className="bg-white">
+        {products.map((p) => (
+          <FinishSetupRow key={p.id} product={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsImportPage() {
@@ -572,6 +677,9 @@ export default function SettingsImportPage() {
 
       {/* Document numbering continuity (spec §1) */}
       <NumberingCard />
+
+      {/* Finish setup — brand-new products from scans awaiting details (spec §5.2) */}
+      <FinishSetupCard />
 
       {/* Import cards — uniform 2-column grid, cards stretch to equal height per row */}
       <div className="grid grid-cols-2 gap-5">
