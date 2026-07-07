@@ -62,6 +62,26 @@ export class SubscriptionService {
     return this.meters.readAll(tenantId);
   }
 
+  /** Billing-domain data export (subscription + usage + audit + invoices). A GET, so it
+   *  keeps working while the tenant is READ_ONLY (trial expiry keeps exports available). */
+  async getExport(tenantId: string) {
+    const [subscription, usage, billingEvents, invoices] = await Promise.all([
+      this.getSubscription(tenantId),
+      this.getUsage(tenantId),
+      this.prisma.billingEvent.findMany({
+        where: { tenantId },
+        orderBy: { createdAt: "desc" },
+        take: 500,
+      }),
+      this.prisma.rfInvoice.findMany({
+        where: { tenantId },
+        orderBy: { issuedAt: "desc" },
+        take: 500,
+      }),
+    ]);
+    return { exportedAt: new Date().toISOString(), subscription, usage, billingEvents, invoices };
+  }
+
   /**
    * Usage-fit recommendation for choose-plan: for each plan, whether current usage
    * fits its caps + the over-cap deltas, and the cheapest fitting plan. Cap-based

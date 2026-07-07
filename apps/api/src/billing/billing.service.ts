@@ -373,26 +373,11 @@ export class BillingService {
     const now = new Date();
     const graceDeadline = new Date(now.getTime() - PAYMENT_GRACE_DAYS * 24 * 60 * 60 * 1000);
 
-    // 1. Expired trials
-    const expiredTrials = await this.prisma.tenant.findMany({
-      where: {
-        status: "TRIAL",
-        trialEndsAt: { lt: now },
-        deletedAt: null,
-      },
-      select: { id: true, slug: true },
-    });
+    // Trial expiry is owned by BillingCronService.expireTrials() → READ_ONLY (not
+    // SUSPENDED), so exports + sign-in keep working. This cron only handles overdue
+    // Stripe payments below.
 
-    for (const tenant of expiredTrials) {
-      await this.prisma.tenant.update({
-        where: { id: tenant.id },
-        data: { status: "SUSPENDED" },
-      });
-      this.tenantStatusGuard.invalidate(tenant.id);
-      this.logger.log(`Trial expired — suspended tenant ${tenant.slug}`);
-    }
-
-    // 2. Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
+    // Overdue subscriptions (periodEnd + grace past, still ACTIVE, no recent payment)
     const overdueSubs = await this.prisma.tenantSubscription.findMany({
       where: {
         periodEnd: { lt: graceDeadline },
@@ -425,10 +410,8 @@ export class BillingService {
       }
     }
 
-    if (expiredTrials.length > 0 || overdueSubs.length > 0) {
-      this.logger.log(
-        `Suspension cron: ${expiredTrials.length} expired trials, ${overdueSubs.length} overdue checked`,
-      );
+    if (overdueSubs.length > 0) {
+      this.logger.log(`Suspension cron: ${overdueSubs.length} overdue subscriptions checked`);
     }
   }
 
