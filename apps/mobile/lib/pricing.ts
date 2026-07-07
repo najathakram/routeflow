@@ -163,3 +163,67 @@ export function classifyMargin(margin: number | null, floor: number): MarginClas
   if (margin < floor + 0.05) return "warn";
   return "ok";
 }
+
+// ─── Category tax (regulated items, Phase 4 W3) ───────────────────────────────
+// A per-category levy that is a SEPARATE dimension from boxed-line price
+// proration: per-unit taxes apply to the PIECE count (never the boxed subtotal),
+// so they compose with computeLineSubtotal without re-introducing the unitsPerBox
+// over-charge. Keep all three mirrors in sync.
+
+export type CategoryTaxType =
+  | "EXCISE_PER_UNIT"
+  | "PERCENT_OF_SALE"
+  | "PER_VOLUME"
+  | "DEPOSIT_PER_CONTAINER"
+  | "NONE";
+
+export interface CategoryTaxInput {
+  taxType: CategoryTaxType;
+  /** PERCENT_OF_SALE → a fraction (0.05 = 5%); otherwise $ per unit of `unitBasis`. */
+  rate: number;
+  /** True when the tax is already baked into the price (shown "incl.", not added on top). */
+  priceIncludesTax?: boolean;
+  /**
+   * Quantity expressed in the category's `unitBasis` — the multiplicand for
+   * per-unit taxes. The CALLER converts to the basis: EXCISE_PER_UNIT and
+   * DEPOSIT_PER_CONTAINER pass the piece count (1 piece = 1 pack/container);
+   * PER_VOLUME passes the true volume (pieces × volume-per-piece, e.g. ounces).
+   * May be fractional (volume) and may be negative (a return/reversal line — the
+   * tax then reverses in sign). Unused by PERCENT_OF_SALE.
+   */
+  unitBasisQty: number;
+  /** The line's net sale (computeLineSubtotal result) — only used by PERCENT_OF_SALE. */
+  lineSubtotal: number;
+}
+
+/**
+ * Compute the category (regulated) tax for one line, rounded to cents. Input
+ * signs are preserved, so a return/reversal line (negative qty or subtotal)
+ * yields a negative tax.
+ *
+ * - PERCENT_OF_SALE: `rate` × subtotal. When `priceIncludesTax`, the subtotal
+ *   already contains the tax, so the embedded portion is `subtotal × rate/(1+rate)`.
+ * - EXCISE_PER_UNIT / PER_VOLUME / DEPOSIT_PER_CONTAINER: `rate` × `unitBasisQty`.
+ *   A per-unit levy on the quantity-in-basis, orthogonal to how price is prorated
+ *   across boxes — never derive it from the boxed subtotal.
+ * - NONE (or `rate` ≤ 0): 0.
+ */
+export function computeCategoryTax(input: CategoryTaxInput): number {
+  const rate = Number(input.rate) || 0;
+  if (rate <= 0) return 0;
+  const basisQty = Number(input.unitBasisQty) || 0;
+  const subtotal = Number(input.lineSubtotal) || 0;
+  switch (input.taxType) {
+    case "PERCENT_OF_SALE":
+      return input.priceIncludesTax
+        ? roundMoney((subtotal * rate) / (1 + rate))
+        : roundMoney(subtotal * rate);
+    case "EXCISE_PER_UNIT":
+    case "PER_VOLUME":
+    case "DEPOSIT_PER_CONTAINER":
+      return roundMoney(rate * basisQty);
+    case "NONE":
+    default:
+      return 0;
+  }
+}

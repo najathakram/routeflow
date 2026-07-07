@@ -6,6 +6,7 @@ import {
   computeMarginFraction,
   priceForMarginFloor,
   classifyMargin,
+  computeCategoryTax,
 } from "./pricing";
 
 /**
@@ -183,5 +184,185 @@ describe("pricing — money discipline", () => {
       expect(classifyMargin(0.3, floor)).toBe("ok");
       expect(classifyMargin(null, floor)).toBeNull();
     });
+  });
+});
+
+describe("computeCategoryTax — regulated items (W3)", () => {
+  it("returns 0 for NONE or a non-positive rate", () => {
+    expect(
+      computeCategoryTax({ taxType: "NONE", rate: 5, unitBasisQty: 10, lineSubtotal: 100 }),
+    ).toBe(0);
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 0,
+        unitBasisQty: 10,
+        lineSubtotal: 100,
+      }),
+    ).toBe(0);
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: -1,
+        unitBasisQty: 10,
+        lineSubtotal: 100,
+      }),
+    ).toBe(0);
+  });
+
+  it("EXCISE_PER_UNIT applies the rate per PIECE (e.g. $2.87/pack × 10 packs)", () => {
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 2.87,
+        unitBasisQty: 10,
+        lineSubtotal: 80,
+      }),
+    ).toBe(28.7);
+  });
+
+  it("DEPOSIT_PER_CONTAINER levies per container (caller passes the piece count)", () => {
+    expect(
+      computeCategoryTax({
+        taxType: "DEPOSIT_PER_CONTAINER",
+        rate: 0.05,
+        unitBasisQty: 24,
+        lineSubtotal: 0,
+      }),
+    ).toBe(1.2);
+  });
+
+  it("PER_VOLUME levies on the TRUE volume the caller passes, not the piece count", () => {
+    // $0.01/oz on twenty 16oz bottles → caller passes unitBasisQty = 20 × 16 = 320 oz.
+    // Correct: 0.01 × 320 = $3.20 (the pre-fix "1 piece = 1 oz" bug returned 0.01 × 20 = $0.20).
+    expect(
+      computeCategoryTax({ taxType: "PER_VOLUME", rate: 0.01, unitBasisQty: 320, lineSubtotal: 0 }),
+    ).toBe(3.2);
+    expect(
+      computeCategoryTax({ taxType: "PER_VOLUME", rate: 0.01, unitBasisQty: 320, lineSubtotal: 0 }),
+    ).not.toBe(0.2);
+  });
+
+  it("PERCENT_OF_SALE (added) is rate × subtotal", () => {
+    // 5% of $80 = $4.00. rate is a fraction.
+    expect(
+      computeCategoryTax({
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.05,
+        unitBasisQty: 10,
+        lineSubtotal: 80,
+      }),
+    ).toBe(4);
+  });
+
+  it("PERCENT_OF_SALE (priceIncludesTax) backs the tax out of the tax-inclusive subtotal", () => {
+    // $105 already includes 5% → embedded tax = 105 × 0.05/1.05 = $5.00.
+    expect(
+      computeCategoryTax({
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.05,
+        priceIncludesTax: true,
+        unitBasisQty: 10,
+        lineSubtotal: 105,
+      }),
+    ).toBe(5);
+  });
+
+  it("CRITICAL: a boxed line's excise uses the PIECE count, never boxes or the boxed subtotal", () => {
+    // Boxed product: unitsPerBox=10, box price $50, sell 2 boxes = 20 pieces.
+    const norm = normalizeBoxesPieces({ boxes: 2, pieces: 0, unitsPerBox: 10 });
+    expect(norm.qty).toBe(20);
+    const subtotal = computeLineSubtotal({
+      unitPrice: 50,
+      qty: norm.qty,
+      boxes: norm.boxes,
+      pieces: norm.pieces,
+      unitsPerBox: 10,
+    });
+    expect(subtotal).toBe(100); // 2 boxes × $50 (box-priced, NOT 20 × $50)
+
+    const tax = computeCategoryTax({
+      taxType: "EXCISE_PER_UNIT",
+      rate: 2.87,
+      unitBasisQty: norm.qty,
+      lineSubtotal: subtotal,
+    });
+    // Correct: $2.87 × 20 packs = $57.40.
+    expect(tax).toBe(57.4);
+    // Guard against the two classic bugs:
+    expect(tax).not.toBe(5.74); // 2 boxes × $2.87 (per-BOX, wrong)
+    expect(tax).not.toBe(287); // 20 × $50 × ... nonsense off the subtotal
+  });
+
+  it("composes with a box+pieces split (2 boxes + 3 loose of 10 = 23 pieces)", () => {
+    const norm = normalizeBoxesPieces({ boxes: 2, pieces: 3, unitsPerBox: 10 });
+    expect(norm.qty).toBe(23);
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 1,
+        unitBasisQty: norm.qty,
+        lineSubtotal: 0,
+      }),
+    ).toBe(23);
+  });
+
+  it("accepts a fractional unitBasisQty (volume) and rounds the levy to cents", () => {
+    // $0.005/oz × 12.5 oz = $0.0625 → $0.06
+    expect(
+      computeCategoryTax({
+        taxType: "PER_VOLUME",
+        rate: 0.005,
+        unitBasisQty: 12.5,
+        lineSubtotal: 0,
+      }),
+    ).toBe(0.06);
+    // $0.333 × 3 = 0.999 → $1.00
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 0.333,
+        unitBasisQty: 3,
+        lineSubtotal: 0,
+      }),
+    ).toBe(1);
+  });
+
+  it("preserves sign so a return/reversal line reverses the tax", () => {
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 2.87,
+        unitBasisQty: -10,
+        lineSubtotal: -80,
+      }),
+    ).toBe(-28.7);
+    expect(
+      computeCategoryTax({
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.05,
+        unitBasisQty: 0,
+        lineSubtotal: -80,
+      }),
+    ).toBe(-4);
+  });
+
+  it("guards non-finite quantities and subtotals", () => {
+    expect(
+      computeCategoryTax({
+        taxType: "EXCISE_PER_UNIT",
+        rate: 2,
+        unitBasisQty: Number.NaN,
+        lineSubtotal: 0,
+      }),
+    ).toBe(0);
+    expect(
+      computeCategoryTax({
+        taxType: "PERCENT_OF_SALE",
+        rate: 0.05,
+        unitBasisQty: 0,
+        lineSubtotal: Number.NaN,
+      }),
+    ).toBe(0);
   });
 });
