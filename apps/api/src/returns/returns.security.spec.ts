@@ -11,6 +11,7 @@ import { ForbiddenException, NotFoundException } from "@nestjs/common";
 import { ReturnsService } from "./returns.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ExecutionContext, HttpStatus } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -99,12 +100,17 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
     prisma = createMockPrisma();
 
     const gateway = { emitReturnCreated: jest.fn() } as unknown as RouteFlowGateway;
+    const ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+    } as unknown as RegulatedLedgerService;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReturnsService,
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: gateway },
+        { provide: RegulatedLedgerService, useValue: ledger },
       ],
     }).compile();
 
