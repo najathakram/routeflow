@@ -26,6 +26,7 @@ import { ExtendTrialDto } from "./dto/extend-trial.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
+import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 @ApiTags("platform-admin")
@@ -57,8 +58,8 @@ export class PlatformAdminController {
   @Post("tenants")
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "Manually create a new tenant (admin-provisioned, starts ACTIVE)" })
-  createTenant(@Body() dto: CreateTenantDto) {
-    return this.svc.createTenant(dto);
+  createTenant(@Body() dto: CreateTenantDto, @CurrentUser() admin: JwtPayload) {
+    return this.svc.createTenant(dto, admin.sub);
   }
 
   @Get("tenants/:id")
@@ -69,27 +70,39 @@ export class PlatformAdminController {
 
   @Patch("tenants/:id/config")
   @ApiOperation({ summary: "Update tenant configuration (address, phone, etc.)" })
-  updateTenantConfig(@Param("id") id: string, @Body() dto: UpdateTenantConfigDto) {
-    return this.svc.updateTenantConfig(id, dto);
+  updateTenantConfig(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantConfigDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateTenantConfig(id, dto, admin.sub);
   }
 
   @Delete("tenants/:id")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Soft-delete (cancel) a tenant" })
-  deleteTenant(@Param("id") id: string) {
-    return this.svc.deleteTenant(id);
+  deleteTenant(@Param("id") id: string, @CurrentUser() admin: JwtPayload) {
+    return this.svc.deleteTenant(id, admin.sub);
   }
 
   @Patch("tenants/:id/status")
   @ApiOperation({ summary: "Suspend or reactivate a tenant" })
-  updateStatus(@Param("id") id: string, @Body() dto: UpdateTenantStatusDto) {
-    return this.svc.updateStatus(id, dto);
+  updateStatus(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantStatusDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateStatus(id, dto, admin.sub);
   }
 
   @Patch("tenants/:id/plan")
   @ApiOperation({ summary: "Change a tenant's plan" })
-  updatePlan(@Param("id") id: string, @Body() dto: UpdateTenantPlanDto) {
-    return this.svc.updatePlan(id, dto);
+  updatePlan(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantPlanDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updatePlan(id, dto, admin.sub);
   }
 
   @Post("tenants/:id/impersonate")
@@ -104,8 +117,12 @@ export class PlatformAdminController {
   @Post("tenants/:id/extend-trial")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Extend tenant trial period by N days from now" })
-  extendTrial(@Param("id") id: string, @Body() dto: ExtendTrialDto) {
-    return this.svc.extendTrial(id, dto.days);
+  extendTrial(
+    @Param("id") id: string,
+    @Body() dto: ExtendTrialDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.extendTrial(id, dto.days, admin.sub);
   }
 
   @Post("tenants/:id/activate-subscription")
@@ -114,15 +131,19 @@ export class PlatformAdminController {
     summary:
       "Manually activate a tenant subscription via external payment (Zelle, bank transfer, check, etc.)",
   })
-  activateManualSubscription(@Param("id") id: string, @Body() dto: ActivateSubscriptionDto) {
-    return this.svc.activateManualSubscription(id, dto);
+  activateManualSubscription(
+    @Param("id") id: string,
+    @Body() dto: ActivateSubscriptionDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.activateManualSubscription(id, dto, admin.sub);
   }
 
   @Post("tenants/:id/reset-admin-password")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Reset the TENANT_ADMIN password and force change on next login" })
-  resetAdminPassword(@Param("id") id: string) {
-    return this.svc.resetTenantAdminPassword(id);
+  resetAdminPassword(@Param("id") id: string, @CurrentUser() admin: JwtPayload) {
+    return this.svc.resetTenantAdminPassword(id, admin.sub);
   }
 
   @Get("tenants/:id/admin")
@@ -137,8 +158,9 @@ export class PlatformAdminController {
   createTenantAdmin(
     @Param("id") id: string,
     @Body() dto: { username: string; email: string; password?: string },
+    @CurrentUser() admin: JwtPayload,
   ) {
-    return this.svc.createTenantAdmin(id, dto);
+    return this.svc.createTenantAdmin(id, dto, admin.sub);
   }
 
   @Get("stats/growth")
@@ -188,6 +210,12 @@ export class PlatformAdminController {
     );
   }
 
+  @Get("audit-logs/facets")
+  @ApiOperation({ summary: "Known admin audit action codes + labels for filter dropdowns" })
+  getAuditLogFacets() {
+    return this.svc.getAuditLogFacets();
+  }
+
   // ─── Billing ──────────────────────────────────────────────────────────────
 
   @Get("tenants/:id/billing")
@@ -221,15 +249,31 @@ export class PlatformAdminController {
   @Post("tenants/:id/addons/enable")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Enable an add-on feature for a tenant" })
-  enableAddon(@Param("id") id: string, @Body() dto: EnableAddonDto) {
-    return this.addonService.enableAddon(id, dto.addonKey, dto.stripePriceId);
+  async enableAddon(
+    @Param("id") id: string,
+    @Body() dto: EnableAddonDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.addonService.enableAddon(id, dto.addonKey, dto.stripePriceId);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_ENABLED, {
+      addonKey: dto.addonKey,
+    });
+    return result;
   }
 
   @Post("tenants/:id/addons/disable")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Disable an add-on feature for a tenant" })
-  disableAddon(@Param("id") id: string, @Body() dto: DisableAddonDto) {
-    return this.addonService.disableAddon(id, dto.addonKey);
+  async disableAddon(
+    @Param("id") id: string,
+    @Body() dto: DisableAddonDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.addonService.disableAddon(id, dto.addonKey);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_DISABLED, {
+      addonKey: dto.addonKey,
+    });
+    return result;
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

@@ -2384,3 +2384,36 @@ model RegulatedFiling {
   @@index([tenantId, trackedCategoryId])
   @@index([trackedCategoryId])
 }
+
+// ─── Migration & Batch Import (Phase 1: numbering continuity) ─────────────────
+
+/// Per-tenant, per-document-type numbering sequence. Set during migration from
+/// the source's last number ("last Zoho invoice INV-08841 → RouteFlow starts at
+/// INV-08842"); editable later in Settings → Invoicing. `NumberingService` owns
+/// the collision-guarded `reserveNext(docType)` that formats `prefix +
+/// nextNumber.padStart(padding)`. Wiring that into LIVE document minting is a
+/// deferred cross-module change (invoices/orders own those call sites); this
+/// table + service is the contract they consume. Imported documents keep their
+/// ORIGINAL numbers and do NOT consume this sequence. `tenantId` is a plain
+/// scalar (tenant-scoped via `forTenant()`), no FK — keeps this an append-only
+/// addition that never edits the shared Tenant model.
+model NumberingSequence {
+  id         String             @id @default(uuid())
+  tenantId   String
+  docType    DocumentNumberType
+  prefix     String             @default("")
+  nextNumber Int                @default(1)
+  padding    Int                @default(4)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([tenantId, docType])
+  @@index([tenantId])
+}
+
+enum DocumentNumberType {
+  INVOICE
+  ESTIMATE
+  CREDIT_NOTE
+  PAYMENT
+}
