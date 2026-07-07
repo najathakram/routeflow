@@ -22,6 +22,14 @@ import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
+import { AuditService } from "../audit/audit.service";
+import {
+  AdminAuditAction,
+  ADMIN_AUDIT_ENTITY,
+  ADMIN_AUDIT_ACTION_FACETS,
+  adminAuditActionLabel,
+  type AdminAuditActionCode,
+} from "./audit-actions.constant";
 
 @Injectable()
 export class PlatformAdminService {
@@ -34,7 +42,32 @@ export class PlatformAdminService {
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
     private readonly tenantStatusGuard: TenantStatusGuard,
+    private readonly auditService: AuditService,
   ) {}
+
+  /**
+   * Emit a purpose-built audit row keyed to the TARGET tenant so a platform-admin
+   * action surfaces when the audit log is filtered by that tenant. The generic
+   * AuditInterceptor also records the request, but with tenantId=null and a
+   * useless entityId, so it never appears in per-tenant views — this row does.
+   * Fire-and-forget: AuditService.log swallows its own errors, so a logging
+   * failure never breaks the mutation.
+   */
+  async recordAdminAction(
+    tenantId: string,
+    adminId: string | null,
+    action: AdminAuditActionCode,
+    meta?: Record<string, unknown>,
+  ) {
+    await this.auditService.log({
+      tenantId,
+      userId: adminId,
+      action,
+      entityType: ADMIN_AUDIT_ENTITY,
+      entityId: tenantId,
+      meta: { platformAdmin: true, ...(meta ?? {}) },
+    });
+  }
 
   // ─── Tenant list ─────────────────────────────────────────────────────────────
 
@@ -84,7 +117,7 @@ export class PlatformAdminService {
 
   // ─── Create / Delete Tenant ───────────────────────────────────────────────────
 
-  async createTenant(dto: CreateTenantDto) {
+  async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
 
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
@@ -196,6 +229,12 @@ ${paymentSection}
       /* best-effort — don't fail tenant creation over email */
     }
 
+    await this.recordAdminAction(result.tenant.id, adminId, AdminAuditAction.TENANT_CREATED, {
+      slug: result.tenant.slug,
+      plan: result.tenant.plan,
+      adminUsername: result.user.username,
+    });
+
     return {
       id: result.tenant.id,
       slug: result.tenant.slug,
@@ -210,7 +249,7 @@ ${paymentSection}
     };
   }
 
-  async deleteTenant(id: string) {
+  async deleteTenant(id: string, adminId: string | null = null) {
     const existing = await this.prisma.tenant.findUnique({
       where: { id },
       select: { id: true, slug: true, status: true },
@@ -227,12 +266,15 @@ ${paymentSection}
     });
     // Evict cached status so the guard blocks this tenant immediately
     this.tenantStatusGuard.invalidate(id);
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_DELETED, {
+      slug: tenant.slug,
+    });
     return { id: tenant.id, slug: tenant.slug, status: tenant.status, deletedAt: tenant.deletedAt };
   }
 
   // ─── Mutations ────────────────────────────────────────────────────────────────
 
-  async updateStatus(id: string, dto: UpdateTenantStatusDto) {
+  async updateStatus(id: string, dto: UpdateTenantStatusDto, adminId: string | null = null) {
     await this._findOrThrow(id);
     const tenant = await this.prisma.tenant.update({
       where: { id },
@@ -240,11 +282,22 @@ ${paymentSection}
     });
     // Evict cached status so the guard picks up the change immediately
     this.tenantStatusGuard.invalidate(id);
+    const action =
+      dto.status === "SUSPENDED"
+        ? AdminAuditAction.TENANT_SUSPENDED
+        : dto.status === "ACTIVE"
+          ? AdminAuditAction.TENANT_REACTIVATED
+          : AdminAuditAction.TENANT_STATUS_CHANGED;
+    await this.recordAdminAction(id, adminId, action, { status: tenant.status });
     return { id: tenant.id, slug: tenant.slug, status: tenant.status };
   }
 
-  async updatePlan(id: string, dto: UpdateTenantPlanDto) {
-    await this._findOrThrow(id);
+  async updatePlan(id: string, dto: UpdateTenantPlanDto, adminId: string | null = null) {
+    const before = await this.prisma.tenant.findUnique({
+      where: { id },
+      select: { id: true, slug: true, plan: true },
+    });
+    if (!before) throw new NotFoundException(`Tenant ${id} not found`);
     const tenant = await this.prisma.tenant.update({
       where: { id },
       data: { plan: dto.plan },
@@ -255,12 +308,20 @@ ${paymentSection}
       create: { tenantId: id, currentPlan: dto.plan },
       update: { currentPlan: dto.plan },
     });
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_PLAN_CHANGED, {
+      from: before.plan,
+      to: tenant.plan,
+    });
     return { id: tenant.id, slug: tenant.slug, plan: tenant.plan };
   }
 
   // ─── Manual subscription activation (non-Stripe payment) ─────────────────────
 
-  async activateManualSubscription(id: string, dto: ActivateSubscriptionDto) {
+  async activateManualSubscription(
+    id: string,
+    dto: ActivateSubscriptionDto,
+    adminId: string | null = null,
+  ) {
     await this._findOrThrow(id);
 
     const now = new Date();
@@ -299,6 +360,13 @@ ${paymentSection}
 
     // Invalidate cached tenant status so the guard picks up ACTIVE immediately
     this.tenantStatusGuard.invalidate(id);
+
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_SUBSCRIPTION_ACTIVATED, {
+      plan: tenant.plan,
+      paymentMethod: dto.paymentMethod,
+      paymentRef: dto.paymentRef ?? null,
+      periodEnd,
+    });
 
     return {
       id: tenant.id,
@@ -347,6 +415,15 @@ ${paymentSection}
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
       expiresIn: "15m",
+    });
+
+    // Record the start of the impersonation session against the target tenant.
+    // Per-write provenance during the session is a separate (audit-module) concern;
+    // this row is what makes "Impersonation session" visible in the tenant's trail.
+    await this.recordAdminAction(tenantId, superAdminId, AdminAuditAction.IMPERSONATION_STARTED, {
+      impersonatedUserId: adminUser.id,
+      impersonatedUsername: adminUser.username,
+      expiresInSeconds: 900,
     });
 
     return {
@@ -498,7 +575,7 @@ ${paymentSection}
 
   // ─── Trial extension ─────────────────────────────────────────────────────────
 
-  async extendTrial(id: string, days: number) {
+  async extendTrial(id: string, days: number, adminId: string | null = null) {
     await this._findOrThrow(id);
     const updated = await this.prisma.tenant.update({
       where: { id },
@@ -510,12 +587,16 @@ ${paymentSection}
     });
     // Evict cached status so the guard picks up the reactivation immediately
     this.tenantStatusGuard.invalidate(id);
+    await this.recordAdminAction(id, adminId, AdminAuditAction.TENANT_TRIAL_EXTENDED, {
+      days,
+      trialEndsAt: updated.trialEndsAt,
+    });
     return updated;
   }
 
   // ─── Reset tenant admin password ─────────────────────────────────────────────
 
-  async resetTenantAdminPassword(tenantId: string) {
+  async resetTenantAdminPassword(tenantId: string, adminId: string | null = null) {
     await this._findOrThrow(tenantId);
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
@@ -527,6 +608,10 @@ ${paymentSection}
     await this.prisma.user.update({
       where: { id: adminUser.id },
       data: { password: hashedPassword, forcePasswordChange: true },
+    });
+    await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_ADMIN_PASSWORD_RESET, {
+      username: adminUser.username,
+      userId: adminUser.id,
     });
     return { username: adminUser.username, tempPassword };
   }
@@ -566,7 +651,44 @@ ${paymentSection}
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-    return { data: logs, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+
+    // Resolve actor + tenant display names for this page so the UI shows
+    // "maria@goldenstate.co" / "Golden State Distribution" instead of raw UUIDs.
+    const userIds = [...new Set(logs.map((l) => l.userId).filter((x): x is string => !!x))];
+    const tenantIds = [...new Set(logs.map((l) => l.tenantId).filter((x): x is string => !!x))];
+    // Prisma returns [] for an empty `in`, so these are safe (and cheap) even with no ids.
+    const [users, tenants] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, username: true, email: true, role: true },
+      }),
+      this.prisma.tenant.findMany({
+        where: { id: { in: tenantIds } },
+        select: { id: true, slug: true, name: true },
+      }),
+    ]);
+    const userMap = new Map(users.map((u) => [u.id, u] as const));
+    const tenantMap = new Map(tenants.map((t) => [t.id, t] as const));
+
+    const data = logs.map((log) => {
+      const u = log.userId ? userMap.get(log.userId) : undefined;
+      const t = log.tenantId ? tenantMap.get(log.tenantId) : undefined;
+      return {
+        ...log,
+        actionLabel: adminAuditActionLabel(log.action),
+        actor: u
+          ? { id: u.id, username: u.username, email: u.email, isPlatform: u.role === "SUPER_ADMIN" }
+          : null,
+        tenant: t ? { id: t.id, slug: t.slug, name: t.name } : null,
+      };
+    });
+
+    return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+  }
+
+  /** Known admin action codes + labels for the audit-log filter dropdown. */
+  getAuditLogFacets() {
+    return { actions: ADMIN_AUDIT_ACTION_FACETS };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -604,7 +726,11 @@ ${paymentSection}
     };
   }
 
-  async updateTenantConfig(tenantId: string, dto: UpdateTenantConfigDto) {
+  async updateTenantConfig(
+    tenantId: string,
+    dto: UpdateTenantConfigDto,
+    adminId: string | null = null,
+  ) {
     const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -612,6 +738,10 @@ ${paymentSection}
       where: { tenantId },
       create: { tenantId, ...dto },
       update: dto,
+    });
+
+    await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_CONFIG_UPDATED, {
+      fields: Object.keys(dto),
     });
 
     return this.getTenant(tenantId);
@@ -639,6 +769,7 @@ ${paymentSection}
   async createTenantAdmin(
     tenantId: string,
     dto: { username: string; email: string; password?: string },
+    adminId: string | null = null,
   ) {
     await this._findOrThrow(tenantId);
     const tenant = await this.prisma.tenant.findUnique({
@@ -711,6 +842,11 @@ ${paymentSection}
     } catch {
       /* best-effort */
     }
+
+    await this.recordAdminAction(tenantId, adminId, AdminAuditAction.TENANT_ADMIN_CREATED, {
+      username: user.username,
+      userId: user.id,
+    });
 
     return { ...user, ...(autoGenerated ? { tempPassword: rawPassword } : {}) };
   }

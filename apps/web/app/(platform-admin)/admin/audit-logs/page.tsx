@@ -4,6 +4,19 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
 
+interface AuditActor {
+  id: string;
+  username: string;
+  email: string;
+  isPlatform: boolean;
+}
+
+interface AuditTenantRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
 interface AuditLogEntry {
   id: string;
   tenantId: string | null;
@@ -13,11 +26,25 @@ interface AuditLogEntry {
   entityId: string | null;
   ip: string | null;
   createdAt: string;
+  // Enriched by the API (null for legacy interceptor rows / unresolvable ids).
+  actionLabel?: string | null;
+  actor?: AuditActor | null;
+  tenant?: AuditTenantRef | null;
 }
 
 interface AuditLogsResponse {
   data: AuditLogEntry[];
   meta: { total: number; page: number; limit: number; pages: number };
+}
+
+interface ActionFacet {
+  code: string;
+  label: string;
+}
+
+interface TenantOption {
+  id: string;
+  label: string;
 }
 
 export default function AuditLogsPage() {
@@ -36,6 +63,30 @@ export default function AuditLogsPage() {
   const [userIdFilter, setUserIdFilter] = React.useState("");
   const [fromDate, setFromDate] = React.useState("");
   const [toDate, setToDate] = React.useState("");
+
+  // Filter dropdown options (loaded once)
+  const [actionFacets, setActionFacets] = React.useState<ActionFacet[]>([]);
+  const [tenantOptions, setTenantOptions] = React.useState<TenantOption[]>([]);
+
+  React.useEffect(() => {
+    superAdminClient
+      .get<{ actions: ActionFacet[] }>("/platform-admin/audit-logs/facets")
+      .then((res) => setActionFacets(res.data.actions ?? []))
+      .catch(() => {});
+    superAdminClient
+      .get<{ data: Array<{ id: string; slug: string; name: string | null }> }>(
+        "/platform-admin/tenants?limit=200",
+      )
+      .then((res) =>
+        setTenantOptions(
+          (res.data.data ?? []).map((t) => ({
+            id: t.id,
+            label: `${t.name ?? t.slug} (${t.slug})`,
+          })),
+        ),
+      )
+      .catch(() => {});
+  }, []);
 
   // Debounce text inputs
   const [debouncedFilters, setDebouncedFilters] = React.useState({
@@ -113,20 +164,34 @@ export default function AuditLogsPage() {
           )}
         </div>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          <input
-            type="text"
-            placeholder="Tenant ID..."
+          <select
             value={tenantIdFilter}
             onChange={(e) => setTenantIdFilter(e.target.value)}
-            className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
-          />
-          <input
-            type="text"
-            placeholder="Action (e.g. LOGIN, CREATE)..."
+            className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+          >
+            <option value="">All tenants</option>
+            {/* Keep a deep-linked tenant selectable even if it's outside the first page. */}
+            {tenantIdFilter && !tenantOptions.some((t) => t.id === tenantIdFilter) && (
+              <option value={tenantIdFilter}>{tenantIdFilter}</option>
+            )}
+            {tenantOptions.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
-            className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
-          />
+            className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+          >
+            <option value="">All actions</option>
+            {actionFacets.map((f) => (
+              <option key={f.code} value={f.code}>
+                {f.label}
+              </option>
+            ))}
+          </select>
           <input
             type="text"
             placeholder="Entity Type (e.g. User, Order)..."
@@ -190,13 +255,45 @@ export default function AuditLogsPage() {
                 <tbody className="divide-y divide-slate-700/50">
                   {data.data.map((log) => (
                     <tr key={log.id} className="hover:bg-slate-700/20">
-                      <td className="px-3 py-2 font-mono text-slate-400">
-                        {log.tenantId ? log.tenantId.slice(0, 8) + "..." : "—"}
+                      <td className="px-3 py-2 text-slate-300">
+                        {log.tenant ? (
+                          <div>
+                            <div className="text-slate-200">
+                              {log.tenant.name || log.tenant.slug}
+                            </div>
+                            <div className="font-mono text-[10px] text-slate-500">
+                              {log.tenant.slug}
+                            </div>
+                          </div>
+                        ) : log.tenantId ? (
+                          <span className="font-mono text-slate-500">
+                            {log.tenantId.slice(0, 8)}…
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-slate-400">
-                        {log.userId ? log.userId.slice(0, 8) + "..." : "—"}
+                      <td className="px-3 py-2 text-slate-300">
+                        {log.actor ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{log.actor.email || log.actor.username}</span>
+                            {log.actor.isPlatform && (
+                              <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
+                                platform
+                              </span>
+                            )}
+                          </span>
+                        ) : log.userId ? (
+                          <span className="font-mono text-slate-500">
+                            {log.userId.slice(0, 8)}…
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-slate-300">{log.action}</td>
+                      <td className="px-3 py-2 text-slate-300" title={log.action}>
+                        {log.actionLabel ?? log.action}
+                      </td>
                       <td className="px-3 py-2 text-slate-400">{log.entityType}</td>
                       <td className="px-3 py-2 font-mono text-slate-500">
                         {log.entityId ? log.entityId.slice(0, 8) + "..." : "—"}
