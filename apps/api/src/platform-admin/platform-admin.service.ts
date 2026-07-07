@@ -122,7 +122,7 @@ export class PlatformAdminService {
         orderBy = { createdAt: dir };
     }
 
-    const [tenants, total] = await Promise.all([
+    const [tenants, total, deletedCount] = await Promise.all([
       this.prisma.tenant.findMany({
         where,
         skip,
@@ -141,11 +141,14 @@ export class PlatformAdminService {
         },
       }),
       this.prisma.tenant.count({ where }),
+      // Total soft-deleted tenants, independent of the current filter, so the
+      // "Show deleted (N)" affordance has a real count even when they're hidden.
+      this.prisma.tenant.count({ where: { deletedAt: { not: null } } }),
     ]);
 
     return {
       data: tenants.map((t) => this._formatTenant(t)),
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+      meta: { total, page, limit, pages: Math.ceil(total / limit), deletedCount },
     };
   }
 
@@ -177,7 +180,8 @@ export class PlatformAdminService {
     return {
       ...this._formatTenant(tenant),
       orders30d,
-      estMrrUsd: STOPGAP_PLAN_MONTHLY_USD[tenant.plan] ?? 0,
+      // Only an ACTIVE tenant is paying; trials/suspended/cancelled contribute $0.
+      estMrrUsd: tenant.status === "ACTIVE" ? (STOPGAP_PLAN_MONTHLY_USD[tenant.plan] ?? 0) : 0,
     };
   }
 
@@ -516,6 +520,7 @@ ${paymentSection}
       superAdminCount,
       newTenantsThisMonth,
       planBreakdown,
+      activePlanBreakdown,
       recentTenants,
       trialsExpiringSoon,
       atRiskTenants,
@@ -527,8 +532,16 @@ ${paymentSection}
       this.prisma.user.count({ where: { tenantId: { not: null } } }),
       this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
       this.prisma.tenant.count({ where: { createdAt: { gte: startOfMonth } } }),
+      // Plan distribution excludes cancelled/soft-deleted tenants (hidden everywhere else).
       this.prisma.tenant.groupBy({
         by: ["plan"],
+        where: { deletedAt: null, status: { not: TenantStatus.CANCELLED } },
+        _count: { plan: true },
+      }),
+      // Est. MRR counts only ACTIVE (paying) tenants — trials/suspended/cancelled pay $0.
+      this.prisma.tenant.groupBy({
+        by: ["plan"],
+        where: { status: TenantStatus.ACTIVE, deletedAt: null },
         _count: { plan: true },
       }),
       this.prisma.tenant.findMany({
@@ -570,6 +583,9 @@ ${paymentSection}
     const planCounts = Object.fromEntries(
       planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
     );
+    const activePlanCounts = Object.fromEntries(
+      activePlanBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
+    );
 
     return {
       tenants: {
@@ -581,9 +597,9 @@ ${paymentSection}
       totalUsers,
       superAdminCount,
       newTenantsThisMonth,
-      // Display-only stopgap MRR (see plan-pricing.constant.ts) until the
-      // billing-plans catalog owns the real rollup.
-      estMrrUsd: estimatePlatformMrrUsd(planCounts),
+      // Display-only stopgap MRR (see plan-pricing.constant.ts) — ACTIVE tenants
+      // only — until the billing-plans catalog owns the real rollup.
+      estMrrUsd: estimatePlatformMrrUsd(activePlanCounts),
       planBreakdown: planCounts,
       recentTenants,
       trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
