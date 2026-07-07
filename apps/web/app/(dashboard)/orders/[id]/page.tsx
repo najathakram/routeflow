@@ -1446,7 +1446,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           // Create the invoice (idempotent — returns existing if already there)
           // then show the send-invoice prompt
           createInvoiceFromOrder.mutate(order.id, {
-            onSuccess: (invoice: any) => {
+            onSuccess: (invoices: any) => {
+              // W4: a mixed regulated order returns sibling invoices; prompt to send
+              // the primary (standard/first) one — the rest show on the order detail.
+              const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
+              if (!invoice) return;
               setInvoiceModal({
                 invoiceId: invoice.id,
                 invoiceNumber: invoice.invoiceNumber,

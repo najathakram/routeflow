@@ -265,7 +265,9 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true, unitsPerBox: true } } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
         },
       },
     });
@@ -282,9 +284,9 @@ export class InvoicesService {
       .filter((x: any) => x.remainingQty > 0.001);
 
     if (remainingItems.length === 0) {
-      // Everything already invoiced. Return the most recent invoice for the order if any
-      // (callers historically expect a non-null result).
-      const existing = await db.invoice.findFirst({
+      // Everything already invoiced — return the order's existing invoice(s).
+      // (W4: returns an array; a mixed order may have >1 sibling invoice.)
+      const existing = await db.invoice.findMany({
         where: { orderId },
         orderBy: { createdAt: "desc" },
       });
@@ -297,87 +299,48 @@ export class InvoicesService {
       select: { isTaxExempt: true },
     });
 
-    // Build invoice items from REMAINING qty per order item (carries price type info).
     const tenantId = this.prisma.getTenantId();
-    const itemsData = remainingItems.map(({ li, remainingQty }: any) =>
-      this.buildInvoiceItemData(li, remainingQty, tenantId),
-    );
-
-    const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
-    // Use the order's tax rate proportionally: tax = (subtotal_remaining / order.subtotal) * order.tax
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const proportion = subtotal / orderSubtotal;
-    // RF-079: tax-exempt customers owe $0 tax
-    const taxAmount = customer?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
-    const total = roundMoney(subtotal + taxAmount);
-
     // Due date from configured payment terms (e.g. "Net 30")
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + dueDays);
-
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
 
-    // Generate invoice number
-    const invoiceNumber = await this.generateInvoiceNumber(db);
+    const extraInvoiceData: Record<string, any> = {
+      dueDate,
+      terms: tenantDefaults.terms ?? defaultTerms,
+      issueDate: new Date(),
+      notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+      // Carry carrier shipment tracking from the order onto the invoice so the
+      // shipment shows on the customer's invoice + PDF.
+      ...(order.shippingCarrier || order.shippingTrackingNumber
+        ? {
+            shippingCarrier: order.shippingCarrier ?? null,
+            shippingTrackingNumber: order.shippingTrackingNumber ?? null,
+            shippedAt: order.shippedAt ?? null,
+          }
+        : {}),
+    };
 
-    let invoice: any;
-    try {
-      invoice = await db.invoice.create({
-        data: {
-          invoiceNumber,
-          customerId: order.customerId,
-          orderId: order.id,
-          status: InvoiceStatus.DRAFT,
-          subtotal,
-          taxAmount,
-          discount: 0,
-          shippingFee: 0,
-          total,
-          dueDate,
-          terms: tenantDefaults.terms ?? defaultTerms,
-          issueDate: new Date(),
-          notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
-          // Carry carrier shipment tracking from the order onto the invoice so the
-          // shipment shows on the customer's invoice + PDF.
-          ...(order.shippingCarrier || order.shippingTrackingNumber
-            ? {
-                shippingCarrier: order.shippingCarrier ?? null,
-                shippingTrackingNumber: order.shippingTrackingNumber ?? null,
-                shippedAt: order.shippedAt ?? null,
-              }
-            : {}),
-          items: { create: itemsData },
-          // RF-147: propagate tenantId onto the Invoice row.  Previously omitted,
-          // leaving auto-generated invoices with tenantId=null.
-          ...(tenantId ? { tenantId } : {}),
+    // Phase 4 (W4): split by regulated category — one invoice per SEPARATE_INVOICE
+    // category + the standard invoice (siblings share invoiceGroupId, numbered
+    // base / -R1 / -R2). A single-group order creates exactly one invoice as before.
+    return this.createSplitInvoices({
+      order,
+      remainingItems,
+      isTaxExempt: !!customer?.isTaxExempt,
+      db,
+      tenantId,
+      extraInvoiceData,
+      include: {
+        customer: {
+          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
         },
-        include: {
-          customer: {
-            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
-          },
-          items: true,
-          payments: true,
-        },
-      });
-    } catch (err: any) {
-      // RF-050: duplicate invoiceNumber under concurrent requests
-      if (err?.code === "P2002")
-        throw new ConflictException("Invoice number conflict — please retry.");
-      throw err;
-    }
-
-    // Bump invoicedQty on each affected order item so a subsequent auto-trigger or
-    // partial-invoice call sees the correct remaining qty.
-    for (const { li, remainingQty } of remainingItems) {
-      await db.orderItem.update({
-        where: { id: li.id },
-        data: { invoicedQty: { increment: remainingQty } },
-      });
-    }
-
-    return invoice;
+        items: true,
+        payments: true,
+      },
+    });
   }
 
   /**
@@ -419,8 +382,209 @@ export class InvoicesService {
         pieces: split.pieces,
         unitsPerBox,
       }),
+      // Phase 4 (W4): carry the line's regulated category onto the invoice line so
+      // the split can group by it and reporting/ledger can read it. Prefer the
+      // OrderItem sale-time snapshot; fall back to the live product category for
+      // orders created before the snapshot shipped (best-effort — see resolveLineCategoryId).
+      trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
+      categoryTaxAmount: Number(li.categoryTaxAmount ?? 0),
       ...(tenantId ? { tenantId } : {}),
     };
+  }
+
+  /**
+   * Phase 4 (W4): partition an order's billable lines into invoice groups by
+   * regulated category. The "standard" group (uncategorised lines + any category
+   * whose invoiceTreatment is NOT SEPARATE_INVOICE — those fold into the main
+   * invoice for now) comes first, then one group per SEPARATE_INVOICE category,
+   * sorted by name for deterministic `-R1/-R2` numbering.
+   *
+   * When no SEPARATE_INVOICE-category lines are present the result is a SINGLE
+   * group, so callers produce exactly one invoice — byte-identical to pre-split
+   * behaviour. Category resolution prefers the OrderItem sale-time snapshot and
+   * falls back to the live product category for orders created before W4.
+   */
+  private async groupOrderLinesForInvoicing(
+    remainingItems: Array<{ li: any; remainingQty: number }>,
+    db: any,
+  ): Promise<
+    Array<{ trackedCategoryId: string | null; category: any; items: typeof remainingItems }>
+  > {
+    const resolveCat = (li: any): string | null =>
+      li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null;
+
+    const catIds = [
+      ...new Set(remainingItems.map(({ li }) => resolveCat(li)).filter(Boolean)),
+    ] as string[];
+    const categories: any[] =
+      catIds.length > 0 ? await db.trackedCategory.findMany({ where: { id: { in: catIds } } }) : [];
+    const catMap = new Map<string, any>(categories.map((c: any) => [c.id, c]));
+    const isSeparate = (id: string | null): boolean =>
+      !!id && catMap.get(id)?.invoiceTreatment === "SEPARATE_INVOICE";
+
+    const standard: typeof remainingItems = [];
+    const byCat = new Map<string, typeof remainingItems>();
+    let sawFolded = false;
+    for (const entry of remainingItems) {
+      const id = resolveCat(entry.li);
+      if (isSeparate(id)) {
+        const arr = byCat.get(id!) ?? [];
+        arr.push(entry);
+        byCat.set(id!, arr);
+      } else {
+        if (id) sawFolded = true; // a regulated category that isn't SEPARATE_INVOICE
+        standard.push(entry);
+      }
+    }
+    if (sawFolded) {
+      this.logger.warn(
+        "Regulated lines with a non-SEPARATE_INVOICE treatment were folded into the standard invoice (SEPARATE_SECTION / LINE_TAX presentation is a deferred follow-up).",
+      );
+    }
+
+    const groups: Array<{ trackedCategoryId: string | null; category: any; items: any[] }> = [];
+    if (standard.length > 0)
+      groups.push({ trackedCategoryId: null, category: null, items: standard });
+    for (const { trackedCategoryId, category, items } of [...byCat.entries()]
+      .map(([id, items]) => ({ trackedCategoryId: id, category: catMap.get(id), items }))
+      .sort((a, b) => String(a.category?.name ?? "").localeCompare(String(b.category?.name ?? ""))))
+      groups.push({ trackedCategoryId, category, items });
+
+    // remainingItems is always non-empty here, so groups is non-empty; guard anyway.
+    if (groups.length === 0)
+      groups.push({ trackedCategoryId: null, category: null, items: remainingItems });
+    return groups;
+  }
+
+  /**
+   * Phase 4 (W4): build + create the (possibly split) invoices for an order.
+   * One invoice per SEPARATE_INVOICE category + one standard invoice; siblings
+   * share an `invoiceGroupId` and are numbered base / base-R1 / base-R2…. Returns
+   * every created invoice. For a single-group order this creates exactly one
+   * invoice with `invoiceGroupId=null` (identical to pre-W4).
+   *
+   * Money: each group's subtotal is the sum of its line subtotals; the order's
+   * regular tax is allocated proportionally by subtotal with the LAST group
+   * absorbing the rounding remainder, so Σ(group tax) == the single-invoice tax
+   * exactly. Category tax (snapshotted per line) is added per group — currently
+   * always 0 (guarded below), so siblings sum == the order total to the cent.
+   */
+  private async createSplitInvoices(params: {
+    order: any;
+    remainingItems: Array<{ li: any; remainingQty: number }>;
+    isTaxExempt: boolean;
+    db: any;
+    tenantId: string | null;
+    extraInvoiceData: Record<string, any>;
+    include: any;
+  }): Promise<any[]> {
+    const { order, remainingItems, isTaxExempt, db, tenantId, extraInvoiceData, include } = params;
+
+    const groups = await this.groupOrderLinesForInvoicing(remainingItems, db);
+
+    // Interim guard: category tax is snapshotted but NOT yet folded into the ORDER
+    // total, so a non-zero rate would make sibling totals exceed the order total
+    // and break the split invariant. Block it explicitly until the order-total
+    // follow-up ships. Tobacco (the only seeded category) is taxType=NONE/rate=0,
+    // so no current tenant is affected.
+    for (const g of groups) {
+      if (g.category && g.category.taxType !== "NONE" && Number(g.category.rate) > 0) {
+        throw new BadRequestException(
+          `Category "${g.category.name}" has a non-zero tax rate; per-category tax on invoices is not enabled yet. Set its rate to 0 before invoicing it.`,
+        );
+      }
+    }
+
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const orderTax = Number(order.tax) || 0;
+
+    const groupData = groups.map((g) => {
+      const itemsData = g.items.map(({ li, remainingQty }: any) =>
+        this.buildInvoiceItemData(li, remainingQty, tenantId),
+      );
+      const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
+      const categoryTax = roundMoney(
+        itemsData.reduce((s: number, it: any) => s + Number(it.categoryTaxAmount ?? 0), 0),
+      );
+      return { g, itemsData, subtotal, categoryTax, regularTax: 0, taxAmount: 0, total: 0 };
+    });
+
+    const totalSubtotal = roundMoney(groupData.reduce((s, gd) => s + gd.subtotal, 0));
+    const totalRegularTax = isTaxExempt
+      ? 0
+      : roundMoney(orderTax * (totalSubtotal / orderSubtotal));
+    // Allocate the order's regular tax proportionally by subtotal, then give the
+    // rounding remainder to the LARGEST-subtotal group — never a tiny trailing
+    // group, which could otherwise round to a NEGATIVE tax. Σ(group tax) still
+    // equals the single-invoice tax exactly, so siblings sum to the order total.
+    if (isTaxExempt) {
+      groupData.forEach((gd) => {
+        gd.regularTax = 0;
+      });
+    } else {
+      let allocated = 0;
+      groupData.forEach((gd) => {
+        gd.regularTax = roundMoney(orderTax * (gd.subtotal / orderSubtotal));
+        allocated = roundMoney(allocated + gd.regularTax);
+      });
+      const remainder = roundMoney(totalRegularTax - allocated);
+      if (remainder !== 0 && groupData.length > 0) {
+        let maxIdx = 0;
+        for (let i = 1; i < groupData.length; i++)
+          if (groupData[i].subtotal > groupData[maxIdx].subtotal) maxIdx = i;
+        groupData[maxIdx].regularTax = roundMoney(groupData[maxIdx].regularTax + remainder);
+      }
+    }
+    groupData.forEach((gd) => {
+      gd.taxAmount = roundMoney(gd.regularTax + gd.categoryTax);
+      gd.total = roundMoney(gd.subtotal + gd.taxAmount);
+    });
+
+    const multi = groupData.length > 1;
+    const baseNumber = await this.generateInvoiceNumber(db);
+    const invoiceGroupId = multi ? randomUUID() : null;
+
+    const created: any[] = [];
+    for (let i = 0; i < groupData.length; i++) {
+      const gd = groupData[i];
+      const invoiceNumber = i === 0 ? baseNumber : `${baseNumber}-R${i}`;
+      try {
+        created.push(
+          await db.invoice.create({
+            data: {
+              invoiceNumber,
+              customerId: order.customerId,
+              orderId: order.id,
+              status: InvoiceStatus.DRAFT,
+              subtotal: gd.subtotal,
+              taxAmount: gd.taxAmount,
+              discount: 0,
+              shippingFee: 0,
+              total: gd.total,
+              ...(invoiceGroupId ? { invoiceGroupId } : {}),
+              ...extraInvoiceData,
+              items: { create: gd.itemsData },
+              ...(tenantId ? { tenantId } : {}),
+            },
+            include,
+          }),
+        );
+      } catch (err: any) {
+        if (err?.code === "P2002")
+          throw new ConflictException("Invoice number conflict — please retry.");
+        throw err;
+      }
+    }
+
+    // Bump invoicedQty once per order item (each belongs to exactly one group).
+    for (const { li, remainingQty } of remainingItems) {
+      await db.orderItem.update({
+        where: { id: li.id },
+        data: { invoicedQty: { increment: remainingQty } },
+      });
+    }
+
+    return created;
   }
 
   /** The order's single open "pending mirror" draft, or null. */
@@ -457,7 +621,9 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true, unitsPerBox: true } } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
         },
       },
     });
@@ -655,7 +821,9 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true, unitsPerBox: true } } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
         },
       },
     });
@@ -669,19 +837,12 @@ export class InvoicesService {
       .filter((x: any) => x.remainingQty > 0.001);
 
     if (remainingItems.length === 0) {
-      // Nothing left to invoice — return the latest existing invoice (or null).
-      return this.prisma.invoice.findFirst({
+      // Nothing left to invoice — return the order's existing invoice(s). (W4: array.)
+      return this.prisma.invoice.findMany({
         where: { orderId, ...(tenantId ? { tenantId } : {}) },
         orderBy: { createdAt: "desc" },
       });
     }
-
-    // Reuse buildInvoiceItemData so boxed-product proration + rounding stay
-    // identical to the in-request path (was a flat remainingQty * unitPrice,
-    // which over-charged boxed lines by unitsPerBox).
-    const itemsData = remainingItems.map(({ li, remainingQty }: any) =>
-      this.buildInvoiceItemData(li, remainingQty, tenantId),
-    );
 
     // RF-079: apply tax-exempt check in the fire-and-forget path too.
     const customerForTax = tenantId
@@ -690,11 +851,6 @@ export class InvoicesService {
           select: { isTaxExempt: true },
         })
       : null;
-    const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
-    const orderSubtotal = Number(order.subtotal) || 1;
-    const proportion = subtotal / orderSubtotal;
-    const taxAmount = customerForTax?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
-    const total = roundMoney(subtotal + taxAmount);
 
     // Resolve default terms — read SystemConfig with explicit tenantId since we're
     // outside the normal request context (fire-and-forget, no AsyncLocalStorage).
@@ -726,52 +882,30 @@ export class InvoicesService {
       tenantTerms = cfg?.invoiceTerms ?? null;
     }
 
-    const invoiceNumber = await this.generateInvoiceNumber();
+    const extraInvoiceData: Record<string, any> = {
+      dueDate,
+      terms: tenantTerms ?? defaultTerms,
+      issueDate: new Date(),
+      notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
+    };
 
-    let invoice: any;
-    try {
-      invoice = await this.prisma.invoice.create({
-        data: {
-          invoiceNumber,
-          customerId: order.customerId,
-          orderId: order.id,
-          status: InvoiceStatus.DRAFT,
-          subtotal,
-          taxAmount,
-          discount: 0,
-          shippingFee: 0,
-          total,
-          dueDate,
-          terms: tenantTerms ?? defaultTerms,
-          issueDate: new Date(),
-          notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
-          items: { create: itemsData },
-          ...(tenantId ? { tenantId } : {}),
+    // W4: split by regulated category (fire-and-forget path). db = unscoped prisma
+    // with an explicit tenantId, exactly as this method already used it.
+    return this.createSplitInvoices({
+      order,
+      remainingItems,
+      isTaxExempt: !!customerForTax?.isTaxExempt,
+      db: this.prisma,
+      tenantId,
+      extraInvoiceData,
+      include: {
+        customer: {
+          select: { id: true, businessName: true, email: true, phone: true, mobile: true },
         },
-        include: {
-          customer: {
-            select: { id: true, businessName: true, email: true, phone: true, mobile: true },
-          },
-          items: true,
-          payments: true,
-        },
-      });
-    } catch (err: any) {
-      // RF-050: duplicate invoiceNumber under concurrent requests
-      if (err?.code === "P2002")
-        throw new ConflictException("Invoice number conflict — please retry.");
-      throw err;
-    }
-
-    // Bump invoicedQty on each affected order item.
-    for (const { li, remainingQty } of remainingItems) {
-      await this.prisma.orderItem.update({
-        where: { id: li.id },
-        data: { invoicedQty: { increment: remainingQty } },
-      });
-    }
-
-    return invoice;
+        items: true,
+        payments: true,
+      },
+    });
   }
 
   /**
@@ -785,7 +919,9 @@ export class InvoicesService {
       include: {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
-          include: { product: { select: { name: true, unitsPerBox: true } } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
         },
       },
     });

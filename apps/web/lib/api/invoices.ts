@@ -641,7 +641,8 @@ export function useUnvoidInvoice() {
 
 export function useCreateInvoiceFromOrder() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
+  // W4: a mixed regulated order returns >1 sibling invoice, so this is Invoice[].
+  return useMutation<Invoice[], Error, string>({
     mutationFn: (orderId) => apiClient.post(`/invoices/from-order/${orderId}`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
