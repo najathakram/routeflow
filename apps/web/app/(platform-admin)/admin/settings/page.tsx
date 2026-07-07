@@ -117,11 +117,17 @@ export default function AdminSettingsPage() {
     setTesting(true);
     setTestResult(null);
     try {
-      const { data } = await superAdminClient.post<{ ok: boolean; error?: string }>(
-        "/platform-admin/ai-config/test",
-      );
+      const { data } = await superAdminClient.post<{
+        ok: boolean;
+        verifiedAt?: string;
+        error?: string;
+      }>("/platform-admin/ai-config/test");
       setTestResult(data);
-      if (data.ok) load(); // refresh verifiedAt
+      // Update verifiedAt in place — refetching here would flip the page-level
+      // loading flag and flash a full-page spinner.
+      if (data.ok && data.verifiedAt) {
+        setConfig((c) => (c ? { ...c, verifiedAt: data.verifiedAt! } : c));
+      }
     } catch (err: any) {
       setTestResult({ ok: false, error: err?.response?.data?.message ?? "Test failed" });
     } finally {
