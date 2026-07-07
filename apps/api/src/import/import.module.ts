@@ -4,21 +4,25 @@ import { ImportService } from "./import.service";
 import { NumberingController } from "./numbering.controller";
 import { NumberingService } from "./numbering.service";
 import { AliasController } from "./alias.controller";
+import { ResolutionController } from "./resolution.controller";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductAliasService } from "./product-alias.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
+import { VariantResolutionService } from "./variant-resolution.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
+import { ProductsModule } from "../products/products.module";
 
 @Module({
-  imports: [PrismaModule, VendorBillsModule],
-  controllers: [ImportController, NumberingController, AliasController],
+  imports: [PrismaModule, VendorBillsModule, ProductsModule],
+  controllers: [ImportController, NumberingController, AliasController, ResolutionController],
   providers: [
     ImportService,
     NumberingService,
     ExternalRefService,
     ProductAliasService,
     DuplicateMatchService,
+    VariantResolutionService,
   ],
   // NumberingService is exported so the deferred invoices/orders wiring (which
   // must call reserveNext at mint time) can consume it without duplicating it.

@@ -653,6 +653,10 @@ model Product {
   // Phase 4: going-forward regulated-category pointer (one max per product);
   // supersedes `isTobacco`, which is kept as a shadow column for one release.
   trackedCategoryId String?
+  // Migration & Batch Import (Phase 3): a brand-new product created from a scanned
+  // invoice line with only name+SKU+cost is flagged incomplete until price/units
+  // are confirmed. Surfaced under a "Finish setup" filter on the import surface.
+  detailsIncomplete Boolean       @default(false)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
   tenantId          String?
@@ -696,6 +700,7 @@ model Product {
   @@index([tenantId])
   @@index([tenantId, isTobacco])
   @@index([tenantId, trackedCategoryId])
+  @@index([tenantId, detailsIncomplete])
 }
 
 model Route {
