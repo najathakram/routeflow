@@ -215,6 +215,10 @@ describe("PlatformAdminService — audit provenance", () => {
       const stats = await service.getStats();
       expect(stats.estMrrUsd).toBe(2 * 29 + 79); // 137
       expect(stats.planBreakdown).toEqual({ STARTER: 2, PROFESSIONAL: 1 });
+      // MRR is computed from an ACTIVE-only groupBy; the donut excludes cancelled.
+      const groupByArgs = ((prisma.tenant as any).groupBy as jest.Mock).mock.calls.map((c) => c[0]);
+      expect(groupByArgs.some((a) => a?.where?.status?.not === "CANCELLED")).toBe(true);
+      expect(groupByArgs.some((a) => a?.where?.status === "ACTIVE")).toBe(true);
     });
 
     it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {
@@ -254,11 +258,12 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   describe("listTenants filters", () => {
-    it("hides deleted by default and builds a search OR + explicit sort", async () => {
+    it("hides deleted by default, builds a search OR + explicit sort, returns deletedCount", async () => {
       prisma.tenant.findMany.mockResolvedValue([]);
-      prisma.tenant.count.mockResolvedValue(0);
+      // count() is called twice: filtered total, then the global soft-deleted count.
+      prisma.tenant.count.mockResolvedValueOnce(5).mockResolvedValueOnce(3);
 
-      await service.listTenants(1, 20, {
+      const result = await service.listTenants(1, 20, {
         search: "acme",
         status: "ACTIVE",
         plan: "STARTER",
@@ -276,6 +281,8 @@ describe("PlatformAdminService — audit provenance", () => {
         ]),
       );
       expect(args.orderBy).toEqual({ slug: "asc" });
+      expect(result.meta.total).toBe(5);
+      expect(result.meta.deletedCount).toBe(3);
     });
 
     it("includes deleted (no deletedAt filter) when requested", async () => {

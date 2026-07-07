@@ -22,7 +22,7 @@ interface Tenant {
 
 interface TenantsResponse {
   data: Tenant[];
-  meta: { total: number; page: number; limit: number; pages: number };
+  meta: { total: number; page: number; limit: number; pages: number; deletedCount: number };
 }
 
 type SortKey = "slug" | "name" | "status" | "plan" | "users" | "createdAt";
@@ -56,6 +56,8 @@ export default function AdminTenantsPage() {
   const [bulkAction, setBulkAction] = React.useState<string | null>(null);
   const [bulkPlan, setBulkPlan] = React.useState("STARTER");
   const headerCheckboxRef = React.useRef<HTMLInputElement>(null);
+  // Monotonic request id so a slow earlier fetch can't overwrite a newer one.
+  const reqSeqRef = React.useRef(0);
 
   // Debounce the search box so typing doesn't fire a request per keystroke.
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
@@ -71,6 +73,7 @@ export default function AdminTenantsPage() {
 
   const fetchTenants = React.useCallback(
     (p: number) => {
+      const seq = ++reqSeqRef.current;
       setLoading(true);
       setError(null);
       const params = new URLSearchParams({ page: String(p), limit: "50", sortKey, sortDir });
@@ -80,9 +83,16 @@ export default function AdminTenantsPage() {
       if (showDeleted) params.set("includeDeleted", "true");
       superAdminClient
         .get<TenantsResponse>(`/platform-admin/tenants?${params}`)
-        .then((res) => setData(res.data))
-        .catch((err) => setError(err?.response?.data?.message ?? "Failed to load tenants"))
-        .finally(() => setLoading(false));
+        .then((res) => {
+          if (seq === reqSeqRef.current) setData(res.data);
+        })
+        .catch((err) => {
+          if (seq === reqSeqRef.current)
+            setError(err?.response?.data?.message ?? "Failed to load tenants");
+        })
+        .finally(() => {
+          if (seq === reqSeqRef.current) setLoading(false);
+        });
     },
     [debouncedSearch, statusFilter, planFilter, showDeleted, sortKey, sortDir],
   );
@@ -273,7 +283,7 @@ export default function AdminTenantsPage() {
   };
 
   const filtersActive = search !== "" || statusFilter !== "" || planFilter !== "" || showDeleted;
-  const cancelledCount = data?.data.filter((t) => t.status === "CANCELLED").length ?? 0;
+  const deletedCount = data?.meta.deletedCount ?? 0;
 
   return (
     <div className="p-6">
@@ -372,7 +382,7 @@ export default function AdminTenantsPage() {
         >
           {showDeleted
             ? "Hide deleted"
-            : `Show deleted${cancelledCount > 0 ? ` (${cancelledCount})` : ""}`}
+            : `Show deleted${deletedCount > 0 ? ` (${deletedCount})` : ""}`}
         </button>
         <span className="ml-auto text-sm text-slate-400">{data ? `${rows.length} shown` : ""}</span>
         {filtersActive && (
