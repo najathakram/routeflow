@@ -87,8 +87,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `platform-admin/`
 
-- **controller** `platform-admin` — `@Get stats|stats/growth|audit-logs|billing/overview`, tenants CRUD, `@Patch tenants/:id/{config,status,plan}`, `@Post tenants/:id/{impersonate,extend-trial,activate-subscription,reset-admin-password}`, addons + billing checkout/portal.
-- **service** — tenant CRUD, `changeStatus`/`changePlan` (invalidate TenantStatusGuard cache), `impersonate`, `getGrowthStats`, `getAuditLogs`. side effects: Tenant/TenantSubscription/TenantAddon writes; billing (Stripe) calls; AuditLog.
+- **controller** `platform-admin` — `@Get stats|stats/growth|audit-logs|audit-logs/facets|billing/overview`, tenants CRUD, `@Patch tenants/:id/{config,status,plan}`, `@Post tenants/:id/{impersonate,extend-trial,activate-subscription,reset-admin-password}`, addons + billing checkout/portal. Mutation endpoints thread `@CurrentUser` adminId; addon enable/disable are async + audit-logged.
+- **service** — tenant CRUD, `updateStatus`/`updatePlan` (invalidate TenantStatusGuard cache), `impersonate`, `getGrowthStats`, `getAuditLogs` (enriched: resolves actor `{username,email,isPlatform}` + tenant `{slug,name}` + friendly `actionLabel`), `getAuditLogFacets`, `recordAdminAction(tenantId,adminId,code,meta)`. Every lifecycle mutation + impersonation emits a purpose-built AuditLog row keyed to the TARGET tenant (entityType='tenant', structured code from `audit-actions.constant.ts`) so per-tenant audit filters surface platform actions — the generic AuditInterceptor still writes its `tenantId=null` row too. side effects: Tenant/TenantSubscription/TenantAddon writes; billing (Stripe) calls; AuditLog.
+- **`audit-actions.constant.ts`** — `AdminAuditAction` codes + `ADMIN_AUDIT_ACTION_LABELS`/`ADMIN_AUDIT_ACTION_FACETS`/`adminAuditActionLabel()` (single source for the audit-log facets dropdown + human-readable labels). Spec: `platform-admin.service.spec.ts`.
 
 ### `customers/`
 
