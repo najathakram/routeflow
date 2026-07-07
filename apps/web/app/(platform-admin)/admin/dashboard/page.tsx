@@ -4,12 +4,12 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
-import { AdminBadge } from "../../_components/AdminBadge";
+import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
 import { Building2, Users, AlertTriangle, Clock } from "lucide-react";
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   PieChart,
   Pie,
   Cell,
@@ -26,6 +26,8 @@ import {
 interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
+  newTenantsThisMonth: number;
+  estMrrUsd: number;
   planBreakdown: Record<string, number>;
   recentTenants: Array<{
     id: string;
@@ -42,6 +44,7 @@ interface PlatformStats {
     plan: string;
     trialEndsAt: string;
     createdAt: string;
+    userCount: number;
   }>;
   atRiskTenants: Array<{
     id: string;
@@ -50,6 +53,7 @@ interface PlatformStats {
     status: string;
     plan: string;
     trialEndsAt: string | null;
+    riskReason: string;
   }>;
 }
 
@@ -59,6 +63,13 @@ interface GrowthPoint {
 }
 
 const PIE_COLORS = ["#6366f1", "#3b82f6", "#a855f7", "#f59e0b", "#10b981"];
+
+const usd = (n: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -97,6 +108,8 @@ export default function AdminDashboardPage() {
   if (!stats) return null;
 
   const planData = Object.entries(stats.planBreakdown).map(([name, value]) => ({ name, value }));
+  const activePct =
+    stats.tenants.total > 0 ? Math.round((stats.tenants.active / stats.tenants.total) * 100) : 0;
 
   return (
     <div className="p-6 space-y-6">
@@ -119,21 +132,26 @@ export default function AdminDashboardPage() {
         <AdminStatCard
           label="Total Tenants"
           value={stats.tenants.total}
+          sub={`+${stats.newTenantsThisMonth} this month`}
           icon={<Building2 className="h-5 w-5" />}
         />
         <AdminStatCard
           label="Active"
           value={stats.tenants.active}
+          accent="success"
+          sub={`${activePct}% of total`}
           icon={<Building2 className="h-5 w-5" />}
         />
         <AdminStatCard
           label="Trial"
           value={stats.tenants.trial}
+          sub={`${stats.trialsExpiringSoon.length} expiring within 7 days`}
           icon={<Clock className="h-5 w-5" />}
         />
         <AdminStatCard
           label="Total Users"
           value={stats.totalUsers}
+          sub="Across all workspaces"
           icon={<Users className="h-5 w-5" />}
         />
       </div>
@@ -144,14 +162,8 @@ export default function AdminDashboardPage() {
         <AdminCard title="Tenant Growth (12 months)" className="lg:col-span-2">
           {growth.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={growth}>
-                <defs>
-                  <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <BarChart data={growth}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
                 <XAxis
                   dataKey="month"
                   tick={{ fill: "#94a3b8", fontSize: 11 }}
@@ -164,6 +176,7 @@ export default function AdminDashboardPage() {
                   allowDecimals={false}
                 />
                 <Tooltip
+                  cursor={{ fill: "#33415533" }}
                   contentStyle={{
                     backgroundColor: "#1e293b",
                     border: "1px solid #334155",
@@ -172,15 +185,16 @@ export default function AdminDashboardPage() {
                   labelStyle={{ color: "#e2e8f0" }}
                   itemStyle={{ color: "#818cf8" }}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="count"
-                  stroke="#6366f1"
-                  fill="url(#growthGrad)"
-                  strokeWidth={2}
-                  name="New Tenants"
-                />
-              </AreaChart>
+                <Bar dataKey="count" name="New Tenants" radius={[4, 4, 0, 0]}>
+                  {growth.map((_, i) => (
+                    <Cell
+                      key={i}
+                      fill="#6366f1"
+                      fillOpacity={i === growth.length - 1 ? 0.4 : 0.85}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           ) : (
             <p className="py-8 text-center text-sm text-slate-500">No growth data yet</p>
@@ -188,7 +202,14 @@ export default function AdminDashboardPage() {
         </AdminCard>
 
         {/* Plan Distribution */}
-        <AdminCard title="Plan Distribution">
+        <AdminCard
+          title="Plan Distribution"
+          actions={
+            <span className="font-mono text-xs text-slate-400">
+              Est. MRR <span className="text-slate-200">{usd(stats.estMrrUsd)}</span>
+            </span>
+          }
+        >
           {planData.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -201,7 +222,7 @@ export default function AdminDashboardPage() {
                   paddingAngle={3}
                   dataKey="value"
                   label={({ name, value }: { name?: string; value?: number }) =>
-                    `${name ?? ""}: ${value ?? 0}`
+                    `${planLabel(name ?? "")}: ${value ?? 0}`
                   }
                 >
                   {planData.map((_, i) => (
@@ -217,7 +238,9 @@ export default function AdminDashboardPage() {
                 />
                 <Legend
                   wrapperStyle={{ fontSize: 12 }}
-                  formatter={(value: string) => <span className="text-slate-300">{value}</span>}
+                  formatter={(value: string) => (
+                    <span className="text-slate-300">{planLabel(value)}</span>
+                  )}
                 />
               </PieChart>
             </ResponsiveContainer>
@@ -248,7 +271,8 @@ export default function AdminDashboardPage() {
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
                     <th className="px-4 py-2.5 text-left">Tenant</th>
                     <th className="px-4 py-2.5 text-left">Plan</th>
-                    <th className="px-4 py-2.5 text-left">Expires</th>
+                    <th className="px-4 py-2.5 text-right">Users</th>
+                    <th className="px-4 py-2.5 text-right">Time Left</th>
                     <th className="px-4 py-2.5 text-left"></th>
                   </tr>
                 </thead>
@@ -259,12 +283,22 @@ export default function AdminDashboardPage() {
                     );
                     return (
                       <tr key={t.id} className="hover:bg-slate-700/20">
-                        <td className="px-4 py-2 text-white">{t.name ?? t.slug}</td>
+                        <td className="px-4 py-2">
+                          <div className="text-white">{t.name ?? t.slug}</div>
+                          <div className="font-mono text-xs text-slate-500">{t.slug}</div>
+                        </td>
                         <td className="px-4 py-2">
                           <AdminBadge variant="plan">{t.plan}</AdminBadge>
                         </td>
-                        <td className="px-4 py-2">
-                          <span className={days <= 2 ? "text-red-400" : "text-yellow-400"}>
+                        <td className="px-4 py-2 text-right font-mono text-slate-400">
+                          {t.userCount}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <span
+                            className={
+                              days <= 2 ? "font-semibold text-red-400" : "font-mono text-slate-300"
+                            }
+                          >
                             {days}d left
                           </span>
                         </td>
@@ -311,7 +345,10 @@ export default function AdminDashboardPage() {
                 <tbody className="divide-y divide-slate-700/50">
                   {stats.atRiskTenants.map((t) => (
                     <tr key={t.id} className="hover:bg-slate-700/20">
-                      <td className="px-4 py-2 text-white">{t.name ?? t.slug}</td>
+                      <td className="px-4 py-2">
+                        <div className="text-white">{t.name ?? t.slug}</div>
+                        <div className="text-xs text-slate-500">{t.riskReason}</div>
+                      </td>
                       <td className="px-4 py-2">
                         <AdminBadge>{t.status}</AdminBadge>
                       </td>

@@ -48,11 +48,37 @@ export class PlatformAdminController {
   }
 
   @Get("tenants")
-  @ApiOperation({ summary: "Paginated list of all tenants with stats" })
+  @ApiOperation({ summary: "Paginated, filterable, sortable list of all tenants with stats" })
   @ApiQuery({ name: "page", required: false, type: Number })
   @ApiQuery({ name: "limit", required: false, type: Number })
-  listTenants(@Query("page") page = "1", @Query("limit") limit = "20") {
-    return this.svc.listTenants(Number(page), Number(limit));
+  @ApiQuery({ name: "search", required: false })
+  @ApiQuery({ name: "status", required: false })
+  @ApiQuery({ name: "plan", required: false })
+  @ApiQuery({
+    name: "sortKey",
+    required: false,
+    enum: ["slug", "name", "status", "plan", "users", "createdAt"],
+  })
+  @ApiQuery({ name: "sortDir", required: false, enum: ["asc", "desc"] })
+  @ApiQuery({ name: "includeDeleted", required: false, type: Boolean })
+  listTenants(
+    @Query("page") page = "1",
+    @Query("limit") limit = "20",
+    @Query("search") search?: string,
+    @Query("status") status?: string,
+    @Query("plan") plan?: string,
+    @Query("sortKey") sortKey?: string,
+    @Query("sortDir") sortDir?: string,
+    @Query("includeDeleted") includeDeleted?: string,
+  ) {
+    return this.svc.listTenants(Number(page), Number(limit), {
+      search: search || null,
+      status: status || null,
+      plan: plan || null,
+      sortKey: sortKey || null,
+      sortDir: sortDir === "asc" ? "asc" : sortDir === "desc" ? "desc" : null,
+      includeDeleted: includeDeleted === "true" || includeDeleted === "1",
+    });
   }
 
   @Post("tenants")
