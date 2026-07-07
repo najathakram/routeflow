@@ -28,6 +28,11 @@ export const FLAG_KEYS = [
 ] as const;
 export type FlagKey = (typeof FLAG_KEYS)[number];
 
+/** Ordinal rank of a plan key (STARTER=0 … ENTERPRISE=3); -1 if unknown. Upgrade/downgrade direction. */
+export function planRank(planKey: string): number {
+  return PLAN_KEYS.indexOf(planKey as PlanKey);
+}
+
 /** The 7 add-on SKUs (pricing-plans.md §Add-on SKUs). */
 export const ADDON_SKUS = [
   "SEAT_EXTRA",
@@ -43,6 +48,23 @@ export type AddonSkuCode = (typeof ADDON_SKUS)[number];
 /** Meter keys (mirror the Prisma MeterKey enum). */
 export const METER_KEYS = ["SEATS", "ROUTES", "SCANS", "MSGS"] as const;
 export type MeterKeyCode = (typeof METER_KEYS)[number];
+
+/** BillingEvent type codes (audit + MRR reconciliation). */
+export const BILLING_EVENTS = {
+  PLAN_CHANGED: "plan.changed",
+  PLAN_DOWNGRADE_SCHEDULED: "plan.downgrade_scheduled",
+  ADDON_ENABLED: "addon.enabled",
+  ADDON_DISABLED: "addon.disabled",
+  SEAT_ADDED: "seat.added",
+  SEAT_FREED: "seat.freed",
+  GRACE_STARTED: "grace.started",
+  GRACE_EXPIRED: "grace.expired",
+  TRIAL_CONVERTED: "trial.converted",
+  TRIAL_EXPIRED: "trial.expired",
+  SUBSCRIPTION_CANCELED: "subscription.canceled",
+  SUBSCRIPTION_RESUMED: "subscription.resumed",
+} as const;
+export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
 
 /**
  * Map the legacy TenantPlan enum → the new planKey source of truth. PROFESSIONAL

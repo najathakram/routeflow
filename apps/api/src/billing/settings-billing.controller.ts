@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Query,
   UseGuards,
@@ -17,16 +18,19 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
 import { ProrationService } from "./proration.service";
+import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { QuoteDto } from "./dto/quote.dto";
+import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 
 interface AuthUser {
   tenantId: string | null;
+  sub?: string;
 }
 
 /**
  * Tenant self-service billing (settings-billing + choose-plan). Authenticated
- * operators/admins only. Read + quote surface — the subscribe/upgrade/downgrade
- * mutations land in Phase 4. (Public pricing lives on GET /billing/plans.)
+ * operators/admins only. Reads + quotes + the subscribe/upgrade/downgrade/cancel and
+ * add-on enable/disable mutations. (Public pricing lives on GET /billing/plans.)
  */
 @ApiTags("billing")
 @ApiBearerAuth()
@@ -37,6 +41,7 @@ export class SettingsBillingController {
   constructor(
     private readonly subscription: SubscriptionService,
     private readonly proration: ProrationService,
+    private readonly mutations: SubscriptionMutationService,
   ) {}
 
   /**
@@ -80,5 +85,72 @@ export class SettingsBillingController {
   @ApiOperation({ summary: "Mid-cycle prorated charge to enable an add-on today" })
   prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {
     return this.proration.prorationPreview(this.tenantIdOf(user), sku);
+  }
+
+  // ─── Mutations (money-moving — TENANT_ADMIN only, not plain OPERATOR) ────────
+
+  @Post("subscribe")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Commit a subscription / convert a trial by picking a plan" })
+  subscribe(@CurrentUser() user: AuthUser, @Body() dto: SubscribeDto) {
+    return this.mutations.subscribe(this.tenantIdOf(user), dto, user.sub);
+  }
+
+  @Post("subscription")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Upgrade to a higher plan (instant + prorated)" })
+  upgrade(@CurrentUser() user: AuthUser, @Body() dto: UpgradeDto) {
+    return this.mutations.upgrade(this.tenantIdOf(user), dto.planKey, user.sub);
+  }
+
+  @Post("subscription/downgrade")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Schedule a downgrade at period end (nothing deleted)" })
+  downgrade(@CurrentUser() user: AuthUser, @Body() dto: DowngradeDto) {
+    return this.mutations.downgrade(
+      this.tenantIdOf(user),
+      dto.targetPlanKey,
+      dto.retainedUserIds ?? [],
+      user.sub,
+    );
+  }
+
+  @Post("subscription/cancel")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Schedule cancellation at period end" })
+  cancel(@CurrentUser() user: AuthUser) {
+    return this.mutations.cancel(this.tenantIdOf(user), user.sub);
+  }
+
+  @Post("subscription/resume")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Undo a scheduled cancellation" })
+  resume(@CurrentUser() user: AuthUser) {
+    return this.mutations.resume(this.tenantIdOf(user), user.sub);
+  }
+
+  @Post("addons/:sku/enable")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Enable an add-on (prorated for the current cycle)" })
+  enableAddon(
+    @CurrentUser() user: AuthUser,
+    @Param("sku") sku: string,
+    @Body() dto: EnableAddonDto,
+  ) {
+    return this.mutations.enableAddon(this.tenantIdOf(user), sku, dto.quantity, user.sub);
+  }
+
+  @Post("addons/:sku/disable")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Disable an add-on (history kept read-only)" })
+  disableAddon(@CurrentUser() user: AuthUser, @Param("sku") sku: string) {
+    return this.mutations.disableAddon(this.tenantIdOf(user), sku, user.sub);
   }
 }
