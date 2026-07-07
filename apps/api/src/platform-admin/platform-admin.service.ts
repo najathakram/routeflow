@@ -30,7 +30,11 @@ import {
   adminAuditActionLabel,
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
-import { STOPGAP_PLAN_MONTHLY_USD, estimatePlatformMrrUsd } from "./plan-pricing.constant";
+import {
+  STOPGAP_PLAN_MONTHLY_USD,
+  estimatePlatformMrrUsd,
+  addonMonthlyUsd,
+} from "./plan-pricing.constant";
 
 @Injectable()
 export class PlatformAdminService {
@@ -654,40 +658,129 @@ ${paymentSection}
 
   // ─── Billing overview ─────────────────────────────────────────────────────────
 
-  async getBillingOverview() {
-    const [subscriptions, totalTenants, trialTenants] = await Promise.all([
+  /** Billing cycle inferred from the subscription period span (display only). */
+  private _cycle(start: Date | null, end: Date | null): "Annual" | "Monthly" | null {
+    if (!start || !end) return null;
+    const days = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
+    return days > 200 ? "Annual" : "Monthly";
+  }
+
+  async getBillingOverview(
+    opts: {
+      page?: number;
+      limit?: number;
+      plan?: string | null;
+      status?: string | null;
+    } = {},
+  ) {
+    const page = opts.page ?? 1;
+    const limit = opts.limit ?? 20;
+    const skip = (page - 1) * limit;
+    const now = new Date();
+
+    // Filters apply to the paginated table only; KPIs are global.
+    const where: Record<string, unknown> = {};
+    if (opts.plan) where.currentPlan = opts.plan;
+    if (opts.status) where.tenant = { is: { status: opts.status } };
+
+    const [
+      rows,
+      total,
+      activePlanBreakdown,
+      activeAddons,
+      payingTenants,
+      trialTenants,
+      pastDueList,
+    ] = await Promise.all([
       this.prisma.tenantSubscription.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { updatedAt: "desc" },
         include: {
           tenant: {
-            select: { id: true, slug: true, name: true, status: true, plan: true },
+            select: {
+              id: true,
+              slug: true,
+              name: true,
+              status: true,
+              plan: true,
+              trialEndsAt: true,
+              addons: { where: { active: true }, select: { addonKey: true } },
+            },
           },
         },
-        orderBy: { updatedAt: "desc" },
       }),
-      this.prisma.tenant.count(),
+      this.prisma.tenantSubscription.count({ where }),
+      // Global MRR base = ACTIVE tenants by plan × stopgap price.
+      this.prisma.tenant.groupBy({
+        by: ["plan"],
+        where: { status: TenantStatus.ACTIVE, deletedAt: null },
+        _count: { plan: true },
+      }),
+      // Global add-on revenue = active add-ons on ACTIVE tenants × stopgap price.
+      this.prisma.tenantAddon.findMany({
+        where: { active: true, tenant: { is: { status: TenantStatus.ACTIVE, deletedAt: null } } },
+        select: { addonKey: true },
+      }),
+      this.prisma.tenant.count({ where: { status: TenantStatus.ACTIVE, deletedAt: null } }),
       this.prisma.tenant.count({ where: { status: TenantStatus.TRIAL } }),
+      // Past-due proxy: ACTIVE, not cancelling, renewal date already elapsed.
+      this.prisma.tenantSubscription.findMany({
+        where: {
+          periodEnd: { lt: now },
+          cancelAtPeriodEnd: false,
+          tenant: { is: { status: TenantStatus.ACTIVE, deletedAt: null } },
+        },
+        select: { currentPlan: true },
+      }),
     ]);
 
-    const activeSubscriptions = subscriptions.filter(
-      (s) => s.tenant.status === "ACTIVE" && !s.cancelAtPeriodEnd,
+    const activePlanCounts = Object.fromEntries(
+      activePlanBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
     );
-    const cancelPending = subscriptions.filter((s) => s.cancelAtPeriodEnd);
+    const baseMrr = estimatePlatformMrrUsd(activePlanCounts);
+    const addonRevenue = addonMonthlyUsd(activeAddons.map((a) => a.addonKey));
+    const pastDueAmount = pastDueList.reduce(
+      (sum, s) => sum + (STOPGAP_PLAN_MONTHLY_USD[s.currentPlan] ?? 0),
+      0,
+    );
+
+    const subscriptions = rows.map((s) => {
+      const t = s.tenant;
+      const isActive = t.status === "ACTIVE" && !s.cancelAtPeriodEnd;
+      const baseMonthly = isActive ? (STOPGAP_PLAN_MONTHLY_USD[s.currentPlan] ?? 0) : 0;
+      const addonMonthly = isActive ? addonMonthlyUsd(t.addons.map((a) => a.addonKey)) : 0;
+      return {
+        tenantId: s.tenantId,
+        tenantSlug: t.slug,
+        tenantName: t.name,
+        tenantStatus: t.status,
+        currentPlan: s.currentPlan,
+        cycle: this._cycle(s.periodStart, s.periodEnd),
+        baseMonthly,
+        addonMonthly,
+        mrr: baseMonthly + addonMonthly,
+        periodEnd: s.periodEnd,
+        // Trials "convert" on their trial end; active subs renew on periodEnd.
+        nextChargeAt: t.status === "TRIAL" ? t.trialEndsAt : s.periodEnd,
+        cancelAtPeriodEnd: s.cancelAtPeriodEnd,
+        pastDue: isActive && s.periodEnd != null && s.periodEnd < now,
+        stripeCustomerId: s.stripeCustomerId,
+      };
+    });
 
     return {
-      activeSubscriptions: activeSubscriptions.length,
-      cancelPending: cancelPending.length,
-      totalTenants,
+      // Display-only stopgap figures (see plan-pricing.constant.ts).
+      estMrr: baseMrr + addonRevenue,
+      baseMrr,
+      addonRevenue,
+      addonSubs: activeAddons.length,
+      payingTenants,
       trialTenants,
-      subscriptions: subscriptions.map((s) => ({
-        tenantId: s.tenantId,
-        tenantSlug: s.tenant.slug,
-        tenantName: s.tenant.name,
-        tenantStatus: s.tenant.status,
-        currentPlan: s.currentPlan,
-        periodEnd: s.periodEnd,
-        cancelAtPeriodEnd: s.cancelAtPeriodEnd,
-        stripeCustomerId: s.stripeCustomerId,
-      })),
+      pastDue: { count: pastDueList.length, amount: pastDueAmount },
+      subscriptions,
+      meta: { total, page, limit, pages: Math.ceil(total / limit) },
     };
   }
 

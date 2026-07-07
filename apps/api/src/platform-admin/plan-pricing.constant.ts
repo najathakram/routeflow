@@ -23,3 +23,24 @@ export function estimatePlatformMrrUsd(planBreakdown: Record<string, number>): n
     return sum + price * (count ?? 0);
   }, 0);
 }
+
+/**
+ * STOPGAP monthly price (USD) per add-on key — same caveat as the plan map
+ * (billing-plans owns the real add-on SKU pricing). Unknown keys contribute $0.
+ */
+export const STOPGAP_ADDON_MONTHLY_USD: Record<string, number> = {
+  ai_scanning: 19,
+  advanced_routes: 15,
+  api_access: 49,
+  custom_branding: 29,
+  priority_support: 99,
+  advanced_reporting: 39,
+  tobacco_dealer: 39,
+  regulated_items: 39,
+  buyer_portal: 49,
+};
+
+/** Sum the stopgap monthly price of a set of active add-on keys. */
+export function addonMonthlyUsd(addonKeys: string[]): number {
+  return addonKeys.reduce((sum, k) => sum + (STOPGAP_ADDON_MONTHLY_USD[k] ?? 0), 0);
+}

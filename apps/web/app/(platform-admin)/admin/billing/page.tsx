@@ -4,34 +4,50 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminStatCard } from "../../_components/AdminStatCard";
-import { AdminBadge } from "../../_components/AdminBadge";
+import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminCard } from "../../_components/AdminCard";
-import { CreditCard, Users, AlertTriangle, TrendingUp } from "lucide-react";
+import { CreditCard, Users, AlertTriangle, TrendingUp, Download } from "lucide-react";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-interface BillingOverview {
-  activeSubscriptions: number;
-  cancelPending: number;
-  totalTenants: number;
-  trialTenants: number;
-  subscriptions: Array<{
-    tenantId: string;
-    tenantSlug: string;
-    tenantName: string;
-    tenantStatus: string;
-    currentPlan: string;
-    periodEnd: string | null;
-    cancelAtPeriodEnd: boolean;
-    stripeCustomerId: string | null;
-  }>;
+interface SubscriptionRow {
+  tenantId: string;
+  tenantSlug: string;
+  tenantName: string;
+  tenantStatus: string;
+  currentPlan: string;
+  cycle: "Annual" | "Monthly" | null;
+  baseMonthly: number;
+  addonMonthly: number;
+  mrr: number;
+  periodEnd: string | null;
+  nextChargeAt: string | null;
+  cancelAtPeriodEnd: boolean;
+  pastDue: boolean;
+  stripeCustomerId: string | null;
 }
 
-const PLAN_PRICES: Record<string, number> = {
-  STARTER: 29,
-  PROFESSIONAL: 79,
-  ENTERPRISE: 199,
-};
+interface BillingOverview {
+  estMrr: number;
+  baseMrr: number;
+  addonRevenue: number;
+  addonSubs: number;
+  payingTenants: number;
+  trialTenants: number;
+  pastDue: { count: number; amount: number };
+  subscriptions: SubscriptionRow[];
+  meta: { total: number; page: number; limit: number; pages: number };
+}
+
+const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"];
+
+const usd = (n: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -39,16 +55,79 @@ export default function BillingPage() {
   const [data, setData] = React.useState<BillingOverview | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [page, setPage] = React.useState(1);
+  const [planFilter, setPlanFilter] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const reqSeqRef = React.useRef(0);
 
   React.useEffect(() => {
-    superAdminClient
-      .get<BillingOverview>("/platform-admin/billing/overview")
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err?.response?.data?.message ?? "Failed to load billing data"))
-      .finally(() => setLoading(false));
-  }, []);
+    setPage(1);
+  }, [planFilter, statusFilter]);
 
-  if (loading)
+  const fetchOverview = React.useCallback(
+    (p: number) => {
+      const seq = ++reqSeqRef.current;
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams({ page: String(p), limit: "20" });
+      if (planFilter) params.set("plan", planFilter);
+      if (statusFilter) params.set("status", statusFilter);
+      superAdminClient
+        .get<BillingOverview>(`/platform-admin/billing/overview?${params}`)
+        .then((res) => {
+          if (seq === reqSeqRef.current) setData(res.data);
+        })
+        .catch((err) => {
+          if (seq === reqSeqRef.current)
+            setError(err?.response?.data?.message ?? "Failed to load billing data");
+        })
+        .finally(() => {
+          if (seq === reqSeqRef.current) setLoading(false);
+        });
+    },
+    [planFilter, statusFilter],
+  );
+
+  React.useEffect(() => {
+    fetchOverview(page);
+  }, [page, fetchOverview]);
+
+  const exportCsv = () => {
+    if (!data) return;
+    const header = [
+      "Tenant",
+      "Slug",
+      "Plan",
+      "Cycle",
+      "Base",
+      "Addons",
+      "MRR",
+      "NextCharge",
+      "Status",
+    ];
+    const lines = data.subscriptions.map((s) => [
+      s.tenantName,
+      s.tenantSlug,
+      s.currentPlan,
+      s.cycle ?? "",
+      s.baseMonthly,
+      s.addonMonthly,
+      s.mrr,
+      s.nextChargeAt ? new Date(s.nextChargeAt).toISOString().slice(0, 10) : "",
+      s.tenantStatus,
+    ]);
+    const csv = [header, ...lines]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `billing-subscriptions-page-${data.meta.page}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading && !data)
     return <div className="p-6 py-12 text-center text-slate-500">Loading billing data...</div>;
   if (error)
     return (
@@ -60,90 +139,138 @@ export default function BillingPage() {
     );
   if (!data) return null;
 
-  // Estimate MRR from active subscriptions
-  const mrr = data.subscriptions
-    .filter((s) => s.tenantStatus === "ACTIVE" && !s.cancelAtPeriodEnd)
-    .reduce((sum, s) => sum + (PLAN_PRICES[s.currentPlan] ?? 0), 0);
-
-  const conversionRate =
-    data.totalTenants > 0
-      ? Math.round(((data.totalTenants - data.trialTenants) / data.totalTenants) * 100)
-      : 0;
-
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Billing Overview</h1>
-        <p className="mt-1 text-sm text-slate-400">Subscription and revenue management</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Billing</h1>
+          <p className="mt-1 text-sm text-slate-400">Subscription revenue across all tenants.</p>
+        </div>
+        <button
+          onClick={exportCsv}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+        >
+          <Download className="h-4 w-4" /> Export
+        </button>
       </div>
 
-      {/* Summary Cards */}
+      {/* KPI tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <AdminStatCard
           label="Est. MRR"
-          value={`$${mrr.toLocaleString()}`}
+          value={usd(data.estMrr)}
+          sub="base + add-ons (est.)"
           icon={<TrendingUp className="h-5 w-5" />}
         />
         <AdminStatCard
-          label="Active Subscriptions"
-          value={data.activeSubscriptions}
+          label="Paying Tenants"
+          value={data.payingTenants}
+          sub={`+ ${data.trialTenants} in trial`}
           icon={<CreditCard className="h-5 w-5" />}
         />
         <AdminStatCard
-          label="Cancel Pending"
-          value={data.cancelPending}
-          icon={<AlertTriangle className="h-5 w-5" />}
+          label="Addon Revenue"
+          value={usd(data.addonRevenue)}
+          sub={`${data.addonSubs} subscriptions`}
+          icon={<Users className="h-5 w-5" />}
         />
         <AdminStatCard
-          label="Trial Conversion"
-          value={`${conversionRate}%`}
-          sub={`${data.trialTenants} still in trial`}
-          icon={<Users className="h-5 w-5" />}
+          label="Past Due"
+          value={data.pastDue.count}
+          accent="danger"
+          sub={`${usd(data.pastDue.amount)} at risk`}
+          icon={<AlertTriangle className="h-5 w-5" />}
         />
       </div>
 
-      {/* Subscription Table */}
-      <AdminCard title="All Subscriptions" noPadding>
+      {/* Subscriptions */}
+      <AdminCard
+        title="Subscriptions"
+        actions={
+          <div className="flex gap-2">
+            <select
+              value={planFilter}
+              onChange={(e) => setPlanFilter(e.target.value)}
+              className="h-8 rounded-lg border border-slate-600 bg-slate-700 px-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="">All plans</option>
+              {PLANS.map((p) => (
+                <option key={p} value={p}>
+                  {planLabel(p)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="h-8 rounded-lg border border-slate-600 bg-slate-700 px-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="TRIAL">Trial</option>
+              <option value="SUSPENDED">Suspended</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+        }
+        noPadding
+      >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
                 <th className="px-4 py-3 text-left">Tenant</th>
-                <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Plan</th>
-                <th className="px-4 py-3 text-left">Period End</th>
-                <th className="px-4 py-3 text-left">Cancel Pending</th>
-                <th className="px-4 py-3 text-left">Stripe ID</th>
-                <th className="px-4 py-3 text-left"></th>
+                <th className="px-4 py-3 text-left">Cycle</th>
+                <th className="px-4 py-3 text-right">Base</th>
+                <th className="px-4 py-3 text-right">Addons</th>
+                <th className="px-4 py-3 text-right">MRR</th>
+                <th className="px-4 py-3 text-left">Next Charge</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
               {data.subscriptions.map((s) => (
-                <tr key={s.tenantId} className="hover:bg-slate-700/20 transition-colors">
+                <tr
+                  key={s.tenantId}
+                  className={`transition-colors hover:bg-slate-700/20 ${s.pastDue ? "bg-red-900/10" : ""}`}
+                >
                   <td className="px-4 py-3">
-                    <div>
-                      <span className="text-white">{s.tenantName ?? s.tenantSlug}</span>
-                      <span className="block text-xs font-mono text-slate-500">{s.tenantSlug}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <AdminBadge>{s.tenantStatus}</AdminBadge>
+                    <span className="text-white">{s.tenantName ?? s.tenantSlug}</span>
+                    <span className="block font-mono text-xs text-slate-500">{s.tenantSlug}</span>
                   </td>
                   <td className="px-4 py-3">
                     <AdminBadge variant="plan">{s.currentPlan}</AdminBadge>
                   </td>
-                  <td className="px-4 py-3 text-slate-400">
-                    {s.periodEnd ? new Date(s.periodEnd).toLocaleDateString() : "—"}
+                  <td className="px-4 py-3 text-slate-400">{s.cycle ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-slate-300">
+                    {s.baseMonthly ? usd(s.baseMonthly) : "—"}
                   </td>
-                  <td className="px-4 py-3">
-                    {s.cancelAtPeriodEnd ? (
-                      <span className="text-red-400 text-xs font-medium">Yes</span>
+                  <td className="px-4 py-3 text-right text-slate-300">
+                    {s.addonMonthly ? usd(s.addonMonthly) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold text-white">{usd(s.mrr)}</td>
+                  <td className="px-4 py-3 text-slate-400">
+                    {s.pastDue ? (
+                      <span className="font-medium text-red-400">Overdue</span>
+                    ) : s.tenantStatus === "TRIAL" ? (
+                      <span className="text-slate-500">
+                        {s.nextChargeAt
+                          ? `converts ${new Date(s.nextChargeAt).toLocaleDateString()}`
+                          : "trial"}
+                      </span>
+                    ) : s.nextChargeAt ? (
+                      new Date(s.nextChargeAt).toLocaleDateString()
                     ) : (
-                      <span className="text-slate-600 text-xs">No</span>
+                      "—"
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-slate-500">
-                    {s.stripeCustomerId?.slice(0, 18) ?? "—"}
+                  <td className="px-4 py-3">
+                    <AdminBadge>{s.tenantStatus}</AdminBadge>
+                    {s.cancelAtPeriodEnd && (
+                      <span className="ml-1.5 text-xs text-red-400">cancel pending</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Link
@@ -157,13 +284,34 @@ export default function BillingPage() {
               ))}
               {data.subscriptions.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
-                    No subscription records found.
+                  <td colSpan={9} className="px-4 py-10 text-center text-slate-500">
+                    No subscriptions match this view.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+        <div className="flex items-center border-t border-slate-700 px-4 py-3">
+          <span className="text-xs text-slate-500">
+            Showing {data.subscriptions.length} of {data.meta.total} subscriptions
+          </span>
+          <div className="ml-auto flex gap-2">
+            <button
+              disabled={page <= 1}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded-lg px-3 py-1 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <button
+              disabled={page >= data.meta.pages}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded-lg px-3 py-1 text-sm text-slate-400 hover:bg-slate-700 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </AdminCard>
     </div>

@@ -8,7 +8,7 @@ import { BillingService } from "../billing/billing.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { estimatePlatformMrrUsd } from "./plan-pricing.constant";
+import { estimatePlatformMrrUsd, addonMonthlyUsd } from "./plan-pricing.constant";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -301,6 +301,94 @@ describe("PlatformAdminService — audit provenance", () => {
       );
       expect(estimatePlatformMrrUsd({ MYSTERY: 5 })).toBe(0);
       expect(estimatePlatformMrrUsd({})).toBe(0);
+    });
+
+    it("addonMonthlyUsd sums known add-on keys and ignores unknown ones", () => {
+      expect(addonMonthlyUsd(["regulated_items", "ai_scanning"])).toBe(39 + 19);
+      expect(addonMonthlyUsd(["nope"])).toBe(0);
+      expect(addonMonthlyUsd([])).toBe(0);
+    });
+  });
+
+  describe("getBillingOverview", () => {
+    beforeEach(() => {
+      (prisma.tenant as any).groupBy = jest
+        .fn()
+        .mockResolvedValue([{ plan: "PROFESSIONAL", _count: { plan: 1 } }]);
+      (prisma as any).tenantSubscription = {
+        findMany: jest.fn(),
+        count: jest.fn().mockResolvedValue(1),
+      };
+    });
+
+    it("computes per-row base/addon/mrr (active-only), cycle, and rolled-up est MRR", async () => {
+      const now = Date.now();
+      (prisma as any).tenantSubscription.findMany
+        .mockResolvedValueOnce([
+          {
+            tenantId: "t1",
+            currentPlan: "PROFESSIONAL",
+            periodStart: new Date(now - 365 * 864e5),
+            periodEnd: new Date(now + 30 * 864e5),
+            cancelAtPeriodEnd: false,
+            stripeCustomerId: "cus_1",
+            tenant: {
+              id: "t1",
+              slug: "acme",
+              name: "Acme",
+              status: "ACTIVE",
+              plan: "PROFESSIONAL",
+              trialEndsAt: null,
+              addons: [{ addonKey: "regulated_items" }],
+            },
+          },
+        ])
+        .mockResolvedValueOnce([]); // past-due list
+      prisma.tenant.count.mockResolvedValue(3);
+      prisma.tenantAddon.findMany.mockResolvedValue([{ addonKey: "regulated_items" }] as any);
+
+      const res = await service.getBillingOverview({ page: 1, limit: 20 });
+
+      expect(res.subscriptions[0]).toMatchObject({
+        baseMonthly: 79,
+        addonMonthly: 39,
+        mrr: 118,
+        cycle: "Annual",
+      });
+      expect(res.baseMrr).toBe(79);
+      expect(res.addonRevenue).toBe(39);
+      expect(res.estMrr).toBe(118);
+      expect(res.pastDue).toEqual({ count: 0, amount: 0 });
+      expect(res.meta.total).toBe(1);
+    });
+
+    it("zeroes MRR for a non-active (trial) subscription row", async () => {
+      (prisma as any).tenantSubscription.findMany
+        .mockResolvedValueOnce([
+          {
+            tenantId: "t2",
+            currentPlan: "PROFESSIONAL",
+            periodStart: null,
+            periodEnd: null,
+            cancelAtPeriodEnd: false,
+            stripeCustomerId: null,
+            tenant: {
+              id: "t2",
+              slug: "trialco",
+              name: "Trial Co",
+              status: "TRIAL",
+              plan: "PROFESSIONAL",
+              trialEndsAt: new Date(),
+              addons: [{ addonKey: "regulated_items" }],
+            },
+          },
+        ])
+        .mockResolvedValueOnce([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      prisma.tenantAddon.findMany.mockResolvedValue([] as any);
+
+      const res = await service.getBillingOverview({});
+      expect(res.subscriptions[0]).toMatchObject({ baseMonthly: 0, addonMonthly: 0, mrr: 0 });
     });
   });
 });

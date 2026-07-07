@@ -197,9 +197,25 @@ export class PlatformAdminController {
   }
 
   @Get("billing/overview")
-  @ApiOperation({ summary: "Aggregated billing/subscription overview" })
-  getBillingOverview() {
-    return this.svc.getBillingOverview();
+  @ApiOperation({
+    summary: "Billing/subscription overview: MRR rollup + filterable, paginated subs",
+  })
+  @ApiQuery({ name: "page", required: false, type: Number })
+  @ApiQuery({ name: "limit", required: false, type: Number })
+  @ApiQuery({ name: "plan", required: false })
+  @ApiQuery({ name: "status", required: false })
+  getBillingOverview(
+    @Query("page") page = "1",
+    @Query("limit") limit = "20",
+    @Query("plan") plan?: string,
+    @Query("status") status?: string,
+  ) {
+    return this.svc.getBillingOverview({
+      page: Number(page),
+      limit: Number(limit),
+      plan: plan || null,
+      status: status || null,
+    });
   }
 
   @Get("audit-logs")
