@@ -8,6 +8,7 @@ import { StorageModule } from "../storage/storage.module";
 import { EmailModule } from "../email/email.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { RegulatedModule } from "../regulated/regulated.module";
+import { AuthorizationsModule } from "../authorizations/authorizations.module";
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RegulatedModule } from "../regulated/regulated.module";
     EmailModule,
     SystemConfigModule,
     RegulatedModule,
+    AuthorizationsModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],

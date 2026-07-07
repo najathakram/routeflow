@@ -26,6 +26,7 @@ import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -46,6 +47,7 @@ export class InvoicesService {
     private readonly pdfService: InvoicePdfService,
     private readonly systemConfig: SystemConfigService,
     private readonly ledger: RegulatedLedgerService,
+    private readonly authGuard: AuthorizationGuardService,
   ) {}
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
@@ -481,6 +483,20 @@ export class InvoicesService {
     include: any;
   }): Promise<any[]> {
     const { order, remainingItems, isTaxExempt, db, tenantId, extraInvoiceData, include } = params;
+
+    // W6b backstop: re-run the license guard at invoice time. Catches a regulated
+    // line added to the order after its create-time guard (buyer merge) or a license
+    // that EXPIRED between order creation and invoicing. Runs before any invoice row
+    // is written (inside the tx), so a block never half-creates. Category resolves
+    // from the line snapshot or the live product (mirrors buildInvoiceItemData).
+    // orderId is passed so ORDER-scoped §8 overrides apply.
+    await this.authGuard.assertAuthorizedOrThrow({
+      customerId: order.customerId,
+      lines: remainingItems.map(({ li }) => ({
+        trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
+      })),
+      orderId: order.id,
+    });
 
     const groups = await this.groupOrderLinesForInvoicing(remainingItems, db);
 
