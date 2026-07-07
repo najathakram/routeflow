@@ -52,7 +52,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   audit interceptor. **`pricing.ts`** — `computeLineSubtotal` (boxed BOX-price proration),
   `normalizeBoxesPieces` (integer boxes/pieces + rollover), `roundMoney` (cents). **Every money
   write rounds; boxed lines never use `qty*unitPrice` (over-charges by unitsPerBox).** Mirrored in
-  web/mobile `lib/pricing.ts`. `utils/pricing.ts` = `getTierPrice`. Specs: `common/pricing.spec.ts`.
+  web/mobile `lib/pricing.ts`. `utils/pricing.ts` = `getTierPrice`. **`computeCategoryTax`** (Phase-4 W3) — regulated per-category levy: per-unit types (EXCISE/PER_VOLUME/DEPOSIT) = `rate × unitBasisQty` (**caller converts to basis**: pieces for excise/deposit, true volume for PER_VOLUME — a 16oz bottle taxed per-oz needs 16×pieces; orthogonal to box-proration, never the boxed subtotal); PERCENT_OF_SALE = `rate × subtotal` (embedded when priceIncludesTax = `subtotal×rate/(1+rate)`). Sign-preserving (reversals). Pure fn — snapshot/integration + add-vs-include decision + PER_VOLUME volume-per-piece source deferred to W4. Specs: `common/pricing.spec.ts`.
 - **Prisma `prisma/schema.prisma`** — models incl. Tenant, User, Customer, Driver, Product,
   Route, RouteStop, RouteRun, RouteRunStop, Order, OrderItem, Invoice, InvoiceItem,
   InvoicePayment, Payment, CreditNote, Estimate, VendorBill(+Item), Return(+Item),

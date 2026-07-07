@@ -2,16 +2,30 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { FileText, Layers, Loader2, Package, Receipt, ShieldCheck } from "lucide-react";
-import { Badge, Card, cn } from "@routeflow/ui/web";
+import {
+  Boxes,
+  FileText,
+  Layers,
+  Loader2,
+  Package,
+  Pencil,
+  Plus,
+  Power,
+  Receipt,
+  ShieldCheck,
+} from "lucide-react";
+import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { fmt } from "@/lib/formatting";
 import { useHasAddon, useTobaccoOverview, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import {
   useTrackedCategories,
+  useToggleTrackedCategory,
   type TrackedCategory,
   type InvoiceTreatment,
 } from "@/lib/api/tracked-categories";
+import { CategoryFormModal } from "@/components/CategoryFormModal";
+import { AssignProductsModal } from "@/components/AssignProductsModal";
 
 function taxRuleLabel(c: TrackedCategory): string {
   const rate = Number(c.rate);
@@ -42,6 +56,7 @@ function treatmentLabel(t: InvoiceTreatment): string {
 export default function CompliancePage() {
   const { setTitle } = usePageTitle();
   React.useEffect(() => setTitle("Regulated Items"), [setTitle]);
+  const { toast } = useToast();
 
   const { data: categories = [], isLoading } = useTrackedCategories();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
@@ -49,9 +64,32 @@ export default function CompliancePage() {
   // ledger + filings arrive in W5. Only fetched when the tobacco addon is active
   // (the endpoint is addon-guarded — avoid a 403 for non-addon tenants).
   const { data: overview } = useTobaccoOverview(undefined, { enabled: hasTobacco });
+  const toggle = useToggleTrackedCategory();
+
+  const [formOpen, setFormOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<TrackedCategory | null>(null);
+  const [assignFor, setAssignFor] = React.useState<TrackedCategory | null>(null);
 
   const activeCount = categories.filter((c) => c.active).length;
   const regulatedProducts = categories.reduce((sum, c) => sum + (c.productCount ?? 0), 0);
+
+  const openNew = () => {
+    setEditing(null);
+    setFormOpen(true);
+  };
+  const openEdit = (c: TrackedCategory) => {
+    setEditing(c);
+    setFormOpen(true);
+  };
+  const handleToggle = (c: TrackedCategory) =>
+    toggle.mutate(c.id, {
+      onSuccess: (updated) =>
+        toast({
+          title: updated.active ? `${c.name} activated` : `${c.name} deactivated`,
+          variant: "success",
+        }),
+      onError: () => toast({ title: "Failed to update category", variant: "error" }),
+    });
 
   return (
     <div className="space-y-5 p-6">
@@ -62,6 +100,9 @@ export default function CompliancePage() {
             Separately-handled categories · per-category tax, invoicing and filings
           </p>
         </div>
+        <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openNew}>
+          New category
+        </Button>
       </div>
 
       {/* KPI cards */}
@@ -117,8 +158,15 @@ export default function CompliancePage() {
           </div>
         ) : categories.length === 0 ? (
           <div className="rounded-xl border border-dashed border-surface-border bg-surface-raised/40 py-10 text-center text-sm text-navy/70">
-            No tracked categories yet. Tobacco is created automatically for tenants that sell it;
-            other categories will be manageable here soon.
+            No tracked categories yet.{" "}
+            <button
+              type="button"
+              onClick={openNew}
+              className="font-medium text-brand-600 hover:underline"
+            >
+              Create your first category
+            </button>{" "}
+            (tobacco is added automatically for tenants that sell it).
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -157,11 +205,42 @@ export default function CompliancePage() {
                     <dd className="font-medium text-navy">{c.productCount}</dd>
                   </div>
                 </dl>
+                <div className="mt-3 flex items-center gap-1 border-t border-surface-border pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setAssignFor(c)}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy"
+                  >
+                    <Boxes className="h-3.5 w-3.5" /> Products
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openEdit(c)}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy"
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleToggle(c)}
+                    disabled={toggle.isPending}
+                    className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+                  >
+                    <Power className="h-3.5 w-3.5" /> {c.active ? "Deactivate" : "Activate"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         )}
       </Card>
+
+      <CategoryFormModal isOpen={formOpen} onClose={() => setFormOpen(false)} category={editing} />
+      <AssignProductsModal
+        isOpen={!!assignFor}
+        onClose={() => setAssignFor(null)}
+        category={assignFor}
+      />
     </div>
   );
 }
