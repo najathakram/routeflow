@@ -25,6 +25,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -44,6 +45,7 @@ export class InvoicesService {
     private readonly emailService: EmailService,
     private readonly pdfService: InvoicePdfService,
     private readonly systemConfig: SystemConfigService,
+    private readonly ledger: RegulatedLedgerService,
   ) {}
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
@@ -544,47 +546,73 @@ export class InvoicesService {
     const baseNumber = await this.generateInvoiceNumber(db);
     const invoiceGroupId = multi ? randomUUID() : null;
 
-    const created: any[] = [];
-    for (let i = 0; i < groupData.length; i++) {
-      const gd = groupData[i];
-      const invoiceNumber = i === 0 ? baseNumber : `${baseNumber}-R${i}`;
-      try {
-        created.push(
-          await db.invoice.create({
-            data: {
-              invoiceNumber,
-              customerId: order.customerId,
-              orderId: order.id,
-              status: InvoiceStatus.DRAFT,
-              subtotal: gd.subtotal,
-              taxAmount: gd.taxAmount,
-              discount: 0,
-              shippingFee: 0,
-              total: gd.total,
-              ...(invoiceGroupId ? { invoiceGroupId } : {}),
-              ...extraInvoiceData,
-              items: { create: gd.itemsData },
-              ...(tenantId ? { tenantId } : {}),
-            },
-            include,
-          }),
-        );
-      } catch (err: any) {
-        if (err?.code === "P2002")
-          throw new ConflictException("Invoice number conflict — please retry.");
-        throw err;
+    // Create every sibling invoice + its ledger rows + the invoicedQty bumps
+    // ATOMICALLY. A mid-batch failure (e.g. a ledger write on invoice 2) must not
+    // leave invoice 1 committed while invoicedQty stays un-bumped — a retry would
+    // then double-invoice. When a caller already passed a tx (txClient) we run
+    // inline (already inside their transaction); otherwise we open one.
+    const runCreation = async (tx: any): Promise<any[]> => {
+      const out: any[] = [];
+      for (let i = 0; i < groupData.length; i++) {
+        const gd = groupData[i];
+        const invoiceNumber = i === 0 ? baseNumber : `${baseNumber}-R${i}`;
+        const inv = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            customerId: order.customerId,
+            orderId: order.id,
+            status: InvoiceStatus.DRAFT,
+            subtotal: gd.subtotal,
+            taxAmount: gd.taxAmount,
+            discount: 0,
+            shippingFee: 0,
+            total: gd.total,
+            ...(invoiceGroupId ? { invoiceGroupId } : {}),
+            ...extraInvoiceData,
+            items: { create: gd.itemsData },
+            ...(tenantId ? { tenantId } : {}),
+          },
+          include,
+        });
+        out.push(inv);
+        // W5: write the regulated-sales ledger from this invoice's regulated lines
+        // (built off the created items, so invoiceItemId is real). orderItemId
+        // provenance is a follow-up — invoice items don't store the order line id.
+        await this.ledger.writeSaleEntries({
+          tenantId,
+          orderId: order.id,
+          invoiceId: inv.id,
+          soldAt: inv.issueDate ?? new Date(),
+          lines: (inv.items ?? []).map((it: any) => ({
+            invoiceItemId: it.id,
+            orderItemId: null,
+            trackedCategoryId: it.trackedCategoryId ?? null,
+            qty: Number(it.qty),
+            netSales: Number(it.subtotal),
+            categoryTax: Number(it.categoryTaxAmount ?? 0),
+          })),
+          db: tx,
+        });
       }
-    }
+      // Bump invoicedQty once per order item (each belongs to exactly one group).
+      for (const { li, remainingQty } of remainingItems) {
+        await tx.orderItem.update({
+          where: { id: li.id },
+          data: { invoicedQty: { increment: remainingQty } },
+        });
+      }
+      return out;
+    };
 
-    // Bump invoicedQty once per order item (each belongs to exactly one group).
-    for (const { li, remainingQty } of remainingItems) {
-      await db.orderItem.update({
-        where: { id: li.id },
-        data: { invoicedQty: { increment: remainingQty } },
-      });
+    try {
+      return db === this.prisma
+        ? await this.prisma.tenantTransaction(runCreation)
+        : await runCreation(db);
+    } catch (err: any) {
+      if (err?.code === "P2002")
+        throw new ConflictException("Invoice number conflict — please retry.");
+      throw err;
     }
-
-    return created;
   }
 
   /** The order's single open "pending mirror" draft, or null. */
@@ -1601,6 +1629,8 @@ export class InvoicesService {
       });
 
       await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
+      // W5: reverse this invoice's regulated ledger rows so filings net to zero.
+      await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
       return voided;
     });
   }
@@ -2121,6 +2151,10 @@ export class InvoicesService {
       // source order's lines flagged as fully invoiced with no surviving
       // record of why — operator can never split again.
       await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
+
+      // W5: reverse this invoice's regulated ledger rows before the invoice + its
+      // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
+      await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
       // Unlink credit notes that were generated for this invoice
       await tx.creditNote.updateMany({

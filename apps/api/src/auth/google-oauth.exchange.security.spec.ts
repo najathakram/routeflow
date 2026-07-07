@@ -32,7 +32,8 @@ describe("GoogleOAuthService exchange code (F8-001)", () => {
     const jwt = {} as unknown as JwtService;
     const prisma = {} as any;
     const email = {} as any;
-    const service = new GoogleOAuthService(prisma, jwt, config, email);
+    const entitlements = { claimsFor: jest.fn().mockResolvedValue(null) } as any;
+    const service = new GoogleOAuthService(prisma, jwt, config, email, entitlements);
     const mockRedis = makeMockRedis();
     (service as any).redis = mockRedis;
     return { service, mockRedis };

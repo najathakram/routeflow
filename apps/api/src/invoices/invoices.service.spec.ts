@@ -20,6 +20,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { InvoiceStatus } from "@prisma/client";
 
 describe("InvoicesService", () => {
@@ -55,6 +56,10 @@ describe("InvoicesService", () => {
         { provide: EmailService, useValue: mockEmailService },
         { provide: InvoicePdfService, useValue: { getOrGenerate: jest.fn() } },
         { provide: SystemConfigService, useValue: mockSystemConfig },
+        {
+          provide: RegulatedLedgerService,
+          useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+        },
       ],
     }).compile();
 

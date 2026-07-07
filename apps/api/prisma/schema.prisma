@@ -22,14 +22,46 @@ enum UserRole {
 enum TenantStatus {
   TRIAL
   ACTIVE
+  READ_ONLY
   SUSPENDED
   CANCELLED
 }
 
 enum TenantPlan {
   STARTER
+  TEAM
+  BUSINESS
   PROFESSIONAL
   ENTERPRISE
+}
+
+// ─── Billing / plans-as-data (Phase: Plans & Billing) ─────────────────────────
+// Plans are versioned reference data (PlanVersion → PlanDefinition + AddonSku);
+// entitlement logic is driven off the string `planKey`, NOT the TenantPlan enum
+// (kept as a legacy shadow). See docs/design-package/project/specs/pricing-plans.md.
+
+enum PlanVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+}
+
+enum BillingCycle {
+  MONTHLY
+  ANNUAL
+}
+
+enum MeterKey {
+  SEATS
+  ROUTES
+  SCANS
+  MSGS
+}
+
+enum AddonUnit {
+  FLAT
+  PER_USER
+  PER_ROUTE
 }
 
 enum UserStatus {
@@ -239,21 +271,29 @@ enum DisconnectedBy {
 // ─── Tenant Models ────────────────────────────────────────────────────────────
 
 model Tenant {
-  id          String       @id @default(uuid())
-  slug        String       @unique
-  name        String
-  status      TenantStatus @default(TRIAL)
-  plan        TenantPlan   @default(STARTER)
-  trialEndsAt DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?
+  id             String       @id @default(uuid())
+  slug           String       @unique
+  name           String
+  status         TenantStatus @default(TRIAL)
+  plan           TenantPlan   @default(STARTER)
+  trialEndsAt    DateTime?
+  // Billing plans-as-data: the published PlanVersion this tenant is pinned to
+  // (the source of truth for entitlements; the `plan` enum stays a legacy shadow).
+  planVersionId  String?
+  readOnlyReason String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
 
-  users        User[]
-  config       TenantConfig?
-  googleOAuth  TenantGoogleOAuth?
-  subscription TenantSubscription?
-  addons       TenantAddon[]
+  users         User[]
+  config        TenantConfig?
+  googleOAuth   TenantGoogleOAuth?
+  subscription  TenantSubscription?
+  addons        TenantAddon[]
+  planVersion   PlanVersion?        @relation(fields: [planVersionId], references: [id])
+  meterUsages   MeterUsage[]
+  billingEvents BillingEvent[]
+  rfInvoices    RfInvoice[]
 
   userPreferences        UserPreference[]
   customers              Customer[]
@@ -319,10 +359,12 @@ model Tenant {
   customerAuthorizations CustomerAuthorization[]
   authorizationOverrides AuthorizationOverride[]
   regulatedSalesLedger   RegulatedSalesLedger[]
+  regulatedFilings       RegulatedFiling[]
 
   @@index([slug])
   @@index([status])
   @@index([deletedAt])
+  @@index([planVersionId])
 }
 
 model TenantConfig {
@@ -372,29 +414,54 @@ model TenantGoogleOAuth {
 }
 
 model TenantSubscription {
-  id                    String     @id @default(uuid())
-  tenantId              String     @unique
+  id                    String       @id @default(uuid())
+  tenantId              String       @unique
   stripeCustomerId      String?
   stripeSubId           String?
-  currentPlan           TenantPlan @default(STARTER)
+  currentPlan           TenantPlan   @default(STARTER)
   periodStart           DateTime?
   periodEnd             DateTime?
-  cancelAtPeriodEnd     Boolean    @default(false)
+  cancelAtPeriodEnd     Boolean      @default(false)
+  // Plans-as-data + lifecycle (Plans & Billing). All nullable/defaulted so
+  // existing rows are untouched; `planKey`/`planVersionId` are the new source of truth.
+  planVersionId         String?
+  planKey               String? // STARTER | TEAM | BUSINESS | ENTERPRISE
+  cycle                 BillingCycle @default(MONTHLY)
+  basePriceSnapshot     Decimal?     @db.Decimal(10, 2)
+  discount              Decimal      @default(0) @db.Decimal(10, 2)
+  downgradeToPlanKey    String?
+  downgradeEffectiveAt  DateTime?
+  retainedUserIds       String[]
+  graceStartedAt        DateTime?
+  graceMeter            MeterKey?
+  trialConvertedAt      DateTime?
+  nextChargeAt          DateTime?
+  failedPaymentCount    Int          @default(0)
   // External (non-Stripe) payment tracking
-  externalPayment       Boolean    @default(false)
+  externalPayment       Boolean      @default(false)
   externalPaymentMethod String? // ZELLE | BANK_TRANSFER | CHECK | CASH | WIRE | OTHER
   externalPaymentRef    String? // transaction ID or confirmation number
   externalPaymentNotes  String?
-  createdAt             DateTime   @default(now())
-  updatedAt             DateTime   @updatedAt
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planVersion PlanVersion? @relation(fields: [planVersionId], references: [id])
+
+  @@index([planVersionId])
+  @@index([downgradeEffectiveAt])
 }
 
 model TenantAddon {
   id            String   @id @default(uuid())
   tenantId      String
   addonKey      String // e.g. "ai_scanning", "advanced_routes", "api_access"
+  // Plans-as-data bridge: canonical SKU code (SEAT_EXTRA, BUYER_PORTAL, …). The
+  // legacy free-text `addonKey` stays authoritative for existing consumers
+  // (e.g. "tobacco_dealer") and is mapped to `sku="REGULATED_ITEMS"` additively.
+  sku           String?
+  quantity      Int      @default(1) // SEAT_EXTRA per-user, OCR_PACK_250 stacks
+  priceSnapshot Decimal? @db.Decimal(10, 2)
   stripePriceId String? // Stripe price for this add-on
   stripeItemId  String? // Stripe subscription item ID
   active        Boolean  @default(true)
@@ -405,6 +472,121 @@ model TenantAddon {
 
   @@unique([tenantId, addonKey])
   @@index([tenantId])
+  @@index([tenantId, sku])
+}
+
+// ─── Billing plan catalog (GLOBAL reference data — not tenant-scoped) ─────────
+
+model PlanVersion {
+  id          String            @id @default(uuid())
+  version     Int               @unique
+  status      PlanVersionStatus @default(DRAFT)
+  effectiveAt DateTime?
+  publishedAt DateTime?
+  publishedBy String?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  definitions   PlanDefinition[]
+  addonSkus     AddonSku[]
+  tenants       Tenant[]
+  subscriptions TenantSubscription[]
+
+  @@index([status])
+}
+
+model PlanDefinition {
+  id               String   @id @default(uuid())
+  planVersionId    String
+  planKey          String // STARTER | TEAM | BUSINESS | ENTERPRISE
+  name             String
+  monthlyPrice     Decimal? @db.Decimal(10, 2) // null = custom (Enterprise)
+  annualPrice      Decimal? @db.Decimal(10, 2) // = monthlyPrice * 10
+  isCustom         Boolean  @default(false)
+  seatsIncluded    Int? // null = unlimited
+  routesConcurrent Int? // null = unlimited
+  scansIncluded    Int? // null = unlimited (Enterprise)
+  msgsIncluded     Int      @default(200)
+  featureFlags     String[] // subset of the 16 flag keys granted at this plan
+  sortOrder        Int      @default(0)
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([planVersionId, planKey])
+  @@index([planVersionId])
+}
+
+model AddonSku {
+  id              String    @id @default(uuid())
+  planVersionId   String
+  sku             String // SEAT_EXTRA | BUYER_PORTAL | REGULATED_ITEMS | OCR_PACK_250 | FORECASTING | ROUTE_EXTRA | MSG_BUNDLE_500
+  name            String
+  monthlyPrice    Decimal   @db.Decimal(10, 2)
+  unit            AddonUnit @default(FLAT)
+  includedAtPlan  String? // planKey at/above which this addon is bundled free
+  meteredKey      MeterKey? // capacity-adding: OCR_PACK→SCANS, MSG_BUNDLE→MSGS, SEAT_EXTRA→SEATS, ROUTE_EXTRA→ROUTES
+  capacityPerUnit Int? // meter capacity added per active quantity
+  stackable       Boolean   @default(false)
+  grantsFlags     String[] // flag keys this addon grants while active
+  sortOrder       Int       @default(0)
+
+  planVersion PlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([planVersionId, sku])
+  @@index([planVersionId])
+}
+
+// ─── Per-tenant metering (tenant-scoped) ──────────────────────────────────────
+
+model MeterUsage {
+  id          String   @id @default(uuid())
+  tenantId    String
+  meter       MeterKey
+  periodStart DateTime // billing-cycle bucket start
+  periodEnd   DateTime
+  used        Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, meter, periodStart])
+  @@index([tenantId, meter])
+}
+
+// ─── Billing audit / MRR source of truth (tenant-scoped) ──────────────────────
+
+model BillingEvent {
+  id          String   @id @default(uuid())
+  tenantId    String
+  type        String // plan.changed | addon.enabled/disabled | seat.added/freed | grace.started/expired | trial.converted/expired
+  payload     Json
+  amountDelta Decimal? @db.Decimal(10, 2) // MRR run-rate delta for reconciliation
+  actorId     String?
+  createdAt   DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([type])
+}
+
+// ─── RouteFlow's own invoices to the tenant (platform billing) ────────────────
+
+model RfInvoice {
+  id       String       @id @default(uuid())
+  tenantId String
+  number   String       @unique // RF-YYYY-NNNN
+  amount   Decimal      @db.Decimal(10, 2)
+  status   String // PAID | OPEN | FAILED
+  cycle    BillingCycle @default(MONTHLY)
+  pdfKey   String?
+  issuedAt DateTime     @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, issuedAt])
 }
 
 // ─── Models ───────────────────────────────────────────────────────────────────
@@ -2209,6 +2391,13 @@ enum LedgerEntryType {
   REVERSAL
 }
 
+/// A regulated filing is either successfully GENERATED (artifacts stored) or a
+/// FAILED attempt (recorded so the tenant still sees it in their filing list).
+enum RegulatedFilingStatus {
+  GENERATED
+  FAILED
+}
+
 /// A tenant-defined class of items handled separately for sales/tax/reporting
 /// (tobacco, alcohol, CRV deposits, city sugar taxes…). Deactivation
 /// (active=false) keeps historic sales/ledger data intact.
@@ -2239,6 +2428,7 @@ model TrackedCategory {
   authorizations CustomerAuthorization[]
   overrides      AuthorizationOverride[]
   ledgerEntries  RegulatedSalesLedger[]
+  filings        RegulatedFiling[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -2249,22 +2439,28 @@ model TrackedCategory {
 /// One row per customer+category. Two paths to VERIFIED: retailer-submitted
 /// (buyer adds → seller approves) or wholesaler-added (VERIFIED immediately).
 model CustomerAuthorization {
-  id                String              @id @default(uuid())
-  tenantId          String
-  customerId        String
-  trackedCategoryId String
-  status            AuthorizationStatus @default(NONE)
-  source            AuthorizationSource @default(WHOLESALER_ADDED)
-  licenseNumber     String?
-  expiresAt         DateTime?
-  documentKey       String?
+  id                         String              @id @default(uuid())
+  tenantId                   String
+  customerId                 String
+  trackedCategoryId          String
+  status                     AuthorizationStatus @default(NONE)
+  source                     AuthorizationSource @default(WHOLESALER_ADDED)
+  licenseNumber              String?
+  expiresAt                  DateTime?
+  documentKey                String?
   // Actor identity is stored as an immutable point-in-time SNAPSHOT (FK-less id +
   // display name) so the compliance audit survives the operator being deleted.
-  verifiedById      String?
-  verifiedByName    String?
-  verifiedAt        DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  verifiedById               String?
+  verifiedByName             String?
+  verifiedAt                 DateTime?
+  // W7 expiry-notification idempotency (no in-app notification store to dedupe
+  // against): the EXPIRED-flip notice fires once; expiringSoonNotifiedBucket holds
+  // the last-sent warning bucket (30/7/1) so each fires at most once. Both reset to
+  // null on renew()/create() so a re-verified→re-expired row notifies again.
+  expiryNotifiedAt           DateTime?
+  expiringSoonNotifiedBucket Int?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
 
   tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -2276,6 +2472,7 @@ model CustomerAuthorization {
   @@index([trackedCategoryId])
   @@index([status])
   @@index([expiresAt])
+  @@index([status, expiresAt])
 }
 
 /// Seller-side "sold under my responsibility" record when an operator sells a
@@ -2321,6 +2518,7 @@ model RegulatedSalesLedger {
   invoiceId         String?
   invoiceItemId     String?
   creditNoteId      String?
+  returnId          String? // W5c: set on return-driven REVERSAL rows (idempotency key)
   qty               Decimal         @db.Decimal(12, 3)
   unitBasisQty      Decimal         @default(0) @db.Decimal(12, 3) // qty expressed in the category's unitBasis
   netSales          Decimal         @default(0) @db.Decimal(12, 2)
@@ -2339,6 +2537,45 @@ model RegulatedSalesLedger {
   @@index([invoiceItemId])
   @@index([orderItemId])
   @@index([creditNoteId])
+  @@index([returnId])
+}
+
+/// A prepared regulatory filing for one category + period (the generic superset
+/// of TobaccoReport). Computed from the RegulatedSalesLedger's pre-signed nets,
+/// so a reversal-heavy period legitimately nets down. Keyed by a single
+/// `periodKey` string so MONTHLY / QUARTERLY / ANNUAL cadences share one column.
+model RegulatedFiling {
+  id                String                @id @default(uuid())
+  tenantId          String
+  trackedCategoryId String
+  reportTemplate    String // snapshot of category.reportTemplate at prepare time
+  cadence           ReportCadence         @default(MONTHLY) // snapshot of category.reportCadence
+  periodKey         String // "YYYY-MM" | "YYYY-Qn" | "YYYY"
+  periodStart       DateTime // UTC inclusive start
+  periodEnd         DateTime // UTC EXCLUSIVE end (half-open, matches period.ts)
+  status            RegulatedFilingStatus @default(GENERATED)
+  // Denormalized signed net totals (the pre-signed ledger already nets).
+  totalQty          Decimal               @default(0) @db.Decimal(12, 3)
+  totalUnitBasisQty Decimal               @default(0) @db.Decimal(12, 3)
+  totalNetSales     Decimal               @default(0) @db.Decimal(12, 2)
+  totalCategoryTax  Decimal               @default(0) @db.Decimal(12, 2)
+  rows              Json // per-(category, periodBucket) snapshot, drives the CSV
+  csvKey            String?
+  pdfKey            String? // reserved; W5b ships CSV only
+  generatedAt       DateTime              @default(now())
+  generatedById     String? // null = cron/system
+  generationCount   Int                   @default(1)
+  errorMessage      String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, trackedCategoryId, periodKey])
+  @@index([tenantId])
+  @@index([tenantId, trackedCategoryId])
+  @@index([trackedCategoryId])
 }
 
 // ─── Migration & Batch Import (Phase 1: numbering continuity) ─────────────────

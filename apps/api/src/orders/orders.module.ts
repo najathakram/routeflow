@@ -8,6 +8,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { InventoryModule } from "../inventory/inventory.module";
+import { AuthorizationsModule } from "../authorizations/authorizations.module";
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { InventoryModule } from "../inventory/inventory.module";
     InvoicesModule,
     SystemConfigModule,
     InventoryModule,
+    AuthorizationsModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],

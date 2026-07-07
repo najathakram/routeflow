@@ -65,7 +65,7 @@ export class TenantStatusGuard implements CanActivate {
     const now = Date.now();
     const cached = this.statusCache.get(tenantId);
     if (cached && cached.expiresAt > now) {
-      return this.assertNotSuspended(cached.status);
+      return this.assertAllowed(cached.status, req);
     }
 
     // ── Query DB ─────────────────────────────────────────────────────────────
@@ -91,10 +91,14 @@ export class TenantStatusGuard implements CanActivate {
         this.cleanExpiredEntries(now);
       }
 
-      return this.assertNotSuspended(tenant.status);
+      return this.assertAllowed(tenant.status, req);
     } catch (err) {
       if (err instanceof ForbiddenException) throw err;
-      // DB error — fail open (log + allow) to avoid blocking all requests
+      // On DB error, prefer the last-known status (even past TTL) so the READ_ONLY /
+      // SUSPENDED enforcement boundary doesn't evaporate during a DB blip. Only fail
+      // open when status is genuinely unknown, to avoid bricking healthy tenants.
+      const stale = this.statusCache.get(tenantId);
+      if (stale) return this.assertAllowed(stale.status, req);
       this.logger.error("Failed to check tenant status", err);
       return true;
     }
@@ -114,9 +118,31 @@ export class TenantStatusGuard implements CanActivate {
 
   // ── Private helpers ──────────────────────────────────────────────────────────
 
-  private assertNotSuspended(status: string): true {
+  private assertAllowed(status: string, req: Request): true {
     if (status === "SUSPENDED" || status === "CANCELLED") {
       throw new ForbiddenException("Tenant account is suspended. Please contact support.");
+    }
+    // READ_ONLY (e.g. expired trial): reads + exports + sign-in still work, and the
+    // billing subscribe/upgrade paths stay open so the tenant can restore full access.
+    // Any other mutating request is blocked with a structured READ_ONLY 403.
+    if (status === "READ_ONLY") {
+      const method = (req.method ?? "GET").toUpperCase();
+      const path = req.path || (req as unknown as { originalUrl?: string }).originalUrl || "";
+      const isRead = method === "GET" || method === "HEAD" || method === "OPTIONS";
+      // Anchored allowlist (not substring) so an unrelated route can't smuggle a mutation
+      // through by merely containing these strings. Global prefix is /api/v1.
+      const allowedMutation =
+        path.startsWith("/api/v1/auth/") ||
+        path === "/api/v1/billing/subscribe" ||
+        path === "/api/v1/billing/subscription" ||
+        path.startsWith("/api/v1/billing/subscription/");
+      if (!isRead && !allowedMutation) {
+        throw new ForbiddenException({
+          code: "READ_ONLY",
+          message:
+            "Your workspace is read-only. Subscribe to restore full access — exports still work.",
+        });
+      }
     }
     return true;
   }

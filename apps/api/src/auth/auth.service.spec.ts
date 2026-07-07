@@ -14,6 +14,7 @@ jest.mock("bcrypt", () => ({
 import { UsersService } from "../users/users.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 const JWT_CONFIG = {
   secret: "test-secret",
@@ -71,6 +72,10 @@ describe("AuthService", () => {
         {
           provide: EmailService,
           useValue: { send: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EntitlementsService,
+          useValue: { claimsFor: jest.fn().mockResolvedValue(null) },
         },
       ],
     }).compile();

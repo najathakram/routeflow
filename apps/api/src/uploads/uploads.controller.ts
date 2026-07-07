@@ -81,7 +81,12 @@ export class UploadsController {
     const reqAny = req as Request & { user?: JwtPayload; signedUrlAuthorized?: boolean };
     if (!reqAny.signedUrlAuthorized) {
       const caller = reqAny.user;
-      const tenantMatch = key.match(/^tenants\/([^/]+)\//);
+      // Every tenant-scoped storage prefix embeds `<prefix>/<tenantId>/...`.
+      // Enforce the embedded tenantId against the JWT caller so a bearer token
+      // can't fetch another tenant's regulatory artifacts (filings / tobacco
+      // reports) or tenant files by guessing the key. The signed-URL path is
+      // exempt above — the signature is itself a per-key capability.
+      const tenantMatch = key.match(/^(?:tenants|regulated-filings|tobacco-reports)\/([^/]+)\//);
       if (tenantMatch && caller?.role !== "SUPER_ADMIN") {
         if (!caller?.tenantId || tenantMatch[1] !== caller.tenantId) {
           throw new ForbiddenException("Cross-tenant file access denied");

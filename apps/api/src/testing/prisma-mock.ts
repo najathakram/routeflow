@@ -112,6 +112,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),
+    regulatedFiling: modelProxy(),
     numberingSequence: modelProxy(),
     importExternalRef: modelProxy(),
     productAlias: modelProxy(),
@@ -119,6 +120,8 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     migrationStagingRecord: modelProxy(),
     importBatch: modelProxy(),
     importQueueItem: modelProxy(),
+    buyerFavorite: modelProxy(),
+    orderTemplate: modelProxy(),
   });
 
   const txModels = () => ({
@@ -148,6 +151,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     customerAuthorization: modelProxy(),
     authorizationOverride: modelProxy(),
     regulatedSalesLedger: modelProxy(),
+    regulatedFiling: modelProxy(),
     numberingSequence: modelProxy(),
     importExternalRef: modelProxy(),
     productAlias: modelProxy(),

@@ -17,6 +17,7 @@ import { EmailService } from "../email/email.service";
 import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ export class GoogleOAuthService {
     // Use untyped ConfigService — Google and Redis keys are not in AppConfig
     private readonly configService: ConfigService,
     private readonly emailService: EmailService,
+    private readonly entitlements: EntitlementsService,
   ) {
     const clientId = configService.get<string>("GOOGLE_CLIENT_ID") ?? "";
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
@@ -581,6 +583,9 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
     };
+    // Plans & Billing: embed the entitlement snapshot for Google-login users too.
+    const claims = await this.entitlements.claimsFor(payload.tenantId);
+    if (claims) Object.assign(payload, claims);
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
       expiresIn: jwtConfig.expiresIn as any,

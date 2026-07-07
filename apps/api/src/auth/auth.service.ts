@@ -13,6 +13,7 @@ import { UsersService } from "../users/users.service";
 import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
+import { EntitlementsService } from "../billing/entitlements.service";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -28,6 +29,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
+    private readonly entitlements: EntitlementsService,
   ) {}
 
   /**
@@ -98,6 +100,12 @@ export class AuthService {
       isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       canActAsDriver: user.canActAsDriver,
     };
+
+    // Plans & Billing: embed a compact entitlement snapshot (plan/flags/addons/
+    // seats/trialEnds) so the client can render plan gates without a round-trip.
+    // Server guards still re-resolve from EntitlementsService (the authority).
+    const claims = await this.entitlements.claimsFor(payload.tenantId);
+    if (claims) Object.assign(payload, claims);
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
@@ -204,6 +212,10 @@ export class AuthService {
       isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       canActAsDriver: user.canActAsDriver,
     };
+
+    // Plans & Billing: refresh re-snapshots entitlement claims into the token.
+    const claims = await this.entitlements.claimsFor(newPayload.tenantId);
+    if (claims) Object.assign(newPayload, claims);
 
     const accessToken = this.jwtService.sign(newPayload, {
       secret: jwtConfig.secret,
@@ -451,6 +463,10 @@ export class AuthService {
       isAdmin: updated.isAdmin || updated.role === "TENANT_ADMIN",
       canActAsDriver: updated.canActAsDriver,
     };
+
+    // Plans & Billing: re-snapshot entitlement claims into the fresh token.
+    const claims = await this.entitlements.claimsFor(payload.tenantId);
+    if (claims) Object.assign(payload, claims);
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
