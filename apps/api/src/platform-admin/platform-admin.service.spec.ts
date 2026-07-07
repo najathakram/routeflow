@@ -8,6 +8,7 @@ import { BillingService } from "../billing/billing.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { estimatePlatformMrrUsd } from "./plan-pricing.constant";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -200,5 +201,99 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(facets.actions.find((a) => a.code === "TENANT_PLAN_CHANGED")?.label).toBe(
       "Plan changed",
     );
+  });
+
+  describe("getStats enrichment", () => {
+    beforeEach(() => {
+      (prisma.tenant as any).groupBy = jest.fn().mockResolvedValue([
+        { plan: "STARTER", _count: { plan: 2 } },
+        { plan: "PROFESSIONAL", _count: { plan: 1 } },
+      ]);
+    });
+
+    it("computes stopgap estMrrUsd from the plan breakdown", async () => {
+      const stats = await service.getStats();
+      expect(stats.estMrrUsd).toBe(2 * 29 + 79); // 137
+      expect(stats.planBreakdown).toEqual({ STARTER: 2, PROFESSIONAL: 1 });
+    });
+
+    it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {
+      prisma.tenant.findMany.mockImplementation((args: any) => {
+        if (args?.where?.status === "TRIAL") {
+          return Promise.resolve([
+            {
+              id: "t-trial",
+              slug: "trial",
+              name: "Trial Co",
+              plan: "STARTER",
+              trialEndsAt: new Date(),
+              createdAt: new Date(),
+              _count: { users: 4 },
+            },
+          ]);
+        }
+        if (args?.where?.OR) {
+          return Promise.resolve([
+            {
+              id: "t-susp",
+              slug: "susp",
+              name: "Susp Co",
+              status: "SUSPENDED",
+              plan: "STARTER",
+              trialEndsAt: null,
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const stats = await service.getStats();
+      expect(stats.trialsExpiringSoon[0].userCount).toBe(4);
+      expect(stats.atRiskTenants[0].riskReason).toBe("Suspended");
+    });
+  });
+
+  describe("listTenants filters", () => {
+    it("hides deleted by default and builds a search OR + explicit sort", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+
+      await service.listTenants(1, 20, {
+        search: "acme",
+        status: "ACTIVE",
+        plan: "STARTER",
+        sortKey: "slug",
+        sortDir: "asc",
+      });
+
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.deletedAt).toBeNull();
+      expect(args.where.status).toBe("ACTIVE");
+      expect(args.where.plan).toBe("STARTER");
+      expect(args.where.OR).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
+        ]),
+      );
+      expect(args.orderBy).toEqual({ slug: "asc" });
+    });
+
+    it("includes deleted (no deletedAt filter) when requested", async () => {
+      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.count.mockResolvedValue(0);
+      await service.listTenants(1, 20, { includeDeleted: true });
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      expect(args.where.deletedAt).toBeUndefined();
+    });
+  });
+
+  describe("estimatePlatformMrrUsd", () => {
+    it("sums plan counts × stopgap prices and ignores unknown plans", () => {
+      expect(estimatePlatformMrrUsd({ STARTER: 2, PROFESSIONAL: 1, ENTERPRISE: 1 })).toBe(
+        2 * 29 + 79 + 199,
+      );
+      expect(estimatePlatformMrrUsd({ MYSTERY: 5 })).toBe(0);
+      expect(estimatePlatformMrrUsd({})).toBe(0);
+    });
   });
 });
