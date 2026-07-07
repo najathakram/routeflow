@@ -16,8 +16,15 @@ import {
   ChevronDown,
   ChevronUp,
   BarChart3,
+  Hash,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import {
+  useNumberingSettings,
+  useUpdateNumbering,
+  formatDocumentNumber,
+  type DocumentNumberType,
+} from "@/lib/api/numbering";
 
 interface ImportResult {
   imported?: number;
@@ -310,6 +317,213 @@ function ImportCard({ section, step }: { section: ImportSection; step: number })
   );
 }
 
+// ─── Document numbering (spec §1: continuity) ─────────────────────────────────
+
+const DOC_TYPE_LABELS: Record<DocumentNumberType, string> = {
+  INVOICE: "Invoices",
+  ESTIMATE: "Estimates",
+  CREDIT_NOTE: "Credit notes",
+  PAYMENT: "Payments",
+};
+
+interface NumberingDraft {
+  prefix: string;
+  nextNumber: number;
+  padding: number;
+}
+
+function NumberingRow({
+  docType,
+  draft,
+  serverPreview,
+  dirty,
+  saving,
+  onChange,
+  onSave,
+}: {
+  docType: DocumentNumberType;
+  draft: NumberingDraft;
+  serverPreview: string;
+  dirty: boolean;
+  saving: boolean;
+  onChange: (patch: Partial<NumberingDraft>) => void;
+  onSave: () => void;
+}) {
+  const preview = dirty
+    ? formatDocumentNumber(draft.prefix, draft.nextNumber, draft.padding)
+    : serverPreview;
+  return (
+    <div className="grid grid-cols-[120px_1fr_110px_90px_1fr_auto] items-center gap-3 border-b border-surface-border px-4 py-3 last:border-b-0">
+      <span className="text-sm font-medium text-navy">{DOC_TYPE_LABELS[docType]}</span>
+      <input
+        aria-label={`${DOC_TYPE_LABELS[docType]} prefix`}
+        value={draft.prefix}
+        onChange={(e) => onChange({ prefix: e.target.value })}
+        placeholder="Prefix"
+        className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-navy focus:border-brand-400 focus:outline-none"
+      />
+      <input
+        aria-label={`${DOC_TYPE_LABELS[docType]} next number`}
+        type="number"
+        min={1}
+        max={2_000_000_000}
+        value={Number.isFinite(draft.nextNumber) ? draft.nextNumber : ""}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10);
+          onChange({ nextNumber: Number.isNaN(v) ? NaN : Math.min(2_000_000_000, v) });
+        }}
+        className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
+      />
+      <input
+        aria-label={`${DOC_TYPE_LABELS[docType]} padding`}
+        type="number"
+        min={0}
+        max={12}
+        value={Number.isFinite(draft.padding) ? draft.padding : ""}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10);
+          onChange({ padding: Number.isNaN(v) ? NaN : Math.min(12, Math.max(0, v)) });
+        }}
+        className="rounded-lg border border-surface-border px-2.5 py-1.5 text-sm font-mono text-right text-navy focus:border-brand-400 focus:outline-none"
+      />
+      <span className="truncate font-mono text-sm text-navy/70">
+        next: <span className="font-semibold text-navy">{preview}</span>
+      </span>
+      <button
+        onClick={onSave}
+        disabled={!dirty || saving}
+        className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
+      >
+        {saving ? "Saving…" : "Save"}
+      </button>
+    </div>
+  );
+}
+
+function NumberingCard() {
+  const { toast } = useToast();
+  const { data: settings, isLoading } = useNumberingSettings();
+  const updateNumbering = useUpdateNumbering();
+  const [drafts, setDrafts] = React.useState<Record<string, NumberingDraft>>({});
+  const [savingType, setSavingType] = React.useState<DocumentNumberType | null>(null);
+
+  // Seed a draft per doc type from the server once; keep local edits afterwards.
+  React.useEffect(() => {
+    if (!settings) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const s of settings) {
+        if (!next[s.docType]) {
+          next[s.docType] = { prefix: s.prefix, nextNumber: s.nextNumber, padding: s.padding };
+        }
+      }
+      return next;
+    });
+  }, [settings]);
+
+  const save = (docType: DocumentNumberType) => {
+    const d = drafts[docType];
+    if (!d) return;
+    if (!Number.isFinite(d.nextNumber) || d.nextNumber < 1) {
+      toast({ title: "Enter a next number of 1 or more", variant: "error" });
+      return;
+    }
+    setSavingType(docType);
+    updateNumbering.mutate(
+      {
+        docType,
+        data: {
+          prefix: d.prefix,
+          nextNumber: d.nextNumber,
+          padding: Number.isFinite(d.padding) ? d.padding : 0,
+        },
+      },
+      {
+        onSuccess: (row) => {
+          // Reconcile the draft to the server-normalized row so the dirty flag
+          // clears after every save (covers NaN/clamped inputs that would
+          // otherwise never round-trip to equality).
+          setDrafts((prev) => ({
+            ...prev,
+            [docType]: { prefix: row.prefix, nextNumber: row.nextNumber, padding: row.padding },
+          }));
+          toast({
+            title: `${DOC_TYPE_LABELS[docType]} numbering saved`,
+            description: `Next ${DOC_TYPE_LABELS[docType].toLowerCase()} will be ${row.preview}`,
+            variant: "success",
+          });
+        },
+        onError: (e: any) => {
+          toast({
+            title: "Could not save numbering",
+            description: e?.response?.data?.message ?? e.message,
+            variant: "error",
+          });
+        },
+        onSettled: () => setSavingType(null),
+      },
+    );
+  };
+
+  return (
+    <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
+      <div className="flex items-start gap-3 border-b border-surface-border p-4">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-navy/5 text-navy/70">
+          <Hash className="h-5 w-5" />
+        </span>
+        <div className="flex-1">
+          <p className="font-semibold text-navy">Document numbering</p>
+          <p className="text-xs text-navy/70 mt-0.5 leading-relaxed">
+            Continue where your old system left off — set the next number for each document type
+            (e.g. last invoice <span className="font-mono">INV-08841</span> → next{" "}
+            <span className="font-mono">INV-08842</span>). Imported documents keep their original
+            numbers; if a number already exists we skip to the next free one and note it on the
+            document.
+          </p>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="p-6 text-sm text-navy/50">Loading numbering…</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-[120px_1fr_110px_90px_1fr_auto] gap-3 bg-surface-raised px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-navy/50">
+            <span>Document</span>
+            <span>Prefix</span>
+            <span className="text-right">Next number</span>
+            <span className="text-right">Padding</span>
+            <span>Preview</span>
+            <span />
+          </div>
+          {(settings ?? []).map((s) => {
+            const d = drafts[s.docType] ?? {
+              prefix: s.prefix,
+              nextNumber: s.nextNumber,
+              padding: s.padding,
+            };
+            const dirty =
+              d.prefix !== s.prefix || d.nextNumber !== s.nextNumber || d.padding !== s.padding;
+            return (
+              <NumberingRow
+                key={s.docType}
+                docType={s.docType}
+                draft={d}
+                serverPreview={s.preview}
+                dirty={dirty}
+                saving={savingType === s.docType}
+                onChange={(patch) =>
+                  setDrafts((prev) => ({ ...prev, [s.docType]: { ...d, ...patch } }))
+                }
+                onSave={() => save(s.docType)}
+              />
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsImportPage() {
@@ -355,6 +569,9 @@ export default function SettingsImportPage() {
           </p>
         </div>
       </div>
+
+      {/* Document numbering continuity (spec §1) */}
+      <NumberingCard />
 
       {/* Import cards — uniform 2-column grid, cards stretch to equal height per row */}
       <div className="grid grid-cols-2 gap-5">
