@@ -45,6 +45,7 @@ import { BillingModule } from "./billing/billing.module";
 import { BuyerModule } from "./buyer/buyer.module";
 import { TobaccoModule } from "./tobacco/tobacco.module";
 import { DraftsModule } from "./drafts/drafts.module";
+import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -146,6 +147,8 @@ import { AppService } from "./app.service";
     TobaccoModule,
     // ─── Minimize & resume drafts (pos-cost-roles-spec §2) ─────────────────────
     DraftsModule,
+    // ─── Regulated / tracked categories (Phase 4) ──────────────────────────────
+    TrackedCategoriesModule,
   ],
   controllers: [AppController],
   providers: [

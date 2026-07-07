@@ -25,7 +25,7 @@ them.
 ## (C) Backend wiring blocks — ordered by value × safety
 Each W-block = one PR (at least). Money/compliance blocks need adversarial review + E2E money-invariant gates before release.
 
-- **W1 — Schema foundation + tobacco migration** `[migration][data-integrity]`
+- **W1 — Schema foundation + tobacco migration** `[migration][data-integrity]` — **BUILT (branch `feat/regulated-items-w1-schema`); migration `20260706120000_regulated_items_foundation` awaiting user approval to apply to prod.** `npm run verify` 18/18 green.
   New models `TrackedCategory`, `CustomerAuthorization`, `AuthorizationOverride`,
   `RegulatedSalesLedger`; columns `Product.trackedCategoryId` (FK, one-max),
   `OrderItem.trackedCategoryId+categoryTaxAmount`, `InvoiceItem.trackedCategoryId+categoryTaxAmount`,
@@ -56,6 +56,35 @@ Each W-block = one PR (at least). Money/compliance blocks need adversarial revie
 - `npm run verify` + smoke + `post-deploy-check` (rebuild routine — standing).
 - Adversarial money review (`/code-review high`) on W3/W4/W5 — focus per-invoice ±0.01 and the boxed-line × category-tax interaction.
 - Migration safety per `db-migration`; keep `isTobacco` shadow column one release.
+
+## W1 review follow-ups (deferred, tracked)
+
+From the W1 adversarial review (verdict: **GO, no blockers**). Applied in W1: seed
+`requiresLicense=false` (behavior-preserving), added FK-less actor-name snapshots
+(`verifiedByName`/`acceptedByName`), rewrote the Step-3 backfill as a semi-join,
+added `ROLLBACK.md`. **Deferred (do in the named block):**
+- **Deploy-time (W1 apply):** the whole migration runs in ONE transaction; Step-3
+  `Order.hasRegulated` backfill is the only data-scaling statement. Confirm prod
+  `Order`/`OrderItem` counts are modest + apply off-peak. Pre-apply probe:
+  `SELECT count(*) FROM "Product" WHERE "isTobacco"=true AND "tenantId" IS NULL`
+  should be 0 (a null-tenant tobacco product would be a data-hygiene bug).
+- **W2/W6 — tobacco license enablement:** the Tobacco seed is `requiresLicense=false`.
+  Enabling the point-of-sale license block for tobacco is an **explicit per-tenant**
+  action (W2 CRUD toggle), never an automatic flip when the W6 guard ships. If a
+  global default-on is ever wanted, gate it behind an explicit rollout, not a seed.
+- **W6 — customer merge/delete:** `CustomerAuthorization`/`AuthorizationOverride`
+  are `ON DELETE CASCADE` on `customerId`. `customers.service.ts` merge (~1198-1217)
+  re-points invoices/templates but has NO authorization handling — the W6 merge/delete
+  paths must re-point/dedupe authorizations (against `@@unique([customerId,trackedCategoryId])`)
+  and the immutable §8 responsibility record must also land in `AuditLog` (not rely
+  solely on `AuthorizationOverride`).
+- **W5 — app-layer validation** of the intentionally free-text columns: a zod/const-union
+  for `reportTemplate` (CA_CDTFA|CA_ABC|CALRECYCLE|GENERIC), a strict `YYYY-MM` check
+  when writing `periodBucket`, and a single parser for override `scope`
+  (`ORDER:<id>`|`UNTIL:<date>`). Keep the ledger source pointers FK-less/null-tolerant;
+  key reversal matching on the `invoiceItemId` index, never a join through a possibly-deleted row.
+- **W7 — expiry cron index:** consider `@@index([status, expiresAt])` (or `[tenantId, expiresAt]`)
+  on `CustomerAuthorization` so the 30/7/1-day scan filters VERIFIED + upcoming selectively.
 
 ## File anchors
 `apps/api/prisma/schema.prisma` (OrderItem ~879, Invoice ~1240, InvoiceItem ~1295, TobaccoReport ~2065) · the `pricing.ts` triple mirror (`apps/{api/src/common,web/lib,mobile/lib}/pricing.ts`) + `apps/api/src/common/pricing.spec.ts` · `apps/api/src/invoices/invoices.service.ts` (`createInvoiceFromOrder`/`createPartialFromOrder`) · `apps/web/e2e/06-critical-paths.spec.ts` · new modules `apps/api/src/{tracked-categories,regulated,authorizations}/`.

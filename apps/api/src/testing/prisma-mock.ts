@@ -106,6 +106,10 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     idempotencyKey: modelProxy(),
     passwordResetToken: modelProxy(),
     saleDraft: modelProxy(),
+    trackedCategory: modelProxy(),
+    customerAuthorization: modelProxy(),
+    authorizationOverride: modelProxy(),
+    regulatedSalesLedger: modelProxy(),
   });
 
   const txModels = () => ({
@@ -131,6 +135,10 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     billPayment: modelProxy(),
     refreshToken: modelProxy(),
     idempotencyKey: modelProxy(),
+    trackedCategory: modelProxy(),
+    customerAuthorization: modelProxy(),
+    authorizationOverride: modelProxy(),
+    regulatedSalesLedger: modelProxy(),
     // Raw query support inside transactions
     $executeRaw: jest.fn().mockResolvedValue(0),
     $queryRaw: jest.fn().mockResolvedValue([]),

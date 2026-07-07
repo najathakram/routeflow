@@ -16,6 +16,7 @@ import {
   Scissors,
   Plus,
   Power,
+  ShieldCheck,
 } from "lucide-react";
 import {
   BarChart,
@@ -1246,6 +1247,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         />
                       );
                     })()}
+                  </div>
+                )}
+
+                {/* Separately handled (regulated category) — Phase 4 */}
+                {(product as any).trackedCategory && (
+                  <div className="mb-4 flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised/50 px-4 py-2">
+                    <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
+                    <span className="text-sm text-navy">
+                      <span className="font-medium">Separately handled:</span>{" "}
+                      {(product as any).trackedCategory.name}
+                    </span>
+                    <Link
+                      href="/compliance"
+                      className="ml-auto text-xs font-medium text-brand-600 hover:underline"
+                    >
+                      Regulated Items →
+                    </Link>
                   </div>
                 )}
 
