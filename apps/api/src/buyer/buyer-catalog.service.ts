@@ -2,6 +2,7 @@ import { Injectable, ConflictException, NotFoundException } from "@nestjs/common
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
+import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "../utils/pricing";
 
 export interface BuyerProduct {
@@ -28,50 +29,8 @@ export class BuyerCatalogService {
     private readonly prisma: PrismaService,
     private readonly productsService: ProductsService,
     private readonly storage: StorageService,
+    private readonly visibility: RegulatedVisibilityService,
   ) {}
-
-  /**
-   * W7 buyer visibility gate: which regulated categories are LOCKED for this buyer
-   * (requiresLicense=true and the buyer has no VERIFIED, non-expired authorization).
-   * Products in a locked category are hidden from catalog/detail/favorites so a buyer
-   * never sees something they'd be blocked from buying (mirrors the sale guard's
-   * VERIFIED-non-expired predicate). Two batched queries — no N+1; fast-paths to
-   * empty when the tenant has no requiresLicense categories (no behavior change).
-   */
-  private async computeGate(
-    customerId: string,
-    now = new Date(),
-  ): Promise<{
-    hiddenIds: Set<string>;
-    locked: Array<{ id: string; name: string; status: string }>;
-  }> {
-    const gated = await this.prisma.forTenant().trackedCategory.findMany({
-      where: { requiresLicense: true, active: true },
-      select: { id: true, name: true },
-    });
-    if (gated.length === 0) return { hiddenIds: new Set(), locked: [] };
-
-    const auths = await this.prisma.forTenant().customerAuthorization.findMany({
-      where: { customerId, trackedCategoryId: { in: gated.map((c) => c.id) } },
-      select: { trackedCategoryId: true, status: true, expiresAt: true },
-    });
-    const byId = new Map(auths.map((a) => [a.trackedCategoryId, a]));
-
-    const hiddenIds = new Set<string>();
-    const locked: Array<{ id: string; name: string; status: string }> = [];
-    for (const c of gated) {
-      const a = byId.get(c.id);
-      const verified = a?.status === "VERIFIED" && (!a.expiresAt || new Date(a.expiresAt) > now);
-      if (!verified) {
-        hiddenIds.add(c.id);
-        // A VERIFIED row that's past expiresAt reads as EXPIRED here (the W7 cron
-        // flips the persisted status separately); no row → NONE.
-        const status = a ? (a.status === "VERIFIED" ? "EXPIRED" : a.status) : "NONE";
-        locked.push({ id: c.id, name: c.name, status });
-      }
-    }
-    return { hiddenIds, locked };
-  }
 
   /**
    * Get paginated product catalog with buyer-specific pricing.
@@ -89,7 +48,7 @@ export class BuyerCatalogService {
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
 
     // W7 gate: hide products in regulated categories the buyer isn't licensed for.
-    const { hiddenIds, locked } = await this.computeGate(customerId);
+    const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
 
     // For price sorts, fetch ALL matching products (limit=0) so sorting is global
     const result = await this.productsService.findAll(
@@ -191,7 +150,7 @@ export class BuyerCatalogService {
     // W7 gate: a buyer must not deep-link a product in a locked regulated category.
     const catId = (product as any).trackedCategoryId as string | null;
     if (catId) {
-      const { hiddenIds } = await this.computeGate(customerId);
+      const { hiddenIds } = await this.visibility.computeGate(customerId);
       if (hiddenIds.has(catId)) throw new NotFoundException("Product not found");
     }
 
@@ -257,7 +216,7 @@ export class BuyerCatalogService {
 
     // Filter out inactive products + W7-gated regulated products (categories the
     // buyer isn't licensed for) so favorites never leak a hidden product.
-    const { hiddenIds } = await this.computeGate(customerId);
+    const { hiddenIds } = await this.visibility.computeGate(customerId);
     const activeFavorites = favorites.filter(
       (f) =>
         f.product.isActive &&

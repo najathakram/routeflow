@@ -1,6 +1,7 @@
 import { Test } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { BuyerCatalogService } from "./buyer-catalog.service";
+import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
@@ -23,6 +24,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     const mod = await Test.createTestingModule({
       providers: [
         BuyerCatalogService,
+        RegulatedVisibilityService,
         { provide: PrismaService, useValue: prisma },
         { provide: ProductsService, useValue: products },
         { provide: StorageService, useValue: { presignedUrl: jest.fn() } },

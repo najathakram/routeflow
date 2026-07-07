@@ -100,25 +100,32 @@ export class AuthorizationExpiryService {
     let expired = 0;
     for (const auth of toExpire) {
       if (!auth.trackedCategory?.requiresLicense) continue; // non-gated (tobacco) — never notify/flip-spam
-      await this.prisma.forTenant().customerAuthorization.update({
-        where: { id: auth.id },
-        data: { status: "EXPIRED", expiryNotifiedAt: now },
-      });
-      await this.audit.log({
-        tenantId,
-        userId: null,
-        action: "regulated_authorization.expired",
-        entityType: "CustomerAuthorization",
-        entityId: auth.id,
-        meta: { customerId: auth.customerId, trackedCategoryId: auth.trackedCategoryId },
-      });
-      await this.notify(
-        auth,
-        operators,
-        `License expired: ${auth.trackedCategory.name}`,
-        `has EXPIRED. Regulated sales in this category are blocked until it is renewed.`,
-      );
-      expired++;
+      try {
+        await this.prisma.forTenant().customerAuthorization.update({
+          where: { id: auth.id },
+          data: { status: "EXPIRED", expiryNotifiedAt: now },
+        });
+        await this.audit.log({
+          tenantId,
+          userId: null,
+          action: "regulated_authorization.expired",
+          entityType: "CustomerAuthorization",
+          entityId: auth.id,
+          meta: { customerId: auth.customerId, trackedCategoryId: auth.trackedCategoryId },
+        });
+        await this.notify(
+          auth,
+          operators,
+          `License expired: ${auth.trackedCategory.name}`,
+          `has EXPIRED. Regulated sales in this category are blocked until it is renewed.`,
+        );
+        expired++;
+      } catch (err) {
+        // Per-row isolation — a single bad row must not skip the rest of the sweep.
+        this.logger.error(
+          `[tenant:${tenantId}] expire ${auth.id} failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
 
     // 2. Warn EXPIRING-SOON (30/7/1) — no status change, once per bucket.
@@ -137,17 +144,23 @@ export class AuthorizationExpiryService {
       // Fire only when this bucket hasn't been sent (buckets only shrink toward expiry).
       const last = auth.expiringSoonNotifiedBucket;
       if (last !== null && last <= bucket) continue;
-      await this.prisma.forTenant().customerAuthorization.update({
-        where: { id: auth.id },
-        data: { expiringSoonNotifiedBucket: bucket },
-      });
-      await this.notify(
-        auth,
-        operators,
-        `License expiring in ${bucket} day(s): ${auth.trackedCategory.name}`,
-        `expires in ${bucket} day(s). Renew it to avoid a block on regulated sales.`,
-      );
-      warned++;
+      try {
+        await this.prisma.forTenant().customerAuthorization.update({
+          where: { id: auth.id },
+          data: { expiringSoonNotifiedBucket: bucket },
+        });
+        await this.notify(
+          auth,
+          operators,
+          `License expiring in ${bucket} day(s): ${auth.trackedCategory.name}`,
+          `expires in ${bucket} day(s). Renew it to avoid a block on regulated sales.`,
+        );
+        warned++;
+      } catch (err) {
+        this.logger.error(
+          `[tenant:${tenantId}] warn ${auth.id} failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
     }
 
     return { expired, warned };
