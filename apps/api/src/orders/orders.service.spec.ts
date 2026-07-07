@@ -112,10 +112,11 @@ describe("OrdersService", () => {
           provide: InvoicesService,
           useValue: {
             createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            // W4: createInvoiceFromOrder now returns an array of sibling invoices.
             createInvoiceFromOrder: jest
               .fn()
-              .mockResolvedValue({ id: "inv-1", invoiceNumber: "INV-1" }),
-            createInvoiceFromOrderWithTenant: jest.fn().mockResolvedValue({ id: "inv-1" }),
+              .mockResolvedValue([{ id: "inv-1", invoiceNumber: "INV-1", total: 0 }]),
+            createInvoiceFromOrderWithTenant: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
             send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),

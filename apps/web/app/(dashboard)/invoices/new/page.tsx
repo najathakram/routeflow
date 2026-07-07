@@ -506,7 +506,11 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
 
   const billWhole = (orderId: string) => {
     createFromOrder.mutate(orderId, {
-      onSuccess: (inv: any) => {
+      // W4: createInvoiceFromOrder returns Invoice[] (a mixed regulated order splits
+      // into siblings). Open the primary (standard/first) invoice.
+      onSuccess: (invoices: any) => {
+        const inv = Array.isArray(invoices) ? invoices[0] : invoices;
+        if (!inv) return;
         toast({ title: "Invoice created", variant: "success" });
         router.push(`/invoices/${inv.id}`);
       },

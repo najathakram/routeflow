@@ -615,6 +615,169 @@ describe("InvoicesService", () => {
     });
   });
 
+  describe("createInvoiceFromOrder — regulated category split (W4)", () => {
+    const setupSplitSpies = () => {
+      jest
+        .spyOn(service as any, "resolveDefaultTerms")
+        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
+      jest
+        .spyOn(service as any, "resolveTenantInvoiceDefaults")
+        .mockResolvedValue({ notes: null, terms: null });
+      jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-2026-0042");
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      // Echo the create data back so we can assert numbers / numbering / groupId.
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+    };
+    const line = (id: string, catId: string | null, name: string) => ({
+      id,
+      productId: `p-${id}`,
+      qty: id === "std" ? 2 : 1,
+      invoicedQty: 0,
+      unitPrice: 10,
+      priceType: "STANDARD",
+      trackedCategoryId: catId,
+      categoryTaxAmount: 0,
+      product: { name, unitsPerBox: 0, trackedCategoryId: catId },
+    });
+
+    it("splits a standard + tobacco order into two siblings sharing invoiceGroupId, tax preserved", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-1",
+        customerId: "cust-1",
+        orderNumber: "ORD-9",
+        subtotal: 30,
+        tax: 3,
+        lineItems: [line("std", null, "Widget"), line("tob", "cat-tob", "Cigarillos")],
+      });
+
+      const result = await service.createInvoiceFromOrder("ord-1");
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toHaveLength(2);
+      const [primary, sibling] = result as any[];
+      expect(primary.invoiceNumber).toBe("INV-2026-0042");
+      expect(sibling.invoiceNumber).toBe("INV-2026-0042-R1");
+      expect(primary.invoiceGroupId).toBeTruthy();
+      expect(primary.invoiceGroupId).toBe(sibling.invoiceGroupId);
+      // Standard group $20, tobacco group $10; siblings partition the subtotal.
+      expect(Number(primary.subtotal)).toBe(20);
+      expect(Number(sibling.subtotal)).toBe(10);
+      // INVARIANT: siblings' totals sum == single-invoice total ($30 + $3 tax = $33).
+      expect(Number(primary.total) + Number(sibling.total)).toBe(33);
+      // Regular tax $3 allocated proportionally 20:10 → $2 + $1.
+      expect(Number(primary.taxAmount) + Number(sibling.taxAmount)).toBe(3);
+      expect(Number(primary.taxAmount)).toBe(2);
+      expect(Number(sibling.taxAmount)).toBe(1);
+      // invoicedQty bumped exactly once per line.
+      expect(prisma.orderItem.update).toHaveBeenCalledTimes(2);
+    });
+
+    it("produces a single invoice with no groupId for a non-regulated order (byte-identical path)", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-2",
+        customerId: "cust-1",
+        orderNumber: "ORD-10",
+        subtotal: 20,
+        tax: 2,
+        lineItems: [line("std", null, "Widget")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-2")) as any[];
+      expect(result).toHaveLength(1);
+      expect(result[0].invoiceNumber).toBe("INV-2026-0042");
+      expect(result[0].invoiceGroupId ?? null).toBeNull();
+      expect(Number(result[0].total)).toBe(22);
+    });
+
+    it("never produces a negative sibling tax when a tiny group trails (3 groups)", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-a",
+          name: "Alcohol",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+        {
+          id: "cat-b",
+          name: "CRV",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      const mkLine = (id: string, catId: string | null, unitPrice: number) => ({
+        id,
+        productId: `p-${id}`,
+        qty: 1,
+        invoicedQty: 0,
+        unitPrice,
+        priceType: "STANDARD",
+        trackedCategoryId: catId,
+        categoryTaxAmount: 0,
+        product: { name: id, unitsPerBox: 0, trackedCategoryId: catId },
+      });
+      // Partial invoicing (remaining 362.75 < order subtotal 391.10) + a $0.02
+      // trailing group: the old "last group absorbs the remainder" made its tax -0.01.
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-4",
+        customerId: "cust-1",
+        orderNumber: "ORD-12",
+        subtotal: 391.1,
+        tax: 19.56,
+        lineItems: [
+          mkLine("std", null, 219.25),
+          mkLine("a", "cat-a", 143.48),
+          mkLine("b", "cat-b", 0.02),
+        ],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-4")) as any[];
+      expect(result).toHaveLength(3);
+      for (const inv of result) expect(Number(inv.taxAmount)).toBeGreaterThanOrEqual(0);
+      // Σ sibling tax == the single-invoice regular tax (19.56 × 362.75/391.10 = 18.14).
+      const taxSum = result.reduce((s, inv) => s + Number(inv.taxAmount), 0);
+      expect(Number(taxSum.toFixed(2))).toBe(18.14);
+    });
+
+    it("blocks invoicing a category with a non-zero rate (interim guard)", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-alc",
+          name: "Alcohol",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "EXCISE_PER_UNIT",
+          rate: 2.5,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-3",
+        customerId: "cust-1",
+        orderNumber: "ORD-11",
+        subtotal: 10,
+        tax: 0,
+        lineItems: [line("alc", "cat-alc", "Beer")],
+      });
+
+      await expect(service.createInvoiceFromOrder("ord-3")).rejects.toThrow(/non-zero tax rate/);
+    });
+  });
+
   describe("updateInvoiceShipment", () => {
     it("sets carrier + tracking + shippedAt on a non-void invoice", async () => {
       prisma.invoice.findUnique.mockResolvedValue({ id: "inv-1", status: "SENT", shippedAt: null });

@@ -64,20 +64,31 @@ different Claude profile won't have prior-session memory — rely on this + the 
   Financial Reports (22-report explorer), Recurring invoices. **Post-deploy VISUAL verification still
   pending** (operator session was replaced by a buyer login; needs operator Google login on `test`).
 - Phase 4 (Regulated items) — **IN PROGRESS**. XL / HIGH money+compliance risk / **multi-session**.
-  Full W1–W7 plan in **`PHASE-4-PLAN.md`**. Generalize `isTobacco` → a `TrackedCategory` model; W3/W4
-  (category tax calc + invoice-split-by-category) are the widest money change in the codebase — separate,
-  pair-programmed, money-reviewed sessions. Multiple prod migrations (each needs user approval).
-  - **W1 (schema foundation) — BUILT** on branch `feat/regulated-items-w1-schema` (migration
-    `20260706120000_regulated_items_foundation`): 4 tenant-scoped models (`TrackedCategory`,
-    `CustomerAuthorization`, `AuthorizationOverride`, `RegulatedSalesLedger`) + 6 enums + FK/snapshot
-    columns (`Product.trackedCategoryId`; `OrderItem`/`InvoiceItem`.{`trackedCategoryId`,`categoryTaxAmount`};
-    `Invoice.invoiceGroupId`; `Order.hasRegulated`; `RouteRunStop`.{`ageCheckRequired`,`identityCheckRequired`})
-    + idempotent tobacco→category backfill. `isTobacco` kept as shadow column (no W1 read changes).
-    `npm run verify` 18/18; adversarially reviewed (5-dim workflow → **GO, no blockers**; follow-ups tracked
-    in PHASE-4-PLAN "W1 review follow-ups"). **Tobacco seed `requiresLicense=false`** (behavior-preserving).
-    **PENDING: user approval to apply the migration to prod** (via `railway run npx prisma migrate deploy`);
-    local docker apply-test not run (Docker unavailable this session — `migrate deploy` is transactional/fail-safe).
-  - **W2 (tracked-categories CRUD) + B1 reskins** next, then W3→W4 (separate money-reviewed sessions), W5, W6, W7.
+  Full W1–W7 plan in **`PHASE-4-PLAN.md`**. Generalize `isTobacco` → a `TrackedCategory` model.
+  - **chunk-1 (W1 schema + W2 CRUD + B1 hub) — SHIPPED & DEPLOYED** (PR #130, master `98df3e8`).
+    Migration `20260706120000_regulated_items_foundation` applied to prod (4 models + 6 enums + FK/snapshot
+    columns + tobacco backfill; `isTobacco` kept as shadow column). Adversarially reviewed → GO. Tobacco seed
+    `requiresLicense=false`. Post-deploy smoke green.
+  - **chunk-2 (B2 manager + W3 tax calc) — SHIPPED & DEPLOYED** (PR #131, master `9e9bd1e`). B2 = category
+    manager UI (create/edit/toggle/assign) on the W2 API. W3 = `computeCategoryTax` pure fn in all 3
+    pricing.ts mirrors (per-unit = rate×unitBasisQty; caller converts basis; PER_VOLUME needs true volume;
+    sign-preserving). Money review GO (fixed a PER_VOLUME 16× undercharge). 30 pricing specs. Smoke green.
+    NOTE: chunk-2 deployed on the **local-verify gate** (no CI) — the private repo has no branch protection,
+    and rapid visibility-toggling was disabling the repo (see the prod-migration/rebuild memory).
+  - **W4 (invoice split-by-category) — CORE SHIPPED** (branch `feat/regulated-w4-invoice-split`).
+    `createInvoiceFromOrder`/`WithTenant` now return `Invoice[]`; a mixed order splits into a standard
+    invoice + one per `SEPARATE_INVOICE` category (siblings share `invoiceGroupId`, numbered base/-R1/-R2);
+    single-group orders are byte-identical to pre-W4. Proportional regular tax with the LARGEST group
+    absorbing the rounding remainder (Σ sibling tax == single-invoice tax exactly; money review GO after
+    fixing a `/invoices/undefined` blocker + a 3-group negative-tax bug). **Interim guard throws if a
+    category has `rate>0`** (category tax not yet in the order total; tobacco is rate=0). OrderItem
+    category snapshot at `create()`. 25 invoice specs + snapshot; verify 18/18.
+  - **W4 DEFERRED follow-ups (do before/with W5–W7):** `completeStop` route-delivery split (delivered-via-route
+    orders still single-invoice), multi-draft `reconcileOrderDraftInvoice`, **order-total category-tax
+    inclusion (lifts the rate>0 guard — needed before any non-zero category rate)**, PER_VOLUME volume-per-piece
+    source, products create/update DTO `trackedCategoryId` wiring (today only tobacco backfill + W2 bulk-assign
+    set it), credit-note/return sibling-aware reversal. Then W5 (ledger+filings), W6 (license guard), W7.
+  - **Also deferred:** product-form category picker + scope selector.
   - **W2 shadow-decoupling (deliberate):** `products.service` still writes only `isTobacco`; the new
     `tracked-categories` assign endpoint sets only `trackedCategoryId`. They are intentionally NOT synced
     this release, so tobacco reports (read `isTobacco`) are untouched. Consequence: a tobacco product

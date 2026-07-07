@@ -890,6 +890,9 @@ export class OrdersService implements OnApplicationBootstrap {
           originalPrice: null as number | null,
           subtotal: itemSubtotal,
           notes: (item as any).itemNote || item.notes,
+          // Phase 4 (W4): unlisted lines are never catalog products → never regulated.
+          trackedCategoryId: null as string | null,
+          categoryTaxAmount: 0,
           tenantId: this.prisma.getTenantId(),
         };
       }
@@ -958,6 +961,13 @@ export class OrdersService implements OnApplicationBootstrap {
         originalPrice,
         subtotal: itemSubtotal,
         notes: (item as any).itemNote || item.notes,
+        // Phase 4 (W4): snapshot the product's regulated category at sale time so
+        // invoice generation can split by it (never re-read the live product —
+        // categories can be reassigned/deactivated after sale, spec §7).
+        // categoryTaxAmount stays 0 until the order-total follow-up lifts the
+        // rate>0 invoice guard (tobacco, the only current category, is rate=0).
+        trackedCategoryId: (product.trackedCategoryId ?? null) as string | null,
+        categoryTaxAmount: 0,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
@@ -1055,6 +1065,8 @@ export class OrdersService implements OnApplicationBootstrap {
               notes: dto.notes,
               urgent: dto.urgent ?? false,
               skipAutoMerge: options.skipAutoMerge ?? false,
+              // Phase 4 (W4): denormalized flag — true when any line is regulated.
+              hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
               requestedDeliveryDate: dto.requestedDeliveryDate
                 ? new Date(dto.requestedDeliveryDate)
                 : undefined,
@@ -1159,8 +1171,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // 3. Generate the invoice from the order — sets Invoice.orderId and increments
     //    OrderItem.invoicedQty (so a later delivery of a not-yet-delivered sale won't
     //    create a second invoice).
-    const invoice = await this.invoicesService.createInvoiceFromOrder(order.id);
-    if (!invoice) {
+    // W4: may return >1 sibling invoice for a mixed regulated order (standard + category).
+    const invoices = await this.invoicesService.createInvoiceFromOrder(order.id);
+    if (!invoices || invoices.length === 0) {
       // Unreachable for a freshly-created order (nothing is invoiced yet), but keep the
       // order intact and surface a clear error so the operator can retry from the order page.
       throw new InternalServerErrorException(
@@ -1174,9 +1187,15 @@ export class OrdersService implements OnApplicationBootstrap {
     //    at delivery, after which staff review & send it. (dto.send is ignored
     //    for deliver-later; sending before delivery is blocked server-side.)
     if (dto.deliveredNow) {
-      return this.invoicesService.send(invoice.id);
+      // Issue every sibling; return the primary (standard/first) invoice.
+      let primary: any = null;
+      for (const inv of invoices) {
+        const sent = await this.invoicesService.send(inv.id);
+        if (primary === null) primary = sent;
+      }
+      return primary;
     }
-    return invoice;
+    return invoices[0];
   }
 
   async changeStatus(id: string, dto: ChangeOrderStatusDto, user: JwtPayload) {
