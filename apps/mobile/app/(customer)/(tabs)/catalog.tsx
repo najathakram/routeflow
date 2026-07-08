@@ -19,6 +19,7 @@ import {
   useBuyerFavorites,
   useToggleFavorite,
   type BuyerProduct,
+  type LockedCategory,
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 
@@ -103,6 +104,9 @@ export default function CustomerCatalogScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}
       >
+        {data?.hiddenCategories && data.hiddenCategories.length > 0 ? (
+          <LockedCategoriesTile categories={data.hiddenCategories} />
+        ) : null}
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
@@ -216,8 +220,80 @@ function ProductCard({
   );
 }
 
+function lockedStatusCopy(status: LockedCategory["status"]): string {
+  switch (status) {
+    case "PENDING_REVIEW":
+      return "pending review";
+    case "EXPIRED":
+      return "expired — renew to unlock";
+    case "REJECTED":
+      return "not approved";
+    default:
+      return "license required";
+  }
+}
+
+function LockedCategoriesTile({ categories }: { categories: LockedCategory[] }) {
+  if (categories.length === 0) return null;
+  return (
+    <View style={styles.lockedTile}>
+      <View style={styles.lockedIcon}>
+        <Ionicons name="lock-closed" size={16} color="#B45309" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.lockedTitle}>
+          {categories.length === 1 ? "1 category locked" : `${categories.length} categories locked`}
+        </Text>
+        <Text style={styles.lockedSub}>
+          These products unlock once your seller verifies your license.
+        </Text>
+        <View style={styles.lockedChips}>
+          {categories.map((c) => (
+            <View key={c.id} style={styles.lockedChip}>
+              <Text style={styles.lockedChipText}>
+                {c.name} · {lockedStatusCopy(c.status)}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  lockedTile: {
+    flexDirection: "row",
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  lockedIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#FDE68A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lockedTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  lockedSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  lockedChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  lockedChip: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    backgroundColor: "#fff",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  lockedChipText: { fontSize: 11, fontFamily: "Inter_500Medium", color: ios.label },
   searchRow: { paddingHorizontal: 16, paddingVertical: 8 },
   searchBox: {
     backgroundColor: ios.fill3,

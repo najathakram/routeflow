@@ -142,6 +142,17 @@ interface Paginated<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
+/** A regulated category hidden from this buyer pending license verification (W7b). */
+export interface LockedCategory {
+  id: string;
+  name: string;
+  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
+}
+
+export interface BuyerCatalogResult extends Paginated<BuyerProduct> {
+  hiddenCategories?: LockedCategory[];
+}
+
 // ─── Product catalog ──────────────────────────────────────────────────────────
 
 export function useBuyerProducts(params?: {
@@ -151,7 +162,7 @@ export function useBuyerProducts(params?: {
   limit?: number;
   sort?: string;
 }) {
-  return useQuery<Paginated<BuyerProduct>>({
+  return useQuery<BuyerCatalogResult>({
     queryKey: ["buyer", "products", params],
     queryFn: () => buyerApiClient.get("/buyer/products", { params }).then((r) => r.data),
   });

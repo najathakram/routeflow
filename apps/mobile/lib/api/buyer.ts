@@ -126,13 +126,24 @@ export interface BuyerDashboard {
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
 
+/** A regulated category hidden from this buyer pending license verification (W7b). */
+export interface LockedCategory {
+  id: string;
+  name: string;
+  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
+}
+
 export function useBuyerProducts(params?: {
   search?: string;
   category?: string;
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: BuyerProduct[]; meta: { total: number } }>({
+  return useQuery<{
+    data: BuyerProduct[];
+    meta: { total: number };
+    hiddenCategories?: LockedCategory[];
+  }>({
     queryKey: ["buyer-products", params],
     queryFn: () =>
       buyerApiClient
