@@ -12,6 +12,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { SuperAdminGuard } from "../tenant/super-admin.guard";
 import { BillingService } from "./billing.service";
+import { MrrService } from "./mrr.service";
 import { CreateCheckoutDto } from "./dto/create-checkout.dto";
 
 /**
@@ -24,7 +25,18 @@ import { CreateCheckoutDto } from "./dto/create-checkout.dto";
 @UseGuards(JwtAuthGuard, SuperAdminGuard)
 @Controller("billing")
 export class BillingController {
-  constructor(private readonly billingService: BillingService) {}
+  constructor(
+    private readonly billingService: BillingService,
+    private readonly mrr: MrrService,
+  ) {}
+
+  @Get("admin/mrr")
+  @ApiOperation({
+    summary: "Server-side MRR rollup = Σ(base + add-ons − discounts) + reconciliation",
+  })
+  getMrr() {
+    return this.mrr.computeOverview();
+  }
 
   @Get("tenants/:tenantId")
   @ApiOperation({ summary: "Get billing info for a tenant" })
