@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
-import { AdminBadge } from "../../_components/AdminBadge";
+import { AdminBadge, planLabel } from "../../_components/AdminBadge";
 import { AdminModal } from "../../_components/AdminModal";
 import { ChevronUp, ChevronDown, X } from "lucide-react";
 
@@ -14,6 +14,7 @@ interface Tenant {
   name: string;
   status: string;
   plan: string;
+  trialEndsAt: string | null;
   businessName: string | null;
   counts: { users: number; customers: number; orders: number } | null;
   createdAt: string;
@@ -21,11 +22,16 @@ interface Tenant {
 
 interface TenantsResponse {
   data: Tenant[];
-  meta: { total: number; page: number; limit: number; pages: number };
+  meta: { total: number; page: number; limit: number; pages: number; deletedCount: number };
 }
 
 type SortKey = "slug" | "name" | "status" | "plan" | "users" | "createdAt";
 type SortDir = "asc" | "desc";
+
+/** Whole days until a trial ends (negative once expired). */
+function trialDaysLeft(trialEndsAt: string): number {
+  return Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
 
 export default function AdminTenantsPage() {
   const router = useRouter();
@@ -49,20 +55,57 @@ export default function AdminTenantsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = React.useState<string | null>(null);
   const [bulkPlan, setBulkPlan] = React.useState("STARTER");
+  const headerCheckboxRef = React.useRef<HTMLInputElement>(null);
+  // Monotonic request id so a slow earlier fetch can't overwrite a newer one.
+  const reqSeqRef = React.useRef(0);
 
-  const fetchTenants = React.useCallback((p: number) => {
-    setLoading(true);
-    setError(null);
-    superAdminClient
-      .get<TenantsResponse>(`/platform-admin/tenants?page=${p}&limit=200`)
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err?.response?.data?.message ?? "Failed to load tenants"))
-      .finally(() => setLoading(false));
-  }, []);
+  // Debounce the search box so typing doesn't fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Any filter/sort change returns to page 1 so the pager can't outrun the results.
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, statusFilter, planFilter, showDeleted, sortKey, sortDir]);
+
+  const fetchTenants = React.useCallback(
+    (p: number) => {
+      const seq = ++reqSeqRef.current;
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams({ page: String(p), limit: "50", sortKey, sortDir });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      if (statusFilter) params.set("status", statusFilter);
+      if (planFilter) params.set("plan", planFilter);
+      if (showDeleted) params.set("includeDeleted", "true");
+      superAdminClient
+        .get<TenantsResponse>(`/platform-admin/tenants?${params}`)
+        .then((res) => {
+          if (seq === reqSeqRef.current) setData(res.data);
+        })
+        .catch((err) => {
+          if (seq === reqSeqRef.current)
+            setError(err?.response?.data?.message ?? "Failed to load tenants");
+        })
+        .finally(() => {
+          if (seq === reqSeqRef.current) setLoading(false);
+        });
+    },
+    [debouncedSearch, statusFilter, planFilter, showDeleted, sortKey, sortDir],
+  );
 
   React.useEffect(() => {
     fetchTenants(page);
   }, [page, fetchTenants]);
+
+  // Selection is scoped to the loaded page — clear it when the result set changes
+  // so the header checkbox can't look "checked" over rows that aren't selected.
+  React.useEffect(() => {
+    setSelected(new Set());
+  }, [page, debouncedSearch, statusFilter, planFilter, showDeleted]);
 
   const [deletingTenant, setDeletingTenant] = React.useState<Tenant | null>(null);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = React.useState("");
@@ -162,47 +205,16 @@ export default function AdminTenantsPage() {
     }
   };
 
-  // Filter + sort
-  const filteredSorted = React.useMemo(() => {
-    if (!data) return [];
-    const q = search.toLowerCase();
-    let rows = data.data.filter((t) => {
-      if (!showDeleted && t.status === "CANCELLED") return false;
-      const matchSearch =
-        !q ||
-        t.slug.toLowerCase().includes(q) ||
-        (t.businessName ?? t.name).toLowerCase().includes(q);
-      const matchStatus = !statusFilter || t.status === statusFilter;
-      const matchPlan = !planFilter || t.plan === planFilter;
-      return matchSearch && matchStatus && matchPlan;
-    });
+  // The server applies search / status / plan / sort / includeDeleted, so this
+  // page's rows render exactly as returned (no client-side re-filtering).
+  const rows = data?.data ?? [];
 
-    rows.sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case "slug":
-          cmp = a.slug.localeCompare(b.slug);
-          break;
-        case "name":
-          cmp = (a.businessName ?? a.name).localeCompare(b.businessName ?? b.name);
-          break;
-        case "status":
-          cmp = a.status.localeCompare(b.status);
-          break;
-        case "plan":
-          cmp = a.plan.localeCompare(b.plan);
-          break;
-        case "users":
-          cmp = (a.counts?.users ?? 0) - (b.counts?.users ?? 0);
-          break;
-        case "createdAt":
-          cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return rows;
-  }, [data, search, statusFilter, planFilter, sortKey, sortDir]);
+  // Header checkbox shows an indeterminate glyph on partial selection.
+  React.useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate = selected.size > 0 && selected.size < rows.length;
+    }
+  }, [selected, rows.length]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -231,10 +243,10 @@ export default function AdminTenantsPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selected.size === filteredSorted.length) {
+    if (selected.size === rows.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(filteredSorted.map((t) => t.id)));
+      setSelected(new Set(rows.map((t) => t.id)));
     }
   };
 
@@ -271,7 +283,7 @@ export default function AdminTenantsPage() {
   };
 
   const filtersActive = search !== "" || statusFilter !== "" || planFilter !== "" || showDeleted;
-  const cancelledCount = data?.data.filter((t) => t.status === "CANCELLED").length ?? 0;
+  const deletedCount = data?.meta.deletedCount ?? 0;
 
   return (
     <div className="p-6">
@@ -356,9 +368,9 @@ export default function AdminTenantsPage() {
           className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
         >
           <option value="">All Plans</option>
-          <option value="STARTER">STARTER</option>
-          <option value="PROFESSIONAL">PROFESSIONAL</option>
-          <option value="ENTERPRISE">ENTERPRISE</option>
+          <option value="STARTER">{planLabel("STARTER")}</option>
+          <option value="PROFESSIONAL">{planLabel("PROFESSIONAL")}</option>
+          <option value="ENTERPRISE">{planLabel("ENTERPRISE")}</option>
         </select>
         <button
           onClick={() => setShowDeleted((v) => !v)}
@@ -370,23 +382,21 @@ export default function AdminTenantsPage() {
         >
           {showDeleted
             ? "Hide deleted"
-            : `Show deleted${cancelledCount > 0 ? ` (${cancelledCount})` : ""}`}
+            : `Show deleted${deletedCount > 0 ? ` (${deletedCount})` : ""}`}
         </button>
+        <span className="ml-auto text-sm text-slate-400">{data ? `${rows.length} shown` : ""}</span>
         {filtersActive && (
-          <>
-            <span className="text-sm text-slate-400">{filteredSorted.length} results</span>
-            <button
-              onClick={() => {
-                setSearch("");
-                setStatusFilter("");
-                setPlanFilter("");
-                setShowDeleted(false);
-              }}
-              className="text-xs text-slate-500 hover:text-slate-300"
-            >
-              Clear filters
-            </button>
-          </>
+          <button
+            onClick={() => {
+              setSearch("");
+              setStatusFilter("");
+              setPlanFilter("");
+              setShowDeleted(false);
+            }}
+            className="text-xs text-slate-500 hover:text-slate-300"
+          >
+            Clear filters
+          </button>
         )}
       </div>
 
@@ -463,9 +473,9 @@ export default function AdminTenantsPage() {
               onChange={(e) => setBulkPlan(e.target.value)}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white"
             >
-              <option value="STARTER">STARTER</option>
-              <option value="PROFESSIONAL">PROFESSIONAL</option>
-              <option value="ENTERPRISE">ENTERPRISE</option>
+              <option value="STARTER">{planLabel("STARTER")}</option>
+              <option value="PROFESSIONAL">{planLabel("PROFESSIONAL")}</option>
+              <option value="ENTERPRISE">{planLabel("ENTERPRISE")}</option>
             </select>
           </div>
         )}
@@ -549,10 +559,9 @@ export default function AdminTenantsPage() {
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
                     <th className="px-3 py-3 text-left w-8">
                       <input
+                        ref={headerCheckboxRef}
                         type="checkbox"
-                        checked={
-                          selected.size === filteredSorted.length && filteredSorted.length > 0
-                        }
+                        checked={selected.size === rows.length && rows.length > 0}
                         onChange={toggleSelectAll}
                         className="rounded border-slate-600 bg-slate-700"
                       />
@@ -597,7 +606,7 @@ export default function AdminTenantsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/50">
-                  {filteredSorted.map((t) => (
+                  {rows.map((t) => (
                     <tr
                       key={t.id}
                       className={`hover:bg-slate-700/30 transition-colors ${selected.has(t.id) ? "bg-indigo-900/10" : ""}`}
@@ -613,7 +622,25 @@ export default function AdminTenantsPage() {
                       <td className="px-4 py-3 font-mono text-slate-300">{t.slug}</td>
                       <td className="px-4 py-3 text-white">{t.businessName ?? t.name}</td>
                       <td className="px-4 py-3">
-                        <AdminBadge>{t.status}</AdminBadge>
+                        <div className="flex items-center gap-1.5">
+                          <AdminBadge>{t.status}</AdminBadge>
+                          {t.status === "TRIAL" &&
+                            t.trialEndsAt &&
+                            (() => {
+                              const d = trialDaysLeft(t.trialEndsAt);
+                              return (
+                                <span
+                                  className={
+                                    d <= 2
+                                      ? "text-xs font-semibold text-red-400"
+                                      : "text-xs text-slate-500"
+                                  }
+                                >
+                                  · {d <= 0 ? "expired" : `${d}d left`}
+                                </span>
+                              );
+                            })()}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <AdminBadge variant="plan">{t.plan}</AdminBadge>
@@ -666,7 +693,7 @@ export default function AdminTenantsPage() {
                       </td>
                     </tr>
                   ))}
-                  {filteredSorted.length === 0 && (
+                  {rows.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
                         {filtersActive ? (

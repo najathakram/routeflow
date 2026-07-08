@@ -30,6 +30,7 @@ import {
   adminAuditActionLabel,
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
+import { STOPGAP_PLAN_MONTHLY_USD, estimatePlatformMrrUsd } from "./plan-pricing.constant";
 
 @Injectable()
 export class PlatformAdminService {
@@ -71,14 +72,62 @@ export class PlatformAdminService {
 
   // ─── Tenant list ─────────────────────────────────────────────────────────────
 
-  async listTenants(page = 1, limit = 20) {
+  async listTenants(
+    page = 1,
+    limit = 20,
+    filters: {
+      search?: string | null;
+      status?: string | null;
+      plan?: string | null;
+      sortKey?: string | null;
+      sortDir?: "asc" | "desc" | null;
+      includeDeleted?: boolean;
+    } = {},
+  ) {
     const skip = (page - 1) * limit;
 
-    const [tenants, total] = await Promise.all([
+    const where: Record<string, unknown> = {};
+    // Cancelled/soft-deleted tenants are hidden unless explicitly requested.
+    if (!filters.includeDeleted) where.deletedAt = null;
+    if (filters.status) where.status = filters.status;
+    if (filters.plan) where.plan = filters.plan;
+    if (filters.search) {
+      const q = filters.search.trim();
+      where.OR = [
+        { slug: { contains: q, mode: "insensitive" } },
+        { name: { contains: q, mode: "insensitive" } },
+        { config: { businessName: { contains: q, mode: "insensitive" } } },
+      ];
+    }
+
+    const dir: "asc" | "desc" = filters.sortDir === "asc" ? "asc" : "desc";
+    let orderBy: Record<string, unknown>;
+    switch (filters.sortKey) {
+      case "slug":
+        orderBy = { slug: dir };
+        break;
+      case "name":
+        orderBy = { name: dir };
+        break;
+      case "status":
+        orderBy = { status: dir };
+        break;
+      case "plan":
+        orderBy = { plan: dir };
+        break;
+      case "users":
+        orderBy = { users: { _count: dir } };
+        break;
+      default:
+        orderBy = { createdAt: dir };
+    }
+
+    const [tenants, total, deletedCount] = await Promise.all([
       this.prisma.tenant.findMany({
+        where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy,
         include: {
           config: {
             select: { businessName: true, primaryColor: true, logoKey: true },
@@ -91,28 +140,49 @@ export class PlatformAdminService {
           },
         },
       }),
-      this.prisma.tenant.count(),
+      this.prisma.tenant.count({ where }),
+      // Total soft-deleted tenants, independent of the current filter, so the
+      // "Show deleted (N)" affordance has a real count even when they're hidden.
+      this.prisma.tenant.count({ where: { deletedAt: { not: null } } }),
     ]);
 
     return {
       data: tenants.map((t) => this._formatTenant(t)),
-      meta: { total, page, limit, pages: Math.ceil(total / limit) },
+      meta: { total, page, limit, pages: Math.ceil(total / limit), deletedCount },
     };
   }
 
   async getTenant(id: string) {
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id },
-      include: {
-        config: true,
-        subscription: true,
-        _count: {
-          select: { users: true, customers: true, orders: true, drivers: true, routes: true },
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const [tenant, orders30d] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id },
+        include: {
+          config: true,
+          subscription: true,
+          _count: {
+            select: {
+              users: true,
+              customers: true,
+              orders: true,
+              drivers: true,
+              routes: true,
+              customerLinks: true,
+            },
+          },
         },
-      },
-    });
+      }),
+      // Read-only order count (orders module untouched); raw client is correct
+      // here since a super-admin request carries no tenant scope.
+      this.prisma.order.count({ where: { tenantId: id, createdAt: { gte: thirtyDaysAgo } } }),
+    ]);
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
-    return this._formatTenant(tenant);
+    return {
+      ...this._formatTenant(tenant),
+      orders30d,
+      // Only an ACTIVE tenant is paying; trials/suspended/cancelled contribute $0.
+      estMrrUsd: tenant.status === "ACTIVE" ? (STOPGAP_PLAN_MONTHLY_USD[tenant.plan] ?? 0) : 0,
+    };
   }
 
   // ─── Create / Delete Tenant ───────────────────────────────────────────────────
@@ -439,6 +509,7 @@ ${paymentSection}
   async getStats() {
     const now = new Date();
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
     const [
       totalTenants,
@@ -447,7 +518,9 @@ ${paymentSection}
       suspendedTenants,
       totalUsers,
       superAdminCount,
+      newTenantsThisMonth,
       planBreakdown,
+      activePlanBreakdown,
       recentTenants,
       trialsExpiringSoon,
       atRiskTenants,
@@ -458,8 +531,17 @@ ${paymentSection}
       this.prisma.tenant.count({ where: { status: TenantStatus.SUSPENDED } }),
       this.prisma.user.count({ where: { tenantId: { not: null } } }),
       this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
+      this.prisma.tenant.count({ where: { createdAt: { gte: startOfMonth } } }),
+      // Plan distribution excludes cancelled/soft-deleted tenants (hidden everywhere else).
       this.prisma.tenant.groupBy({
         by: ["plan"],
+        where: { deletedAt: null, status: { not: TenantStatus.CANCELLED } },
+        _count: { plan: true },
+      }),
+      // Est. MRR counts only ACTIVE (paying) tenants — trials/suspended/cancelled pay $0.
+      this.prisma.tenant.groupBy({
+        by: ["plan"],
+        where: { status: TenantStatus.ACTIVE, deletedAt: null },
         _count: { plan: true },
       }),
       this.prisma.tenant.findMany({
@@ -481,6 +563,7 @@ ${paymentSection}
           plan: true,
           trialEndsAt: true,
           createdAt: true,
+          _count: { select: { users: true } },
         },
       }),
       // At-risk: suspended or expired trials
@@ -497,6 +580,13 @@ ${paymentSection}
       }),
     ]);
 
+    const planCounts = Object.fromEntries(
+      planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
+    );
+    const activePlanCounts = Object.fromEntries(
+      activePlanBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
+    );
+
     return {
       tenants: {
         total: totalTenants,
@@ -506,13 +596,41 @@ ${paymentSection}
       },
       totalUsers,
       superAdminCount,
-      planBreakdown: Object.fromEntries(
-        planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
-      ),
+      newTenantsThisMonth,
+      // Display-only stopgap MRR (see plan-pricing.constant.ts) — ACTIVE tenants
+      // only — until the billing-plans catalog owns the real rollup.
+      estMrrUsd: estimatePlatformMrrUsd(activePlanCounts),
+      planBreakdown: planCounts,
       recentTenants,
-      trialsExpiringSoon,
-      atRiskTenants,
+      trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        plan: t.plan,
+        trialEndsAt: t.trialEndsAt,
+        createdAt: t.createdAt,
+        userCount: t._count.users,
+      })),
+      atRiskTenants: atRiskTenants.map((t) => ({
+        id: t.id,
+        slug: t.slug,
+        name: t.name,
+        status: t.status,
+        plan: t.plan,
+        trialEndsAt: t.trialEndsAt,
+        riskReason: this._riskReason(t.status, t.trialEndsAt, now),
+      })),
     };
+  }
+
+  /** Human-readable "why at risk" for the dashboard At-Risk table. */
+  private _riskReason(status: string, trialEndsAt: Date | null, now: Date): string {
+    if (status === "SUSPENDED") return "Suspended";
+    if (status === "TRIAL" && trialEndsAt && trialEndsAt < now) {
+      const days = Math.floor((now.getTime() - trialEndsAt.getTime()) / (1000 * 60 * 60 * 24));
+      return days <= 0 ? "Trial expired today" : `Trial expired ${days}d ago`;
+    }
+    return "At risk";
   }
 
   // ─── Growth stats ─────────────────────────────────────────────────────────────

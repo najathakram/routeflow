@@ -1,14 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
+import { planLabel } from "../../../_components/AdminBadge";
 
 const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
 
+interface CreatedTenant {
+  slug: string;
+  id: string;
+  adminUsername?: string;
+  tempPassword?: string;
+  checkoutUrl?: string;
+}
+
 export default function AdminCreateTenantPage() {
-  const router = useRouter();
   const [form, setForm] = React.useState({
     slug: "",
     businessName: "",
@@ -20,7 +27,8 @@ export default function AdminCreateTenantPage() {
   const [showPw, setShowPw] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [success, setSuccess] = React.useState<{ slug: string; id: string } | null>(null);
+  const [success, setSuccess] = React.useState<CreatedTenant | null>(null);
+  const [copied, setCopied] = React.useState(false);
 
   const onChange =
     (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -33,10 +41,13 @@ export default function AdminCreateTenantPage() {
     setError(null);
     setSuccess(null);
     try {
-      const res = await superAdminClient.post("/platform-admin/tenants", form);
-      setSuccess({ slug: res.data.slug, id: res.data.id });
-      // Redirect after a short delay
-      setTimeout(() => router.push("/admin/tenants"), 2500);
+      // Omit a blank password so the API auto-generates a temporary one and
+      // returns it (we then surface it for the admin to copy).
+      const payload: Record<string, string> = { ...form };
+      if (!payload.adminPassword) delete payload.adminPassword;
+      const res = await superAdminClient.post("/platform-admin/tenants", payload);
+      setSuccess(res.data);
+      setCopied(false);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message;
@@ -60,8 +71,64 @@ export default function AdminCreateTenantPage() {
           <div className="mb-4 rounded-xl bg-green-900/40 p-4 ring-1 ring-green-700">
             <p className="font-semibold text-green-400">Tenant created successfully!</p>
             <p className="mt-1 text-sm text-green-300">
-              Slug: <span className="font-mono">{success.slug}</span> — redirecting to tenant list…
+              Slug: <span className="font-mono">{success.slug}</span>
             </p>
+            {success.tempPassword && (
+              <div className="mt-3 rounded-lg bg-slate-900/60 p-3 ring-1 ring-green-700/40">
+                <p className="text-xs text-green-300">
+                  Auto-generated temporary password — copy it now, it won&apos;t be shown again. The
+                  admin must change it on first login.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  {success.adminUsername && (
+                    <span className="text-xs text-slate-400">
+                      {success.adminUsername}
+                      {" · "}
+                    </span>
+                  )}
+                  <code className="rounded bg-slate-800 px-2 py-1 font-mono text-sm text-white">
+                    {success.tempPassword}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(success.tempPassword ?? "");
+                      setCopied(true);
+                    }}
+                    className="rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
+                  >
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {success.checkoutUrl && (
+              <p className="mt-3 text-sm text-green-300">
+                Payment link:{" "}
+                <a
+                  href={success.checkoutUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-indigo-300 underline hover:text-indigo-200"
+                >
+                  {success.checkoutUrl}
+                </a>
+              </p>
+            )}
+            <div className="mt-3 flex gap-3">
+              <Link
+                href={`/admin/tenants/${success.id}`}
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
+              >
+                View tenant
+              </Link>
+              <Link
+                href="/admin/tenants"
+                className="rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700"
+              >
+                Back to list
+              </Link>
+            </div>
           </div>
         )}
 
@@ -128,14 +195,15 @@ export default function AdminCreateTenantPage() {
 
           {/* Admin Password */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-slate-300">Admin Password</label>
+            <label className="text-sm font-medium text-slate-300">
+              Admin Password <span className="font-normal text-slate-500">(optional)</span>
+            </label>
             <div className="relative">
               <input
                 type={showPw ? "text" : "password"}
                 value={form.adminPassword}
                 onChange={onChange("adminPassword")}
-                placeholder="Min. 8 characters"
-                required
+                placeholder="Leave blank to auto-generate"
                 className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 pr-10 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
               />
               <button
@@ -177,6 +245,9 @@ export default function AdminCreateTenantPage() {
                 )}
               </button>
             </div>
+            <p className="text-xs text-slate-500">
+              If left blank, a secure temporary password is generated and shown once after creation.
+            </p>
           </div>
 
           {/* Plan */}
@@ -189,7 +260,7 @@ export default function AdminCreateTenantPage() {
             >
               {PLANS.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {planLabel(p)}
                 </option>
               ))}
             </select>

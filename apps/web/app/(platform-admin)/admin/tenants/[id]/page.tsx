@@ -6,10 +6,17 @@ import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminTabs } from "../../../_components/AdminTabs";
-import { AdminBadge } from "../../../_components/AdminBadge";
+import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
 import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
+
+const usd = (n: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(n);
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,7 +55,10 @@ interface TenantDetail {
     orders: number;
     drivers: number;
     routes: number;
+    customerLinks: number;
   } | null;
+  orders30d?: number;
+  estMrrUsd?: number;
 }
 
 interface AuditActor {
@@ -377,8 +387,34 @@ function OverviewTab({
       .catch(() => {});
   }, [tenant.id]);
 
+  const sub = tenant.subscription;
+  const paymentMethodLabel = sub?.externalPayment
+    ? (sub.externalPaymentMethod ?? "External")
+    : sub?.stripeCustomerId
+      ? "Card (Stripe)"
+      : null;
+
   return (
     <div className="grid gap-6 lg:grid-cols-2">
+      {/* At-a-glance KPIs */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
+        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Est. MRR</p>
+          <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
+          <p className="mt-1 text-xs text-slate-500">{planLabel(tenant.plan)} · stopgap estimate</p>
+        </div>
+        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Orders, 30d</p>
+          <p className="mt-2 text-2xl font-bold text-white">{tenant.orders30d ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">Placed in the last 30 days</p>
+        </div>
+        <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Users</p>
+          <p className="mt-2 text-2xl font-bold text-white">{tenant.counts?.users ?? 0}</p>
+          <p className="mt-1 text-xs text-slate-500">Across this workspace</p>
+        </div>
+      </div>
+
       {/* Tenant Info */}
       <AdminCard title="Tenant Info">
         <dl className="flex flex-col gap-2.5 text-sm">
@@ -426,6 +462,36 @@ function OverviewTab({
               <dd>
                 <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
               </dd>
+            </div>
+          )}
+          {tenant.primaryColor && (
+            <div className="flex justify-between items-center">
+              <dt className="text-slate-500">Brand color</dt>
+              <dd className="flex items-center gap-2">
+                <span
+                  className="inline-block h-3.5 w-3.5 rounded ring-1 ring-white/10"
+                  style={{ backgroundColor: tenant.primaryColor }}
+                />
+                <span className="font-mono text-xs text-slate-300">{tenant.primaryColor}</span>
+              </dd>
+            </div>
+          )}
+          {tenant.counts && (
+            <div className="flex justify-between items-center">
+              <dt className="text-slate-500">Linked buyers</dt>
+              <dd className="font-mono text-slate-300">{tenant.counts.customerLinks}</dd>
+            </div>
+          )}
+          {sub?.periodEnd && (
+            <div className="flex justify-between items-center">
+              <dt className="text-slate-500">Next renewal</dt>
+              <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
+            </div>
+          )}
+          {paymentMethodLabel && (
+            <div className="flex justify-between items-center">
+              <dt className="text-slate-500">Payment method</dt>
+              <dd className="text-slate-300">{paymentMethodLabel}</dd>
             </div>
           )}
         </dl>
@@ -486,7 +552,7 @@ function OverviewTab({
             >
               {PLANS.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {planLabel(p)}
                 </option>
               ))}
             </select>
@@ -928,7 +994,7 @@ function BillingTab({
             >
               {PLANS.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {planLabel(p)}
                 </option>
               ))}
             </select>
@@ -1475,7 +1541,7 @@ export default function AdminTenantDetailPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-4 flex items-center gap-4">
+      <div className="mb-1 flex items-center gap-4">
         <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
           Tenants
         </Link>
@@ -1484,6 +1550,11 @@ export default function AdminTenantDetailPage() {
         <AdminBadge>{tenant.status}</AdminBadge>
         <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
       </div>
+      <p className="mb-4 text-sm text-slate-500">
+        <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
+        {new Date(tenant.createdAt).toLocaleDateString()}
+        {tenant.counts ? ` · ${tenant.counts.users} users` : ""}
+      </p>
 
       {/* Tabs */}
       <AdminTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
