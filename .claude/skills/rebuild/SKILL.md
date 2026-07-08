@@ -27,6 +27,25 @@ If `verify` fails → stop, fix the failures, then restart from Step 1.
 
 ---
 
+## Step 1.5 — GATE: apply any pending PROD migration BEFORE the merge ⚠️
+
+Merging to master auto-redeploys the app via Railway, and **Railway never runs
+migrations** (`CMD = node dist/main.js` only). If the branch adds a Prisma migration,
+the freshly-deployed image will hit **missing columns and 500** until the migration
+lands — so the migration must be applied to **prod first**.
+
+```bash
+# Does this branch add a migration not yet on master?
+git diff --name-only origin/master...HEAD -- apps/api/prisma/migrations/
+```
+
+If it lists a new migration → it must be applied to prod (human-run, after review — see
+the **db-migration** skill + `CLAUDE_SESSION_PREAMBLE.md`) **before** the Step 2 merge.
+Additive-only migrations make this ordering safe: the old image tolerates the new columns,
+and the new image needs them. Do not merge until the migration shows as applied.
+
+---
+
 ## Step 2 — Make repo public, merge PR, make repo private
 
 RouteFlow uses a $0 GitHub Actions budget; CI only runs on public repos.
