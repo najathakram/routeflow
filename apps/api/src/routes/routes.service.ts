@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { createHash } from "crypto";
@@ -18,6 +19,14 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
+import { CompleteStopDto } from "./dto/complete-stop.dto";
+import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import {
+  assertRegulatedDeliverySatisfied,
+  deriveStopRegulatedRequirements,
+  loadAgeIdCategorySets,
+  type RegulatedDeliveryDb,
+} from "../common/regulated-delivery";
 
 // Shared per-stop include used by both list (`findAllRuns`) and detail
 // (`findOneRun`) so the two endpoints stay in lockstep. Driver list views need
@@ -74,6 +83,8 @@ const RUN_STOP_INCLUDE = {
 
 @Injectable()
 export class RoutesService {
+  private readonly logger = new Logger(RoutesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
@@ -615,6 +626,16 @@ export class RoutesService {
         ),
     );
 
+    // Phase 4 (W7b): flag stops whose newly-assigned orders contain an age/ID-gated
+    // category so the driver app can surface "regulated — signature required"
+    // before the delivery is attempted. Best-effort — a flag failure must not
+    // block dispatch (the completion gate re-derives authoritatively anyway).
+    await this.applyStopRegulatedFlags(run.stops.map((s) => s.id)).catch((e) =>
+      this.logger.warn(
+        `applyStopRegulatedFlags failed for run ${run.id}: ${e instanceof Error ? e.message : e}`,
+      ),
+    );
+
     // RF-015: notify the assigned driver via WebSocket + push so the run
     // appears on their device immediately after dispatch (no pull-to-refresh needed).
     if (run.driverId) {
@@ -644,6 +665,33 @@ export class RoutesService {
     }
 
     return run;
+  }
+
+  /**
+   * Phase 4 (W7b): persist per-stop age/ID requirement flags from the categories
+   * of each stop's assigned orders. Fast-paths to a no-op for tenants that run no
+   * age/ID-gated category. The completion gate re-derives authoritatively, so
+   * these flags only drive the driver-app stop card.
+   */
+  private async applyStopRegulatedFlags(stopIds: string[]): Promise<void> {
+    if (stopIds.length === 0) return;
+    const scoped = this.prisma.forTenant();
+    const db = scoped as unknown as RegulatedDeliveryDb;
+    const sets = await loadAgeIdCategorySets(db);
+    if (!sets.any) return;
+    for (const stopId of stopIds) {
+      const { requiresAge, requiresId } = await deriveStopRegulatedRequirements(
+        db,
+        { stopId },
+        sets,
+      );
+      if (requiresAge || requiresId) {
+        await scoped.routeRunStop.update({
+          where: { id: stopId },
+          data: { ageCheckRequired: requiresAge, identityCheckRequired: requiresId },
+        });
+      }
+    }
   }
 
   async findAllRuns(query: ListRunsDto, user: JwtPayload) {
@@ -1072,19 +1120,7 @@ export class RoutesService {
   async completeStop(
     runId: string,
     stopId: string,
-    dto: {
-      driverNote?: string;
-      podPhotoUrls?: string[];
-      signatureUrl?: string;
-      safeDropEnabled?: boolean;
-      deliveries?: Array<{
-        orderItemId: string;
-        type: string;
-        quantityDelivered: number;
-        note?: string;
-      }>;
-      idempotencyKey?: string;
-    },
+    dto: CompleteStopDto & { idempotencyKey?: string },
     user: JwtPayload,
   ) {
     // RF-003: fetch the parent run first and reject if it hasn't been started.
@@ -1119,6 +1155,24 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
+      // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
+      // requirement from the stop's current orders (authoritative — orders can be
+      // linked after dispatch), then block a regulated completion that lacks the
+      // required checks / signature / hands it to a safe-drop, and normalise the
+      // captured values onto the stop.
+      const db = tx as unknown as RegulatedDeliveryDb;
+      const sets = await loadAgeIdCategorySets(db);
+      const requirements = await deriveStopRegulatedRequirements(
+        db,
+        { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
+        sets,
+      );
+      const regulatedPatch = assertRegulatedDeliverySatisfied({
+        requirements,
+        capture: dto,
+        existingSignatureUrl: stop.signatureUrl,
+      });
+
       // 1. Mark stop completed
       await tx.routeRunStop.update({
         where: { id: stopId },
@@ -1129,6 +1183,7 @@ export class RoutesService {
           ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
           ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
           ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+          ...regulatedPatch,
         },
       });
 
@@ -1222,24 +1277,7 @@ export class RoutesService {
   async completeWithPayment(
     runId: string,
     stopId: string,
-    dto: {
-      driverNote?: string;
-      podPhotoUrls?: string[];
-      signatureUrl?: string;
-      safeDropEnabled?: boolean;
-      deliveries?: Array<{
-        orderItemId: string;
-        type: string;
-        quantityDelivered: number;
-        note?: string;
-      }>;
-      payment?: {
-        invoiceId: string;
-        amount: number;
-        method: string;
-      };
-      idempotencyKey?: string;
-    },
+    dto: CompleteWithPaymentDto & { idempotencyKey?: string },
     user: JwtPayload,
   ) {
     const run = await this.prisma.forTenant().routeRun.findUnique({ where: { id: runId } });
@@ -1281,6 +1319,20 @@ export class RoutesService {
 
     let autoCompleted = false;
     await this.prisma.tenantTransaction(async (tx) => {
+      // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
+      const db = tx as unknown as RegulatedDeliveryDb;
+      const sets = await loadAgeIdCategorySets(db);
+      const requirements = await deriveStopRegulatedRequirements(
+        db,
+        { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
+        sets,
+      );
+      const regulatedPatch = assertRegulatedDeliverySatisfied({
+        requirements,
+        capture: dto,
+        existingSignatureUrl: stop.signatureUrl,
+      });
+
       // 1. Mark stop completed
       await tx.routeRunStop.update({
         where: { id: stopId },
@@ -1291,6 +1343,7 @@ export class RoutesService {
           ...(dto.podPhotoUrls ? { podPhotoUrls: dto.podPhotoUrls } : {}),
           ...(dto.signatureUrl !== undefined ? { signatureUrl: dto.signatureUrl } : {}),
           ...(dto.safeDropEnabled !== undefined ? { safeDropEnabled: dto.safeDropEnabled } : {}),
+          ...regulatedPatch,
         },
       });
 
@@ -1706,7 +1759,8 @@ export class RoutesService {
         await tx.transaction.deleteMany({ where: { orderId: order.id, status: "UNPAID" } });
       }
 
-      // 6. Reset stop
+      // 6. Reset stop (incl. Phase 4 W7b regulated POD capture so a re-completion
+      // must re-capture the age/ID checks; requirement flags are re-derived then).
       await tx.routeRunStop.update({
         where: { id: stopId },
         data: {
@@ -1717,6 +1771,10 @@ export class RoutesService {
           podPhotoUrls: [],
           safeDropEnabled: false,
           signatureUrl: null,
+          ageVerified: false,
+          identityVerified: false,
+          identityType: null,
+          identityVerifiedAt: null,
         },
       });
 
