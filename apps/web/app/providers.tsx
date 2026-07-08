@@ -14,10 +14,13 @@ function QueryProviders({ children }: { children: React.ReactNode }) {
     new QueryClient({
       mutationCache: new MutationCache({
         onError: (error) => {
-          const message =
-            (error as any)?.response?.data?.message ||
-            (error as Error)?.message ||
-            "Something went wrong";
+          const data = (error as any)?.response?.data;
+          // These 409s are turned into guided in-app flows by the initiating
+          // component (merge prompt, license guard) — don't also surface them as a
+          // generic error toast.
+          const HANDLED_CODES = ["MERGE_CHOICE_REQUIRED", "REGULATED_AUTH_REQUIRED"];
+          if (data?.code && HANDLED_CODES.includes(data.code)) return;
+          const message = data?.message || (error as Error)?.message || "Something went wrong";
           toast({ title: message, variant: "error" });
         },
       }),

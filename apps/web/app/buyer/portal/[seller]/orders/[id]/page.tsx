@@ -243,7 +243,17 @@ export default function BuyerOrderDetailPage() {
       });
       setEditMode(false);
     } catch (err: any) {
-      setActionError(err?.response?.data?.message ?? "Failed to update order items.");
+      const data = err?.response?.data;
+      if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
+        const names = (data.blockedCategories ?? [])
+          .map((b: { categoryName: string }) => b.categoryName)
+          .join(", ");
+        setActionError(
+          `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
+        );
+        return;
+      }
+      setActionError(data?.message ?? "Failed to update order items.");
     }
   };
 

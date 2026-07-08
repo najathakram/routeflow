@@ -12,7 +12,7 @@ jest.mock("./invoice-pdf.service", () => ({
 }));
 
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -21,6 +21,7 @@ import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { InvoiceStatus } from "@prisma/client";
 
 describe("InvoicesService", () => {
@@ -59,6 +60,13 @@ describe("InvoicesService", () => {
         {
           provide: RegulatedLedgerService,
           useValue: { writeSaleEntries: jest.fn(), reverseInvoiceEntries: jest.fn() },
+        },
+        {
+          provide: AuthorizationGuardService,
+          useValue: {
+            assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
+            checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+          },
         },
       ],
     }).compile();
@@ -780,6 +788,36 @@ describe("InvoicesService", () => {
       });
 
       await expect(service.createInvoiceFromOrder("ord-3")).rejects.toThrow(/non-zero tax rate/);
+    });
+
+    it("W6b backstop: blocks invoicing when the customer's license guard rejects", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-5",
+        customerId: "cust-1",
+        orderNumber: "ORD-13",
+        subtotal: 10,
+        tax: 0,
+        lineItems: [line("tob", "cat-tob", "Cigarillos")],
+      });
+      // License expired between order and invoice → guard rejects at invoice time.
+      (service as any).authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(
+        new ConflictException({ code: "REGULATED_AUTH_REQUIRED", blockedCategories: [] }),
+      );
+
+      await expect(service.createInvoiceFromOrder("ord-5")).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.invoice.create).not.toHaveBeenCalled(); // blocked before any invoice row
     });
   });
 

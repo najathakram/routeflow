@@ -21,6 +21,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { UserRole } from "@prisma/client";
@@ -38,12 +39,17 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   let ordersService: jest.Mocked<Pick<OrdersService, "findAll">>;
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
   let templatesService: jest.Mocked<Pick<OrderTemplatesService, "findAllForUser">>;
+  let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
 
   beforeEach(async () => {
     ordersService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
       findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+    };
+    authorizationsService = {
+      listForBuyer: jest.fn().mockResolvedValue([]),
+      submit: jest.fn().mockResolvedValue({ id: "auth-1", status: "PENDING_REVIEW" }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -57,6 +63,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: InvoicePdfService, useValue: {} },
         { provide: CustomersService, useValue: {} },
         { provide: OrderTemplatesService, useValue: templatesService },
+        { provide: AuthorizationsService, useValue: authorizationsService },
         { provide: PrismaService, useValue: {} },
         {
           provide: TenantContextService,
@@ -129,5 +136,22 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   it("getMe: returns customer profile directly from context (no extra DB call)", () => {
     const result = controller.getMe(MOCK_CTX as any);
     expect(result).toEqual(MOCK_CTX.customer);
+  });
+
+  // W6b: buyer license endpoints resolve customerId from context, not the client.
+  it("listAuthorizations: delegates to the service with the context customerId", () => {
+    controller.listAuthorizations(MOCK_CTX as any);
+    expect(authorizationsService.listForBuyer).toHaveBeenCalledWith("cust-abc");
+  });
+
+  it("submitAuthorization: delegates to the service with the context customerId + dto", () => {
+    const dto = {
+      trackedCategoryId: "cat-1",
+      licenseNumber: "LIC-1",
+      expiresAt: "2027-01-01T00:00:00Z",
+      shareConsent: true,
+    };
+    controller.submitAuthorization(MOCK_CTX as any, dto as any);
+    expect(authorizationsService.submit).toHaveBeenCalledWith("cust-abc", dto);
   });
 });

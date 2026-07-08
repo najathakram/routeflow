@@ -29,6 +29,7 @@ import {
   ZoomIn,
   Upload,
   Download,
+  ShieldCheck,
 } from "lucide-react";
 import {
   Avatar,
@@ -57,6 +58,7 @@ import {
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
+import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
 import { useMarginConfig } from "@/lib/api/margin";
@@ -1795,6 +1797,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               Documents
             </span>
           </TabTrigger>
+          <TabTrigger value="authorizations">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Licenses
+            </span>
+          </TabTrigger>
         </Tabs.List>
 
         {/* ── Profile tab ────────────────────────────────────────── */}
@@ -3357,6 +3365,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
         {/* ── Documents tab ──────────────────────────────────────── */}
         <DocumentsTab customerId={params.id} />
+
+        {/* ── Licenses & Authorizations tab (W6b) ────────────────── */}
+        <AuthorizationsTab customerId={params.id} />
       </Tabs.Root>
 
       {/* Modals */}

@@ -17,7 +17,8 @@ import { AuthorizationExpiryService } from "./authorization-expiry.service";
     AuthorizationGuardService,
     AuthorizationExpiryService,
   ],
-  // Exported so Orders/Invoices can enforce the license guard at sale time.
-  exports: [AuthorizationGuardService],
+  // AuthorizationGuardService → Orders/Invoices enforce the license guard at sale time.
+  // AuthorizationsService → the buyer portal reuses it for self-serve submit/list (W6b).
+  exports: [AuthorizationGuardService, AuthorizationsService],
 })
 export class AuthorizationsModule {}

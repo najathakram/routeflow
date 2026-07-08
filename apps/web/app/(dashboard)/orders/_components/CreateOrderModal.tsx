@@ -23,6 +23,8 @@ import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { LicenseGuardModal } from "./LicenseGuardModal";
+import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +61,9 @@ interface LineItem {
   pieces?: number; // extra loose pieces (only when unitsPerBox is set)
   unitCost?: number; // Product.averageCost (per piece) — for the live margin hint
   category?: string; // for the per-category margin floor
+  /** Regulated tracked-category id (null for standard products) — maps a blocked
+   *  category from the 409 license guard back to the cart line. */
+  trackedCategoryId?: string | null;
   /** True for a free-text, non-catalog line (sent as { name, qty, unitPrice }). */
   isUnlisted?: boolean;
 }
@@ -148,6 +153,8 @@ export function CreateOrderModal({
   // Merge-vs-separate prompt state. Set when the operator submits and the API
   // (or our pre-check) reports an existing active order for the same customer.
   const [mergePrompt, setMergePrompt] = React.useState<ActiveOrderSummary | null>(null);
+  // The license guard (W6b): categories blocked by a 409 REGULATED_AUTH_REQUIRED.
+  const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   // Pre-check: as soon as a customer is selected, look up their active order so we can
   // surface the prompt the moment "Create Order" is clicked.
   const { data: activeOrderForCustomer } = useActiveOrderForCustomer(selectedCustomer?.id);
@@ -362,6 +369,7 @@ export function CreateOrderModal({
         pieces: upb ? 0 : undefined,
         unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
         category: product.category ?? undefined,
+        trackedCategoryId: product.trackedCategoryId ?? null,
       },
     ]);
     setScrollToId(newTempId);
@@ -624,6 +632,12 @@ export function CreateOrderModal({
   // funnel through here so the prompt fires for either action.
   const pendingFormValuesRef = React.useRef<FormValues | null>(null);
   const pendingAsDraftRef = React.useRef<boolean>(false);
+  // Stashed submit args so the license guard can retry the create after the
+  // operator captures a license or accepts responsibility.
+  const licenseRetryRef = React.useRef<{
+    data: FormValues;
+    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean };
+  } | null>(null);
 
   /**
    * Actually fire the create-order request with the operator's chosen mergeChoice
@@ -696,6 +710,13 @@ export function CreateOrderModal({
             pendingFormValuesRef.current = data;
             pendingAsDraftRef.current = !!asDraft;
             setMergePrompt(body.activeOrder as ActiveOrderSummary);
+            return;
+          }
+          // A regulated line needs a verified license (or a §8 override / removal).
+          const blocked = parseRegulatedAuthError(err);
+          if (blocked && blocked.length > 0) {
+            licenseRetryRef.current = { data, options };
+            setLicenseBlock(blocked);
           }
         },
       },
@@ -1510,6 +1531,29 @@ export function CreateOrderModal({
           </div>
         )}
       </Modal>
+
+      {/* License guard (W6b): the sale hit a 409 REGULATED_AUTH_REQUIRED. */}
+      {licenseBlock && selectedCustomer && (
+        <LicenseGuardModal
+          open
+          customerId={selectedCustomer.id}
+          blocked={licenseBlock}
+          onResolved={() => {
+            const retry = licenseRetryRef.current;
+            setLicenseBlock(null);
+            if (retry) submitOrder(retry.data, retry.options);
+          }}
+          onRemoveLines={(categoryIds) => {
+            setLineItems((prev) =>
+              prev.filter(
+                (li) => !li.trackedCategoryId || !categoryIds.includes(li.trackedCategoryId),
+              ),
+            );
+            toast({ title: "Removed regulated line(s)", variant: "success" });
+          }}
+          onClose={() => setLicenseBlock(null)}
+        />
+      )}
     </Modal>
   );
 }

@@ -109,7 +109,19 @@ export default function BuyerCartPage() {
         setOrderPlaced(result);
       }
     } catch (err: any) {
-      setOrderError(err?.response?.data?.message ?? "Failed to create order. Please try again.");
+      const data = err?.response?.data;
+      // A regulated line the buyer isn't licensed for (e.g. a stale cart item whose
+      // license lapsed) — point them at the Licenses page instead of a generic retry.
+      if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
+        const names = (data.blockedCategories ?? [])
+          .map((b: { categoryName: string }) => b.categoryName)
+          .join(", ");
+        setOrderError(
+          `Your order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
+        );
+        return;
+      }
+      setOrderError(data?.message ?? "Failed to create order. Please try again.");
     }
   };
 

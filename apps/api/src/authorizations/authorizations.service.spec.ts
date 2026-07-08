@@ -3,22 +3,33 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { AuthorizationsService } from "./authorizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("AuthorizationsService", () => {
   let service: AuthorizationsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let audit: { log: jest.Mock };
+  let notifications: { sendToUser: jest.Mock; sendToCustomer: jest.Mock };
+  let email: { send: jest.Mock };
   const user = { sub: "u1", username: "operator1", role: "OPERATOR" } as any;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     audit = { log: jest.fn().mockResolvedValue(undefined) };
+    notifications = {
+      sendToUser: jest.fn().mockResolvedValue(1),
+      sendToCustomer: jest.fn().mockResolvedValue(1),
+    };
+    email = { send: jest.fn().mockResolvedValue(undefined) };
     const mod = await Test.createTestingModule({
       providers: [
         AuthorizationsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AuditService, useValue: audit },
+        { provide: NotificationsService, useValue: notifications },
+        { provide: EmailService, useValue: email },
       ],
     }).compile();
     service = mod.get(AuthorizationsService);
@@ -135,5 +146,150 @@ describe("AuthorizationsService", () => {
     await expect(
       service.renew("c1", "a1", { expiresAt: "2028-01-01T00:00:00Z" }, user),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // ─── Buyer self-serve submit (W6b) ────────────────────────────────────────────
+
+  const submitDto = {
+    trackedCategoryId: "cat-1",
+    licenseNumber: "LIC-123",
+    expiresAt: "2027-01-01T00:00:00Z",
+    shareConsent: true,
+  };
+
+  it("submit → PENDING_REVIEW + RETAILER_SUBMITTED, no verifier stamp, notifies operators", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "Tobacco",
+      requiresLicense: true,
+    });
+    prisma.customerAuthorization.findUnique.mockResolvedValue(null);
+    prisma.user.findMany.mockResolvedValue([{ id: "op1", email: "op@acme.test" }]);
+
+    const auth = await service.submit("c1", submitDto);
+
+    expect(auth).toMatchObject({
+      status: "PENDING_REVIEW",
+      source: "RETAILER_SUBMITTED",
+      licenseNumber: "LIC-123",
+      verifiedById: null,
+      verifiedByName: null,
+      verifiedAt: null,
+    });
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "regulated_authorization.submitted",
+        userId: null,
+        meta: expect.objectContaining({ source: "RETAILER_SUBMITTED", shareConsent: true }),
+      }),
+    );
+    expect(notifications.sendToUser).toHaveBeenCalledWith(
+      "op1",
+      expect.objectContaining({ title: expect.stringContaining("submitted for review") }),
+    );
+    expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: "op@acme.test" }));
+  });
+
+  it("submit blocks a non-license category", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "CRV",
+      requiresLicense: false,
+    });
+    await expect(service.submit("c1", submitDto)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customerAuthorization.create).not.toHaveBeenCalled();
+  });
+
+  it("submit will not clobber a live VERIFIED authorization", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "Tobacco",
+      requiresLicense: true,
+    });
+    prisma.customerAuthorization.findUnique.mockResolvedValue({
+      id: "a1",
+      status: "VERIFIED",
+      expiresAt: new Date("2099-01-01T00:00:00Z"),
+    });
+    await expect(service.submit("c1", submitDto)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customerAuthorization.update).not.toHaveBeenCalled();
+  });
+
+  it("submit's P2002 race path won't clobber a concurrently-verified license", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "Tobacco",
+      requiresLicense: true,
+    });
+    // Initial existence check → null (take the create branch); create races a
+    // concurrent operator VERIFIED insert → P2002; re-lookup returns that live row.
+    prisma.customerAuthorization.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "raced-verified", status: "VERIFIED", expiresAt: null });
+    prisma.customerAuthorization.create.mockRejectedValueOnce({ code: "P2002" });
+    await expect(service.submit("c1", submitDto)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customerAuthorization.update).not.toHaveBeenCalled();
+  });
+
+  it("submit re-submits over an EXPIRED authorization", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "Tobacco",
+      requiresLicense: true,
+    });
+    prisma.customerAuthorization.findUnique.mockResolvedValue({
+      id: "a1",
+      status: "EXPIRED",
+      expiresAt: new Date("2020-01-01T00:00:00Z"),
+    });
+    const auth = await service.submit("c1", submitDto);
+    expect(prisma.customerAuthorization.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "a1" },
+        data: expect.objectContaining({ status: "PENDING_REVIEW" }),
+      }),
+    );
+    expect(auth).toMatchObject({ status: "PENDING_REVIEW" });
+  });
+
+  it("submit treats a VERIFIED-but-past-expiry row as renewable (not a live block)", async () => {
+    prisma.trackedCategory.findUnique.mockResolvedValue({
+      id: "cat-1",
+      name: "Tobacco",
+      requiresLicense: true,
+    });
+    prisma.customerAuthorization.findUnique.mockResolvedValue({
+      id: "a1",
+      status: "VERIFIED",
+      expiresAt: new Date("2020-01-01T00:00:00Z"), // already lapsed → resubmit allowed
+    });
+    const auth = await service.submit("c1", submitDto);
+    expect(auth).toMatchObject({ status: "PENDING_REVIEW" });
+  });
+
+  it("listForBuyer merges categories with buyer status (NONE when unsubmitted, lazy EXPIRED)", async () => {
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-1", name: "Tobacco" },
+      { id: "cat-2", name: "Alcohol" },
+      { id: "cat-3", name: "Vape" },
+    ]);
+    prisma.customerAuthorization.findMany.mockResolvedValue([
+      { trackedCategoryId: "cat-1", status: "VERIFIED", expiresAt: new Date("2099-01-01") },
+      {
+        trackedCategoryId: "cat-2",
+        status: "VERIFIED",
+        expiresAt: new Date("2000-01-01"),
+        licenseNumber: "OLD",
+      },
+    ]);
+    const rows = await service.listForBuyer("c1");
+    const byId = Object.fromEntries(rows.map((r) => [r.trackedCategoryId, r.status]));
+    expect(byId).toEqual({ "cat-1": "VERIFIED", "cat-2": "EXPIRED", "cat-3": "NONE" });
+  });
+
+  it("listForBuyer is empty when the tenant runs no license-required program", async () => {
+    prisma.trackedCategory.findMany.mockResolvedValue([]);
+    expect(await service.listForBuyer("c1")).toEqual([]);
+    expect(prisma.customerAuthorization.findMany).not.toHaveBeenCalled();
   });
 });

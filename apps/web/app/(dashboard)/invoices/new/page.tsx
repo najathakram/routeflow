@@ -514,7 +514,22 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
         toast({ title: "Invoice created", variant: "success" });
         router.push(`/invoices/${inv.id}`);
       },
-      onError: () => toast({ title: "Could not create the invoice", variant: "error" }),
+      onError: (err: any) => {
+        // The invoice-time license backstop blocks a regulated line with an
+        // unverified/expired license. This page has no inline guard, so point the
+        // operator to the order where they can capture the license / override.
+        const data = err?.response?.data;
+        if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
+          toast({
+            title: "License required for a regulated line",
+            description:
+              "Open the order to capture the customer's license or record a responsibility override, then invoice it.",
+            variant: "error",
+          });
+          return;
+        }
+        toast({ title: "Could not create the invoice", variant: "error" });
+      },
     });
   };
 
