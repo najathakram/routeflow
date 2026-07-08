@@ -11,6 +11,8 @@ import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
@@ -31,6 +33,8 @@ export class OrderTemplatesService {
     private readonly tenantCtx: TenantContextService,
     private readonly config: ConfigService,
     private readonly ordersService: OrdersService,
+    private readonly authGuard: AuthorizationGuardService,
+    private readonly notifications: NotificationsService,
   ) {
     this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
   }
@@ -218,7 +222,16 @@ export class OrderTemplatesService {
     });
     if (!template) throw new NotFoundException("Order template not found");
     if (!template.isActive) throw new BadRequestException("Template is not active");
-    return this.createOrderFromTemplate(template);
+    const order = await this.createOrderFromTemplate(template);
+    // Null = every line was a license-gated category the customer isn't verified
+    // for, so nothing was ordered. Surface it (the cron path tolerates null; a
+    // manual reorder should tell the caller why the order is empty).
+    if (!order) {
+      throw new BadRequestException(
+        "Every item in this standing order needs a license this customer isn't verified for — nothing was ordered.",
+      );
+    }
+    return order;
   }
 
   // ─── SECURITY (F2-003): ownership-enforced wrappers ──────────────────────────
@@ -275,8 +288,10 @@ export class OrderTemplatesService {
           }
 
           try {
-            await this.createOrderFromTemplate(template);
-            totalCreated++;
+            const order = await this.createOrderFromTemplate(template);
+            // null = all lines were license-gated + skipped → nothing created.
+            if (order) totalCreated++;
+            else totalSkipped++;
           } catch (err) {
             this.logger.error(
               `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
@@ -304,9 +319,35 @@ export class OrderTemplatesService {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // W6: regulated license guard. A standing order must never sell a
+    // license-required line to a customer without a VERIFIED authorization (or an
+    // active §8 override) — the same rule the interactive create/edit/promote hooks
+    // enforce. Per spec §8, standing orders SKIP the blocked line(s) and notify both
+    // sides (they don't hard-fail the whole run). Mirrors the create-hook check:
+    // customerId + per-line trackedCategoryId, no delivery/order context here.
+    const { blocked } = await this.authGuard.checkAuthorized({
+      customerId: template.customerId,
+      lines: template.items.map((i) => ({
+        trackedCategoryId: productMap.get(i.productId)?.trackedCategoryId ?? null,
+      })),
+    });
+    const blockedCategoryIds = new Set(blocked.map((b) => b.trackedCategoryId));
+    const allowedItems = template.items.filter((i) => {
+      const catId = productMap.get(i.productId)?.trackedCategoryId ?? null;
+      return !catId || !blockedCategoryIds.has(catId);
+    });
+    const skippedCount = template.items.length - allowedItems.length;
+
+    if (skippedCount > 0) {
+      await this.notifySkippedRegulatedLines(template, blocked, skippedCount).catch(() => {});
+    }
+    // Every line was a license-gated category the customer isn't verified for —
+    // there is nothing to order. Callers treat null as "skipped".
+    if (allowedItems.length === 0) return null;
+
     const tenantId = this.prisma.getTenantId();
     let subtotal = 0;
-    const lineItemsData = template.items.map((item) => {
+    const lineItemsData = allowedItems.map((item) => {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
       const unitPrice = Number(product.pricePerUnit);
@@ -326,6 +367,8 @@ export class OrderTemplatesService {
     const total = subtotal + tax;
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
+    const skipNote =
+      skippedCount > 0 ? ` (${skippedCount} regulated line(s) skipped — license not verified)` : "";
 
     const created = await this.prisma.forTenant().order.create({
       data: {
@@ -335,7 +378,7 @@ export class OrderTemplatesService {
         subtotal,
         tax,
         total,
-        notes: `Auto-generated from standing order: ${template.name}`,
+        notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
         requestedDeliveryDate: today,
         lineItems: { create: lineItemsData },
       },
@@ -350,5 +393,34 @@ export class OrderTemplatesService {
     // wins on price/metadata per the merge rules.
     const merged = await this.ordersService.mergeAllPendingForCustomer(template.customerId);
     return merged ?? created;
+  }
+
+  /** Spec §8: when a standing order skips license-gated lines, notify the buyer
+   *  (push) and the seller's operators (push). Best-effort per recipient. */
+  private async notifySkippedRegulatedLines(
+    template: { customerId: string; name: string },
+    blocked: Array<{ categoryName: string }>,
+    skippedCount: number,
+  ): Promise<void> {
+    const categories = [...new Set(blocked.map((b) => b.categoryName))].join(", ");
+    await this.notifications
+      .sendToCustomer(
+        template.customerId,
+        "Regulated items skipped from your standing order",
+        `${skippedCount} line(s) were skipped from "${template.name}" because a verified license is required (${categories}). Submit or renew your license to include them.`,
+      )
+      .catch(() => {});
+
+    const tenantId = this.prisma.getTenantId();
+    const operators = await this.prisma.user.findMany({
+      where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
+      select: { id: true },
+    });
+    const opBody = `Standing order "${template.name}" skipped ${skippedCount} unlicensed regulated line(s): ${categories}.`;
+    for (const op of operators) {
+      await this.notifications
+        .sendToUser(op.id, { title: "Standing order skipped regulated items", body: opBody })
+        .catch(() => {});
+    }
   }
 }
