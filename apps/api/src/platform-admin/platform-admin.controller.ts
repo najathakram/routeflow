@@ -315,4 +315,20 @@ export class PlatformAdminController {
   updateAiConfig(@Body() dto: { apiKey?: string; model?: string; maxTokens?: number }) {
     return this.platformConfig.updateAiConfig(dto);
   }
+
+  @Get("ai-config/usage")
+  @ApiOperation({
+    summary: "Platform-wide Claude usage rollup (OCR/forecast scans, tokens, spend)",
+  })
+  @ApiQuery({ name: "days", required: false, type: Number })
+  getAiUsage(@Query("days") days = "30") {
+    return this.platformConfig.getAiUsage(Number(days));
+  }
+
+  @Post("ai-config/test")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Verify the stored Anthropic key against the API (stores verifiedAt)" })
+  testAiConnection() {
+    return this.platformConfig.testConnection();
+  }
 }
