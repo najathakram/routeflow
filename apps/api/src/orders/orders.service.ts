@@ -341,6 +341,7 @@ export class OrdersService implements OnApplicationBootstrap {
         overrideReason: string | null;
         overriddenBy: string | null;
         notes: string | null;
+        trackedCategoryId: string | null;
       }
     >();
     // Unlisted (catalog-free) loser lines can't be keyed by product — each is
@@ -382,6 +383,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: li.overrideReason,
             overriddenBy: li.overriddenBy,
             notes: li.notes,
+            // Carry the loser line's sale-time regulated-category snapshot so the
+            // new winner line keeps it (invoice split + ledger depend on it).
+            trackedCategoryId: li.trackedCategoryId ?? null,
           });
         }
       }
@@ -451,6 +455,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: meta.overrideReason,
             overriddenBy: meta.overriddenBy,
             notes: meta.notes,
+            // Preserve the regulated-category snapshot through the merge (was
+            // dropped, so a merged regulated line invoiced as standard).
+            trackedCategoryId: meta.trackedCategoryId,
           },
         });
       }
@@ -491,7 +498,13 @@ export class OrdersService implements OnApplicationBootstrap {
       const tax = roundMoney(subtotal * taxRate);
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: roundMoney(subtotal + tax) },
+        data: {
+          subtotal,
+          tax,
+          total: roundMoney(subtotal + tax),
+          // A merged-in regulated line flips the denormalized flag on.
+          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+        },
       });
     });
 
@@ -538,6 +551,7 @@ export class OrdersService implements OnApplicationBootstrap {
         overrideReason: string | null;
         overriddenBy: string | null;
         notes: string | null;
+        trackedCategoryId: string | null;
       }
     >();
     // Unlisted (catalog-free) loser lines are appended as their own winner lines.
@@ -578,6 +592,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: li.overrideReason,
             overriddenBy: li.overriddenBy,
             notes: li.notes,
+            // Carry the loser line's sale-time regulated-category snapshot so the
+            // new winner line keeps it (invoice split + ledger depend on it).
+            trackedCategoryId: li.trackedCategoryId ?? null,
           });
         }
       }
@@ -643,6 +660,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: meta.overrideReason,
             overriddenBy: meta.overriddenBy,
             notes: meta.notes,
+            // Preserve the regulated-category snapshot through the merge (was
+            // dropped, so a merged regulated line invoiced as standard).
+            trackedCategoryId: meta.trackedCategoryId,
           },
         });
       }
@@ -689,7 +709,14 @@ export class OrdersService implements OnApplicationBootstrap {
         : {};
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: roundMoney(subtotal + tax), ...routeUpdate },
+        data: {
+          subtotal,
+          tax,
+          total: roundMoney(subtotal + tax),
+          // A merged-in regulated line flips the denormalized flag on.
+          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+          ...routeUpdate,
+        },
       });
       // If the winner carries a pending mirror draft, re-sync it to the merged lines.
       await this.invoicesService.reconcileOrderDraftInvoice(winner.id, { basis: "order", tx });
@@ -1420,8 +1447,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // merge into an existing order) must be authorized just like at create — else
     // it's a bypass. Non-draft only (a draft edit isn't a sale yet). Run BEFORE any
     // mutation so a block can't leave a half-edited order. Categories resolve from
-    // the incoming products (edited lines carry no snapshot; invoicing categorizes
-    // via the product too). orderId is passed so ORDER-scoped §8 overrides apply.
+    // the incoming products — the same snapshot the created/substituted lines now
+    // persist below. orderId is passed so ORDER-scoped §8 overrides apply.
     if (order.status !== "DRAFT") {
       const pids = (dto.items ?? []).map((i) => i.productId).filter(Boolean) as string[];
       const products = pids.length
@@ -1518,6 +1545,9 @@ export class OrdersService implements OnApplicationBootstrap {
             pieces,
             status: "PENDING",
             notes: item.notes,
+            // Snapshot the regulated category so an edited-in line invoices/ledgers
+            // correctly (mirrors orders.service.create; spec §7).
+            trackedCategoryId: product.trackedCategoryId ?? null,
           },
         });
       }
@@ -1612,6 +1642,8 @@ export class OrdersService implements OnApplicationBootstrap {
               originalPrice: isManualOverride ? catalogPrice : null,
               overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
               overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+              // Snapshot the regulated category (spec §7).
+              trackedCategoryId: product.trackedCategoryId ?? null,
             },
           });
         }
@@ -1679,6 +1711,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 originalPrice: isManualOverride ? catalogPrice : null,
                 overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
                 overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+                // Snapshot the regulated category (spec §7).
+                trackedCategoryId: product.trackedCategoryId ?? null,
               },
             });
             continue;
@@ -1739,6 +1773,9 @@ export class OrdersService implements OnApplicationBootstrap {
                 originalPrice: null,
                 overrideReason: null,
                 overriddenBy: null,
+                // The product changed — re-snapshot the substitute's category so
+                // it doesn't keep the replaced product's (spec §7).
+                trackedCategoryId: product.trackedCategoryId ?? null,
               },
             });
           } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
@@ -1824,6 +1861,8 @@ export class OrdersService implements OnApplicationBootstrap {
         subtotal,
         tax,
         total: roundMoney(subtotal + tax),
+        // Recompute the denormalized regulated flag from the edited line set.
+        hasRegulated: activeItems.some((li) => li.trackedCategoryId != null),
         ...(shouldRevert ? { status: "PENDING" } : {}),
         ...(dto.orderNotes !== undefined
           ? { notes: (order.notes ?? "") + (revertNote ?? "") + "\n" + dto.orderNotes }

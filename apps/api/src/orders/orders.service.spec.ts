@@ -710,6 +710,89 @@ describe("OrdersService", () => {
       );
     });
 
+    it("edit that adds a regulated line snapshots its category + flips hasRegulated", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 7,
+        unitsPerBox: null,
+        trackedCategoryId: "cat-tob",
+      });
+      // Post-edit active items include the newly-added regulated line.
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING", trackedCategoryId: null },
+        { subtotal: 7, status: "PENDING", trackedCategoryId: "cat-tob" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-tob", qty: 1 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ productId: "prod-tob", trackedCategoryId: "cat-tob" }),
+        }),
+      );
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ hasRegulated: true }) }),
+      );
+    });
+
+    it("customer replace path snapshots a regulated line's category", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...orderWithItems, customerId: "cust-1" });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-tob", pricePerUnit: 7, unitsPerBox: null, trackedCategoryId: "cat-tob" },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 7, status: "PENDING", trackedCategoryId: "cat-tob" },
+      ]);
+
+      await service.updateOrderItems("ord-1", { items: [{ productId: "prod-tob", qty: 1 }] }, {
+        ...customerPayload,
+        sub: "user-cust",
+      } as any);
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ productId: "prod-tob", trackedCategoryId: "cat-tob" }),
+        }),
+      );
+    });
+
+    it("substituting to a regulated product re-snapshots the new category", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 8,
+        unitsPerBox: null,
+        trackedCategoryId: "cat-tob",
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 16, status: "PENDING", trackedCategoryId: "cat-tob" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 2 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            trackedCategoryId: "cat-tob",
+          }),
+        }),
+      );
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ hasRegulated: true }) }),
+      );
+    });
+
     it("legacy heuristic — an all-id-less payload with no flag still replaces all (mobile)", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.product.findMany.mockResolvedValue([
@@ -1015,6 +1098,58 @@ describe("OrdersService", () => {
       expect(upd.qty).toBe(12);
       expect(upd.boxes).toBe(2);
       expect(upd.pieces).toBe(0);
+    });
+
+    it("preserves a loser regulated line's tracked-category snapshot + flips hasRegulated", async () => {
+      const line = (id: string, extra: Record<string, unknown>) => ({
+        id,
+        productId: "p?",
+        qty: 1,
+        unitPrice: 5,
+        subtotal: 5,
+        status: "PENDING",
+        priceType: "STANDARD",
+        originalPrice: null,
+        name: null,
+        overrideReason: null,
+        overriddenBy: null,
+        boxes: null,
+        pieces: null,
+        trackedCategoryId: null,
+        ...extra,
+      });
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: "w1",
+          customerId: "cust-1",
+          status: "PENDING",
+          lineItems: [line("wl1", { productId: "prod-std" })],
+        },
+        {
+          id: "l1",
+          customerId: "cust-1",
+          status: "PENDING",
+          // A regulated line, only on the loser → becomes a NEW winner item.
+          lineItems: [line("ll1", { productId: "prod-tob", trackedCategoryId: "cat-tob" })],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-std", unitsPerBox: null },
+        { id: "prod-tob", unitsPerBox: null },
+      ]);
+      // activeItems (post-merge totals + hasRegulated recompute) include the reg line.
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 5, trackedCategoryId: null },
+        { subtotal: 5, trackedCategoryId: "cat-tob" },
+      ]);
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.productId).toBe("prod-tob");
+      expect(created.trackedCategoryId).toBe("cat-tob"); // snapshot survived the merge
+      const upd = prisma.order.update.mock.calls.at(-1)![0].data;
+      expect(upd.hasRegulated).toBe(true);
     });
 
     it("heals a selling-unit (boxes null) boxed merge to piece-denominated $120", async () => {
