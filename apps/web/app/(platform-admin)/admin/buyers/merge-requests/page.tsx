@@ -38,6 +38,8 @@ export default function MergeRequestsPage() {
   const [page, setPage] = React.useState(1);
   const [statusFilter, setStatusFilter] = React.useState("");
   const [loading, setLoading] = React.useState(true);
+  const [actionLoading, setActionLoading] = React.useState<string | null>(null);
+  const [pendingCount, setPendingCount] = React.useState<number | null>(null);
 
   const fetchRequests = React.useCallback(async () => {
     setLoading(true);
@@ -58,6 +60,40 @@ export default function MergeRequestsPage() {
     fetchRequests();
   }, [fetchRequests]);
 
+  const fetchPending = React.useCallback(() => {
+    superAdminClient
+      .get<{ pendingCount: number }>("/platform-admin/buyer-merge-summary?limit=1")
+      .then((res) => setPendingCount(res.data.pendingCount))
+      .catch(() => {});
+  }, []);
+
+  React.useEffect(() => {
+    fetchPending();
+  }, [fetchPending]);
+
+  const resolveMerge = async (req: MergeRequest, action: "execute" | "reject") => {
+    const verb = action === "execute" ? "Approve" : "Reject";
+    if (
+      !window.confirm(
+        `${verb} merge of ${req.secondaryAccount.email} into ${req.primaryAccount.email}?`,
+      )
+    )
+      return;
+    setActionLoading(req.id);
+    try {
+      await superAdminClient.post(`/platform-admin/buyer-merge-requests/${req.id}/${action}`, {});
+      fetchRequests();
+      fetchPending();
+    } catch (err: unknown) {
+      alert(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Action failed",
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   return (
     <div className="p-6 md:p-8">
       <div className="mb-6 flex items-center gap-4">
@@ -69,7 +105,14 @@ export default function MergeRequestsPage() {
             <GitMerge className="h-5 w-5 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">Merge Requests</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-white">Merge Requests</h1>
+              {pendingCount != null && pendingCount > 0 && (
+                <span className="rounded-full bg-yellow-900/40 px-2.5 py-0.5 text-xs font-medium text-yellow-400 ring-1 ring-yellow-600/30">
+                  {pendingCount} pending
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500">{total} total</p>
           </div>
         </div>
@@ -142,12 +185,32 @@ export default function MergeRequestsPage() {
                     {new Date(req.createdAt).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/buyers/merge-requests/${req.id}`}
-                      className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-medium"
-                    >
-                      Review <ExternalLink className="h-3 w-3" />
-                    </Link>
+                    <div className="flex items-center gap-3">
+                      {req.status === "PENDING_REVIEW" && (
+                        <>
+                          <button
+                            disabled={actionLoading === req.id}
+                            onClick={() => resolveMerge(req, "execute")}
+                            className="text-xs font-medium text-green-400 hover:text-green-300 disabled:opacity-50"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            disabled={actionLoading === req.id}
+                            onClick={() => resolveMerge(req, "reject")}
+                            className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      <Link
+                        href={`/admin/buyers/merge-requests/${req.id}`}
+                        className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 text-xs font-medium"
+                      >
+                        Review <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}

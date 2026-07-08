@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
 import { AdminBadge } from "../../_components/AdminBadge";
-import { ChevronUp, ChevronDown, Users, CheckCircle, ShieldOff, Link2 } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,61 +12,114 @@ interface BuyerRow {
   id: string;
   email: string;
   name: string;
-  phone: string | null;
   status: "ACTIVE" | "SUSPENDED" | "DELETED";
   emailVerified: boolean;
   createdAt: string;
-  _count: { customerLinks: number };
+  businessName: string | null;
+  sellers: number;
+  orders90d: number;
 }
 
-interface BuyersResponse {
+interface Segments {
+  all: number;
+  multiSeller: number;
+  unverified: number;
+}
+
+interface DirectoryResponse {
   data: BuyerRow[];
-  meta: { total: number; page: number; limit: number; totalPages: number };
+  segments: Segments;
+  meta: { total: number; page: number; limit: number; pages: number };
 }
 
-interface Stats {
-  buyers: { total: number; active: number };
-  links: { total: number; last30Days: number; byStatus: Record<string, number> };
+interface MergeAccount {
+  id: string;
+  email: string;
+  name: string;
+  sellers: number;
+  orders90d: number;
 }
 
-type SortKey = "name" | "email" | "status" | "links" | "createdAt";
-type SortDir = "asc" | "desc";
+interface MergeRequest {
+  id: string;
+  status: string;
+  initiatedBy: string;
+  initiatorNotes: string | null;
+  createdAt: string;
+  primary: MergeAccount;
+  secondary: MergeAccount;
+}
+
+interface MergeSummary {
+  data: MergeRequest[];
+  pendingCount: number;
+}
+
+type Segment = "all" | "multi-seller" | "unverified";
+
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminBuyersPage() {
-  const [data, setData] = React.useState<BuyersResponse | null>(null);
-  const [stats, setStats] = React.useState<Stats | null>(null);
+  const [data, setData] = React.useState<DirectoryResponse | null>(null);
+  const [merges, setMerges] = React.useState<MergeSummary | null>(null);
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState<string | null>(null);
 
-  // Filters
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState("");
+  const [segment, setSegment] = React.useState<Segment>("all");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
+  const reqSeqRef = React.useRef(0);
 
-  // Sort
-  const [sortKey, setSortKey] = React.useState<SortKey>("createdAt");
-  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  const fetchBuyers = React.useCallback((p: number) => {
-    setLoading(true);
-    setError(null);
+  React.useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch, segment]);
+
+  const fetchDirectory = React.useCallback(
+    (p: number) => {
+      const seq = ++reqSeqRef.current;
+      setLoading(true);
+      setError(null);
+      const params = new URLSearchParams({ page: String(p), limit: "25", segment });
+      if (debouncedSearch) params.set("search", debouncedSearch);
+      superAdminClient
+        .get<DirectoryResponse>(`/platform-admin/buyer-directory?${params}`)
+        .then((res) => {
+          if (seq === reqSeqRef.current) setData(res.data);
+        })
+        .catch((err) => {
+          if (seq === reqSeqRef.current)
+            setError(err?.response?.data?.message ?? "Failed to load buyers");
+        })
+        .finally(() => {
+          if (seq === reqSeqRef.current) setLoading(false);
+        });
+    },
+    [debouncedSearch, segment],
+  );
+
+  React.useEffect(() => {
+    fetchDirectory(page);
+  }, [page, fetchDirectory]);
+
+  const fetchMerges = React.useCallback(() => {
     superAdminClient
-      .get<BuyersResponse>(`/platform-admin/buyer-accounts?page=${p}&limit=200`)
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err?.response?.data?.message ?? "Failed to load buyers"))
-      .finally(() => setLoading(false));
+      .get<MergeSummary>("/platform-admin/buyer-merge-summary?limit=10")
+      .then((res) => setMerges(res.data))
+      .catch(() => setMerges({ data: [], pendingCount: 0 }));
   }, []);
 
   React.useEffect(() => {
-    fetchBuyers(page);
-    superAdminClient
-      .get<Stats>("/platform-admin/customer-links/stats")
-      .then((res) => setStats(res.data))
-      .catch(() => null);
-  }, [page, fetchBuyers]);
+    fetchMerges();
+  }, [fetchMerges]);
 
   const setStatus = async (buyer: BuyerRow, status: "ACTIVE" | "SUSPENDED" | "DELETED") => {
     if (
@@ -78,7 +131,7 @@ export default function AdminBuyersPage() {
     setActionLoading(buyer.id + status);
     try {
       await superAdminClient.patch(`/platform-admin/buyer-accounts/${buyer.id}/status`, { status });
-      fetchBuyers(page);
+      fetchDirectory(page);
     } catch (err: unknown) {
       alert(
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
@@ -89,141 +142,71 @@ export default function AdminBuyersPage() {
     }
   };
 
-  // Filter + sort (client-side on the fetched page)
-  const filteredSorted = React.useMemo(() => {
-    if (!data) return [];
-    const q = search.toLowerCase();
-    let rows = data.data.filter((b) => {
-      const matchSearch =
-        !q || b.email.toLowerCase().includes(q) || b.name.toLowerCase().includes(q);
-      const matchStatus = !statusFilter || b.status === statusFilter;
-      return matchSearch && matchStatus;
-    });
-
-    rows.sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case "name":
-          cmp = a.name.localeCompare(b.name);
-          break;
-        case "email":
-          cmp = a.email.localeCompare(b.email);
-          break;
-        case "status":
-          cmp = a.status.localeCompare(b.status);
-          break;
-        case "links":
-          cmp = a._count.customerLinks - b._count.customerLinks;
-          break;
-        case "createdAt":
-          cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-          break;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return rows;
-  }, [data, search, statusFilter, sortKey, sortDir]);
-
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
+  const resolveMerge = async (req: MergeRequest, action: "execute" | "reject") => {
+    const verb = action === "execute" ? "Approve" : "Reject";
+    if (!window.confirm(`${verb} merge of ${req.secondary.email} into ${req.primary.email}?`))
+      return;
+    setActionLoading("merge" + req.id);
+    try {
+      await superAdminClient.post(`/platform-admin/buyer-merge-requests/${req.id}/${action}`, {});
+      fetchMerges();
+      fetchDirectory(page);
+    } catch (err: unknown) {
+      alert(
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+          "Merge action failed",
+      );
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col) return <span className="text-slate-600 ml-1">&#8597;</span>;
-    return sortDir === "asc" ? (
-      <ChevronUp className="inline h-3 w-3 ml-0.5" />
-    ) : (
-      <ChevronDown className="inline h-3 w-3 ml-0.5" />
-    );
-  };
-
-  const filtersActive = search !== "" || statusFilter !== "";
+  const chips: { key: Segment; label: string; count?: number }[] = [
+    { key: "all", label: "All", count: data?.segments.all },
+    { key: "multi-seller", label: "Multi-seller", count: data?.segments.multiSeller },
+    { key: "unverified", label: "Unverified", count: data?.segments.unverified },
+  ];
 
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-1 flex items-baseline gap-3">
         <h1 className="text-2xl font-bold text-white">Buyers</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          All customer portal accounts across the platform
-        </p>
+        {data && (
+          <span className="text-sm text-slate-400">
+            · {data.segments.all.toLocaleString()} accounts
+          </span>
+        )}
       </div>
+      <p className="mb-5 text-sm text-slate-400">
+        Cross-tenant buyer accounts and pending account merges.
+      </p>
 
-      {/* Stats */}
-      {stats && (
-        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            {
-              label: "Total Buyers",
-              value: stats.buyers.total,
-              icon: Users,
-              color: "text-indigo-400",
-            },
-            {
-              label: "Active",
-              value: stats.buyers.active,
-              icon: CheckCircle,
-              color: "text-green-400",
-            },
-            {
-              label: "Suspended",
-              value: stats.buyers.total - stats.buyers.active,
-              icon: ShieldOff,
-              color: "text-yellow-400",
-            },
-            {
-              label: "Active Links",
-              value: stats.links.byStatus?.ACTIVE ?? 0,
-              icon: Link2,
-              color: "text-sky-400",
-            },
-          ].map((s) => (
-            <div key={s.label} className="rounded-xl bg-slate-800 p-4 ring-1 ring-white/5">
-              <s.icon className={`h-4 w-4 ${s.color} mb-2`} />
-              <div className="text-2xl font-bold text-white">{s.value}</div>
-              <div className="text-xs text-slate-500">{s.label}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Search & Filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {/* Search + segment chips */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
           type="text"
-          placeholder="Search by name or email..."
+          placeholder="Buyer email or name..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-72 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-9 rounded-lg border border-slate-600 bg-slate-800 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-        >
-          <option value="">All Statuses</option>
-          <option value="ACTIVE">ACTIVE</option>
-          <option value="SUSPENDED">SUSPENDED</option>
-          <option value="DELETED">DELETED</option>
-        </select>
-        {filtersActive && (
-          <>
-            <span className="text-sm text-slate-400">{filteredSorted.length} results</span>
-            <button
-              onClick={() => {
-                setSearch("");
-                setStatusFilter("");
-              }}
-              className="text-xs text-slate-500 hover:text-slate-300"
-            >
-              Clear filters
-            </button>
-          </>
-        )}
+        {chips.map((c) => (
+          <button
+            key={c.key}
+            onClick={() => setSegment(c.key)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              segment === c.key
+                ? "border-indigo-500 bg-indigo-900/40 text-indigo-300"
+                : "border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+            }`}
+          >
+            {c.label}
+            {typeof c.count === "number" && (
+              <span className="ml-1.5 text-slate-500">{c.count.toLocaleString()}</span>
+            )}
+          </button>
+        ))}
       </div>
 
       {loading && <div className="py-12 text-center text-slate-500">Loading buyers...</div>}
@@ -240,57 +223,36 @@ export default function AdminBuyersPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
-                    <th
-                      className="px-4 py-3 text-left cursor-pointer select-none"
-                      onClick={() => toggleSort("name")}
-                    >
-                      Name <SortIcon col="name" />
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left cursor-pointer select-none"
-                      onClick={() => toggleSort("email")}
-                    >
-                      Email <SortIcon col="email" />
-                    </th>
+                    <th className="px-4 py-3 text-left">Buyer</th>
+                    <th className="px-4 py-3 text-left">Business</th>
+                    <th className="px-4 py-3 text-right">Sellers</th>
+                    <th className="px-4 py-3 text-right">Orders 90d</th>
                     <th className="px-4 py-3 text-left">Verified</th>
-                    <th
-                      className="px-4 py-3 text-left cursor-pointer select-none"
-                      onClick={() => toggleSort("status")}
-                    >
-                      Status <SortIcon col="status" />
-                    </th>
-                    <th
-                      className="px-4 py-3 text-right cursor-pointer select-none"
-                      onClick={() => toggleSort("links")}
-                    >
-                      Sellers <SortIcon col="links" />
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left cursor-pointer select-none"
-                      onClick={() => toggleSort("createdAt")}
-                    >
-                      Joined <SortIcon col="createdAt" />
-                    </th>
+                    <th className="px-4 py-3 text-left">Joined</th>
                     <th className="px-4 py-3 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-700/50">
-                  {filteredSorted.map((b) => (
+                  {data.data.map((b) => (
                     <tr key={b.id} className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-4 py-3 font-medium text-white">{b.name}</td>
-                      <td className="px-4 py-3 text-slate-300">{b.email}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white">{b.email}</span>
+                          {b.status !== "ACTIVE" && <AdminBadge>{b.status}</AdminBadge>}
+                        </div>
+                        {b.name && b.name !== b.email && (
+                          <div className="text-xs text-slate-500">{b.name}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">{b.businessName ?? "—"}</td>
+                      <td className="px-4 py-3 text-right text-slate-400">{b.sellers}</td>
+                      <td className="px-4 py-3 text-right text-slate-400">{b.orders90d}</td>
                       <td className="px-4 py-3">
                         {b.emailVerified ? (
                           <span className="text-xs font-medium text-green-400">Verified</span>
                         ) : (
-                          <span className="text-xs text-slate-500">Unverified</span>
+                          <span className="text-xs text-yellow-500">Unverified</span>
                         )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <AdminBadge>{b.status}</AdminBadge>
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-400">
-                        {b._count.customerLinks}
                       </td>
                       <td className="px-4 py-3 text-slate-500">
                         {new Date(b.createdAt).toLocaleDateString()}
@@ -334,10 +296,10 @@ export default function AdminBuyersPage() {
                       </td>
                     </tr>
                   ))}
-                  {filteredSorted.length === 0 && (
+                  {data.data.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
-                        {filtersActive ? "No buyers match your filters." : "No buyer accounts yet."}
+                        No buyer accounts match this view.
                       </td>
                     </tr>
                   )}
@@ -346,7 +308,7 @@ export default function AdminBuyersPage() {
             </div>
           </div>
 
-          {data.meta.totalPages > 1 && (
+          {data.meta.pages > 1 && (
             <div className="mt-4 flex items-center justify-center gap-2">
               <button
                 disabled={page <= 1}
@@ -356,10 +318,10 @@ export default function AdminBuyersPage() {
                 Prev
               </button>
               <span className="text-sm text-slate-500">
-                Page {data.meta.page} of {data.meta.totalPages}
+                Page {data.meta.page} of {data.meta.pages}
               </span>
               <button
-                disabled={page >= data.meta.totalPages}
+                disabled={page >= data.meta.pages}
                 onClick={() => setPage((p) => p + 1)}
                 className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-800 disabled:opacity-40"
               >
@@ -368,6 +330,78 @@ export default function AdminBuyersPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Inline Merge Requests */}
+      {merges && merges.data.length > 0 && (
+        <div className="mt-8 rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-700 px-5 py-3">
+            <h3 className="text-sm font-semibold text-white">Merge Requests</h3>
+            <span className="rounded-full bg-yellow-900/40 px-2.5 py-0.5 text-xs font-medium text-yellow-400 ring-1 ring-yellow-600/30">
+              {plural(merges.pendingCount, "pending")}
+            </span>
+          </div>
+          <div className="flex flex-col divide-y divide-slate-700/50">
+            {merges.data.map((req) => (
+              <div key={req.id} className="px-5 py-4">
+                <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+                  <div className="rounded-lg border border-slate-700 p-3">
+                    <div className="font-medium text-white">{req.primary.email}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      kept · {plural(req.primary.sellers, "seller")} ·{" "}
+                      {plural(req.primary.orders90d, "order")}
+                    </div>
+                  </div>
+                  <ArrowLeft className="mx-auto hidden h-4 w-4 text-slate-500 sm:block" />
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
+                    <div className="font-medium text-white">{req.secondary.email}</div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      absorbed · {plural(req.secondary.sellers, "seller")} ·{" "}
+                      {plural(req.secondary.orders90d, "order")}
+                    </div>
+                    {req.initiatorNotes && (
+                      <div className="mt-1 text-xs italic text-slate-500">
+                        &ldquo;{req.initiatorNotes}&rdquo;
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <Link
+                    href={`/admin/buyers/merge-requests/${req.id}`}
+                    className="rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                  >
+                    View details
+                  </Link>
+                  <button
+                    disabled={!!actionLoading}
+                    onClick={() => resolveMerge(req, "reject")}
+                    className="rounded px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-900/30 disabled:opacity-50"
+                  >
+                    Reject
+                  </button>
+                  <button
+                    disabled={!!actionLoading}
+                    onClick={() => resolveMerge(req, "execute")}
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    <Check className="h-3 w-3" /> Approve merge
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {merges.pendingCount > merges.data.length && (
+            <div className="border-t border-slate-700 px-5 py-2 text-center">
+              <Link
+                href="/admin/buyers/merge-requests"
+                className="text-xs text-indigo-400 hover:text-indigo-300"
+              >
+                View all {merges.pendingCount} merge requests
+              </Link>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
