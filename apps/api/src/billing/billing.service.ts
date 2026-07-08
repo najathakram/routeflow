@@ -1,10 +1,13 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { TenantPlan } from "@prisma/client";
+import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
+import { roundMoney } from "../common/pricing";
 import { StripeService } from "./stripe.service";
+import { BillingEventService } from "./billing-event.service";
+import { BILLING_EVENTS, BillingEventType } from "./plan-catalog.constants";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
@@ -18,7 +21,92 @@ export class BillingService {
     private readonly stripe: StripeService,
     private readonly email: EmailService,
     private readonly tenantStatusGuard: TenantStatusGuard,
+    private readonly events: BillingEventService,
   ) {}
+
+  /**
+   * Emit a signed MRR-ledger delta for a Stripe-driven status transition into (+1) or out of
+   * (−1) the paying set, so the append-only BillingEvent ledger (and `ledgerMrr`/`momDelta`)
+   * tracks the snapshot MRR across legacy-Stripe churn/reactivation.
+   *
+   * Mirrors MrrService's paying predicate: NO-OP when `planKey == null` (legacy Stripe-only
+   * tenants never contribute to snapshot MRR, so there is no run-rate to move). Contribution =
+   * `roundMoney(base + Σ active add-ons − discount)`.
+   *
+   * Unlike the plans-as-data cron, add-on rows are intentionally NOT toggled: the snapshot
+   * includes/excludes add-ons via `tenant.status`, Stripe suspend↔reactivate is reversible, and
+   * SUSPENDED/CANCELLED tenants are hard-blocked from `subscribe()` — so there is no
+   * subscribe()-reentry that would need the rows deactivated, and leaving them active keeps the
+   * −/+ pair symmetric.
+   */
+  private async emitPayingDelta(
+    tenantId: string,
+    sub: {
+      planKey: string | null;
+      basePriceSnapshot: Prisma.Decimal | null;
+      discount: Prisma.Decimal | null;
+    },
+    direction: 1 | -1,
+    event: BillingEventType,
+    payload: Prisma.InputJsonValue,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (sub.planKey == null) return; // wasn't in the paying set → no run-rate to move
+    const addons = await tx.tenantAddon.findMany({
+      where: { tenantId, active: true },
+      select: { priceSnapshot: true, quantity: true },
+    });
+    const addonMrr = addons.reduce(
+      (s, a) => s + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+      0,
+    );
+    const contribution = roundMoney(
+      (sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0) +
+        addonMrr -
+        Number(sub.discount ?? 0),
+    );
+    await this.events.emit(tenantId, event, payload, {
+      amountDelta: contribution ? direction * contribution : 0,
+      tx,
+    });
+  }
+
+  /**
+   * Atomically transition a tenant's status (compare-and-swap via a conditional updateMany) and
+   * emit the matching signed MRR delta EXACTLY ONCE, in the SAME transaction.
+   *
+   * The conditional `updateMany` is the idempotency key: concurrent, duplicate, or reordered
+   * Stripe webhooks that target the same transition all race on the one row, and only the call
+   * that actually flips the status (`count === 1`) emits — so the paired checkout/payment events
+   * for a single reactivation, or a duplicate subscription.deleted, can't double-count. Because
+   * the status write and the ledger append share one transaction, a failed emit rolls the status
+   * back and the webhook/cron simply retries (no half-applied churn).
+   *
+   * @returns true iff THIS call performed the transition.
+   */
+  private async transitionAndEmit(
+    tenantId: string,
+    sub: {
+      planKey: string | null;
+      basePriceSnapshot: Prisma.Decimal | null;
+      discount: Prisma.Decimal | null;
+    },
+    statusWhere: Prisma.TenantWhereInput,
+    toStatus: "ACTIVE" | "CANCELLED" | "SUSPENDED",
+    direction: 1 | -1,
+    event: BillingEventType,
+    payload: Prisma.InputJsonValue,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.tenant.updateMany({
+        where: { ...statusWhere, id: tenantId },
+        data: { status: toStatus },
+      });
+      if (count !== 1) return false;
+      await this.emitPayingDelta(tenantId, sub, direction, event, payload, tx);
+      return true;
+    });
+  }
 
   // ─── Stripe Customer ──────────────────────────────────────────────────────
 
@@ -199,7 +287,7 @@ export class BillingService {
     // Fetch the full subscription to get period dates
     const stripeSub = await this.stripe.getSubscription(subscriptionId);
 
-    await this.prisma.tenantSubscription.upsert({
+    const upserted = await this.prisma.tenantSubscription.upsert({
       where: { tenantId },
       create: {
         tenantId,
@@ -217,11 +305,19 @@ export class BillingService {
       },
     });
 
-    // Activate the tenant
-    await this.prisma.tenant.update({
-      where: { id: tenantId },
-      data: { status: "ACTIVE" },
-    });
+    // Atomic non-ACTIVE→ACTIVE: activates the tenant, and if it was previously non-paying (e.g.
+    // SUSPENDED) re-adds its run-rate exactly once — idempotent against the paired
+    // invoice.payment_succeeded webhook. NO-OP for a fresh Stripe checkout (planKey is null —
+    // legacy Stripe doesn't set it, so emitPayingDelta short-circuits).
+    await this.transitionAndEmit(
+      tenantId,
+      upserted,
+      { status: { not: "ACTIVE" } },
+      "ACTIVE",
+      1,
+      BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+      { source: "stripe", reason: "checkout_completed" },
+    );
     this.tenantStatusGuard.invalidate(tenantId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
@@ -259,11 +355,19 @@ export class BillingService {
       }
     }
 
-    // Ensure tenant is ACTIVE (in case it was previously past-due)
-    await this.prisma.tenant.update({
-      where: { id: sub.tenantId },
-      data: { status: "ACTIVE" },
-    });
+    // Atomic non-ACTIVE→ACTIVE: reinstates a dropped-out tenant and re-adds its run-rate exactly
+    // once. The conditional flip is the idempotency key — the paired checkout.session.completed
+    // webhook races here and only the winner emits — and it is a NO-OP on ordinary renewals
+    // (already ACTIVE → count 0 → no ledger delta).
+    await this.transitionAndEmit(
+      sub.tenantId,
+      sub,
+      { status: { not: "ACTIVE" } },
+      "ACTIVE",
+      1,
+      BILLING_EVENTS.SUBSCRIPTION_RESUMED,
+      { source: "stripe", reason: "payment_succeeded" },
+    );
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
@@ -319,10 +423,25 @@ export class BillingService {
     });
     if (!sub) return;
 
-    await this.prisma.tenant.update({
-      where: { id: sub.tenantId },
-      data: { status: "CANCELLED" },
-    });
+    // Atomic ACTIVE→CANCELLED: emits the −MRR delta exactly once, even across duplicate webhooks
+    // or a race with the plans-as-data cron (both leave a non-ACTIVE status → count 0 here).
+    const churned = await this.transitionAndEmit(
+      sub.tenantId,
+      sub,
+      { status: "ACTIVE" },
+      "CANCELLED",
+      -1,
+      BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+      { source: "stripe", reason: "subscription_deleted" },
+    );
+    // Not a paying→churn transition (already non-ACTIVE) — still land the Stripe-deleted tenant in
+    // CANCELLED (a terminal hard-block), without a duplicate ledger delta.
+    if (!churned) {
+      await this.prisma.tenant.update({
+        where: { id: sub.tenantId },
+        data: { status: "CANCELLED" },
+      });
+    }
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
     await this.prisma.tenantSubscription.update({
@@ -396,14 +515,24 @@ export class BillingService {
           stripeSub.status === "unpaid" ||
           stripeSub.status === "canceled"
         ) {
-          await this.prisma.tenant.update({
-            where: { id: sub.tenantId },
-            data: { status: "SUSPENDED" },
-          });
-          this.tenantStatusGuard.invalidate(sub.tenantId);
-          this.logger.log(
-            `Overdue payment — suspended tenant ${sub.tenant.slug} (Stripe status: ${stripeSub.status})`,
+          // Atomic ACTIVE→SUSPENDED: emits the −MRR delta exactly once even if a concurrent
+          // subscription.deleted webhook already churned this tenant (count 0 → no double). The
+          // suspension is reversible — onPaymentSucceeded re-adds a matching +delta on reinstatement.
+          const suspended = await this.transitionAndEmit(
+            sub.tenantId,
+            sub,
+            { status: "ACTIVE" },
+            "SUSPENDED",
+            -1,
+            BILLING_EVENTS.SUBSCRIPTION_SUSPENDED,
+            { source: "stripe", reason: "overdue_payment", stripeStatus: stripeSub.status },
           );
+          if (suspended) {
+            this.tenantStatusGuard.invalidate(sub.tenantId);
+            this.logger.log(
+              `Overdue payment — suspended tenant ${sub.tenant.slug} (Stripe status: ${stripeSub.status})`,
+            );
+          }
         }
       } catch (err) {
         this.logger.error(`Failed to check Stripe subscription for tenant ${sub.tenantId}`, err);
