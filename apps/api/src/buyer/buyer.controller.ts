@@ -36,6 +36,8 @@ import { OrderTemplatesService } from "../order-templates/order-templates.servic
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
+import { AuthorizationsService } from "../authorizations/authorizations.service";
+import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
 
 /**
  * Builds a JwtPayload that looks like a tenant user.
@@ -75,6 +77,7 @@ export class BuyerController {
     private readonly invoicePdfService: InvoicePdfService,
     private readonly customersService: CustomersService,
     private readonly templatesService: OrderTemplatesService,
+    private readonly authorizationsService: AuthorizationsService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -618,5 +621,30 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
   ) {
     return this.catalogService.removeFavorite(buyer.sub, ctx.customerId, productId);
+  }
+
+  // ─── Licenses & Authorizations (W6b — buyer self-serve) ────────────────────────
+
+  @Get("authorizations")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "List this seller's license-required categories with the buyer's status for each",
+  })
+  listAuthorizations(@CurrentBuyerCustomer() ctx: any) {
+    return this.authorizationsService.listForBuyer(ctx.customerId);
+  }
+
+  @Post("authorizations")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Submit or renew a license for review (RETAILER_SUBMITTED → PENDING_REVIEW)",
+  })
+  submitAuthorization(@CurrentBuyerCustomer() ctx: any, @Body() dto: SubmitAuthorizationDto) {
+    return this.authorizationsService.submit(ctx.customerId, dto);
   }
 }

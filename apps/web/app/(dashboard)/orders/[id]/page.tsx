@@ -41,6 +41,8 @@ import {
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
+import { LicenseGuardModal } from "../_components/LicenseGuardModal";
+import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
@@ -1180,6 +1182,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
 
+  // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
+  const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
+  const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
+  // through to the global mutation toast.
+  const guardError = (retry: () => void) => (err: unknown) => {
+    const blocked = parseRegulatedAuthError(err);
+    if (blocked && blocked.length > 0) {
+      licenseRetryRef.current = retry;
+      setLicenseBlock(blocked);
+    }
+  };
+
   // Status tracking — use actual API status directly
   const [localStatus, setLocalStatus] = React.useState<ApiOrderStatus>("PENDING");
 
@@ -1403,6 +1418,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           setIsEditing(false);
           setEditItems([]);
         },
+        onError: guardError(() => handleSaveItems()),
       },
     );
   }
@@ -1412,14 +1428,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const handleConfirm = () => {
     updateStatus.mutate(
       { id: order.id, status: "CONFIRMED" },
-      { onSuccess: () => setLocalStatus("CONFIRMED") },
+      { onSuccess: () => setLocalStatus("CONFIRMED"), onError: guardError(() => handleConfirm()) },
     );
   };
 
   const handleLock = () => {
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
-      { onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY") },
+      {
+        onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY"),
+        onError: guardError(() => handleLock()),
+      },
     );
   };
 
@@ -1444,31 +1463,42 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         onSuccess: () => {
           setLocalStatus("DELIVERED");
           // Create the invoice (idempotent — returns existing if already there)
-          // then show the send-invoice prompt
-          createInvoiceFromOrder.mutate(order.id, {
-            onSuccess: (invoices: any) => {
-              // W4: a mixed regulated order returns sibling invoices; prompt to send
-              // the primary (standard/first) one — the rest show on the order detail.
-              const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
-              if (!invoice) return;
-              setInvoiceModal({
-                invoiceId: invoice.id,
-                invoiceNumber: invoice.invoiceNumber,
-                total: Number(invoice.total),
-                customerName: order.customer?.businessName ?? "Customer",
-                customerPhone: order.customer?.phone,
-                customerMobile: order.customer?.mobile,
-                customerEmail: order.customer?.email,
-              });
-            },
-            onError: () => {
-              // Non-critical — invoice can be created manually
-              toast({
-                title: "Order delivered. Create the invoice manually from the Invoices page.",
-                variant: "warning",
-              });
-            },
-          });
+          // then show the send-invoice prompt.
+          const invoiceNow = () =>
+            createInvoiceFromOrder.mutate(order.id, {
+              onSuccess: (invoices: any) => {
+                // W4: a mixed regulated order returns sibling invoices; prompt to send
+                // the primary (standard/first) one — the rest show on the order detail.
+                const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
+                if (!invoice) return;
+                setInvoiceModal({
+                  invoiceId: invoice.id,
+                  invoiceNumber: invoice.invoiceNumber,
+                  total: Number(invoice.total),
+                  customerName: order.customer?.businessName ?? "Customer",
+                  customerPhone: order.customer?.phone,
+                  customerMobile: order.customer?.mobile,
+                  customerEmail: order.customer?.email,
+                });
+              },
+              onError: (err: unknown) => {
+                // The invoice-time backstop can block on an expired/newly-added
+                // regulated line — open the license guard (capture/override) and
+                // retry invoicing on resolve rather than dead-ending.
+                const blocked = parseRegulatedAuthError(err);
+                if (blocked && blocked.length > 0) {
+                  licenseRetryRef.current = invoiceNow;
+                  setLicenseBlock(blocked);
+                  return;
+                }
+                // Non-critical — invoice can be created manually.
+                toast({
+                  title: "Order delivered. Create the invoice manually from the Invoices page.",
+                  variant: "warning",
+                });
+              },
+            });
+          invoiceNow();
         },
       },
     );
@@ -1575,10 +1605,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 size="sm"
                 leftIcon={<CheckCircle2 className="h-4 w-4" />}
                 onClick={() => {
-                  updateStatus.mutate(
-                    { id: order.id, status: "PENDING" as any },
-                    { onSuccess: () => setLocalStatus("PENDING") },
-                  );
+                  const publish = () =>
+                    updateStatus.mutate(
+                      { id: order.id, status: "PENDING" as any },
+                      {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                        onError: guardError(() => publish()),
+                      },
+                    );
+                  publish();
                 }}
                 loading={updateStatus.isPending}
               >
@@ -1949,16 +1984,23 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   setIsEditing(false);
                                   setEditItems([]);
                                 },
+                                onError: guardError(() => doPublish()),
                               },
                             );
-                          if (updates.length > 0) {
-                            updateItems.mutate(
-                              { id: order!.id, items: updates },
-                              { onSuccess: doPublish },
-                            );
-                          } else {
-                            doPublish();
-                          }
+                          const saveThenPublish = () => {
+                            if (updates.length > 0) {
+                              updateItems.mutate(
+                                { id: order!.id, items: updates },
+                                {
+                                  onSuccess: doPublish,
+                                  onError: guardError(() => saveThenPublish()),
+                                },
+                              );
+                            } else {
+                              doPublish();
+                            }
+                          };
+                          saveThenPublish();
                         }}
                         loading={updateItems.isPending || updateStatus.isPending}
                       >
@@ -2274,7 +2316,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           className="w-full justify-center"
                           leftIcon={<FileText className="h-4 w-4" />}
                           loading={createInvoiceFromOrder.isPending}
-                          onClick={() => createInvoiceFromOrder.mutate(order.id)}
+                          onClick={() => {
+                            // The invoice-time backstop can 409 on an expired/newly-added
+                            // regulated line — route it into the license guard + retry.
+                            const invoiceNow = () =>
+                              createInvoiceFromOrder.mutate(order.id, {
+                                onError: guardError(() => invoiceNow()),
+                              });
+                            invoiceNow();
+                          }}
                         >
                           Generate Invoice (full order)
                         </Button>
@@ -2338,6 +2388,23 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       {/* Send invoice modal — shown after marking order as delivered */}
       {invoiceModal && (
         <SendInvoiceModal data={invoiceModal} onClose={() => setInvoiceModal(null)} />
+      )}
+
+      {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
+          Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      {licenseBlock && order && (
+        <LicenseGuardModal
+          open
+          customerId={order.customerId}
+          orderId={order.id}
+          blocked={licenseBlock}
+          onResolved={() => {
+            const retry = licenseRetryRef.current;
+            setLicenseBlock(null);
+            retry?.();
+          }}
+          onClose={() => setLicenseBlock(null)}
+        />
       )}
     </div>
   );

@@ -20,6 +20,7 @@ import {
   Bell,
   X,
   TrendingUp,
+  ShieldCheck,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
@@ -183,6 +184,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           href: `/buyer/portal/${sellerSlug}/templates`,
           icon: Repeat,
           label: "Standing Orders",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/licenses`,
+          icon: ShieldCheck,
+          label: "Licenses",
         },
         {
           href: `/buyer/portal/${sellerSlug}/account`,

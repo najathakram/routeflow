@@ -408,3 +408,42 @@ export function useBuyerAnalytics() {
     queryFn: () => buyerApiClient.get("/buyer/analytics").then((r) => r.data),
   });
 }
+
+// ─── Licenses & Authorizations (W6b — buyer self-serve) ──────────────────────────
+
+export interface BuyerAuthorizationRow {
+  trackedCategoryId: string;
+  categoryName: string;
+  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
+  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
+  licenseNumber: string | null;
+  expiresAt: string | null;
+  documentKey: string | null;
+  submittedAt: string | null;
+  verifiedAt: string | null;
+}
+
+export interface SubmitBuyerAuthorizationInput {
+  trackedCategoryId: string;
+  licenseNumber: string;
+  expiresAt: string; // ISO 8601
+  documentKey?: string;
+  shareConsent: boolean;
+}
+
+/** License-required categories at the active seller, each with the buyer's status. */
+export function useBuyerAuthorizations() {
+  return useQuery<BuyerAuthorizationRow[]>({
+    queryKey: ["buyer", "authorizations"],
+    queryFn: () => buyerApiClient.get("/buyer/authorizations").then((r) => r.data),
+  });
+}
+
+/** Submit or renew a license for the active seller's review (→ PENDING_REVIEW). */
+export function useSubmitBuyerAuthorization() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, SubmitBuyerAuthorizationInput>({
+    mutationFn: (dto) => buyerApiClient.post("/buyer/authorizations", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer", "authorizations"] }),
+  });
+}
