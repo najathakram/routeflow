@@ -123,6 +123,33 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
   });
 
+  it("reactivation from READ_ONLY (stale planKey retained) emits a full +base delta, not 0", async () => {
+    const { svc, events } = make({
+      tenantStatus: "READ_ONLY",
+      sub: { planKey: "BUSINESS" }, // planKey survives the cancellation → READ_ONLY
+    });
+    await svc.subscribe("t1", { planKey: "BUSINESS", cycle: "MONTHLY" }, "admin");
+    // Was NOT paying (READ_ONLY) → prior run-rate is 0, so re-entry is the full +349,
+    // mirroring the −349 emitted at churn — NOT 349 − 349 = 0.
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349);
+  });
+
+  it("reactivation re-adds add-ons (churn deactivated them) so the ledger nets symmetrically", async () => {
+    const { svc, events } = make({
+      tenantStatus: "READ_ONLY",
+      sub: { planKey: "BUSINESS" },
+      priorAddons: [], // churn (applyScheduledCancellations) deactivated the rows
+    });
+    await svc.subscribe(
+      "t1",
+      { planKey: "BUSINESS", cycle: "MONTHLY", addons: [{ sku: "SEAT_EXTRA", quantity: 2 }] },
+      "admin",
+    );
+    // Full run-rate re-added: +349 base and +24 add-on (12×2) — matching the −373 at churn.
+    expect(deltaOf(events, BILLING_EVENTS.PLAN_CHANGED)).toBe(349);
+    expect(deltaOf(events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24);
+  });
+
   it("rejects the custom Enterprise plan", async () => {
     await expect(
       make().svc.subscribe("t1", { planKey: "ENTERPRISE", cycle: "MONTHLY" }),

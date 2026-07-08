@@ -27,16 +27,32 @@ interface BillingOverview {
   }>;
 }
 
+// Fallback per-plan monthly prices, used only if the server MRR rollup is unavailable.
+// Keyed on the live TenantPlan enum values (STARTER | TEAM | BUSINESS | ENTERPRISE);
+// ENTERPRISE is custom-priced so it is intentionally omitted from the degraded estimate.
 const PLAN_PRICES: Record<string, number> = {
-  STARTER: 29,
-  PROFESSIONAL: 79,
-  ENTERPRISE: 199,
+  STARTER: 59,
+  TEAM: 149,
+  BUSINESS: 349,
 };
+
+/** Format a dollar amount with a fixed 2 decimals (locale-grouped), e.g. 339.05 → "339.05". */
+function fmtMoney(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Shape returned by GET /billing/admin/mrr (MrrService.computeOverview). */
+interface MrrOverview {
+  mrr: number;
+  momDelta: number;
+  payingTenants: number;
+}
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function BillingPage() {
   const [data, setData] = React.useState<BillingOverview | null>(null);
+  const [mrrData, setMrrData] = React.useState<MrrOverview | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -46,6 +62,12 @@ export default function BillingPage() {
       .then((res) => setData(res.data))
       .catch((err) => setError(err?.response?.data?.message ?? "Failed to load billing data"))
       .finally(() => setLoading(false));
+    // Server-side MRR rollup (price-snapshot accurate). Best-effort: the page still
+    // renders a client-side estimate if this endpoint is unavailable.
+    superAdminClient
+      .get<MrrOverview>("/billing/admin/mrr")
+      .then((res) => setMrrData(res.data))
+      .catch(() => setMrrData(null));
   }, []);
 
   if (loading)
@@ -60,10 +82,13 @@ export default function BillingPage() {
     );
   if (!data) return null;
 
-  // Estimate MRR from active subscriptions
-  const mrr = data.subscriptions
+  // Prefer the server-side rollup (price-snapshot accurate); fall back to a client
+  // estimate from active subscriptions if the endpoint is unavailable.
+  const clientMrrEstimate = data.subscriptions
     .filter((s) => s.tenantStatus === "ACTIVE" && !s.cancelAtPeriodEnd)
     .reduce((sum, s) => sum + (PLAN_PRICES[s.currentPlan] ?? 0), 0);
+  const mrr = mrrData?.mrr ?? clientMrrEstimate;
+  const momDelta = mrrData?.momDelta ?? 0;
 
   const conversionRate =
     data.totalTenants > 0
@@ -80,8 +105,13 @@ export default function BillingPage() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <AdminStatCard
-          label="Est. MRR"
-          value={`$${mrr.toLocaleString()}`}
+          label={mrrData ? "MRR" : "Est. MRR"}
+          value={`$${fmtMoney(mrr)}`}
+          sub={
+            mrrData
+              ? `${momDelta >= 0 ? "+" : "−"}$${fmtMoney(Math.abs(momDelta))} last 30d`
+              : undefined
+          }
           icon={<TrendingUp className="h-5 w-5" />}
         />
         <AdminStatCard

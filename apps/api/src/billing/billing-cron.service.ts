@@ -188,16 +188,44 @@ export class BillingCronService {
         periodEnd: { not: null, lt: now },
         tenant: { status: "ACTIVE", deletedAt: null },
       },
-      select: { tenantId: true },
+      select: { tenantId: true, basePriceSnapshot: true, discount: true },
     });
     for (const s of subs) {
+      // The run-rate this tenant stops contributing once access ends → emit it as a NEGATIVE
+      // MRR delta (base + active add-ons − discount) so the append-only ledger nets down with
+      // churn instead of over-counting the tenant's last plan forever.
+      const addons = await this.prisma.tenantAddon.findMany({
+        where: { tenantId: s.tenantId, active: true },
+        select: { priceSnapshot: true, quantity: true },
+      });
+      const addonMrr = addons.reduce(
+        (sum, a) => sum + (a.priceSnapshot != null ? Number(a.priceSnapshot) : 0) * a.quantity,
+        0,
+      );
+      const contribution = roundMoney(
+        (s.basePriceSnapshot != null ? Number(s.basePriceSnapshot) : 0) +
+          addonMrr -
+          Number(s.discount ?? 0),
+      );
       await this.prisma.tenant.update({
         where: { id: s.tenantId },
         data: { status: "READ_ONLY", readOnlyReason: "subscription_cancelled" },
       });
-      await this.events.emit(s.tenantId, BILLING_EVENTS.SUBSCRIPTION_CANCELED, {
-        appliedAt: now.toISOString(),
+      // Deactivate the cancelled subscription's add-ons: the negative delta above already
+      // removed their run-rate, so the rows must follow suit — otherwise a later reactivation
+      // via subscribe() sees them still-active (deltaQty=0) and never re-adds the +add-on delta,
+      // drifting the ledger below the snapshot. (A non-paying tenant holding "active" paid
+      // add-ons is itself incorrect state.)
+      await this.prisma.tenantAddon.updateMany({
+        where: { tenantId: s.tenantId, active: true },
+        data: { active: false },
       });
+      await this.events.emit(
+        s.tenantId,
+        BILLING_EVENTS.SUBSCRIPTION_CANCELED,
+        { appliedAt: now.toISOString() },
+        { amountDelta: contribution ? -contribution : 0 },
+      );
       this.entitlements.invalidate(s.tenantId);
       this.tenantStatus.invalidate(s.tenantId);
     }

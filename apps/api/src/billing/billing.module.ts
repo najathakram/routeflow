@@ -13,6 +13,7 @@ import { SubscriptionService } from "./subscription.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingEventService } from "./billing-event.service";
 import { BillingCronService } from "./billing-cron.service";
+import { MrrService } from "./mrr.service";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "./entitlements.module";
 
@@ -35,6 +36,7 @@ import { EntitlementsModule } from "./entitlements.module";
     SubscriptionMutationService,
     BillingEventService,
     BillingCronService,
+    MrrService,
   ],
   exports: [StripeService, BillingService, AddonService, AddonGuard, EntitlementsModule],
 })

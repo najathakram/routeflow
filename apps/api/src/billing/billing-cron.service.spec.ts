@@ -8,6 +8,7 @@ function make(
     downgrades?: any[];
     rollSubs?: any[];
     cancellations?: any[];
+    cancelAddons?: any[];
     activeTeam?: number;
   } = {},
 ) {
@@ -27,6 +28,10 @@ function make(
     tenantSubscription: {
       findMany: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
+    },
+    tenantAddon: {
+      findMany: jest.fn().mockResolvedValue(data.cancelAddons ?? []),
+      updateMany: jest.fn().mockResolvedValue({ count: data.cancelAddons?.length ?? 0 }),
     },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   } as any;
@@ -53,6 +58,10 @@ function make(
 }
 
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
+const deltaOf = (events: any, type: string) => {
+  const c = events.emit.mock.calls.find((x: any[]) => x[1] === type);
+  return c ? c[3]?.amountDelta : undefined;
+};
 
 describe("BillingCronService", () => {
   it("expireTrials flips expired trials to READ_ONLY (not SUSPENDED) + emits trial.expired", async () => {
@@ -148,15 +157,35 @@ describe("BillingCronService", () => {
     expect(tx.user.updateMany).not.toHaveBeenCalled();
   });
 
-  it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY", async () => {
-    const { svc, prisma, events, tenantStatus } = make({ cancellations: [{ tenantId: "t1" }] });
+  it("applyScheduledCancellations flips cancelled+expired subs to READ_ONLY + emits a NEGATIVE churn delta", async () => {
+    const { svc, prisma, events, tenantStatus } = make({
+      cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
+    });
     await svc.applyScheduledCancellations();
     expect(prisma.tenant.update.mock.calls[0][0].data).toMatchObject({
       status: "READ_ONLY",
       readOnlyReason: "subscription_cancelled",
     });
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_CANCELED);
+    // Ledger nets DOWN by the tenant's run-rate: base 349 − discount 10 = 339.
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-339);
     expect(tenantStatus.invalidate).toHaveBeenCalledWith("t1");
+  });
+
+  it("applyScheduledCancellations churn delta includes active add-ons + deactivates the add-on rows", async () => {
+    const { svc, prisma, events } = make({
+      cancellations: [{ tenantId: "t1", basePriceSnapshot: 349, discount: 10 }],
+      cancelAddons: [{ priceSnapshot: 12, quantity: 2 }],
+    });
+    await svc.applyScheduledCancellations();
+    // −(349 + 12×2 − 10) = −363.
+    expect(deltaOf(events, BILLING_EVENTS.SUBSCRIPTION_CANCELED)).toBe(-363);
+    // Rows follow the ledger: the removed add-ons are deactivated so a later reactivation
+    // re-adds their delta symmetrically (no ledger drift).
+    expect(prisma.tenantAddon.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1", active: true },
+      data: { active: false },
+    });
   });
 
   it("rollCycles advances the billing period so meters bucket into the new cycle", async () => {

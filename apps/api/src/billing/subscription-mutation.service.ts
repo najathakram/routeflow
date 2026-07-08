@@ -111,7 +111,12 @@ export class SubscriptionMutationService {
     }
     const toDisable = [...priorByCode.keys()].filter((c) => !desired.has(c));
 
-    const oldPlanMonthly = this.planMonthly(version, priorSub?.planKey);
+    // Coming from a NON-paying status (READ_ONLY / SUSPENDED / CANCELLED / TRIAL) the tenant
+    // still carries its old planKey but contributes 0 to the run-rate — so re-entry is a full
+    // +base delta, mirroring the negative delta emitted when access ended (billing-cron
+    // applyScheduledCancellations). Only an already-ACTIVE tenant nets against its old plan.
+    const oldPlanMonthly =
+      tenant.status === "ACTIVE" ? this.planMonthly(version, priorSub?.planKey) : 0;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.upsert({
