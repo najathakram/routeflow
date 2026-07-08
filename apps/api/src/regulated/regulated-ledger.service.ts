@@ -261,4 +261,55 @@ export class RegulatedLedgerService {
     const { returnId, db } = params;
     await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
   }
+
+  /**
+   * Reverse regulated SALE rows when a CREDIT NOTE is issued (W5c). Unlike a return,
+   * a credit note carries no goods — so the per-category breakdown comes from its
+   * CreditNoteItems, which were derived from the source invoice's lines by allocating
+   * the credit amount proportionally (credit-notes.service). Each regulated item
+   * (trackedCategoryId set) already holds the pre-signed positive net/qty/tax to
+   * reverse, so we simply negate them. Idempotent per `creditNoteId`; the credit's
+   * cumulative-amount cap (≤ invoice total) bounds cumulative reversal, so no
+   * per-line clamp is needed. Books into the CURRENT period.
+   */
+  async reverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
+    const { creditNoteId, db } = params;
+
+    // Idempotency: this credit note already reversed → no-op.
+    const prior = await db.regulatedSalesLedger.findMany({
+      where: { creditNoteId, entryType: "REVERSAL" },
+      select: { id: true },
+    });
+    if (prior.length > 0) return;
+
+    const items = await db.creditNoteItem.findMany({
+      where: { creditNoteId, trackedCategoryId: { not: null } },
+    });
+    if (items.length === 0) return;
+
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const rows = items.map((it: any) => ({
+      tenantId: it.tenantId,
+      trackedCategoryId: it.trackedCategoryId,
+      entryType: "REVERSAL" as const,
+      invoiceItemId: it.invoiceItemId,
+      creditNoteId,
+      qty: -round3(Number(it.qty)),
+      unitBasisQty: -round3(Number(it.qty)),
+      netSales: roundMoney(-Number(it.amount)),
+      categoryTax: roundMoney(-Number(it.categoryTax)),
+      soldAt: now,
+      periodBucket: bucket,
+    }));
+    if (rows.length === 0) return;
+    await db.regulatedSalesLedger.createMany({ data: rows });
+  }
+
+  /** Undo a credit note's REVERSAL rows when the credit note is VOIDED (symmetric
+   *  to the returns cancel-undo). Delete keeps the `creditNoteId` idempotency clean. */
+  async unreverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
+    const { creditNoteId, db } = params;
+    await db.regulatedSalesLedger.deleteMany({ where: { creditNoteId, entryType: "REVERSAL" } });
+  }
 }

@@ -334,6 +334,7 @@ model Tenant {
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
   creditNotes            CreditNote[]
+  creditNoteItems        CreditNoteItem[]
   estimates              Estimate[]
   estimateItems          EstimateItem[]
   vendorBills            VendorBill[]
@@ -1816,11 +1817,35 @@ model CreditNote {
   tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
+  items           CreditNoteItem[]
 
   @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
+}
+
+/// Phase 4 (W5c): per-line breakdown of a credit note, derived from the SOURCE
+/// invoice's lines by allocating the credit `amount` proportionally. Carries each
+/// line's regulated category snapshot so the credit can faithfully reverse the
+/// regulated sales ledger per category (the credit note header is a single lump sum
+/// and can't). Only lines with a `trackedCategoryId` drive a ledger reversal.
+model CreditNoteItem {
+  id                String   @id @default(uuid())
+  tenantId          String
+  creditNoteId      String
+  invoiceItemId     String?
+  trackedCategoryId String?
+  amount            Decimal  @default(0) @db.Decimal(12, 2) // credited net (pre-tax) portion
+  qty               Decimal  @default(0) @db.Decimal(12, 3)
+  categoryTax       Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt         DateTime @default(now())
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([creditNoteId])
 }
 
 model Estimate {

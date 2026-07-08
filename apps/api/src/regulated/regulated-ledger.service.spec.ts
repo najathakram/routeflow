@@ -319,4 +319,51 @@ describe("RegulatedLedgerService", () => {
       });
     });
   });
+
+  describe("reverseCreditNoteEntries", () => {
+    it("negates the credit note's regulated items into REVERSAL rows", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([]); // idempotency: none prior
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 15,
+          qty: 1.5,
+          categoryTax: 3,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0]).toMatchObject({
+        entryType: "REVERSAL",
+        creditNoteId: "cn-1",
+        trackedCategoryId: "cat-A",
+        invoiceItemId: "ii-1",
+        qty: -1.5,
+        netSales: -15,
+        categoryTax: -3,
+      });
+    });
+
+    it("is idempotent — a credit note already reversed writes nothing", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([{ id: "existing-rev" }]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("no-ops when the credit note has no regulated items", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([]);
+      prisma.creditNoteItem.findMany.mockResolvedValue([]); // only non-regulated (filtered out by the query)
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("unreverseCreditNoteEntries deletes the credit note's REVERSAL rows", async () => {
+      await service.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: "cn-1", entryType: "REVERSAL" },
+      });
+    });
+  });
 });
