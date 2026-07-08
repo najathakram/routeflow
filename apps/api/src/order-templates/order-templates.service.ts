@@ -359,6 +359,12 @@ export class OrderTemplatesService {
         unitPrice,
         subtotal: itemSubtotal,
         notes: item.notes ?? undefined,
+        // W4/W6b: snapshot the product's regulated category at sale time so
+        // invoice generation splits by it and the ledger is written — same as the
+        // interactive create path (orders.service.create). Without this an allowed
+        // regulated standing-order line would invoice as standard.
+        trackedCategoryId: product.trackedCategoryId ?? null,
+        categoryTaxAmount: 0,
         tenantId, // nested creates bypass forTenant() extension
       };
     });
@@ -380,6 +386,8 @@ export class OrderTemplatesService {
         total,
         notes: `Auto-generated from standing order: ${template.name}${skipNote}`,
         requestedDeliveryDate: today,
+        // Denormalized flag — true when any (allowed) line is regulated.
+        hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
         lineItems: { create: lineItemsData },
       },
       include: {

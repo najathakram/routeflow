@@ -1017,6 +1017,58 @@ describe("OrdersService", () => {
       expect(upd.pieces).toBe(0);
     });
 
+    it("preserves a loser regulated line's tracked-category snapshot + flips hasRegulated", async () => {
+      const line = (id: string, extra: Record<string, unknown>) => ({
+        id,
+        productId: "p?",
+        qty: 1,
+        unitPrice: 5,
+        subtotal: 5,
+        status: "PENDING",
+        priceType: "STANDARD",
+        originalPrice: null,
+        name: null,
+        overrideReason: null,
+        overriddenBy: null,
+        boxes: null,
+        pieces: null,
+        trackedCategoryId: null,
+        ...extra,
+      });
+      prisma.order.findMany.mockResolvedValue([
+        {
+          id: "w1",
+          customerId: "cust-1",
+          status: "PENDING",
+          lineItems: [line("wl1", { productId: "prod-std" })],
+        },
+        {
+          id: "l1",
+          customerId: "cust-1",
+          status: "PENDING",
+          // A regulated line, only on the loser → becomes a NEW winner item.
+          lineItems: [line("ll1", { productId: "prod-tob", trackedCategoryId: "cat-tob" })],
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-std", unitsPerBox: null },
+        { id: "prod-tob", unitsPerBox: null },
+      ]);
+      // activeItems (post-merge totals + hasRegulated recompute) include the reg line.
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 5, trackedCategoryId: null },
+        { subtotal: 5, trackedCategoryId: "cat-tob" },
+      ]);
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.productId).toBe("prod-tob");
+      expect(created.trackedCategoryId).toBe("cat-tob"); // snapshot survived the merge
+      const upd = prisma.order.update.mock.calls.at(-1)![0].data;
+      expect(upd.hasRegulated).toBe(true);
+    });
+
     it("heals a selling-unit (boxes null) boxed merge to piece-denominated $120", async () => {
       // Two mobile-created box-count lines (qty = boxes, boxes/pieces null).
       const su = (id: string) => boxLine(id, { qty: 1, boxes: null, pieces: null });

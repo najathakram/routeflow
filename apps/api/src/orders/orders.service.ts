@@ -341,6 +341,7 @@ export class OrdersService implements OnApplicationBootstrap {
         overrideReason: string | null;
         overriddenBy: string | null;
         notes: string | null;
+        trackedCategoryId: string | null;
       }
     >();
     // Unlisted (catalog-free) loser lines can't be keyed by product — each is
@@ -382,6 +383,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: li.overrideReason,
             overriddenBy: li.overriddenBy,
             notes: li.notes,
+            // Carry the loser line's sale-time regulated-category snapshot so the
+            // new winner line keeps it (invoice split + ledger depend on it).
+            trackedCategoryId: li.trackedCategoryId ?? null,
           });
         }
       }
@@ -451,6 +455,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: meta.overrideReason,
             overriddenBy: meta.overriddenBy,
             notes: meta.notes,
+            // Preserve the regulated-category snapshot through the merge (was
+            // dropped, so a merged regulated line invoiced as standard).
+            trackedCategoryId: meta.trackedCategoryId,
           },
         });
       }
@@ -491,7 +498,13 @@ export class OrdersService implements OnApplicationBootstrap {
       const tax = roundMoney(subtotal * taxRate);
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: roundMoney(subtotal + tax) },
+        data: {
+          subtotal,
+          tax,
+          total: roundMoney(subtotal + tax),
+          // A merged-in regulated line flips the denormalized flag on.
+          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+        },
       });
     });
 
@@ -538,6 +551,7 @@ export class OrdersService implements OnApplicationBootstrap {
         overrideReason: string | null;
         overriddenBy: string | null;
         notes: string | null;
+        trackedCategoryId: string | null;
       }
     >();
     // Unlisted (catalog-free) loser lines are appended as their own winner lines.
@@ -578,6 +592,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: li.overrideReason,
             overriddenBy: li.overriddenBy,
             notes: li.notes,
+            // Carry the loser line's sale-time regulated-category snapshot so the
+            // new winner line keeps it (invoice split + ledger depend on it).
+            trackedCategoryId: li.trackedCategoryId ?? null,
           });
         }
       }
@@ -643,6 +660,9 @@ export class OrdersService implements OnApplicationBootstrap {
             overrideReason: meta.overrideReason,
             overriddenBy: meta.overriddenBy,
             notes: meta.notes,
+            // Preserve the regulated-category snapshot through the merge (was
+            // dropped, so a merged regulated line invoiced as standard).
+            trackedCategoryId: meta.trackedCategoryId,
           },
         });
       }
@@ -689,7 +709,14 @@ export class OrdersService implements OnApplicationBootstrap {
         : {};
       await tx.order.update({
         where: { id: winner.id },
-        data: { subtotal, tax, total: roundMoney(subtotal + tax), ...routeUpdate },
+        data: {
+          subtotal,
+          tax,
+          total: roundMoney(subtotal + tax),
+          // A merged-in regulated line flips the denormalized flag on.
+          hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
+          ...routeUpdate,
+        },
       });
       // If the winner carries a pending mirror draft, re-sync it to the merged lines.
       await this.invoicesService.reconcileOrderDraftInvoice(winner.id, { basis: "order", tx });

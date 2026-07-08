@@ -99,11 +99,17 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     expect(order).toMatchObject({ id: "o1" });
   });
 
-  it("orders every line and notifies no one when the customer is verified", async () => {
+  it("orders every line (snapshotting the regulated category + hasRegulated) when verified", async () => {
     authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
     await service.generateOrder("t1");
-    const createdLines = prisma.order.create.mock.calls[0][0].data.lineItems.create;
+    const createData = prisma.order.create.mock.calls[0][0].data;
+    const createdLines = createData.lineItems.create;
     expect(createdLines).toHaveLength(2);
+    // The allowed regulated line snapshots its tracked category so it invoices
+    // as regulated (split + ledger) rather than standard.
+    const tob = createdLines.find((l: any) => l.productId === "p-tob");
+    expect(tob.trackedCategoryId).toBe("cat-tob");
+    expect(createData.hasRegulated).toBe(true);
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
   });
 
