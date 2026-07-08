@@ -21,6 +21,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { UserRole } from "@prisma/client";
@@ -57,6 +58,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: InvoicePdfService, useValue: {} },
         { provide: CustomersService, useValue: {} },
         { provide: OrderTemplatesService, useValue: templatesService },
+        { provide: AuthorizationsService, useValue: {} },
         { provide: PrismaService, useValue: {} },
         {
           provide: TenantContextService,

@@ -136,4 +136,58 @@ describe("AuthorizationsService", () => {
       service.renew("c1", "a1", { expiresAt: "2028-01-01T00:00:00Z" }, user),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it("findExpiringSoon returns [] with no tenant context (no cross-tenant leak)", async () => {
+    prisma.getTenantId.mockReturnValue(null);
+    await expect(service.findExpiringSoon()).resolves.toEqual([]);
+    expect(prisma.customerAuthorization.findMany).not.toHaveBeenCalled();
+  });
+
+  it("findExpiringSoon computes 30/7/1 buckets and flags expired", async () => {
+    prisma.getTenantId.mockReturnValue("t1");
+    const now = new Date("2026-07-10T00:00:00.000Z");
+    const day = 86_400_000;
+    prisma.customerAuthorization.findMany.mockResolvedValue([
+      {
+        id: "a",
+        customerId: "c",
+        trackedCategoryId: "cat",
+        status: "VERIFIED",
+        expiresAt: new Date(now.getTime() + day / 2),
+        customer: { businessName: "Acme" },
+        trackedCategory: { name: "Tobacco" },
+      },
+      {
+        id: "b",
+        customerId: "c",
+        trackedCategoryId: "cat",
+        status: "VERIFIED",
+        expiresAt: new Date(now.getTime() + 5 * day),
+        customer: { businessName: "Acme" },
+        trackedCategory: { name: "Tobacco" },
+      },
+      {
+        id: "c",
+        customerId: "c",
+        trackedCategoryId: "cat",
+        status: "EXPIRED",
+        expiresAt: new Date(now.getTime() - day),
+        customer: null,
+        trackedCategory: null,
+      },
+    ] as any);
+    const res = await service.findExpiringSoon(30, now);
+    expect(
+      res.map((r) => ({
+        id: r.id,
+        bucket: r.bucket,
+        expired: r.expired,
+        customerName: r.customerName,
+      })),
+    ).toEqual([
+      { id: "a", bucket: 1, expired: false, customerName: "Acme" },
+      { id: "b", bucket: 7, expired: false, customerName: "Acme" },
+      { id: "c", bucket: null, expired: true, customerName: "Customer" },
+    ]);
+  });
 });

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -73,5 +73,20 @@ export class AuthorizationsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.overrides.createOverride(customerId, dto, user);
+  }
+}
+
+// Tenant-wide expiring/expired licenses for the operator expiry bell (W7b).
+// Top-level (not customer-scoped) so it can power the header bell.
+@Controller("authorizations")
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(UserRole.OPERATOR)
+export class ExpiringAuthorizationsController {
+  constructor(private readonly authorizations: AuthorizationsService) {}
+
+  @Get("expiring-soon")
+  expiringSoon(@Query("withinDays") withinDays?: string) {
+    const days = withinDays ? Number(withinDays) : 30;
+    return this.authorizations.findExpiringSoon(Number.isFinite(days) && days > 0 ? days : 30);
   }
 }

@@ -12,6 +12,7 @@ import { CustomersModule } from "../customers/customers.module";
 import { ProductsModule } from "../products/products.module";
 import { OrderTemplatesModule } from "../order-templates/order-templates.module";
 import { StorageModule } from "../storage/storage.module";
+import { AuthorizationsModule } from "../authorizations/authorizations.module";
 
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
@@ -43,6 +44,7 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     ProductsModule,
     OrderTemplatesModule,
     StorageModule,
+    AuthorizationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

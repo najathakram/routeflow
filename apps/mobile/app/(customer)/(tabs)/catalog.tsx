@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,6 +19,7 @@ import {
   useBuyerCategories,
   useBuyerFavorites,
   useToggleFavorite,
+  useBuyerExpiringAuthorizations,
   type BuyerProduct,
   type LockedCategory,
 } from "../../../lib/api/buyer";
@@ -54,9 +56,36 @@ export default function CustomerCatalogScreen() {
   );
   const toggleFavorite = useToggleFavorite();
 
+  const { data: expiring = [] } = useBuyerExpiringAuthorizations();
+  const showExpiryAlert = () => {
+    if (expiring.length === 0) {
+      Alert.alert("Licenses", "No licenses expiring soon.");
+      return;
+    }
+    const lines = expiring
+      .map((a) => {
+        const when = a.expired
+          ? "expired"
+          : a.bucket === 1
+            ? "expires in ~1 day"
+            : `expires in ~${a.bucket} days`;
+        return `• ${a.categoryName} — ${when}`;
+      })
+      .join("\n");
+    Alert.alert("License expiry", lines);
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar inlineTitle="Catalog" />
+      <NavBar
+        inlineTitle="Catalog"
+        trailing={
+          <Pressable onPress={showExpiryAlert} hitSlop={8} style={styles.bellBtn}>
+            <Ionicons name="notifications-outline" size={22} color={ios.label} />
+            {expiring.length > 0 ? <View style={styles.bellDot} /> : null}
+          </Pressable>
+        }
+      />
 
       {/* Search bar */}
       <View style={styles.searchRow}>
@@ -263,6 +292,16 @@ function LockedCategoriesTile({ categories }: { categories: LockedCategory[] }) 
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  bellBtn: { padding: 2 },
+  bellDot: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: "#ef4444",
+  },
   lockedTile: {
     flexDirection: "row",
     gap: 10,

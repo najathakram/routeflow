@@ -18,13 +18,23 @@ import {
   LayoutGrid,
   Heart,
   Bell,
+  ShieldAlert,
   X,
   TrendingUp,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerNotifications, type BuyerNotification } from "@/lib/hooks/useBuyerNotifications";
+import { useBuyerExpiringAuthorizations } from "@/lib/api/buyer";
+import type { ExpiringAuthorization } from "@/lib/api/authorizations";
 import type { BuyerSeller } from "@/lib/buyer-auth";
+
+function buyerExpiryLabel(a: ExpiringAuthorization): string {
+  if (a.expired) return "Expired";
+  if (a.bucket === 1) return "Expires in ~1 day";
+  if (a.bucket) return `Expires in ~${a.bucket} days`;
+  return "Expiring soon";
+}
 import { BuyerPortalErrorBoundary } from "./error-boundary";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -121,6 +131,8 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
   const sellerSlug = activeSeller?.tenant.slug;
   const { totalQty: cartItemCount } = useBuyerCart(buyer?.id, sellerSlug);
   const { notifications, unreadCount, markAllRead, clearAll } = useBuyerNotifications();
+  const { data: expiring = [] } = useBuyerExpiringAuthorizations(!!activeSeller);
+  const bellCount = unreadCount + expiring.length;
   const [sellersOpen, setSellersOpen] = React.useState(false);
   const [notifOpen, setNotifOpen] = React.useState(false);
 
@@ -224,9 +236,9 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                 className="relative rounded-lg p-2 text-buyer-300 hover:bg-white/10 hover:text-white transition-colors"
               >
                 <Bell className="h-4 w-4" />
-                {unreadCount > 0 && (
+                {bellCount > 0 && (
                   <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
-                    {unreadCount}
+                    {bellCount}
                   </span>
                 )}
               </button>
@@ -244,11 +256,36 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                     )}
                   </div>
                   <div className="max-h-64 overflow-y-auto">
-                    {notifications.length === 0 ? (
+                    {/* W7b: the buyer's own expiring / expired licenses */}
+                    {expiring.length > 0 && (
+                      <div className="border-b border-surface-border">
+                        <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-navy/40">
+                          Your licenses
+                        </p>
+                        {expiring.map((a) => (
+                          <div
+                            key={a.id}
+                            className={`flex items-start gap-2 border-b border-surface-border px-3 py-2 last:border-b-0 ${
+                              a.expired ? "bg-danger/5" : "bg-amber-50/50"
+                            }`}
+                          >
+                            <ShieldAlert
+                              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                                a.expired ? "text-danger" : "text-amber-600"
+                              }`}
+                            />
+                            <p className="min-w-0 flex-1 text-xs font-medium text-navy">
+                              {a.categoryName} — {buyerExpiryLabel(a)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {notifications.length === 0 && expiring.length === 0 ? (
                       <p className="px-3 py-6 text-center text-xs text-buyer-600">
                         No notifications
                       </p>
-                    ) : (
+                    ) : notifications.length > 0 ? (
                       notifications.slice(0, 20).map((n) => (
                         <div
                           key={n.id}
@@ -264,7 +301,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
                           </p>
                         </div>
                       ))
-                    )}
+                    ) : null}
                   </div>
                 </div>
               )}

@@ -42,6 +42,7 @@ import {
   Languages,
   Cigarette,
   ShieldCheck,
+  ShieldAlert,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -53,6 +54,7 @@ import { clearTenantCookie } from "@/lib/tenant-cookie";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
+import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api/authorizations";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
@@ -444,6 +446,13 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
 
 // ─── Header ───────────────────────────────────────────────────────────────────
 
+function expiryLabel(a: ExpiringAuthorization): string {
+  if (a.expired) return "Expired";
+  if (a.bucket === 1) return "Expires in ~1 day";
+  if (a.bucket) return `Expires in ~${a.bucket} days`;
+  return "Expiring soon";
+}
+
 function Header({
   onOpenPalette,
   onOpenMobileNav,
@@ -457,6 +466,8 @@ function Header({
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
+  const { data: expiring = [] } = useExpiringAuthorizations();
+  const bellCount = unreadCount + expiring.length;
   const { driveMode, setDriveMode } = useDriveMode();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
@@ -532,12 +543,12 @@ function Header({
           <DropdownMenu.Trigger asChild>
             <button
               className="relative rounded-lg p-2 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
-              aria-label={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
+              aria-label={bellCount > 0 ? `${bellCount} notifications` : "Notifications"}
             >
               <Bell className="h-5 w-5" />
-              {unreadCount > 0 && (
+              {bellCount > 0 && (
                 <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-danger text-[10px] font-bold leading-none text-white">
-                  {unreadCount > 9 ? "9+" : unreadCount}
+                  {bellCount > 9 ? "9+" : bellCount}
                 </span>
               )}
             </button>
@@ -565,7 +576,45 @@ function Header({
 
               {/* List */}
               <div className="max-h-[60vh] overflow-y-auto">
-                {notifications.length === 0 ? (
+                {/* W7b: license expiry section (30/7/1 + expired) */}
+                {expiring.length > 0 && (
+                  <div className="border-b border-surface-border">
+                    <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
+                      Licenses
+                    </p>
+                    <ul className="divide-y divide-surface-border">
+                      {expiring.map((a) => (
+                        <li
+                          key={a.id}
+                          className={cn(
+                            "flex items-start gap-3 px-4 py-3",
+                            a.expired ? "bg-danger/5" : "bg-amber-50/50",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                              a.expired
+                                ? "bg-danger/10 text-danger"
+                                : "bg-amber-100 text-amber-700",
+                            )}
+                          >
+                            <ShieldAlert className="h-4 w-4" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">
+                              {a.categoryName} — {expiryLabel(a)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                              {a.customerName}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {notifications.length === 0 && expiring.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-10 text-center">
                     <Bell className="h-8 w-8 text-navy/20" />
                     <p className="text-sm text-navy/70">No notifications yet</p>
@@ -573,7 +622,7 @@ function Header({
                       Urgent orders, driver updates, and low-stock alerts will appear here
                     </p>
                   </div>
-                ) : (
+                ) : notifications.length > 0 ? (
                   <ul className="divide-y divide-surface-border">
                     {notifications.map((n) => (
                       <li
@@ -594,7 +643,7 @@ function Header({
                       </li>
                     ))}
                   </ul>
-                )}
+                ) : null}
               </div>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
