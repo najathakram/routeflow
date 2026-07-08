@@ -1001,6 +1001,14 @@ model RouteRunStop {
   // (set when the stop contains a category demanding age / identity verification).
   ageCheckRequired      Boolean            @default(false)
   identityCheckRequired Boolean            @default(false)
+  // Phase 4 (W7b): what the driver actually captured at a regulated delivery.
+  // ageVerified/identityVerified are the affirmative check-offs; identityType is
+  // the kind of ID inspected (DRIVERS_LICENSE, PASSPORT, STATE_ID, MILITARY_ID,
+  // OTHER); identityVerifiedAt is stamped server-side when identity is confirmed.
+  ageVerified           Boolean            @default(false)
+  identityVerified      Boolean            @default(false)
+  identityType          String?
+  identityVerifiedAt    DateTime?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
   tenantId              String?
@@ -2415,6 +2423,11 @@ model TrackedCategory {
   invoiceTreatment InvoiceTreatment       @default(SEPARATE_INVOICE)
   appliesScope     Json? // optional geo/customer scoping, e.g. {cities:["Oakland"]}
   requiresLicense  Boolean                @default(false)
+  // Phase 4 (W7b): per-category POD policy — when set, a delivery stop containing
+  // a product in this category demands the driver capture an age check and/or an
+  // identity check (with signature POD, no safe-drop) before the stop completes.
+  requiresAgeCheck Boolean                @default(false)
+  requiresIdCheck  Boolean                @default(false)
   reportTemplate   String                 @default("GENERIC") // CA_CDTFA | CA_ABC | CALRECYCLE | GENERIC
   reportCadence    ReportCadence          @default(MONTHLY)
   active           Boolean                @default(true)
