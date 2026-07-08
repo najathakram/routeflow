@@ -319,4 +319,76 @@ describe("RegulatedLedgerService", () => {
       });
     });
   });
+
+  describe("reverseCreditNoteEntries", () => {
+    it("negates the credit note's regulated items into REVERSAL rows", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([]); // idempotency: none prior
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 15,
+          qty: 1.5,
+          categoryTax: 3,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
+      expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0]).toMatchObject({
+        entryType: "REVERSAL",
+        creditNoteId: "cn-1",
+        trackedCategoryId: "cat-A",
+        invoiceItemId: "ii-1",
+        qty: -1.5,
+        netSales: -15,
+        categoryTax: -3,
+      });
+    });
+
+    it("is idempotent — a credit note already reversed writes nothing", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([{ id: "existing-rev" }]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("no-ops when the credit note has no regulated items", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([]);
+      prisma.creditNoteItem.findMany.mockResolvedValue([]); // only non-regulated (filtered out by the query)
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("closing credit books the exact remaining balance (no multi-credit drift)", async () => {
+      // SALE net 90; two earlier credits already reversed -60.01; this credit's item
+      // is -30 nominal but must CLOSE to -29.99 so the line nets to exactly 0.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency: none for this creditNoteId
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 90, qty: 3, categoryTax: 0 }]) // SALE
+        .mockResolvedValueOnce([
+          { invoiceItemId: "ii-1", netSales: -30.01, qty: -1, categoryTax: 0 },
+          { invoiceItemId: "ii-1", netSales: -30.0, qty: -1, categoryTax: 0 },
+        ]); // prior REVERSAL rows
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 30,
+          qty: 1,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-3", db: prisma });
+      const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
+      expect(row.netSales).toBe(-29.99); // -90 - (-60.01); total across the 3 credits = -90.00
+    });
+
+    it("unreverseCreditNoteEntries deletes the credit note's REVERSAL rows", async () => {
+      await service.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
+        where: { creditNoteId: "cn-1", entryType: "REVERSAL" },
+      });
+    });
+  });
 });
