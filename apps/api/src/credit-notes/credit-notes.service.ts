@@ -321,9 +321,22 @@ export class CreditNotesService {
   }
 
   async voidCreditNote(id: string) {
+    const cn = await this.prisma
+      .forTenant()
+      .creditNote.findUnique({ where: { id }, select: { status: true, amountUsed: true } });
+    if (!cn) throw new NotFoundException("Credit note not found");
+    // A credit that's been consumed as a payment can't be voided — un-applying it
+    // first is the only safe path. Without this, void would delete the ledger
+    // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
+    if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
+      throw new BadRequestException(
+        "Cannot void a credit note that has been applied — un-apply it first.",
+      );
+    }
     return this.prisma.tenantTransaction(async (tx: any) => {
       const updated = await tx.creditNote.update({ where: { id }, data: { status: "VOID" } });
-      // W5c: undo the regulated ledger reversal booked at creation.
+      // W5c: undo the regulated ledger reversal booked at creation (safe now — the
+      // credit was never consumed, so voiding restores the sale to full).
       await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
       return updated;
     });

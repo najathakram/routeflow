@@ -87,11 +87,19 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ).rejects.toThrow(/exceed invoice total/);
   });
 
-  it("voidCreditNote un-reverses the ledger", async () => {
+  it("voidCreditNote un-reverses the ledger for an unused (ISSUED) credit", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.update.mockResolvedValue({ id: "cn-1", status: "VOID" });
     await service.voidCreditNote("cn-1");
     expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith(
       expect.objectContaining({ creditNoteId: "cn-1" }),
     );
+  });
+
+  it("blocks voiding an APPLIED credit note (must un-apply first) — no ledger touch", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
+    await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
+    expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(prisma.creditNote.update).not.toHaveBeenCalled();
   });
 });
