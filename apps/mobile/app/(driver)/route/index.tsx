@@ -400,6 +400,7 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
               subtitle={formatStopSub(stop)}
               status={stopStatus(stop, nextStop?.id)}
               pillLabel={stopPill(stop, nextStop?.id)}
+              regulated={!!(stop.ageCheckRequired || stop.identityCheckRequired)}
               onPress={() => onOpenStop(stop.id)}
             />
           ))}

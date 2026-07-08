@@ -61,6 +61,13 @@ export interface RouteRunStop {
   podPhotoUrls?: string[];
   safeDropEnabled?: boolean;
   signatureUrl?: string;
+  // Phase 4 (W7b): regulated-delivery requirement flags + captured checks.
+  ageCheckRequired?: boolean;
+  identityCheckRequired?: boolean;
+  ageVerified?: boolean;
+  identityVerified?: boolean;
+  identityType?: string | null;
+  identityVerifiedAt?: string | null;
   notes?: string;
   orders?: RouteRunOrder[];
   deliveryMutations?: DeliveryMutation[];
@@ -188,6 +195,24 @@ export interface CompleteStopItemDto {
   driverNote?: string;
 }
 
+/** Allowed RouteRunStop.identityType values (mirrors the API). */
+export const IDENTITY_TYPES = [
+  "DRIVERS_LICENSE",
+  "PASSPORT",
+  "STATE_ID",
+  "MILITARY_ID",
+  "OTHER",
+] as const;
+export type IdentityType = (typeof IDENTITY_TYPES)[number];
+
+export const IDENTITY_TYPE_LABELS: Record<IdentityType, string> = {
+  DRIVERS_LICENSE: "Driver's license",
+  PASSPORT: "Passport",
+  STATE_ID: "State ID",
+  MILITARY_ID: "Military ID",
+  OTHER: "Other",
+};
+
 export interface CompleteStopDto {
   runId: string;
   stopId: string;
@@ -196,6 +221,10 @@ export interface CompleteStopDto {
   podPhotoUrls?: string[];
   signatureUrl?: string;
   safeDropEnabled?: boolean;
+  // Phase 4 (W7b): regulated-delivery POD capture.
+  ageVerified?: boolean;
+  identityVerified?: boolean;
+  identityType?: string | null;
 }
 
 export function useCompleteStop() {
@@ -209,6 +238,9 @@ export function useCompleteStop() {
       podPhotoUrls,
       signatureUrl,
       safeDropEnabled,
+      ageVerified,
+      identityVerified,
+      identityType,
     }) => {
       const deliveries = items
         .filter((i) => i.orderItemId) // API requires orderItemId; skip ADD_ON items without one
@@ -225,6 +257,9 @@ export function useCompleteStop() {
           podPhotoUrls,
           signatureUrl,
           safeDropEnabled,
+          ageVerified,
+          identityVerified,
+          identityType,
         })
         .then((r) => r.data);
     },
@@ -249,6 +284,10 @@ export interface CompleteWithPaymentDto {
   podPhotoUrls?: string[];
   signatureUrl?: string;
   safeDropEnabled?: boolean;
+  // Phase 4 (W7b): regulated-delivery POD capture.
+  ageVerified?: boolean;
+  identityVerified?: boolean;
+  identityType?: string | null;
   payment?: {
     invoiceId: string;
     amount: number;
@@ -268,6 +307,9 @@ export function useCompleteWithPayment() {
       podPhotoUrls,
       signatureUrl,
       safeDropEnabled,
+      ageVerified,
+      identityVerified,
+      identityType,
       payment,
       idempotencyKey,
     }) => {
@@ -276,7 +318,17 @@ export function useCompleteWithPayment() {
       return apiClient
         .post(
           `/route-runs/${runId}/stops/${stopId}/complete-with-payment`,
-          { driverNote, deliveries, podPhotoUrls, signatureUrl, safeDropEnabled, payment },
+          {
+            driverNote,
+            deliveries,
+            podPhotoUrls,
+            signatureUrl,
+            safeDropEnabled,
+            ageVerified,
+            identityVerified,
+            identityType,
+            payment,
+          },
           { headers },
         )
         .then((r) => r.data);
