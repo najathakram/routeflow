@@ -31,6 +31,12 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
+import {
+  assertRegulatedDeliverySatisfied,
+  deriveStopRegulatedRequirements,
+  loadAgeIdCategorySets,
+  type RegulatedDeliveryDb,
+} from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { getTierPrice } from "../utils/pricing";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -1961,6 +1967,23 @@ export class OrdersService implements OnApplicationBootstrap {
       });
       if (!stop) throw new NotFoundException("Route run stop not found");
 
+      // Phase 4 (W7b): regulated-delivery POD gate. Re-derive the age/ID
+      // requirement from the stop's current orders and block/normalise BEFORE any
+      // DeliveryBatch / SALE / invoice write, so a blocked regulated delivery
+      // persists nothing (the throw rolls the whole transaction back).
+      const regDb = tx as unknown as RegulatedDeliveryDb;
+      const regSets = await loadAgeIdCategorySets(regDb);
+      const regRequirements = await deriveStopRegulatedRequirements(
+        regDb,
+        { stopId, orderItemIds: dto.deliveries?.map((d) => d.orderItemId) },
+        regSets,
+      );
+      const regulatedPatch = assertRegulatedDeliverySatisfied({
+        requirements: regRequirements,
+        capture: dto,
+        existingSignatureUrl: stop.signatureUrl,
+      });
+
       // Resolve driver ID once
       const driverId =
         user.role === UserRole.DRIVER
@@ -2238,6 +2261,7 @@ export class OrdersService implements OnApplicationBootstrap {
           podPhotoUrls: dto.podPhotoUrls ?? [],
           signatureUrl: dto.signatureUrl ?? null,
           safeDropEnabled: dto.safeDropEnabled ?? false,
+          ...regulatedPatch,
         },
       });
 

@@ -17,7 +17,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useActiveRouteRun, useRouteRun, type RouteRunStop } from "../../../../../lib/api/routes";
+import {
+  useActiveRouteRun,
+  useRouteRun,
+  IDENTITY_TYPES,
+  IDENTITY_TYPE_LABELS,
+  type RouteRunStop,
+} from "../../../../../lib/api/routes";
 import { usePodStore } from "../../../../../store/podStore";
 import { openInMaps } from "../../../../../components/openInMaps";
 
@@ -69,6 +75,7 @@ export default function StopDetailScreen() {
 
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
   const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
+  const setRegulated = usePodStore((s) => s.setRegulated);
 
   if (activeLoading || runLoading) {
     return (
@@ -261,6 +268,60 @@ export default function StopDetailScreen() {
           />
         </View>
 
+        {/* Phase 4 (W7b): regulated-delivery age / identity capture */}
+        {stop.ageCheckRequired || stop.identityCheckRequired ? (
+          <>
+            <SectionRow title="Age & identity" />
+            <View style={styles.regBanner}>
+              <Ionicons name="shield-checkmark-outline" size={16} color="#B45309" />
+              <Text style={styles.regBannerText}>
+                Regulated delivery — hand to a verified recipient with a signature (no
+                leave-at-door).
+              </Text>
+            </View>
+            {stop.ageCheckRequired ? (
+              <CheckRow
+                label="Recipient meets the minimum age"
+                checked={!!pod?.ageVerified}
+                onToggle={() => setRegulated(stopId, { ageVerified: !pod?.ageVerified })}
+              />
+            ) : null}
+            {stop.identityCheckRequired ? (
+              <CheckRow
+                label="Recipient's ID checked"
+                checked={!!pod?.identityVerified}
+                onToggle={() =>
+                  setRegulated(stopId, {
+                    identityVerified: !pod?.identityVerified,
+                    // clearing the check also clears the recorded ID type
+                    ...(pod?.identityVerified ? { identityType: null } : {}),
+                  })
+                }
+              />
+            ) : null}
+            {stop.identityCheckRequired && pod?.identityVerified ? (
+              <View style={styles.idTypeRow}>
+                {IDENTITY_TYPES.map((t) => (
+                  <Pressable
+                    key={t}
+                    onPress={() => setRegulated(stopId, { identityType: t })}
+                    style={[styles.idTypePill, pod?.identityType === t && styles.idTypePillActive]}
+                  >
+                    <Text
+                      style={[
+                        styles.idTypePillText,
+                        pod?.identityType === t && styles.idTypePillTextActive,
+                      ]}
+                    >
+                      {IDENTITY_TYPE_LABELS[t]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+
         <View style={styles.actionsBlock}>
           <View style={styles.actionBtnRow}>
             <SecondaryBtn
@@ -351,8 +412,79 @@ function SecondaryBtn({ label, onPress }: { label: string; onPress?: () => void 
   );
 }
 
+function CheckRow({
+  label,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable onPress={onToggle} style={styles.checkRow}>
+      <View style={[styles.checkBox, checked && styles.checkBoxOn]}>
+        {checked ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+      </View>
+      <Text style={styles.checkRowLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
+  regBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  regBannerText: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: "#92400E" },
+  checkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+  },
+  checkBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: ios.gray[3],
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkBoxOn: { backgroundColor: ios.system.green, borderColor: ios.system.green },
+  checkRowLabel: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
+  idTypeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 8,
+  },
+  idTypePill: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: ios.separator,
+    backgroundColor: ios.bgElev,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  idTypePillActive: { backgroundColor: ios.brand, borderColor: ios.brand },
+  idTypePillText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
+  idTypePillTextActive: { color: "#fff" },
   center: {
     flex: 1,
     alignItems: "center",
