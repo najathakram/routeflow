@@ -62,6 +62,7 @@ export const BILLING_EVENTS = {
   TRIAL_CONVERTED: "trial.converted",
   TRIAL_EXPIRED: "trial.expired",
   SUBSCRIPTION_CANCELED: "subscription.canceled",
+  SUBSCRIPTION_SUSPENDED: "subscription.suspended",
   SUBSCRIPTION_RESUMED: "subscription.resumed",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
