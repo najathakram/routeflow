@@ -16,6 +16,7 @@ import { BuyerController } from "./buyer.controller";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
+import { ReplenishmentService } from "./replenishment.service";
 import { OrdersService } from "../orders/orders.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
@@ -58,6 +59,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
+        { provide: ReplenishmentService, useValue: {} },
         { provide: OrdersService, useValue: ordersService },
         { provide: InvoicesService, useValue: invoicesService },
         { provide: InvoicePdfService, useValue: {} },
