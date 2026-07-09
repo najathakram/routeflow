@@ -125,6 +125,14 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     creditNoteItem: modelProxy(),
     promotion: modelProxy(),
     promotionProduct: modelProxy(),
+    // P6-1 (F0): messaging thread schema (message was previously missing).
+    message: modelProxy(),
+    messageThread: modelProxy(),
+    messageTemplate: modelProxy(),
+    notificationRule: modelProxy(),
+    messageOptOut: modelProxy(),
+    messagingSettings: modelProxy(),
+    inboundTriage: modelProxy(),
   });
 
   const txModels = () => ({
