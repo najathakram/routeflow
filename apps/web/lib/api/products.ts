@@ -97,6 +97,10 @@ export interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  /** Buyer merchandising flags (P5-01). */
+  isFeatured?: boolean;
+  isNew?: boolean;
+  isDeal?: boolean;
 }
 
 export interface ZohoImportItem {

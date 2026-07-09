@@ -18,6 +18,7 @@ import { UsersModule } from "./users/users.module";
 import { CustomersModule } from "./customers/customers.module";
 import { DriversModule } from "./drivers/drivers.module";
 import { ProductsModule } from "./products/products.module";
+import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
@@ -116,6 +117,7 @@ import { AppService } from "./app.service";
     CustomersModule,
     DriversModule,
     ProductsModule,
+    PromotionsModule,
     RoutesModule,
     OrdersModule,
     BookkeepingModule,

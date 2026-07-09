@@ -67,6 +67,33 @@ interface ApiProduct {
   variantName?: string | null;
   variants?: ApiProduct[];
   parent?: ApiProduct | null;
+  isFeatured?: boolean;
+  isNew?: boolean;
+  isDeal?: boolean;
+}
+
+// Merchandising badge row (P5-01) — reused by grid card + table cell.
+function MerchBadges({ product }: { product: ApiProduct }) {
+  if (!product.isFeatured && !product.isNew && !product.isDeal) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {product.isFeatured && (
+        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-brand-50 text-brand-700 ring-1 ring-brand-200">
+          Featured
+        </span>
+      )}
+      {product.isNew && (
+        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-sky-100 text-sky-800">
+          New
+        </span>
+      )}
+      {product.isDeal && (
+        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+          Deal
+        </span>
+      )}
+    </span>
+  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -193,7 +220,10 @@ function ProductCard({
         {product.variantName && product.parent && (
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
-        <StockBadge status={status} />
+        <div className="flex items-center gap-1.5">
+          <StockBadge status={status} />
+          <MerchBadges product={product} />
+        </div>
         {/* Add variant button for parent products */}
         {product.variants && product.variants.length > 0 && onAddVariant && !selectionMode && (
           <button
@@ -311,6 +341,9 @@ function makeTableColumns(
                     tobacco
                   </span>
                 )}
+                <span className="ml-2 inline-flex align-middle">
+                  <MerchBadges product={p} />
+                </span>
               </p>
               <p className="text-[11px] text-navy/40">
                 {p.sku ? `${p.sku} · ` : ""}

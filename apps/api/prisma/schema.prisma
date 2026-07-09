@@ -361,6 +361,7 @@ model Tenant {
   authorizationOverrides AuthorizationOverride[]
   regulatedSalesLedger   RegulatedSalesLedger[]
   regulatedFilings       RegulatedFiling[]
+  promotions             Promotion[]
 
   @@index([slug])
   @@index([status])
@@ -820,6 +821,9 @@ model Product {
   imageKeys         String[]      @default([])
   isActive          Boolean       @default(true)
   isFeatured        Boolean       @default(false)
+  // Buyer merchandising flags (P5-01): drive catalogue tiles + smart collections.
+  isNew             Boolean       @default(false)
+  isDeal            Boolean       @default(false)
   // Regulated tobacco product — only settable when the tenant has the
   // "tobacco_dealer" addon; drives separate tracking + monthly tax reports
   isTobacco         Boolean       @default(false)
@@ -859,6 +863,7 @@ model Product {
   customerPrices        CustomerPrice[]
   productMappings       ProductMapping[]
   buyerFavorites        BuyerFavorite[]
+  promotionProducts     PromotionProduct[]
   parent                Product?               @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants              Product[]              @relation("ProductVariants")
   trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
@@ -884,6 +889,60 @@ model Product {
   @@index([tenantId, isTobacco])
   @@index([tenantId, trackedCategoryId])
   @@index([tenantId, detailsIncomplete])
+}
+
+/// Seller merchandising promotion (P5-01): evaluated at cart time (in pricing.ts) and
+/// shown on tiles + a checkout savings line. Tenant-managed. Typed rules — no JSON DSL:
+/// PERCENT / FIXED / QTY_BREAK, scoped to all products, one category, or an explicit
+/// product set, within a time window. Money math lives in pricing.ts, never here.
+model Promotion {
+  id         String         @id @default(uuid())
+  tenantId   String
+  name       String
+  bannerText String?
+  type       PromotionType  @default(PERCENT)
+  value      Decimal        @default(0) @db.Decimal(10, 2)
+  minQty     Int? // QTY_BREAK threshold (pieces)
+  scope      PromotionScope @default(ALL)
+  category   String? // when scope = CATEGORY
+  startsAt   DateTime
+  endsAt     DateTime
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  tenant   Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  products PromotionProduct[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive, startsAt, endsAt])
+}
+
+/// Join row when a Promotion scopes to an explicit product set (scope = PRODUCTS).
+model PromotionProduct {
+  id          String @id @default(uuid())
+  tenantId    String
+  promotionId String
+  productId   String
+
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([promotionId, productId])
+  @@index([tenantId])
+  @@index([productId])
+}
+
+enum PromotionType {
+  PERCENT
+  FIXED
+  QTY_BREAK
+}
+
+enum PromotionScope {
+  ALL
+  CATEGORY
+  PRODUCTS
 }
 
 model Route {

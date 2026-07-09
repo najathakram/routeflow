@@ -19,6 +19,10 @@ export class UpdateProductDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  /** Buyer merchandising flags (P5-01) — surfaced on catalogue tiles + smart collections. */
+  @IsOptional() @IsBoolean() isFeatured?: boolean;
+  @IsOptional() @IsBoolean() isNew?: boolean;
+  @IsOptional() @IsBoolean() isDeal?: boolean;
   /** Requires the tenant's "tobacco_dealer" addon to set true. */
   @IsOptional() @IsBoolean() isTobacco?: boolean;
   /** Full replacement of the imageKeys array — used to reorder or set the default image. */

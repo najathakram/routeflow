@@ -111,6 +111,58 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+// ─── Merchandising flag toggle (P5-01) ──────────────────────────────────────────
+
+function MerchFlagToggle({
+  label,
+  description,
+  active,
+  disabled,
+  onToggle,
+}: {
+  label: string;
+  description: string;
+  active: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={active}
+      disabled={disabled}
+      onClick={onToggle}
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
+        active
+          ? "border-brand-300 bg-brand-50"
+          : "border-surface-border bg-white hover:bg-surface-raised",
+      )}
+    >
+      <span className="min-w-0">
+        <span className={cn("block text-sm font-medium", active ? "text-brand-700" : "text-navy")}>
+          {label}
+        </span>
+        <span className="block text-[11px] text-navy/60">{description}</span>
+      </span>
+      <span
+        className={cn(
+          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors",
+          active ? "bg-brand-500" : "bg-navy/20",
+        )}
+      >
+        <span
+          className={cn(
+            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+            active ? "translate-x-4" : "translate-x-0.5",
+          )}
+        />
+      </span>
+    </button>
+  );
+}
+
 // ─── Inline number field ──────────────────────────────────────────────────────
 
 function EditableNumber({ value, onChange }: { value: number; onChange: (v: number) => void }) {
@@ -766,6 +818,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 <Badge variant="warning" label="Low Stock" />
               ) : null}
               {(product as any).isTobacco && <Badge variant="warning" label="Tobacco" />}
+              {(product as any).isFeatured && <Badge variant="info" label="Featured" />}
+              {(product as any).isNew && <Badge variant="info" label="New" />}
+              {(product as any).isDeal && <Badge variant="success" label="Deal" />}
             </div>
             <p className="mt-1.5 text-sm text-navy/70">
               {product.sku && <span className="font-mono">{product.sku}</span>}
@@ -1277,6 +1332,70 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
                       Tobacco section →
                     </Link>
+                  </div>
+                )}
+
+                {/* Buyer merchandising flags (P5-01) */}
+                {isOperator && (
+                  <div className="mb-4 rounded-lg border border-surface-border bg-white p-4">
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <Star className="h-4 w-4 text-brand-500" />
+                      <h3 className="text-sm font-semibold text-navy">Buyer merchandising</h3>
+                    </div>
+                    <p className="mb-3 text-xs text-navy/60">
+                      Highlight this product on the buyer catalogue with badges and smart
+                      collections. These are display flags only — they don&apos;t change price.
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <MerchFlagToggle
+                        label="Featured"
+                        description="Pin to the featured shelf"
+                        active={!!(product as any).isFeatured}
+                        disabled={updateProduct.isPending}
+                        onToggle={() =>
+                          updateProduct.mutate(
+                            { id: params.id, isFeatured: !(product as any).isFeatured } as any,
+                            {
+                              onSuccess: () =>
+                                toast({ title: "Merchandising updated", variant: "success" }),
+                              onError: () => toast({ title: "Failed to update", variant: "error" }),
+                            },
+                          )
+                        }
+                      />
+                      <MerchFlagToggle
+                        label="New"
+                        description={'Show a "New" badge'}
+                        active={!!(product as any).isNew}
+                        disabled={updateProduct.isPending}
+                        onToggle={() =>
+                          updateProduct.mutate(
+                            { id: params.id, isNew: !(product as any).isNew } as any,
+                            {
+                              onSuccess: () =>
+                                toast({ title: "Merchandising updated", variant: "success" }),
+                              onError: () => toast({ title: "Failed to update", variant: "error" }),
+                            },
+                          )
+                        }
+                      />
+                      <MerchFlagToggle
+                        label="Deal"
+                        description={'Show a "Deal" badge'}
+                        active={!!(product as any).isDeal}
+                        disabled={updateProduct.isPending}
+                        onToggle={() =>
+                          updateProduct.mutate(
+                            { id: params.id, isDeal: !(product as any).isDeal } as any,
+                            {
+                              onSuccess: () =>
+                                toast({ title: "Merchandising updated", variant: "success" }),
+                              onError: () => toast({ title: "Failed to update", variant: "error" }),
+                            },
+                          )
+                        }
+                      />
+                    </div>
                   </div>
                 )}
 

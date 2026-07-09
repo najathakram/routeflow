@@ -10,6 +10,7 @@ import { OrdersModule } from "../orders/orders.module";
 import { InvoicesModule } from "../invoices/invoices.module";
 import { CustomersModule } from "../customers/customers.module";
 import { ProductsModule } from "../products/products.module";
+import { PromotionsModule } from "../promotions/promotions.module";
 import { OrderTemplatesModule } from "../order-templates/order-templates.module";
 import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
@@ -43,6 +44,7 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     InvoicesModule,
     CustomersModule,
     ProductsModule,
+    PromotionsModule,
     OrderTemplatesModule,
     StorageModule,
     AuthorizationsModule,
