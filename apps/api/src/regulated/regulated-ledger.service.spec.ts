@@ -309,6 +309,24 @@ describe("RegulatedLedgerService", () => {
       });
       expect(written()[0]).toMatchObject({ qty: -1, netSales: -3.34 });
     });
+
+    it("does not double-reverse when a CREDIT NOTE already reversed the same line", async () => {
+      // Reachable path: the returns page can both process the return AND issue a credit
+      // note. The credit-note REVERSAL (keyed by invoiceItemId) must count against the
+      // return's cap so the SALE isn't reversed twice into a negative filing.
+      arrange({
+        sales: [saleRow({ qty: 3, netSales: 30, categoryTax: 0 })],
+        priorReversals: [{ invoiceItemId: "ii-1", qty: -3, netSales: -30, categoryTax: 0 }],
+        items: [{ id: "ii-1", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-dup",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]), // wants all 3, but 0 remain
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
   });
 
   describe("unreverseReturnEntries", () => {
@@ -321,14 +339,27 @@ describe("RegulatedLedgerService", () => {
   });
 
   describe("reverseCreditNoteEntries", () => {
-    it("negates the credit note's regulated items into REVERSAL rows", async () => {
-      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([]); // idempotency: none prior
+    it("reverses a credited regulated line against its matching SALE row (stamps source ids)", async () => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency: none prior for this creditNoteId
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-1",
+            netSales: 30,
+            qty: 3,
+            categoryTax: 6,
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            invoiceId: "inv-1",
+          },
+        ]) // SALE rows
+        .mockResolvedValueOnce([]); // prior REVERSAL rows: none
       prisma.creditNoteItem.findMany.mockResolvedValue([
         {
           tenantId: "t1",
           trackedCategoryId: "cat-A",
           invoiceItemId: "ii-1",
-          amount: 15,
+          amount: 15, // partial credit of the $30 line
           qty: 1.5,
           categoryTax: 3,
         },
@@ -340,10 +371,87 @@ describe("RegulatedLedgerService", () => {
         creditNoteId: "cn-1",
         trackedCategoryId: "cat-A",
         invoiceItemId: "ii-1",
+        orderId: "ord-1", // stamped from the SALE so the return path's cap sees it
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
         qty: -1.5,
         netSales: -15,
         categoryTax: -3,
       });
+    });
+
+    it("does NOT book a naked reversal when the credited line has no SALE row", async () => {
+      // e.g. a pre-W5 / non-split invoice: CreditNoteItem exists but no SALE was ledgered.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([]) // SALE rows: NONE
+        .mockResolvedValueOnce([]); // prior reversals
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 15,
+          qty: 1.5,
+          categoryTax: 3,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("clamps so a credit can't reverse more than the line's remaining un-reversed balance", async () => {
+      // SALE $30/qty3; a prior return already reversed the whole line (-$30/-3).
+      // A $30 credit of the same line must reverse NOTHING (already fully reversed).
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 30, qty: 3, categoryTax: 0 }]) // SALE
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: -30, qty: -3, categoryTax: 0 }]); // prior REVERSAL
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 30,
+          qty: 3,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-2", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("clamps WITHIN a batch: two items on the same line can't over-reverse the SALE", async () => {
+      // Defense-in-depth for the duplicate-invoiceItemId vector: even if two
+      // CreditNoteItems reference the same line, cumulative reversal is capped at the SALE.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 100, qty: 10, categoryTax: 0 }]) // SALE
+        .mockResolvedValueOnce([]); // prior reversals: none
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 100,
+          qty: 10,
+          categoryTax: 0,
+        },
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 100,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-dup", db: prisma });
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      const totalNet = data.reduce((s: number, r: any) => s + r.netSales, 0);
+      const totalQty = data.reduce((s: number, r: any) => s + r.qty, 0);
+      expect(totalNet).toBe(-100); // NOT -200
+      expect(totalQty).toBe(-10);
     });
 
     it("is idempotent — a credit note already reversed writes nothing", async () => {
