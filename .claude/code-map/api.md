@@ -253,7 +253,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `buyer/` (multi-tenant customer identity)
 
 - **buyer-auth controller** `buyer/auth` — register, login, refresh, logout, delete account, change-password, profile, sessions.
-- **buyer controller** `buyer` — sellers, invites details/accept, sellers request/disconnect, profile, orders, invoices(+/:id), statement, products(+categories/:id), orders active/:id.
+- **buyer controller** `buyer` — sellers, invites details/accept, sellers request/disconnect, profile, orders, invoices(+/:id), statement, products(+categories/:id), orders active/:id, dashboard, **replenishment**, authorizations.
+- **replenishment.service (P5-05)** — `estimates(customerId, now?)`: read-only cadence inference over `Order`/`OrderItem` history (last 180d, non-cancelled). Per product: median inter-order gap = `cadenceDays`, `estDaysLeft`, median `typicalQty`, `suggestedQty` rounded to usual pack (`normalizeBoxesPieces` + whole-box), `state` low/due-soon/ok; sorted urgent-first. No model, no money write. `GET /buyer/replenishment` (seller-scoped, `@CurrentBuyerCustomer` ctx). Feeds Your Shelf / running-low strip / dashboard chips (P5-06/07). Spec `replenishment.service.spec`.
 - **buyer-admin controller** `platform-admin/buyer-accounts` + `customer-links` — manage buyer accounts, approve links.
 - **buyer-merge controller** `buyer/auth` — account merge via token.
 - side effects: BuyerAccount/BuyerRefreshToken/CustomerLink/BuyerMergeRequest writes; invite email; presigned links.

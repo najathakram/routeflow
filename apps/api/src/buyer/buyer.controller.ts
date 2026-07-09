@@ -17,6 +17,7 @@ import { OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
+import { ReplenishmentService } from "./replenishment.service";
 import { BuyerJwtAuthGuard, PublicBuyer } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
@@ -72,6 +73,7 @@ export class BuyerController {
     private readonly buyerService: BuyerService,
     private readonly catalogService: BuyerCatalogService,
     private readonly dashboardService: BuyerDashboardService,
+    private readonly replenishmentService: ReplenishmentService,
     private readonly ordersService: OrdersService,
     private readonly invoicesService: InvoicesService,
     private readonly invoicePdfService: InvoicePdfService,
@@ -382,6 +384,17 @@ export class BuyerController {
       ? (frequentWindow as "30d" | "90d" | "all")
       : "all";
     return this.dashboardService.getDashboard(ctx.customerId, window);
+  }
+
+  @Get("replenishment")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Per-product replenishment estimates (cadence, days-left, suggested qty)",
+  })
+  getReplenishment(@CurrentBuyerCustomer() ctx: any) {
+    return this.replenishmentService.estimates(ctx.customerId);
   }
 
   // ─── Buyer self-profile ───────────────────────────────────────────────────────
