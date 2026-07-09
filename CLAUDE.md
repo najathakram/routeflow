@@ -91,6 +91,27 @@ Names only — see each app's example file. Never commit values.
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
 
+### Canonical deploy flow: **public → merge → deploy → private** (in this exact order)
+
+The repo is **private by default** (commercial source). CI (public repos = free Actions) and Railway's
+GitHub deploy (it must **clone** the repo) both need it public. The sequence — **always**:
+
+1. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
+2. **(schema change only)** apply the prod migration FIRST — `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
+3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
+4. **Let the deploy FINISH while still public.** Railway clones the repo during **"Snapshot code"** — wait until the new deployment is **ACTIVE / "Deployment successful"** (watch `railway deployment list --service @routeflow/{api,web}` or the dashboard), then `npm run post-deploy-check`.
+5. **Only then make it private** — `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
+
+> **Do NOT flip to private before the Railway deploy completes.** If the repo goes private mid-deploy,
+> the clone fails with **"Snapshot code → repository not found"** and the deploy dies (Railway's GitHub
+> App lacks private-repo access — see memory `project_railway_deploy_outage_2026-07`). Docs-only changes
+> (outside each service's `watchPatterns` = `apps/<svc>/**` + `packages/**`) are **SKIPPED** by Railway, so
+> there's no deploy to wait for — go private right after merge.
+>
+> **Fallback if a GitHub deploy is stuck/broken:** `railway up --service @routeflow/api --ci` then
+> `--service @routeflow/web --ci` force-deploys local source (bypasses the clone). Permanent fix for the
+> clone failure = reinstall the **Railway GitHub App** with access to the private repo on account `najathakram`.
+
 ## Token Budget
 
 - grep before reading whole files; read exports/signatures before bodies.
