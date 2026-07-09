@@ -18,6 +18,7 @@ import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { ReplenishmentService } from "./replenishment.service";
+import { PromotionsService } from "../promotions/promotions.service";
 import { BuyerJwtAuthGuard, PublicBuyer } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
@@ -74,6 +75,7 @@ export class BuyerController {
     private readonly catalogService: BuyerCatalogService,
     private readonly dashboardService: BuyerDashboardService,
     private readonly replenishmentService: ReplenishmentService,
+    private readonly promotionsService: PromotionsService,
     private readonly ordersService: OrdersService,
     private readonly invoicesService: InvoicesService,
     private readonly invoicePdfService: InvoicePdfService,
@@ -406,6 +408,16 @@ export class BuyerController {
   })
   getReplenishment(@CurrentBuyerCustomer() ctx: any) {
     return this.replenishmentService.estimates(ctx.customerId);
+  }
+
+  @Get("promotions")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Active merchandising promotions at the selected seller" })
+  getPromotions() {
+    // Tenant is set by the interceptor; returns only in-window active promos.
+    return this.promotionsService.activeForCatalog();
   }
 
   // ─── Buyer self-profile ───────────────────────────────────────────────────────

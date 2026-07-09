@@ -107,7 +107,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `products/`
 
 - **controller** `products` — `barcode/:barcode`, `@Get/:id`, import, `@Delete clear-all|bulk|:id`, `@Patch :id`, images add/remove.
-- **service** — `findAll`, `findByBarcode`, `findOne`, `create`, `update`, `delete`, `import`, `add/removeImage`. `create` defaults a new product's `costingMethod` to the tenant `costing.method` via `resolveCostingMethod()` (WEIGHTED_AVERAGE→AVCO; explicit DTO wins; unset tenant → schema default FIFO) — ProductsModule imports SystemConfigModule (pos-cost-roles §1). side effects: Product/ProductImage writes; image upload; inventory ledger.
+- **service** — `findAll`, `findByBarcode`, `findOne`, `create`, `update`, `delete`, `import`, `add/removeImage`. `create` defaults a new product's `costingMethod` to the tenant `costing.method` via `resolveCostingMethod()` (WEIGHTED_AVERAGE→AVCO; explicit DTO wins; unset tenant → schema default FIFO) — ProductsModule imports SystemConfigModule (pos-cost-roles §1). side effects: Product/ProductImage writes; image upload; inventory ledger. **P5-01: `UpdateProductDto` gained `isFeatured/isNew/isDeal` merch flags** (pass-through in `update`).
+
+### `promotions/` (P5-01)
+
+- **controller** `promotions` `@Roles(OPERATOR)` — CRUD + `PATCH :id/active`. **service** `PromotionsService`: tenant-scoped promo CRUD (typed rules PERCENT/FIXED/QTY_BREAK × scope ALL/CATEGORY/PRODUCTS, windowed; `validateRule` guards) + `activeForCatalog(now)` (in-window active promos, flattened `productIds`) consumed by buyer `GET /buyer/promotions`. Prices NOTHING — pricing.ts applies rules at cart time (P5-04). Models `Promotion`/`PromotionProduct` + migration `20260711000000_promotions_merch_flags` (additive). Spec `promotions.service.spec`.
 
 ### `orders/`
 
