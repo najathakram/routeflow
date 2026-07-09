@@ -347,6 +347,12 @@ model Tenant {
   recurringInvoices      RecurringInvoice[]
   recurringInvoiceItems  RecurringInvoiceItem[]
   messages               Message[]
+  messageThreads         MessageThread[]
+  messageTemplates       MessageTemplate[]
+  notificationRules      NotificationRule[]
+  messageOptOuts         MessageOptOut[]
+  messagingSettings      MessagingSettings?
+  inboundTriages         InboundTriage[]
   customerPrices         CustomerPrice[]
   systemConfigs          SystemConfig[]
   customerLinks          CustomerLink[]
@@ -674,6 +680,11 @@ model Customer {
   creditLimit           Decimal?    @db.Decimal(10, 2)
   currency              String      @default("USD")
   pricingTier           Int         @default(1)
+  // P6-1 (F0): per-channel messaging consent (only the STOP-gated SMS/WA channels
+  // carry consent; EMAIL/PORTAL don't). Additive — existing rows backfill to false.
+  smsConsent            Boolean     @default(false)
+  waConsent             Boolean     @default(false)
+  consentUpdatedAt      DateTime?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   // RF-197: soft-delete timestamp; set instead of physically deleting when
@@ -683,6 +694,8 @@ model Customer {
 
   user              User                    @relation(fields: [userId], references: [id])
   tenant            Tenant?                 @relation(fields: [tenantId], references: [id])
+  messageThreads    MessageThread[]
+  messageOptOuts    MessageOptOut[]
   addresses         CustomerAddress[]
   routes            RouteCustomer[]
   routeStops        RouteStop[]
@@ -2186,12 +2199,185 @@ model Message {
   createdAt  DateTime @default(now())
   tenantId   String?
 
-  sender User    @relation(fields: [senderId], references: [id])
-  tenant Tenant? @relation(fields: [tenantId], references: [id])
+  // P6-1 (F0): additively generalize the run-chat Message into a channel-aware,
+  // thread-attachable message. Existing driver run-chat rows keep threadId=NULL
+  // and channel=INTERNAL (both defaulted), so the create/read paths are unchanged.
+  threadId String?
+  channel  MessageChannel @default(INTERNAL)
+
+  sender User           @relation(fields: [senderId], references: [id])
+  tenant Tenant?        @relation(fields: [tenantId], references: [id])
+  thread MessageThread? @relation(fields: [threadId], references: [id])
 
   @@index([runId])
   @@index([senderId])
   @@index([tenantId])
+  @@index([threadId])
+}
+
+// ─── P6-1 (F0): Unified messaging — threads, templates, rules, consent ────────
+// Additive foundation for the P6 messaging phase. NOTHING here is wired to a
+// provider yet (StubProvider + real adapters land in P6-3/P6-4); this is the
+// schema substrate the engine/inbox/settings build on. All tenant-scoped.
+
+enum MessageChannel {
+  INTERNAL // driver ↔ operator run-chat (default; never metered, never STOP-gated)
+  WHATSAPP // metered (MSGS), STOP-gated, consent-gated
+  SMS // metered (MSGS), STOP-gated, consent-gated
+  EMAIL // never metered
+  PORTAL // buyer-portal chat; never metered
+}
+
+enum ThreadStatus {
+  OPEN
+  SNOOZED
+  CLOSED
+}
+
+enum WaApprovalStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TriageStatus {
+  PENDING
+  LINKED
+  DISMISSED
+}
+
+// Catalogue of notification triggers the rules matrix + templates key off.
+enum NotificationEvent {
+  ORDER_CONFIRMED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  ORDER_CHANGED_AT_DOOR
+  INVOICE_SENT // email/portal only; WA/SMS cells render disabled
+  PAYMENT_REMINDER
+  LICENSE_EXPIRING
+  URGENT_ORDER_PLACED // internal alert
+  LOW_STOCK // internal alert
+  FAILED_DELIVERY // internal alert
+  PAYMENT_FAILED_NSF // internal alert
+}
+
+// One conversation with a customer across all channels (the inbox row).
+model MessageThread {
+  id                 String          @id @default(uuid())
+  tenantId           String?
+  customerId         String?
+  lastChannel        MessageChannel?
+  lastMessageAt      DateTime?
+  lastMessagePreview String?
+  unreadCount        Int             @default(0)
+  status             ThreadStatus    @default(OPEN)
+  snoozedUntil       DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  messages Message[]
+
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, lastMessageAt])
+  @@index([tenantId, status])
+}
+
+// Per-event/-channel message body with {{var}} placeholders (+ Meta WA template ref).
+model MessageTemplate {
+  id               String            @id @default(uuid())
+  tenantId         String?
+  eventKey         NotificationEvent
+  channel          MessageChannel
+  body             String
+  variables        String[]          @default([])
+  waTemplateName   String?
+  waApprovalStatus WaApprovalStatus  @default(NONE)
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, eventKey, channel])
+  @@index([tenantId])
+}
+
+// The Settings → Notifications matrix cell state (event × channel → on/off).
+model NotificationRule {
+  id        String            @id @default(uuid())
+  tenantId  String?
+  eventKey  NotificationEvent
+  channel   MessageChannel
+  enabled   Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, eventKey, channel])
+  @@index([tenantId])
+}
+
+// STOP-reply / manual opt-out state for the metered, STOP-capable channels.
+model MessageOptOut {
+  id         String         @id @default(uuid())
+  tenantId   String?
+  customerId String?
+  phone      String?
+  channel    MessageChannel
+  optedOutAt DateTime       @default(now())
+  reason     String?
+  source     String? // e.g. "STOP"
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@unique([tenantId, customerId, channel])
+  @@index([tenantId])
+  @@index([tenantId, phone])
+}
+
+// Per-tenant messaging config singleton. Provider credentials (Meta WA / Twilio)
+// are deferred to P6-3 (encrypted via EncryptionService when the adapters land).
+model MessagingSettings {
+  id                String   @id @default(uuid())
+  tenantId          String   @unique
+  quietHoursEnabled Boolean  @default(true)
+  quietHoursStart   String   @default("21:00")
+  quietHoursEnd     String   @default("07:00")
+  timezone          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+}
+
+// Inbound message from an unknown number → operator triage queue (link/dismiss).
+model InboundTriage {
+  id                 String       @id @default(uuid())
+  tenantId           String?
+  channel            MessageChannel
+  fromNumber         String
+  body               String
+  providerMsgId      String?
+  status             TriageStatus @default(PENDING)
+  resolvedCustomerId String?
+  resolvedById       String?
+  resolvedAt         DateTime?
+  receivedAt         DateTime     @default(now())
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, status])
 }
 
 // ─── Customer Special Prices ──────────────────────────────────────────────────
