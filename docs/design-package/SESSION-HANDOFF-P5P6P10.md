@@ -5,10 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P5-01 COMPLETE + LIVE (PR #159). ⚠️ Railway GitHub auto-deploys are
-> broken since 07-08 — ROOT CAUSE CONFIRMED (Railway can't clone the private repo: "Snapshot code →
-> repository not found"; the Railway GitHub App lost repo access). Ship with `railway up` until the
-> App is reinstalled. See Current state.
+> **Last updated:** 2026-07-09 — P6-1/F0 messaging-thread schema COMPLETE + LIVE (PR #163). P5-01 also
+> live (#159). ⚠️ Railway GitHub auto-deploys still broken since 07-08 (root cause: App can't clone the
+> private repo — "Snapshot code → repository not found"). Ship with `railway up` until the user reinstalls
+> the Railway GitHub App. Canonical flow now in CLAUDE.md: **public → merge → deploy (wait) → private.**
 
 ---
 
@@ -32,11 +32,17 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **master @ 7e11d71.** **P5-01 COMPLETE + LIVE** (PR #159): merchandising promotions + product merch
-  flags, backend + operator web UI. Migration `20260711000000_promotions_merch_flags` applied to prod.
-  `/promotions` manager page + `lib/api/promotions.ts` hooks + product-detail Featured/New/Deal toggles +
-  list badges + nav/command-palette entries; `GET /buyer/promotions` live. Pricing-time application is
-  still **P5-04** (not built). P5-05 replenishment (#158) is also now live.
+- **master @ 66d550d.** **P6-1 / F0 COMPLETE + LIVE** (PR #163): additive messaging-thread schema
+  foundation. `Message` gained `threadId?` + `channel MessageChannel @default(INTERNAL)` (run-chat
+  **unregressed** — create/read paths untouched, locked by `apps/api/src/messages/messages.service.spec.ts`);
+  6 new tenant-scoped models (`MessageThread`, `MessageTemplate`, `NotificationRule`, `MessageOptOut`,
+  `MessagingSettings`, `InboundTriage`) + 5 enums; `Customer` +`smsConsent`/`waConsent`/`consentUpdatedAt`.
+  Migration `20260712000000_messaging_threads` applied to prod; deployed via `railway up` (GitHub deploy
+  still broken). Providers/engine/inbox/settings-UI = later P6 increments (P6-2…P6-14).
+- **P5-01 COMPLETE + LIVE** (PR #159): merchandising promotions + product merch flags, backend + operator
+  web UI. Migration `20260711000000_promotions_merch_flags` applied. `/promotions` manager + product merch
+  toggles/badges; `GET /buyer/promotions`. Pricing-time application is still **P5-04** (not built). P5-05
+  replenishment (#158) also live.
 - **⚠️ RAILWAY GITHUB AUTO-DEPLOYS BROKEN SINCE 2026-07-08 — ROOT CAUSE CONFIRMED (Railway dashboard).**
   Every GitHub-triggered deploy (web + api) FAILS at **"Initialization › Snapshot code" with
   `##NOT-FOUND## repository not found`** — build/deploy never start. Railway **cannot clone the repo**:
@@ -57,16 +63,17 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **P6-1 / F0 — messaging thread schema.** G3 default = **generalize run-chat `Message` ADDITIVELY**: add
-   nullable `threadId` + `channel`(=`INTERNAL` default) columns + NEW models (`MessageThread`,
-   `MessageTemplate`, `NotificationRule`, `MessageOptOut`, `MessagingSettings`, `InboundTriage`) + `Customer`
-   consent columns. **Do NOT rename the `Message` table** — the existing driver run-chat must keep working;
-   verify it is unregressed. Additive migration; `git add -f` the migration.sql.
-
-2. **P10-PAR-1 — mobile estimates/quotes parity screen** (apps/mobile), mirroring the shipped web estimates
+1. **P10-PAR-1 — mobile estimates/quotes parity screen** (apps/mobile), mirroring the shipped web estimates
    API. No new models. Mobile Jest = pure-logic only.
 
-_(Full backlog + dependencies + 18 gating decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
+2. **P6-2 — messaging engine + StubProvider** (next P6 step now that F0 schema is live): the
+   provider-agnostic `MessageProvider` interface + `StubProvider` (logs, no send), a message service that
+   writes `Message` rows on a `MessageThread` with `channel`, resolves templates (`MessageTemplate`), honors
+   `NotificationRule`/`MessageOptOut`/quiet-hours (`MessagingSettings`). Real Meta-WA/Twilio adapters are
+   later (P6-3/P6-4). Everything tenant-scoped; no money.
+
+_(P6-1/F0 schema foundation is DONE — see Current state. Full backlog + dependencies + 18 gating
+decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
 
 ## Critical rules
 

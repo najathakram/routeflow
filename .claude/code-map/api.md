@@ -230,7 +230,8 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `notifications/` & `messages/`
 
 - **notifications controller** `notifications` — register-token, delete token, test, status. `sendNotification`/`broadcast` via FCM/Expo push; DeviceToken writes.
-- **messages controller** `messages` — create, list (inbox). Message writes; Socket.io broadcast.
+- **messages controller** `messages` — create, list (inbox). Message writes; Socket.io broadcast. `messages.service.ts` create sets only `{runId,text,senderId,senderRole}`; `findByRun` reads `where:{runId}`,`orderBy createdAt asc`,`include sender`. **`messages.service.spec.ts` locks this run-chat create/read shape** (P6-1 regression guard).
+- **P6-1 (F0) messaging thread schema (schema-only foundation, PR #163, no service yet):** `Message` additively gained `threadId String?` + `channel MessageChannel @default(INTERNAL)` (+`thread` relation, index) — run-chat rows stay `channel=INTERNAL`/`threadId=null`, unregressed. New tenant-scoped models: `MessageThread`, `MessageTemplate`, `NotificationRule`, `MessageOptOut`, `MessagingSettings` (per-tenant singleton, `tenantId @unique`; provider creds deferred to P6-3), `InboundTriage`; enums `MessageChannel`/`ThreadStatus`/`WaApprovalStatus`/`TriageStatus`/`NotificationEvent`. `Customer` gained `smsConsent`/`waConsent`/`consentUpdatedAt`. Migration `20260712000000_messaging_threads` (additive; applied to prod). Engine/inbox/settings/providers = later P6 increments.
 
 ### `uploads/`
 
