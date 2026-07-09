@@ -5,8 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P5-01 COMPLETE + LIVE (PR #159). ⚠️ Railway GitHub-deploys are
-> broken since 07-08 (see Current state) — ship increments with `railway up`, not the auto-deploy.
+> **Last updated:** 2026-07-09 — P5-01 COMPLETE + LIVE (PR #159). ⚠️ Railway GitHub auto-deploys are
+> broken since 07-08 — ROOT CAUSE CONFIRMED (Railway can't clone the private repo: "Snapshot code →
+> repository not found"; the Railway GitHub App lost repo access). Ship with `railway up` until the
+> App is reinstalled. See Current state.
 
 ---
 
@@ -35,13 +37,23 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
   `/promotions` manager page + `lib/api/promotions.ts` hooks + product-detail Featured/New/Deal toggles +
   list badges + nav/command-palette entries; `GET /buyer/promotions` live. Pricing-time application is
   still **P5-04** (not built). P5-05 replenishment (#158) is also now live.
-- **⚠️ RAILWAY GITHUB-DEPLOYS BROKEN SINCE 2026-07-08.** Every auto-deploy (web + api) FAILS at the
-  Metal-builder "scheduling build" stage with no build logs — a platform/account issue, NOT code (predates
-  P5-01; failures line up with #157/#158/#159 merges). **Workaround that WORKED: `railway up --service
-  @routeflow/api --ci` and `--service @routeflow/web --ci`** (force-deploy from local — bypasses the GitHub
-  trigger; same builder but it succeeded). Prod DB is fully migrated. Until the auto-deploy is fixed
-  (Railway dashboard / build quota / builder), **ship every increment with `railway up`**, then
-  `post-deploy-check`. See memory `project_railway_deploy_outage_2026-07`.
+- **⚠️ RAILWAY GITHUB AUTO-DEPLOYS BROKEN SINCE 2026-07-08 — ROOT CAUSE CONFIRMED (Railway dashboard).**
+  Every GitHub-triggered deploy (web + api) FAILS at **"Initialization › Snapshot code" with
+  `##NOT-FOUND## repository not found`** — build/deploy never start. Railway **cannot clone the repo**:
+  it's private (RouteFlow flips public only briefly for CI, then back to private right after merge) and
+  **Railway's GitHub App no longer has access to `najathakram/routeflow`**. Source connection config is
+  intact (repo/branch/auto-deploy all set); it's purely a repo-access problem. Not code — failures
+  predate P5-01 and line up with #157/#158/#159 merges. Account tangle to know: repo owner = `najathakram`
+  (gh CLI), a *different* GitHub account `najathakram91` is logged into the browser, Railway =
+  `najathakram1@gmail.com`.
+  - **PROVEN workaround (used for P5-01):** `railway up --service @routeflow/api --ci` then
+    `--service @routeflow/web --ci` — force-deploys local source, bypasses the GitHub clone. Succeeds.
+    Then run `post-deploy-check`. Prod DB is fully migrated.
+  - **Permanent fix (user action — I can't grant App access):** reinstall/grant the **Railway GitHub App**
+    access to `najathakram/routeflow` on the owner account (Railway → each service → Settings → Source →
+    edit/reconnect repo, OR github.com/apps/railway → Configure → add repo). Then GitHub deploys clone the
+    private repo fine. Alternatives: keep the repo PUBLIC until Railway finishes each deploy, or make it
+    permanently public (exposes source). See memory `project_railway_deploy_outage_2026-07`.
 
 ## DO NEXT (in order — one branch/PR per increment)
 
