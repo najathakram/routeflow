@@ -5,7 +5,8 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P5-05 shipped; P5-01 backend built (not deployed).
+> **Last updated:** 2026-07-09 — P5-01 COMPLETE + LIVE (PR #159). ⚠️ Railway GitHub-deploys are
+> broken since 07-08 (see Current state) — ship increments with `railway up`, not the auto-deploy.
 
 ---
 
@@ -29,28 +30,28 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **master @ 65cab27.** P5-05 (buyer replenishment estimates, `GET /buyer/replenishment`) is **SHIPPED + live**.
-- **P5-01 BACKEND built, NOT deployed** — branch `feat/promotions-merch-flags` (commit `ea499d5`, pushed).
-  Contains: additive migration `20260711000000_promotions_merch_flags` (`Product.isNew/isDeal` +
-  `Promotion`/`PromotionProduct`), `apps/api/src/promotions/*` (CRUD `@Roles(OPERATOR)` + `activeForCatalog`),
-  `UpdateProductDto` merch flags, `GET /buyer/promotions`, specs (verify was 18/18). Prisma client regenerated.
+- **master @ 7e11d71.** **P5-01 COMPLETE + LIVE** (PR #159): merchandising promotions + product merch
+  flags, backend + operator web UI. Migration `20260711000000_promotions_merch_flags` applied to prod.
+  `/promotions` manager page + `lib/api/promotions.ts` hooks + product-detail Featured/New/Deal toggles +
+  list badges + nav/command-palette entries; `GET /buyer/promotions` live. Pricing-time application is
+  still **P5-04** (not built). P5-05 replenishment (#158) is also now live.
+- **⚠️ RAILWAY GITHUB-DEPLOYS BROKEN SINCE 2026-07-08.** Every auto-deploy (web + api) FAILS at the
+  Metal-builder "scheduling build" stage with no build logs — a platform/account issue, NOT code (predates
+  P5-01; failures line up with #157/#158/#159 merges). **Workaround that WORKED: `railway up --service
+  @routeflow/api --ci` and `--service @routeflow/web --ci`** (force-deploy from local — bypasses the GitHub
+  trigger; same builder but it succeeded). Prod DB is fully migrated. Until the auto-deploy is fixed
+  (Railway dashboard / build quota / builder), **ship every increment with `railway up`**, then
+  `post-deploy-check`. See memory `project_railway_deploy_outage_2026-07`.
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **Finish + deploy P5-01.** On `feat/promotions-merch-flags`: add the operator web UI (apps/web Products
-   surface) to manage promotions + toggle product featured/new/deal flags via the existing endpoints. (Do NOT
-   fold in pricing-time promo application — that's a separate increment, **P5-04**.) Then deploy the whole
-   increment: **MIGRATE PROD FIRST** (`railway run --service postgres node apps/api/scripts/prod-migrate.mjs`
-   from a tree that has the migration) → public → CI green → merge → private → `post-deploy-check`. Migration
-   must precede the app deploy.
-
-2. **P6-1 / F0 — messaging thread schema.** G3 default = **generalize run-chat `Message` ADDITIVELY**: add
+1. **P6-1 / F0 — messaging thread schema.** G3 default = **generalize run-chat `Message` ADDITIVELY**: add
    nullable `threadId` + `channel`(=`INTERNAL` default) columns + NEW models (`MessageThread`,
    `MessageTemplate`, `NotificationRule`, `MessageOptOut`, `MessagingSettings`, `InboundTriage`) + `Customer`
    consent columns. **Do NOT rename the `Message` table** — the existing driver run-chat must keep working;
    verify it is unregressed. Additive migration; `git add -f` the migration.sql.
 
-3. **P10-PAR-1 — mobile estimates/quotes parity screen** (apps/mobile), mirroring the shipped web estimates
+2. **P10-PAR-1 — mobile estimates/quotes parity screen** (apps/mobile), mirroring the shipped web estimates
    API. No new models. Mobile Jest = pure-logic only.
 
 _(Full backlog + dependencies + 18 gating decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
