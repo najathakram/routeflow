@@ -71,6 +71,14 @@ export default function OperatorMoreScreen() {
             chevron
           />
           <ListRow
+            icon={<Ionicons name="reader-outline" size={16} color={ios.system.purpleInk} />}
+            iconBg={ios.system.purpleWash}
+            title="Estimates"
+            subtitle="Quotes & proposals"
+            onPress={() => router.push("/(operator)/estimates")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="cube-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
             title="Shipments"
