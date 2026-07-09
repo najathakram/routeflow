@@ -21,6 +21,22 @@ export interface BuyerAuthorizationRow {
   verifiedAt: Date | null;
 }
 
+/** A license authorization that is expiring soon (30/7/1) or already expired — W7b bell. */
+export interface ExpiringAuthorization {
+  id: string;
+  customerId: string;
+  customerName: string;
+  trackedCategoryId: string;
+  categoryName: string;
+  status: "VERIFIED" | "EXPIRED";
+  expiresAt: Date | null;
+  /** 30 | 7 | 1 for an expiring-soon VERIFIED row; null once expired. */
+  bucket: 30 | 7 | 1 | null;
+  expired: boolean;
+}
+
+const DAY_MS = 86_400_000;
+
 /**
  * Phase 4 (W6): the CustomerAuthorization lifecycle
  * (NONE → PENDING_REVIEW → VERIFIED → EXPIRED/REJECTED). Two paths to VERIFIED:
@@ -78,6 +94,80 @@ export class AuthorizationsService {
         documentKey: a?.documentKey ?? null,
         submittedAt: a?.createdAt ?? null,
         verifiedAt: a?.verifiedAt ?? null,
+      };
+    });
+  }
+
+  /**
+   * W7b expiry bell (operator): every license-required authorization in the tenant
+   * that is already EXPIRED or VERIFIED-and-expiring within `withinDays`. Mirrors
+   * the sweep's gating (requiresLicense only — tobacco is never surfaced).
+   */
+  async findExpiringSoon(withinDays = 30, now = new Date()): Promise<ExpiringAuthorization[]> {
+    // This is a tenant-wide list. A SUPER_ADMIN carries no tenant context, so
+    // forTenant() would run UNSCOPED across all tenants — return nothing instead
+    // of leaking every tenant's licenses (the bell is a per-tenant operator tool).
+    if (!this.prisma.getTenantId()) return [];
+    return this.mapExpiring(await this.queryExpiring(withinDays, now), now);
+  }
+
+  /** W7b expiry bell (buyer): the caller's own expiring/expired licenses at this seller. */
+  async findExpiringForCustomer(
+    customerId: string,
+    withinDays = 30,
+    now = new Date(),
+  ): Promise<ExpiringAuthorization[]> {
+    return this.mapExpiring(await this.queryExpiring(withinDays, now, customerId), now);
+  }
+
+  private async queryExpiring(withinDays: number, now: Date, customerId?: string) {
+    const horizon = new Date(now.getTime() + withinDays * DAY_MS);
+    return this.prisma.forTenant().customerAuthorization.findMany({
+      where: {
+        ...(customerId ? { customerId } : {}),
+        trackedCategory: { requiresLicense: true },
+        OR: [{ status: "EXPIRED" }, { status: "VERIFIED", expiresAt: { not: null, lte: horizon } }],
+      },
+      include: {
+        customer: { select: { businessName: true } },
+        trackedCategory: { select: { name: true } },
+      },
+      orderBy: [{ expiresAt: "asc" }],
+    });
+  }
+
+  private mapExpiring(
+    rows: Array<{
+      id: string;
+      customerId: string;
+      trackedCategoryId: string;
+      status: string;
+      expiresAt: Date | null;
+      customer: { businessName: string | null } | null;
+      trackedCategory: { name: string } | null;
+    }>,
+    now: Date,
+  ): ExpiringAuthorization[] {
+    return rows.map((a) => {
+      let expired = a.status === "EXPIRED";
+      let bucket: 30 | 7 | 1 | null = null;
+      if (!expired && a.expiresAt) {
+        const ms = new Date(a.expiresAt).getTime() - now.getTime();
+        if (ms <= 0) expired = true;
+        else if (ms <= DAY_MS) bucket = 1;
+        else if (ms <= 7 * DAY_MS) bucket = 7;
+        else if (ms <= 30 * DAY_MS) bucket = 30;
+      }
+      return {
+        id: a.id,
+        customerId: a.customerId,
+        customerName: a.customer?.businessName ?? "Customer",
+        trackedCategoryId: a.trackedCategoryId,
+        categoryName: a.trackedCategory?.name ?? "",
+        status: expired ? "EXPIRED" : "VERIFIED",
+        expiresAt: a.expiresAt,
+        bucket,
+        expired,
       };
     });
   }

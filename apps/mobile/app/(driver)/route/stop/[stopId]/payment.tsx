@@ -108,6 +108,28 @@ export default function PaymentScreen() {
       return;
     }
 
+    // W7b: a regulated delivery must carry the demanded age/ID checks + a signature
+    // (the server enforces this too — check here for a clear inline message and to
+    // avoid a wasted round-trip).
+    if (stop.ageCheckRequired || stop.identityCheckRequired) {
+      if (!pod?.signatureUri) {
+        setAmountError("A signature is required for this regulated delivery.");
+        return;
+      }
+      if (stop.ageCheckRequired && !pod?.ageVerified) {
+        setAmountError("Confirm the recipient's age before completing this regulated delivery.");
+        return;
+      }
+      if (stop.identityCheckRequired && !pod?.identityVerified) {
+        setAmountError("Verify the recipient's ID before completing this regulated delivery.");
+        return;
+      }
+      if (stop.identityCheckRequired && !pod?.identityType) {
+        setAmountError("Record which type of ID was checked.");
+        return;
+      }
+    }
+
     const invoiceId = stop.orders?.[0]?.invoiceId;
     const apiMethod = ({
       Cash: "CASH",
@@ -129,6 +151,9 @@ export default function PaymentScreen() {
         podPhotoUrls: pod?.photoUrls,
         signatureUrl: pod?.signatureUri,
         driverNote: pod?.note,
+        ageVerified: pod?.ageVerified,
+        identityVerified: pod?.identityVerified,
+        identityType: pod?.identityType,
         payment:
           invoiceId && collected > 0
             ? { invoiceId, amount: collected, method: apiMethod }

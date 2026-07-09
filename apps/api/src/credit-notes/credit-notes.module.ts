@@ -3,9 +3,10 @@ import { CreditNotesController } from "./credit-notes.controller";
 import { CreditNotesService } from "./credit-notes.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
+import { RegulatedModule } from "../regulated/regulated.module";
 
 @Module({
-  imports: [PrismaModule, GatewaysModule],
+  imports: [PrismaModule, GatewaysModule, RegulatedModule],
   controllers: [CreditNotesController],
   providers: [CreditNotesService],
   exports: [CreditNotesService],

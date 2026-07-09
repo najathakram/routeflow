@@ -25,6 +25,8 @@ import { AddStopDto } from "./dto/add-stop.dto";
 import { CreateRouteRunDto } from "./dto/create-route-run.dto";
 import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
+import { CompleteStopDto } from "./dto/complete-stop.dto";
+import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 
 @ApiTags("routes")
 @ApiBearerAuth()
@@ -169,19 +171,7 @@ export class RouteRunsController {
   completeStop(
     @Param("id") runId: string,
     @Param("stopId") stopId: string,
-    @Body()
-    body: {
-      driverNote?: string;
-      podPhotoUrls?: string[];
-      signatureUrl?: string;
-      safeDropEnabled?: boolean;
-      deliveries?: Array<{
-        orderItemId: string;
-        type: string;
-        quantityDelivered: number;
-        note?: string;
-      }>;
-    },
+    @Body() body: CompleteStopDto,
     @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
@@ -195,24 +185,7 @@ export class RouteRunsController {
   completeWithPayment(
     @Param("id") runId: string,
     @Param("stopId") stopId: string,
-    @Body()
-    body: {
-      driverNote?: string;
-      podPhotoUrls?: string[];
-      signatureUrl?: string;
-      safeDropEnabled?: boolean;
-      deliveries?: Array<{
-        orderItemId: string;
-        type: string;
-        quantityDelivered: number;
-        note?: string;
-      }>;
-      payment?: {
-        invoiceId: string;
-        amount: number;
-        method: string;
-      };
-    },
+    @Body() body: CompleteWithPaymentDto,
     @Headers("idempotency-key") idempotencyKey: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {

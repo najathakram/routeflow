@@ -334,6 +334,7 @@ model Tenant {
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
   creditNotes            CreditNote[]
+  creditNoteItems        CreditNoteItem[]
   estimates              Estimate[]
   estimateItems          EstimateItem[]
   vendorBills            VendorBill[]
@@ -1001,6 +1002,14 @@ model RouteRunStop {
   // (set when the stop contains a category demanding age / identity verification).
   ageCheckRequired      Boolean            @default(false)
   identityCheckRequired Boolean            @default(false)
+  // Phase 4 (W7b): what the driver actually captured at a regulated delivery.
+  // ageVerified/identityVerified are the affirmative check-offs; identityType is
+  // the kind of ID inspected (DRIVERS_LICENSE, PASSPORT, STATE_ID, MILITARY_ID,
+  // OTHER); identityVerifiedAt is stamped server-side when identity is confirmed.
+  ageVerified           Boolean            @default(false)
+  identityVerified      Boolean            @default(false)
+  identityType          String?
+  identityVerifiedAt    DateTime?
   createdAt             DateTime           @default(now())
   updatedAt             DateTime           @updatedAt
   tenantId              String?
@@ -1816,11 +1825,35 @@ model CreditNote {
   tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
+  items           CreditNoteItem[]
 
   @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
   @@index([status])
   @@index([tenantId])
+}
+
+/// Phase 4 (W5c): per-line breakdown of a credit note, derived from the SOURCE
+/// invoice's lines by allocating the credit `amount` proportionally. Carries each
+/// line's regulated category snapshot so the credit can faithfully reverse the
+/// regulated sales ledger per category (the credit note header is a single lump sum
+/// and can't). Only lines with a `trackedCategoryId` drive a ledger reversal.
+model CreditNoteItem {
+  id                String   @id @default(uuid())
+  tenantId          String
+  creditNoteId      String
+  invoiceItemId     String?
+  trackedCategoryId String?
+  amount            Decimal  @default(0) @db.Decimal(12, 2) // credited net (pre-tax) portion
+  qty               Decimal  @default(0) @db.Decimal(12, 3)
+  categoryTax       Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt         DateTime @default(now())
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([creditNoteId])
 }
 
 model Estimate {
@@ -2415,6 +2448,11 @@ model TrackedCategory {
   invoiceTreatment InvoiceTreatment       @default(SEPARATE_INVOICE)
   appliesScope     Json? // optional geo/customer scoping, e.g. {cities:["Oakland"]}
   requiresLicense  Boolean                @default(false)
+  // Phase 4 (W7b): per-category POD policy — when set, a delivery stop containing
+  // a product in this category demands the driver capture an age check and/or an
+  // identity check (with signature POD, no safe-drop) before the stop completes.
+  requiresAgeCheck Boolean                @default(false)
+  requiresIdCheck  Boolean                @default(false)
   reportTemplate   String                 @default("GENERIC") // CA_CDTFA | CA_ABC | CALRECYCLE | GENERIC
   reportCadence    ReportCadence          @default(MONTHLY)
   active           Boolean                @default(true)

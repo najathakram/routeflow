@@ -33,10 +33,10 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
-import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
 
 /**
@@ -250,6 +250,17 @@ export class BuyerController {
   @ApiOperation({ summary: "Get single product detail with buyer-specific pricing" })
   getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     return this.catalogService.getProductDetail(id, ctx.customerId);
+  }
+
+  // ─── Licenses (W7b expiry bell) ───────────────────────────────────────────────
+
+  @Get("authorizations/expiring")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "The buyer's own expiring/expired licenses at this seller" })
+  expiringAuthorizations(@CurrentBuyerCustomer() ctx: any) {
+    return this.authorizationsService.findExpiringForCustomer(ctx.customerId);
   }
 
   // ─── Order CRUD ───────────────────────────────────────────────────────────────

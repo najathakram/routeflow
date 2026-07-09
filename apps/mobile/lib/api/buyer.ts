@@ -126,19 +126,53 @@ export interface BuyerDashboard {
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
 
+/** A regulated category hidden from this buyer pending license verification (W7b). */
+export interface LockedCategory {
+  id: string;
+  name: string;
+  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
+}
+
 export function useBuyerProducts(params?: {
   search?: string;
   category?: string;
   page?: number;
   limit?: number;
 }) {
-  return useQuery<{ data: BuyerProduct[]; meta: { total: number } }>({
+  return useQuery<{
+    data: BuyerProduct[];
+    meta: { total: number };
+    hiddenCategories?: LockedCategory[];
+  }>({
     queryKey: ["buyer-products", params],
     queryFn: () =>
       buyerApiClient
         .get("/buyer/products", { params: { limit: 50, ...params } })
         .then((r) => r.data),
     staleTime: 60_000,
+  });
+}
+
+/** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
+export interface ExpiringAuthorization {
+  id: string;
+  customerId: string;
+  customerName: string;
+  trackedCategoryId: string;
+  categoryName: string;
+  status: "VERIFIED" | "EXPIRED";
+  expiresAt: string | null;
+  bucket: 30 | 7 | 1 | null;
+  expired: boolean;
+}
+
+/** Buyer: the caller's own expiring/expired licenses at this seller (W7b bell). */
+export function useBuyerExpiringAuthorizations() {
+  return useQuery<ExpiringAuthorization[]>({
+    queryKey: ["buyer-authorizations-expiring"],
+    queryFn: () => buyerApiClient.get("/buyer/authorizations/expiring").then((r) => r.data),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
   });
 }
 

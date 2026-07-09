@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
+import type { ExpiringAuthorization } from "./authorizations";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -142,6 +143,17 @@ interface Paginated<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
+/** A regulated category hidden from this buyer pending license verification (W7b). */
+export interface LockedCategory {
+  id: string;
+  name: string;
+  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
+}
+
+export interface BuyerCatalogResult extends Paginated<BuyerProduct> {
+  hiddenCategories?: LockedCategory[];
+}
+
 // ─── Product catalog ──────────────────────────────────────────────────────────
 
 export function useBuyerProducts(params?: {
@@ -151,7 +163,7 @@ export function useBuyerProducts(params?: {
   limit?: number;
   sort?: string;
 }) {
-  return useQuery<Paginated<BuyerProduct>>({
+  return useQuery<BuyerCatalogResult>({
     queryKey: ["buyer", "products", params],
     queryFn: () => buyerApiClient.get("/buyer/products", { params }).then((r) => r.data),
   });
@@ -162,6 +174,18 @@ export function useBuyerProduct(productId: string) {
     queryKey: ["buyer", "product", productId],
     queryFn: () => buyerApiClient.get(`/buyer/products/${productId}`).then((r) => r.data),
     enabled: !!productId,
+  });
+}
+
+/** Buyer: the caller's own expiring/expired licenses at this seller (W7b bell).
+ *  Pass `enabled=false` when no seller is active (the endpoint needs a seller). */
+export function useBuyerExpiringAuthorizations(enabled = true) {
+  return useQuery<ExpiringAuthorization[]>({
+    queryKey: ["buyer", "authorizations", "expiring"],
+    queryFn: () => buyerApiClient.get("/buyer/authorizations/expiring").then((r) => r.data),
+    enabled,
+    staleTime: 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
   });
 }
 

@@ -175,8 +175,11 @@ export class RegulatedLedgerService {
     // Qty + money already reversed per invoiceItemId (across earlier returns AND
     // invoice voids), so cumulative reversals can never exceed the original sold
     // qty, and the chunk that CLOSES a row can absorb rounding drift (below).
+    // Everything already reversed on THESE LINES — by earlier returns, invoice
+    // voids AND credit notes — keyed by invoiceItemId (not orderId) so a credit
+    // note that already reversed a line is seen here and can never be double-reversed.
     const priorReversals = await db.regulatedSalesLedger.findMany({
-      where: { orderId, entryType: "REVERSAL" },
+      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
       select: { invoiceItemId: true, qty: true, netSales: true, categoryTax: true },
     });
     const reversedByItem = new Map<string, number>();
@@ -260,5 +263,168 @@ export class RegulatedLedgerService {
   async unreverseReturnEntries(params: { returnId: string; db: any }): Promise<void> {
     const { returnId, db } = params;
     await db.regulatedSalesLedger.deleteMany({ where: { returnId, entryType: "REVERSAL" } });
+  }
+
+  /**
+   * Reverse regulated SALE rows when a CREDIT NOTE is issued (W5c). Unlike a return,
+   * a credit note carries no goods — so the per-category breakdown comes from its
+   * CreditNoteItems, which credit-notes.service builds ONLY for the invoice lines the
+   * operator explicitly credited (line linkage), snapshotting each line's category as
+   * it was AT SALE. Safety invariants (each independently regression-tested):
+   *  - SALE-existence: a REVERSAL is booked ONLY against a line that actually recorded
+   *    a regulated SALE — never "naked" (pre-W5 / non-split invoices have no SALE rows).
+   *  - Over-reversal clamp: cumulative reversed net/qty per line can never exceed the
+   *    SALE's remaining un-reversed balance, counting credit-note, return AND void
+   *    reversals together (keyed by invoiceItemId), so credit-then-return can't
+   *    double-reverse.
+   *  - Closing balance: the credit that CLOSES a line books the EXACT remaining balance
+   *    (not the independently-rounded share), so a fully-credited line nets to exactly 0
+   *    across any number of partial credits.
+   * REVERSAL rows carry the SALE's orderId/orderItemId/invoiceId so every reversal path
+   * reconciles. Idempotent per `creditNoteId`. Books into the CURRENT period.
+   */
+  async reverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
+    const { creditNoteId, db } = params;
+
+    // Idempotency: this credit note already reversed → no-op.
+    const prior = await db.regulatedSalesLedger.findMany({
+      where: { creditNoteId, entryType: "REVERSAL" },
+      select: { id: true },
+    });
+    if (prior.length > 0) return;
+
+    const items = await db.creditNoteItem.findMany({
+      where: { creditNoteId, trackedCategoryId: { not: null } },
+    });
+    if (items.length === 0) return;
+
+    const invoiceItemIds = [
+      ...new Set(items.map((it: any) => it.invoiceItemId).filter(Boolean)),
+    ] as string[];
+    if (invoiceItemIds.length === 0) return;
+
+    // The credited lines' SALE rows (with the source ids to stamp onto reversals).
+    const saleRows = await db.regulatedSalesLedger.findMany({
+      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE" },
+      select: {
+        invoiceItemId: true,
+        netSales: true,
+        qty: true,
+        categoryTax: true,
+        orderId: true,
+        orderItemId: true,
+        invoiceId: true,
+      },
+    });
+    const saleByItem = new Map<
+      string,
+      {
+        net: number;
+        qty: number;
+        tax: number;
+        orderId: string | null;
+        orderItemId: string | null;
+        invoiceId: string | null;
+      }
+    >();
+    for (const s of saleRows) {
+      const k = s.invoiceItemId ?? "";
+      const cur = saleByItem.get(k) ?? {
+        net: 0,
+        qty: 0,
+        tax: 0,
+        orderId: s.orderId ?? null,
+        orderItemId: s.orderItemId ?? null,
+        invoiceId: s.invoiceId ?? null,
+      };
+      cur.net += Number(s.netSales);
+      cur.qty += Number(s.qty);
+      cur.tax += Number(s.categoryTax);
+      saleByItem.set(k, cur);
+    }
+
+    // Everything already reversed on these lines (credit-note + return + void
+    // reversals), so cumulative reversal can never exceed the sold amount regardless
+    // of which path booked the earlier reversal. Signed (negative).
+    const revRows = await db.regulatedSalesLedger.findMany({
+      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
+      select: { invoiceItemId: true, netSales: true, qty: true, categoryTax: true },
+    });
+    const revByItem = new Map<string, { net: number; qty: number; tax: number }>();
+    for (const r of revRows) {
+      const k = r.invoiceItemId ?? "";
+      const cur = revByItem.get(k) ?? { net: 0, qty: 0, tax: 0 };
+      cur.net += Number(r.netSales);
+      cur.qty += Number(r.qty);
+      cur.tax += Number(r.categoryTax);
+      revByItem.set(k, cur);
+    }
+
+    const now = new Date();
+    const bucket = periodBucketOf(now);
+    const rows: any[] = [];
+    for (const it of items) {
+      const key = it.invoiceItemId ?? "";
+      const sale = saleByItem.get(key);
+      if (!sale || sale.net <= 0) continue; // SALE-existence guard — no naked reversal.
+      const already = revByItem.get(key) ?? { net: 0, qty: 0, tax: 0 };
+      // Remaining capacity to reverse (signed, negative). `already.*` is <= 0.
+      const remNet = -sale.net - already.net;
+      const remQty = -sale.qty - already.qty;
+      const remTax = -sale.tax - already.tax;
+      if (remNet >= -0.005) continue; // line already fully reversed — nothing left.
+
+      let net = -Number(it.amount);
+      let qty = -Number(it.qty);
+      let tax = -Number(it.categoryTax);
+      // CLOSES when this credit reaches/overshoots the remaining balance: book the
+      // EXACT remaining (absorbs multi-credit rounding drift AND clamps over-reversal).
+      const closes = net <= remNet + 0.005;
+      if (closes) {
+        net = remNet;
+        qty = remQty;
+        tax = remTax;
+      } else {
+        // Partial credit: clamp defensively so no dimension can exceed the remaining.
+        if (qty < remQty) qty = remQty;
+        if (tax < remTax) tax = remTax;
+      }
+      const bookedNet = roundMoney(net);
+      const bookedQty = round3(qty);
+      const bookedTax = roundMoney(tax);
+      rows.push({
+        tenantId: it.tenantId,
+        trackedCategoryId: it.trackedCategoryId,
+        entryType: "REVERSAL" as const,
+        orderId: sale.orderId,
+        orderItemId: sale.orderItemId,
+        invoiceId: sale.invoiceId,
+        invoiceItemId: it.invoiceItemId,
+        creditNoteId,
+        qty: bookedQty,
+        unitBasisQty: bookedQty,
+        netSales: bookedNet,
+        categoryTax: bookedTax,
+        soldAt: now,
+        periodBucket: bucket,
+      });
+      // Accumulate what we just booked so a second CreditNoteItem on the SAME line
+      // (a duplicate invoiceItemId within this one credit note) sees the reduced
+      // remaining capacity and can never re-consume the SALE.
+      revByItem.set(key, {
+        net: already.net + bookedNet,
+        qty: already.qty + bookedQty,
+        tax: already.tax + bookedTax,
+      });
+    }
+    if (rows.length === 0) return;
+    await db.regulatedSalesLedger.createMany({ data: rows });
+  }
+
+  /** Undo a credit note's REVERSAL rows when the credit note is VOIDED (symmetric
+   *  to the returns cancel-undo). Delete keeps the `creditNoteId` idempotency clean. */
+  async unreverseCreditNoteEntries(params: { creditNoteId: string; db: any }): Promise<void> {
+    const { creditNoteId, db } = params;
+    await db.regulatedSalesLedger.deleteMany({ where: { creditNoteId, entryType: "REVERSAL" } });
   }
 }

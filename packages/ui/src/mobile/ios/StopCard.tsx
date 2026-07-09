@@ -11,6 +11,8 @@ export interface StopCardProps {
   subtitle: string;
   status: StopStatus;
   pillLabel?: string;
+  /** W7b: mark a stop that needs an age/ID check on delivery. */
+  regulated?: boolean;
   onPress?: () => void;
 }
 
@@ -20,7 +22,15 @@ const STATUS_COLORS: Record<StopStatus, string> = {
   pending: ios.gray[4],
 };
 
-export function StopCard({ number, name, subtitle, status, pillLabel, onPress }: StopCardProps) {
+export function StopCard({
+  number,
+  name,
+  subtitle,
+  status,
+  pillLabel,
+  regulated,
+  onPress,
+}: StopCardProps) {
   const accent = STATUS_COLORS[status];
   const badgeBg = status === "pending" ? ios.fill3 : accent;
   const badgeFg = status === "pending" ? ios.label : "#fff";
@@ -40,6 +50,11 @@ export function StopCard({ number, name, subtitle, status, pillLabel, onPress }:
             {subtitle}
           </Text>
         </View>
+        {regulated ? (
+          <View style={styles.regBadge}>
+            <Text style={styles.regBadgeText}>🔒</Text>
+          </View>
+        ) : null}
         {pillLabel ? (
           <Pill variant={pillVariant}>{pillLabel}</Pill>
         ) : (
@@ -102,4 +117,15 @@ const styles = StyleSheet.create({
     color: ios.gray[3],
     fontFamily: "Inter_400Regular",
   },
+  regBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  regBadgeText: { fontSize: 12 },
 });

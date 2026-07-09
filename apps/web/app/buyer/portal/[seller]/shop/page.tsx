@@ -15,6 +15,7 @@ import {
   ChevronRight,
   X,
   Heart,
+  Lock,
 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
@@ -25,6 +26,7 @@ import {
   useBuyerAddFavorite,
   useBuyerRemoveFavorite,
   type BuyerProduct,
+  type LockedCategory,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
@@ -209,6 +211,62 @@ function ProductCard({
   );
 }
 
+// ─── Locked-categories unlock tile (W7b) ──────────────────────────────────────
+
+function lockedStatusCopy(status: LockedCategory["status"]): string {
+  switch (status) {
+    case "PENDING_REVIEW":
+      return "License pending review";
+    case "EXPIRED":
+      return "License expired — renew to unlock";
+    case "REJECTED":
+      return "License not approved";
+    default:
+      return "Requires a verified license";
+  }
+}
+
+function LockedCategoriesTile({
+  categories,
+  sellerName,
+}: {
+  categories: LockedCategory[];
+  sellerName?: string;
+}) {
+  if (categories.length === 0) return null;
+  return (
+    <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+          <Lock className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold text-navy">
+            {categories.length === 1
+              ? "1 category is locked"
+              : `${categories.length} categories are locked`}
+          </h3>
+          <p className="mt-0.5 text-xs text-navy/70">
+            These products unlock once {sellerName ?? "your seller"} verifies your license. Contact
+            them to get set up.
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {categories.map((c) => (
+              <li
+                key={c.id}
+                className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-white px-2.5 py-1 text-xs"
+              >
+                <span className="font-medium text-navy">{c.name}</span>
+                <span className="text-navy/60">· {lockedStatusCopy(c.status)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BuyerShopPage() {
@@ -361,6 +419,14 @@ export default function BuyerShopPage() {
               </button>
             ))}
           </div>
+        )}
+
+        {/* W7b: regulated categories the buyer isn't licensed for */}
+        {result?.hiddenCategories && result.hiddenCategories.length > 0 && (
+          <LockedCategoriesTile
+            categories={result.hiddenCategories}
+            sellerName={activeSeller?.tenant.name}
+          />
         )}
 
         {/* Results count */}
