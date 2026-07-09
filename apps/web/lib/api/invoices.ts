@@ -28,6 +28,8 @@ export interface InvoiceItem {
   priceType?: PriceType;
   taxRate?: number;
   subtotal?: number;
+  /** Regulated category snapshot (set at invoice creation) — drives credit-note ledger reversal. */
+  trackedCategoryId?: string | null;
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;

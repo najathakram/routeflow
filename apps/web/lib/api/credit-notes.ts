@@ -58,6 +58,12 @@ export interface CreateCreditNoteDto {
   reason: string;
   issueDate: string;
   notes?: string;
+  /**
+   * Optional invoice-line linkage. Present => the credit is attributed to specific
+   * invoice lines and (for regulated lines) reverses the regulated category ledger.
+   * Absent => a lump-sum credit that books no regulated reversal.
+   */
+  items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
 }
 
 export function useCreateCreditNote() {

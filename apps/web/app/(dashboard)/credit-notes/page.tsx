@@ -7,7 +7,7 @@ import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@rou
 import { usePageTitle } from "@/lib/page-title-context";
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
-import { useInvoices } from "@/lib/api/invoices";
+import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
 
 // ─── Status filter chips (real statuses) ──────────────────────────────────────
@@ -54,6 +54,10 @@ function CreateCreditNoteModal({
   const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);
   const [errors, setErrors] = React.useState<Partial<Record<keyof CreateFormState, string>>>({});
   const [customerSearch, setCustomerSearch] = React.useState("");
+  // Line linkage: which invoice lines this credit applies to (drives the regulated
+  // ledger reversal). Keyed by invoiceItemId. Empty selection => lump-sum credit.
+  const [lineSel, setLineSel] = React.useState<Record<string, boolean>>({});
+  const [lineAmt, setLineAmt] = React.useState<Record<string, string>>({});
 
   const { data: customersData } = useCustomers({ search: customerSearch || undefined });
   const customers = customersData?.data ?? (Array.isArray(customersData) ? customersData : []);
@@ -64,19 +68,58 @@ function CreateCreditNoteModal({
     return form.customerId ? all.filter((inv) => inv.customerId === form.customerId) : [];
   }, [invoicesData, form.customerId]);
 
+  // The selected invoice's lines (for the line picker).
+  const { data: invoiceDetail } = useInvoice(form.invoiceId);
+  const invoiceItems = React.useMemo(
+    () => (form.invoiceId ? (invoiceDetail?.items ?? []) : []),
+    [invoiceDetail, form.invoiceId],
+  );
+  const selectedLines = invoiceItems.filter((it) => lineSel[it.id]);
+  const hasLineSelection = selectedLines.length > 0;
+  const linesTotal = React.useMemo(
+    () => selectedLines.reduce((s, it) => s + (parseFloat(lineAmt[it.id] ?? "") || 0), 0),
+    [selectedLines, lineAmt],
+  );
+
   React.useEffect(() => {
     if (isOpen) {
       setForm(EMPTY_FORM);
       setErrors({});
       setCustomerSearch("");
+      setLineSel({});
+      setLineAmt({});
     }
   }, [isOpen]);
+
+  // Reset line selection whenever the chosen invoice changes; prefill each line's
+  // credit amount with its full subtotal.
+  React.useEffect(() => {
+    setLineSel({});
+    setLineAmt(
+      Object.fromEntries(invoiceItems.map((it) => [it.id, String(Number(it.subtotal ?? 0))])),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.invoiceId, invoiceItems.length]);
 
   function validate() {
     const e: Partial<Record<keyof CreateFormState, string>> = {};
     if (!form.customerId) e.customerId = "Customer is required.";
-    const amt = parseFloat(form.amount);
-    if (!form.amount || isNaN(amt) || amt <= 0) e.amount = "Enter an amount greater than 0.";
+    if (hasLineSelection) {
+      for (const it of selectedLines) {
+        const a = parseFloat(lineAmt[it.id] ?? "");
+        if (isNaN(a) || a <= 0) {
+          e.amount = "Each selected line needs an amount greater than 0.";
+          break;
+        }
+        if (a > Number(it.subtotal ?? 0) + 0.001) {
+          e.amount = "A line credit can't exceed its line total.";
+          break;
+        }
+      }
+    } else {
+      const amt = parseFloat(form.amount);
+      if (!form.amount || isNaN(amt) || amt <= 0) e.amount = "Enter an amount greater than 0.";
+    }
     if (!form.reason.trim()) e.reason = "Reason is required.";
     if (!form.issueDate) e.issueDate = "Issue date is required.";
     return e;
@@ -91,11 +134,18 @@ function CreateCreditNoteModal({
     }
     setErrors({});
 
+    const amount = hasLineSelection ? Number(linesTotal.toFixed(2)) : parseFloat(form.amount);
     createCreditNote.mutate(
       {
         customerId: form.customerId,
         invoiceId: form.invoiceId || undefined,
-        amount: parseFloat(form.amount),
+        amount,
+        items: hasLineSelection
+          ? selectedLines.map((it) => ({
+              invoiceItemId: it.id,
+              amount: Number((parseFloat(lineAmt[it.id] ?? "0") || 0).toFixed(2)),
+            }))
+          : undefined,
         reason: form.reason.trim(),
         issueDate: form.issueDate,
         notes: form.notes.trim() || undefined,
@@ -193,18 +243,95 @@ function CreateCreditNoteModal({
           </select>
         </div>
 
-        {/* Amount */}
+        {/* Line picker — attribute the credit to specific invoice lines. Selecting a
+            regulated line reverses its category tax in the regulated ledger. */}
+        {form.invoiceId && invoiceItems.length > 0 && (
+          <div className="rounded-lg border border-surface-border bg-surface-raised/40 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-sm font-medium text-navy/80">Credit specific lines</label>
+              <span className="text-xs text-navy/60">
+                {hasLineSelection ? `${selectedLines.length} selected` : "optional"}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {invoiceItems.map((it) => {
+                const checked = !!lineSel[it.id];
+                const regulated = !!it.trackedCategoryId;
+                return (
+                  <div
+                    key={it.id}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md border px-2.5 py-2",
+                      checked ? "border-brand-500 bg-white" : "border-surface-border bg-white/60",
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setLineSel((s) => ({ ...s, [it.id]: e.target.checked }))}
+                      className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-navy">{it.description}</span>
+                        {regulated && (
+                          <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-accent-deep/10 px-1.5 py-0.5 text-[10px] font-medium text-accent-deep">
+                            <ShieldCheck className="h-3 w-3" /> Regulated
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-navy/50">
+                        {Number(it.qty)} × · line {fmt(Number(it.subtotal ?? 0))}
+                      </span>
+                    </div>
+                    <div className="relative w-24 flex-shrink-0">
+                      <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-navy/40">
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        disabled={!checked}
+                        value={lineAmt[it.id] ?? ""}
+                        onChange={(e) => setLineAmt((a) => ({ ...a, [it.id]: e.target.value }))}
+                        className="h-8 w-full rounded-md border border-surface-border bg-white pl-5 pr-2 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {hasLineSelection && (
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-navy/60">
+                <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0 text-accent-deep" />
+                Credits on regulated lines reverse category tax and post to the category ledger.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Amount — derived from selected lines, or a free lump sum when none are picked. */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Amount ($)</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0.01"
-            placeholder="0.00"
-            value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-            className={inputCls(errors.amount)}
-          />
+          {hasLineSelection ? (
+            <div className="flex h-10 w-full items-center justify-between rounded-lg border border-surface-border bg-surface-raised px-3 text-sm">
+              <span className="text-navy/60">
+                Sum of {selectedLines.length} selected line{selectedLines.length === 1 ? "" : "s"}
+              </span>
+              <span className="money font-semibold text-navy">{fmt(linesTotal)}</span>
+            </div>
+          ) : (
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder="0.00"
+              value={form.amount}
+              onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
+              className={inputCls(errors.amount)}
+            />
+          )}
           {errors.amount && <p className="mt-1 text-xs text-danger">{errors.amount}</p>}
         </div>
 
