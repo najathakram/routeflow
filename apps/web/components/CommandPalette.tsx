@@ -25,6 +25,7 @@ import {
   BarChart3,
   Building2,
   Layers,
+  Megaphone,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
@@ -99,6 +100,13 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         label: "Products",
         icon: Package,
         action: () => router.push("/products"),
+      },
+      {
+        id: "nav-promotions",
+        group: "Navigate",
+        label: "Promotions",
+        icon: Megaphone,
+        action: () => router.push("/promotions"),
       },
       {
         id: "nav-inventory",

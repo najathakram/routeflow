@@ -35,6 +35,7 @@ import {
   PieChart,
   ShoppingBag,
   ClipboardList,
+  Megaphone,
   Search,
   Menu,
   X,
@@ -97,6 +98,7 @@ const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
       { kind: "leaf", label: "Products", href: "/products", icon: Package },
+      { kind: "leaf", label: "Promotions", href: "/promotions", icon: Megaphone },
       { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
       { kind: "leaf", label: "Bills & Purchasing", href: "/vendor-bills", icon: ClipboardList },
     ],
