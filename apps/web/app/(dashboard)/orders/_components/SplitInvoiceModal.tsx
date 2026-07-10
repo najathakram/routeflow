@@ -10,7 +10,22 @@ interface OrderItemForSplit {
   qty: number;
   invoicedQty: number;
   unitPrice: number;
+  /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
+  subtotal?: number;
   unit?: string;
+}
+
+/**
+ * Preview line total for billing `billQty` of an order line. Mirrors the server:
+ * prorate the STORED subtotal by qty (so boxed lines, whose unitPrice is the BOX
+ * price, are never multiplied by the piece count). Falls back to qty × unitPrice
+ * only when the line has no stored subtotal.
+ */
+function previewLineTotal(it: OrderItemForSplit, billQty: number): number {
+  if (it.subtotal != null && it.qty > 0) {
+    return Math.round(((it.subtotal * billQty) / it.qty) * 100) / 100;
+  }
+  return Math.round(billQty * it.unitPrice * 100) / 100;
 }
 
 interface SplitInvoiceModalProps {
@@ -73,7 +88,7 @@ export function SplitInvoiceModal({
   const billable = items.filter((it) => it.qty - it.invoicedQty > 0.001);
   const selectedTotal = billable.reduce((s, it) => {
     const q = qtyById[it.id] ?? 0;
-    return s + q * it.unitPrice;
+    return s + previewLineTotal(it, q);
   }, 0);
 
   const onTermsChange = (newTerms: string) => {
@@ -185,7 +200,7 @@ export function SplitInvoiceModal({
                         />
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-navy">
-                        ${(q * it.unitPrice).toFixed(2)}
+                        ${previewLineTotal(it, q).toFixed(2)}
                       </td>
                     </tr>
                   );

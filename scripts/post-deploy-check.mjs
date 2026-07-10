@@ -226,6 +226,56 @@ async function run() {
     failures++;
   }
 
+  // ── 5. Order↔Invoice divergence guard ────────────────────────────────────────
+  // A fully-invoiced order's total must equal the sum of its non-void invoice
+  // totals. This is the standing guard for the box-proration divergence class
+  // (an invoice line that billed the per-box price as the whole line total).
+  try {
+    const res = await get("/api/v1/orders?limit=25", token);
+    if (res.ok) {
+      const body = await res.json();
+      const orders = Array.isArray(body) ? body : (body.items ?? body.data ?? []);
+      const delivered = orders
+        .filter((o) => o.status === "DELIVERED" || o.status === "CANCELLED")
+        .slice(0, 15);
+      let checked = 0;
+      const diverged = [];
+      for (const o of delivered) {
+        const detailRes = await get(`/api/v1/orders/${o.id}`, token);
+        if (!detailRes.ok) continue;
+        const detail = await detailRes.json();
+        const lineItems = detail.lineItems ?? [];
+        const invoices = (detail.invoices ?? []).filter((i) => i.status !== "VOID");
+        if (invoices.length === 0) continue;
+        // Only compare when nothing is left to bill (a partial split bills less).
+        const noRemaining = !lineItems.some(
+          (li) => li.status !== "CANCELLED" && Number(li.qty) - Number(li.invoicedQty ?? 0) > 0.001,
+        );
+        if (!noRemaining) continue;
+        checked++;
+        const invoicedTotal =
+          Math.round(invoices.reduce((s, i) => s + Number(i.total), 0) * 100) / 100;
+        const orderTotal = Number(detail.total);
+        if (Math.abs(orderTotal - invoicedTotal) > 0.01) {
+          diverged.push(
+            `${detail.orderNumber ?? detail.id}: order ${orderTotal} ≠ invoiced ${invoicedTotal}`,
+          );
+        }
+      }
+      if (diverged.length > 0) {
+        fail(
+          `Order↔Invoice divergence — ${diverged.length} fully-invoiced order(s) mismatch:\n      ${diverged.join("\n      ")}`,
+        );
+        failures++;
+      } else {
+        pass(`Order↔Invoice divergence — ${checked} fully-invoiced order(s) reconcile`);
+      }
+    }
+  } catch (err) {
+    fail(`Order↔Invoice divergence — ${err?.message ?? err}`);
+    failures++;
+  }
+
   // ── Summary ──────────────────────────────────────────────────────────────────
   console.log("");
   if (failures > 0) {

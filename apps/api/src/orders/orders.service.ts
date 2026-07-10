@@ -1006,6 +1006,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Recompute qty from boxes/pieces when provided (backend is authoritative).
       // Normalize to integers and roll loose pieces >= unitsPerBox into boxes.
+      const upb = Number(product.unitsPerBox ?? 0);
       let qty = item.qty;
       let boxes = item.boxes ?? null;
       let pieces = item.pieces ?? null;
@@ -1013,7 +1014,7 @@ export class OrdersService implements OnApplicationBootstrap {
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
           pieces: item.pieces,
-          unitsPerBox: product.unitsPerBox,
+          unitsPerBox: upb,
         });
         qty = split.qty;
         boxes = split.boxes;
@@ -1029,17 +1030,27 @@ export class OrdersService implements OnApplicationBootstrap {
       let priceType: PriceType;
       let originalPrice: number | null = null;
 
+      // QTY_BREAK promo threshold is measured in PIECES. A box-split line stores qty
+      // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
+      // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
+      // buyer line prices identically at create vs edit.
+      const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
+
       // Price priority: operator one-time override (DISCOUNTED) > best buyer
       // promotion (PROMO) / tier price (SPECIAL) / list price (STANDARD). Promos
       // populate `activePromos` only on the buyer (CUSTOMER) path (P5-04); staff
       // orders get [] so this reproduces the prior tier/standard ladder exactly.
-      // `qty` here is the normalized total PIECES — the QTY_BREAK threshold basis.
       if (overridePrice != null && overridePrice < listPrice) {
         unitPrice = overridePrice;
         priceType = PriceType.DISCOUNTED;
         originalPrice = listPrice;
       } else {
-        const resolved = this.resolveBuyerLinePrice(product, tierForProduct, activePromos, qty);
+        const resolved = this.resolveBuyerLinePrice(
+          product,
+          tierForProduct,
+          activePromos,
+          qtyPieces,
+        );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
         originalPrice = resolved.originalPrice;
@@ -1052,7 +1063,7 @@ export class OrdersService implements OnApplicationBootstrap {
         qty,
         boxes,
         pieces,
-        unitsPerBox: product.unitsPerBox,
+        unitsPerBox: upb,
       });
       subtotal += itemSubtotal;
       return {
@@ -1061,6 +1072,10 @@ export class OrdersService implements OnApplicationBootstrap {
         qty,
         boxes,
         pieces,
+        // Snapshot the sale-time box size on box-split lines so invoicing and later
+        // recompute use it instead of the (mutable) live product size. Selling-unit
+        // lines (boxes==null) leave it null — their qty already carries the unit.
+        unitsPerBox: boxes != null && upb > 1 ? upb : null,
         unitPrice,
         priceType,
         originalPrice,
@@ -1519,6 +1534,12 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
+    // If this order already has a SENT pending-mirror invoice, revert it to DRAFT
+    // first so the edit below re-syncs into it (auto-revert policy). Runs before any
+    // mutation: a paid invoice throws here and the edit is aborted cleanly, so money
+    // never detaches from a sent document. No-op when there's no such invoice.
+    await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
     // merge into an existing order) must be authorized just like at create — else
     // it's a bypass. Non-draft only (a draft edit isn't a sale yet). Run BEFORE any
@@ -1661,6 +1682,8 @@ export class OrdersService implements OnApplicationBootstrap {
             }),
             boxes,
             pieces,
+            // Snapshot the sale-time box size on box-split lines (see create()).
+            unitsPerBox: boxes != null && upb > 1 ? upb : null,
             originalPrice: priced.originalPrice,
             priceType: priced.priceType,
             status: "PENDING",
@@ -1754,6 +1777,11 @@ export class OrdersService implements OnApplicationBootstrap {
               qty,
               boxes,
               pieces,
+              // Snapshot the sale-time box size on box-split lines (see create()).
+              unitsPerBox:
+                boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                  ? Number(product.unitsPerBox)
+                  : null,
               unitPrice,
               subtotal,
               status: "PENDING",
@@ -1823,6 +1851,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 qty,
                 boxes: item.boxes ?? null,
                 pieces: item.pieces ?? null,
+                // Snapshot the sale-time box size on box-split lines (see create()).
+                unitsPerBox:
+                  item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                    ? Number(product.unitsPerBox)
+                    : null,
                 unitPrice,
                 subtotal,
                 status: "PENDING",
@@ -1886,6 +1919,11 @@ export class OrdersService implements OnApplicationBootstrap {
                 qty: qtyVal,
                 boxes: item.boxes ?? null,
                 pieces: item.pieces ?? null,
+                // Re-snapshot the substitute's box size on box-split lines.
+                unitsPerBox:
+                  item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                    ? Number(product.unitsPerBox)
+                    : null,
                 subtotal,
                 status: "PENDING",
                 notes: item.notes,
@@ -1901,22 +1939,55 @@ export class OrdersService implements OnApplicationBootstrap {
           } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
             const li = order.lineItems.find((li) => li.id === item.id);
             if (!li) continue;
-            // For qty math we need the product's unitsPerBox even if it's not
-            // changing — the caller may have edited boxes/pieces only.
             const isUnlisted = !li.productId;
-            let unitsPerBox: number | null = null;
-            if ((item.boxes != null || item.pieces != null) && li.productId) {
+            const editHasSplit = item.boxes != null || item.pieces != null;
+            const wasBoxSplit = li.boxes != null;
+            // Resolve the box size for a catalog line even on a qty-ONLY edit —
+            // prefer the line's sale-time snapshot, fall back to the live product.
+            // Without this a qty-only edit of a box-split line dropped to non-boxed
+            // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
+            let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
+            if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
               const product = await this.prisma.forTenant().product.findUnique({
                 where: { id: li.productId },
                 select: { unitsPerBox: true },
               });
               unitsPerBox = product?.unitsPerBox ?? null;
             }
-            let qty = item.qty ?? Number(li.qty);
-            if (item.boxes != null || item.pieces != null) {
-              qty = (item.boxes ?? 0) * Number(unitsPerBox ?? 0) + (item.pieces ?? 0);
+            const upb = Number(unitsPerBox ?? 0);
+
+            // Resolve qty + the box/piece split, PRESERVING the line's denomination:
+            //  - an explicit boxes/pieces edit wins;
+            //  - else a box-split line re-derives its split from the new qty (box
+            //    price prorated, stale boxes/pieces refreshed);
+            //  - else a selling-unit / non-boxed line keeps boxes/pieces null.
+            let qty: number;
+            let boxes: number | null;
+            let pieces: number | null;
+            if (editHasSplit) {
+              const split = normalizeBoxesPieces({
+                boxes: item.boxes,
+                pieces: item.pieces,
+                unitsPerBox: upb,
+              });
+              qty = split.qty;
+              boxes = split.boxes;
+              pieces = split.pieces;
+            } else if (wasBoxSplit && upb > 1) {
+              const split = normalizeBoxesPieces({
+                qty: item.qty ?? Number(li.qty),
+                unitsPerBox: upb,
+              });
+              qty = split.qty;
+              boxes = split.boxes;
+              pieces = split.pieces;
+            } else {
+              qty = item.qty ?? Number(li.qty);
+              boxes = null;
+              pieces = null;
             }
             if (qty <= 0) continue;
+
             const existingUnitPrice = Number(li.unitPrice);
             const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
             const isManualOverride = overridePrice !== null && overridePrice !== existingUnitPrice;
@@ -1924,16 +1995,19 @@ export class OrdersService implements OnApplicationBootstrap {
             const subtotal = computeLineSubtotal({
               unitPrice,
               qty,
-              boxes: item.boxes ?? null,
-              pieces: item.pieces ?? null,
-              unitsPerBox,
+              boxes,
+              pieces,
+              unitsPerBox: upb,
             });
             await this.prisma.forTenant().orderItem.update({
               where: { id: item.id },
               data: {
                 qty,
-                ...(item.boxes != null ? { boxes: item.boxes } : {}),
-                ...(item.pieces != null ? { pieces: item.pieces } : {}),
+                // Always set the split explicitly so a qty-only edit can't leave
+                // stale boxes/pieces behind (the reverse-divergence class).
+                boxes,
+                pieces,
+                unitsPerBox: boxes != null && upb > 1 ? upb : null,
                 // Allow renaming an unlisted line; catalog lines keep name null.
                 ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
                 unitPrice,
@@ -2122,12 +2196,17 @@ export class OrdersService implements OnApplicationBootstrap {
         Array<{
           orderItemId: string;
           productId: string;
-          qty: number;
+          qty: number; // delivered qty (this batch), in the order line's own unit
+          orderQty: number; // the order line's full qty (proration denominator)
+          storedSubtotal: number | null; // the order line's agreed subtotal (copied)
+          boxes: number | null; // the order line's stored split (null = selling-unit)
           unitPrice: number;
           productName: string;
           priceType: string;
           originalPrice: number | null;
-          unitsPerBox: number;
+          unitsPerBox: number; // sale-time snapshot, not the live product
+          trackedCategoryId: string | null;
+          categoryTaxAmount: number;
         }>
       >();
 
@@ -2216,12 +2295,20 @@ export class OrdersService implements OnApplicationBootstrap {
               orderItemId: orderItem.id,
               productId: orderItem.productId,
               qty: deliveredQty,
+              orderQty: Number(orderItem.qty),
+              storedSubtotal: orderItem.subtotal != null ? Number(orderItem.subtotal) : null,
+              boxes: orderItem.boxes,
               unitPrice: Number(orderItem.unitPrice),
               productName: orderItem.product?.name ?? "Product",
               priceType: orderItem.priceType ?? PriceType.STANDARD,
               originalPrice:
                 orderItem.originalPrice != null ? Number(orderItem.originalPrice) : null,
-              unitsPerBox: Number(orderItem.product?.unitsPerBox ?? 0),
+              // Prefer the order line's sale-time snapshot; fall back to live product.
+              unitsPerBox: Number(
+                (orderItem as any).unitsPerBox ?? orderItem.product?.unitsPerBox ?? 0,
+              ),
+              trackedCategoryId: orderItem.trackedCategoryId ?? null,
+              categoryTaxAmount: Number(orderItem.categoryTaxAmount ?? 0),
             });
             batchDeliveredItems.set(orderItem.orderId, items);
           }
@@ -2309,22 +2396,34 @@ export class OrdersService implements OnApplicationBootstrap {
           const dueDate = new Date();
           dueDate.setDate(dueDate.getDate() + invoiceDueDays);
 
-          // Compute totals from delivered items only. For boxed products `unitPrice`
-          // is the BOX price and `qty` is in pieces — re-split through the shared
-          // helper so we don't multiply the box price by the piece count.
-          const lineSubtotal = (li: { qty: number; unitPrice: number; unitsPerBox: number }) => {
-            const split = normalizeBoxesPieces({ qty: li.qty, unitsPerBox: li.unitsPerBox });
-            return computeLineSubtotal({
-              unitPrice: li.unitPrice,
-              qty: split.qty,
-              boxes: split.boxes,
-              pieces: split.pieces,
-              unitsPerBox: li.unitsPerBox,
-            });
+          // Build each invoice line by COPYING the order line's stored money and
+          // denomination for the delivered portion — never re-deriving from the live
+          // product (which turned selling-unit lines into phantom box splits and
+          // multiplied the box price by the delivered count). Full deliveries copy
+          // the stored subtotal verbatim; partials prorate it.
+          const buildBatchLine = (li: (typeof deliveredInBatch)[number]) => {
+            const isBoxSplit = li.boxes != null;
+            const upb = Number(li.unitsPerBox ?? 0);
+            const split = isBoxSplit
+              ? normalizeBoxesPieces({ qty: li.qty, unitsPerBox: upb })
+              : { qty: li.qty, boxes: null as number | null, pieces: null as number | null };
+            let subtotal: number;
+            if (li.storedSubtotal == null || li.orderQty <= 0) {
+              subtotal = computeLineSubtotal({
+                unitPrice: li.unitPrice,
+                qty: split.qty,
+                boxes: split.boxes,
+                pieces: split.pieces,
+                unitsPerBox: upb,
+              });
+            } else {
+              subtotal = roundMoney((li.storedSubtotal * li.qty) / li.orderQty);
+            }
+            return { split, subtotal, upb };
           };
-          const invoiceSubtotal = roundMoney(
-            deliveredInBatch.reduce((sum, li) => sum + lineSubtotal(li), 0),
-          );
+
+          const builtLines = deliveredInBatch.map((li) => ({ li, ...buildBatchLine(li) }));
+          const invoiceSubtotal = roundMoney(builtLines.reduce((sum, b) => sum + b.subtotal, 0));
 
           await tx.invoice.create({
             data: {
@@ -2346,10 +2445,14 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? `Order #${order.orderNumber} — delivery batch`
                 : "Delivery batch invoice",
               items: {
-                create: deliveredInBatch.map((li) => ({
+                create: builtLines.map(({ li, split, subtotal, upb }) => ({
                   description: li.productName,
                   productId: li.productId,
-                  qty: li.qty,
+                  orderItemId: li.orderItemId,
+                  qty: split.qty,
+                  boxes: split.boxes,
+                  pieces: split.pieces,
+                  unitsPerBox: upb > 0 ? upb : null,
                   unitPrice: li.unitPrice,
                   // `unitPrice` is already the net (post-override) price; `originalPrice`
                   // carries the strikethrough. Re-deriving a discount here would
@@ -2358,7 +2461,9 @@ export class OrdersService implements OnApplicationBootstrap {
                   originalPrice: li.originalPrice,
                   priceType: li.priceType as any,
                   taxRate: 0,
-                  subtotal: lineSubtotal(li),
+                  subtotal,
+                  trackedCategoryId: li.trackedCategoryId,
+                  categoryTaxAmount: li.categoryTaxAmount,
                 })),
               },
             },

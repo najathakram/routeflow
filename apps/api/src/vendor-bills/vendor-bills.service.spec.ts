@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
@@ -233,6 +233,33 @@ describe("VendorBillsService", () => {
       expect(where.AND).toEqual([
         { OR: [{ items: { none: {} } }, { items: { some: { productId: null } } }] },
       ]);
+    });
+  });
+
+  describe("recordPayment", () => {
+    it("rejects a payment that exceeds the remaining balance", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ totalOwed: 100, payments: [{ amount: 40 }] }),
+      );
+
+      await expect(service.recordPayment("bill-1", { amount: 61, method: "CASH" })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.billPayment.create).not.toHaveBeenCalled();
+    });
+
+    it("records a payment within the remaining balance and rounds the running total", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ totalOwed: 100, payments: [{ amount: 40 }] }),
+      );
+      prisma.billPayment.create.mockResolvedValue({});
+      prisma.vendorBill.update.mockResolvedValue({});
+
+      await service.recordPayment("bill-1", { amount: 60, method: "CASH" });
+
+      const data = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(data.totalPaid).toBe(100);
+      expect(data.status).toBe("PAID");
     });
   });
 });

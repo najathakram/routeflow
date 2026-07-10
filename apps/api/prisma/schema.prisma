@@ -1185,6 +1185,11 @@ model OrderItem {
   overriddenBy      String?
   boxes             Int?
   pieces            Int?
+  // Sale-time snapshot of the product's box size (Product.unitsPerBox). Boxed
+  // line math (price proration, box/piece split) must use THIS value, never the
+  // live product — a later packaging change must not re-interpret past lines.
+  // Null for lines created before the snapshot shipped (fall back to live upb).
+  unitsPerBox       Int?
   notes             String?
   // Phase 4: regulated-category snapshot at sale time; `categoryTaxAmount` is the
   // computed category tax for this line (0 until the W3 calculator populates it).
@@ -1201,6 +1206,7 @@ model OrderItem {
   trackedCategory   TrackedCategory?   @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
   deliveryMutations DeliveryMutation[]
   transactionItems  TransactionItem[]
+  invoiceItems      InvoiceItem[]
 
   @@index([orderId])
   @@index([productId])
@@ -1604,6 +1610,15 @@ model InvoiceItem {
   subtotal          Decimal   @db.Decimal(10, 2)
   boxes             Int?
   pieces            Int?
+  // Sale-time snapshot of the product's box size, carried from the order line.
+  // Any recompute of this invoice line (edit form, PDF) must use THIS value, not
+  // the live product. Null for lines created before the snapshot shipped.
+  unitsPerBox       Int?
+  // Provenance: the OrderItem this invoice line was billed from (null for manual
+  // / freeform lines). Enables exact partial-billing bookkeeping and precise
+  // invoicedQty release on void. SetNull so an order-line hard-delete (order edit
+  // replaces line items) never blocks on this FK.
+  orderItemId       String?
   // Phase 4: regulated-category snapshot carried from the order line onto the
   // (possibly split) invoice; `categoryTaxAmount` is this line's category tax.
   trackedCategoryId String?
@@ -1615,10 +1630,12 @@ model InvoiceItem {
   invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   tenant          Tenant?          @relation(fields: [tenantId], references: [id])
   product         Product?         @relation(fields: [productId], references: [id])
+  orderItem       OrderItem?       @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
   trackedCategory TrackedCategory? @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@index([productId])
+  @@index([orderItemId])
   @@index([tenantId])
   @@index([trackedCategoryId])
 }

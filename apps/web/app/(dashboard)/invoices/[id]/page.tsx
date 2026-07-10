@@ -55,6 +55,7 @@ import { fmt, fmtDate } from "@/lib/formatting";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { useTenant } from "@/components/tenant-provider";
+import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 
 function methodLabel(method: string) {
   switch (method) {
@@ -932,6 +933,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
   // Explicit Draft/Final PDF-stage override; null = follow the smart default.
   const [pdfVariantOverride, setPdfVariant] = React.useState<InvoicePdfVariant | null>(null);
+  // Floating "View order" preview popup.
+  const [orderPreviewOpen, setOrderPreviewOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (invoice) setTitle(invoice.invoiceNumber);
@@ -1747,13 +1750,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* Linked order */}
           {(invoice as any).orderId && (
             <Card title="Linked Order">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <Package className="h-4 w-4 text-navy/70" />
+                <button
+                  type="button"
+                  onClick={() => setOrderPreviewOpen(true)}
+                  className="text-sm font-medium text-brand-500 hover:underline"
+                >
+                  Preview order
+                </button>
                 <Link
                   href={`/orders/${(invoice as any).orderId}`}
-                  className="text-sm text-brand-500 hover:underline"
+                  className="text-sm text-navy/60 hover:underline"
                 >
-                  View order →
+                  Open →
                 </Link>
               </div>
             </Card>
@@ -2055,6 +2065,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         }}
         isPending={sendInvoice.isPending}
       />
+
+      {(invoice as any).orderId && (
+        <OrderPreviewModal
+          open={orderPreviewOpen}
+          onClose={() => setOrderPreviewOpen(false)}
+          orderId={(invoice as any).orderId}
+        />
+      )}
     </div>
   );
 }

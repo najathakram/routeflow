@@ -12,6 +12,13 @@ export interface OrderItem {
   product?: { id: string; name: string; unit: string };
   qty: number;
   unitPrice: number;
+  /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
+  subtotal?: number;
+  /** Boxed split persisted server-side; boxes==null means qty is in selling units. */
+  boxes?: number | null;
+  pieces?: number | null;
+  /** Cumulative qty already covered by issued invoices for this item. */
+  invoicedQty?: number;
   status: string;
 }
 

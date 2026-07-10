@@ -249,7 +249,13 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
       setItems(
         (invoice.items ?? []).length > 0
           ? (invoice.items ?? []).map((it) => {
-              const upb = Number(it.product?.unitsPerBox ?? 0);
+              // Treat a line as box-split ONLY if it was STORED with a split, and
+              // use the sale-time snapshot upb — never the live product (which, if
+              // the product's packaging changed since, would re-price the line and
+              // show the per-box price as the whole line total). Selling-unit lines
+              // (boxes == null) stay non-boxed so qty × unitPrice is preserved.
+              const isBoxSplit = it.boxes != null;
+              const upb = Number(it.unitsPerBox ?? it.product?.unitsPerBox ?? 0);
               return {
                 key: it.id,
                 productId: it.productId,
@@ -258,7 +264,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 unitPrice: Number(it.unitPrice),
                 taxRate: Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
-                unitsPerBox: upb > 1 ? upb : undefined,
+                unitsPerBox: isBoxSplit && upb > 1 ? upb : undefined,
               };
             })
           : [createEmptyItem()],

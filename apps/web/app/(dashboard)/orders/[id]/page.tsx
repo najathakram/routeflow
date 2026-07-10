@@ -51,6 +51,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
+import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
@@ -1219,6 +1220,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // Split-invoice modal (operator can split an order into multiple invoices)
   const [splitInvoiceOpen, setSplitInvoiceOpen] = React.useState(false);
 
+  // Floating invoice-preview popup (from the Invoices card).
+  const [previewInvoiceId, setPreviewInvoiceId] = React.useState<string | null>(null);
+
   const { toast } = useToast();
 
   React.useEffect(() => {
@@ -1249,7 +1253,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 notes: li.notes,
                 overrideReason: li.overrideReason ?? undefined,
                 unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
-                unitsPerBox: li.product?.unitsPerBox ?? null,
+                // Prefer the line's sale-time box-size snapshot over the live product.
+                unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
                 category: li.product?.category ?? null,
                 boxSplit: li.boxes != null || li.pieces != null,
               };
@@ -1308,7 +1313,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             notes: li.notes,
             overrideReason: li.overrideReason ?? undefined,
             // unitsPerBox + boxSplit drive boxed proration on save (money fix).
-            unitsPerBox: li.product?.unitsPerBox ?? null,
+            // Prefer the line's sale-time snapshot over the live product so a later
+            // packaging change can't re-price an existing line.
+            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
             boxSplit: li.boxes != null || li.pieces != null,
           };
         }),
@@ -2129,13 +2136,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           ) : (
                             <span className="money text-navy">
                               $
-                              {computeLineSubtotal({
-                                unitPrice: Number(li.unitPrice),
-                                qty: Number(li.qty),
-                                boxes: li.boxes ?? null,
-                                pieces: li.pieces ?? null,
-                                unitsPerBox: li.product?.unitsPerBox ?? null,
-                              }).toFixed(2)}
+                              {(li.subtotal != null
+                                ? Number(li.subtotal)
+                                : computeLineSubtotal({
+                                    unitPrice: Number(li.unitPrice),
+                                    qty: Number(li.qty),
+                                    boxes: li.boxes ?? null,
+                                    pieces: li.pieces ?? null,
+                                    // Snapshot upb, never the live product.
+                                    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                                  })
+                              ).toFixed(2)}
                             </span>
                           )}
                         </td>
@@ -2276,6 +2287,28 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             <Card title={`Invoice${((order as any).invoices?.length ?? 0) > 1 ? "s" : ""}`}>
               {(order as any).invoices?.length > 0 && (
                 <div className="space-y-3">
+                  {(() => {
+                    // Warn when this fully-invoiced order's total no longer matches
+                    // the sum of its non-void invoices (mirrors the popup note). "Fully
+                    // invoiced" = no line has qty left to bill, so a partial split
+                    // (which legitimately bills less) never trips the warning.
+                    const nonVoid = ((order as any).invoices as any[]).filter(
+                      (i) => i.status !== "VOID",
+                    );
+                    const invoicedTotal = nonVoid.reduce((s, i) => s + Number(i.total), 0);
+                    const noRemaining = !((order.lineItems ?? []) as any[]).some(
+                      (li) =>
+                        li.status !== "CANCELLED" &&
+                        Number(li.qty) - Number(li.invoicedQty ?? 0) > 0.001,
+                    );
+                    const fullyInvoiced = nonVoid.length > 0 && noRemaining;
+                    return fullyInvoiced ? (
+                      <DivergenceNote
+                        orderTotal={Number(order.total)}
+                        invoicedTotal={invoicedTotal}
+                      />
+                    ) : null;
+                  })()}
                   {(order as any).invoices.map((inv: any) => (
                     <div key={inv.id} className="space-y-1">
                       <div className="flex items-center gap-2">
@@ -2292,12 +2325,21 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           </span>
                         )}
                       </div>
-                      <Link
-                        href={`/invoices/${inv.id}`}
-                        className="block text-xs text-brand-500 hover:underline"
-                      >
-                        View invoice →
-                      </Link>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewInvoiceId(inv.id)}
+                          className="text-xs font-medium text-brand-500 hover:underline"
+                        >
+                          Preview
+                        </button>
+                        <Link
+                          href={`/invoices/${inv.id}`}
+                          className="text-xs text-navy/60 hover:underline"
+                        >
+                          Open →
+                        </Link>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2366,8 +2408,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),
+          // Stored line subtotal so the preview prorates it the same way the server
+          // bills the split — never a raw qty × unitPrice (over-charges boxed lines).
+          subtotal: li.subtotal != null ? Number(li.subtotal) : undefined,
           unit: li.product?.unit,
         }))}
+      />
+
+      <InvoicePreviewModal
+        open={previewInvoiceId != null}
+        onClose={() => setPreviewInvoiceId(null)}
+        invoiceId={previewInvoiceId ?? ""}
+        orderTotal={Number(order.total)}
       />
 
       {/* Cancel confirmation */}

@@ -25,6 +25,13 @@ export interface Order {
   requestedDeliveryDate?: string;
   templateId?: string;
   lineItems: OrderItem[];
+  /** Invoices generated from this order (sibling split invoices share invoiceGroupId). */
+  invoices?: Array<{
+    id: string;
+    invoiceNumber: string;
+    status: string;
+    total: number;
+  }>;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
@@ -53,6 +60,10 @@ export interface OrderItem {
   overrideReason?: string | null;
   boxes?: number | null;
   pieces?: number | null;
+  /** Sale-time box-size snapshot. Box math must use THIS, not the live product. */
+  unitsPerBox?: number | null;
+  /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
+  subtotal?: number;
   status: string;
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */

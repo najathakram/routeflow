@@ -171,6 +171,9 @@ export class InvoicesService {
         subtotal: lineSub,
         boxes,
         pieces,
+        // Snapshot the box size when this line was priced as a box split, so a later
+        // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
+        unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
@@ -348,26 +351,79 @@ export class InvoicesService {
   }
 
   /**
-   * Shared per-line invoice-item shape built from an order line, billing `qty`
-   * of it. Reused by createInvoiceFromOrder and reconcileOrderDraftInvoice so
-   * the two never drift.
+   * Shared per-line invoice-item shape built from an order line, billing `billQty`
+   * pieces of it. Reused by createInvoiceFromOrder, reconcileOrderDraftInvoice and
+   * createPartialFromOrder so the invoice line NEVER drifts from the order line.
+   *
+   * COPY, DON'T RECOMPUTE. The order line already holds the agreed money
+   * (`li.subtotal`) and the canonical box/piece denomination (`li.boxes` null ⇒
+   * `qty` is in SELLING UNITS, not pieces). Re-deriving either from the billed qty
+   * and the LIVE product.unitsPerBox is what let an invoice diverge from its order
+   * (a packaging change re-priced past lines; the per-box price showed as the line
+   * total). So:
+   *   - Money comes from the STORED subtotal, never `computeLineSubtotal(live upb)`.
+   *   - The box/piece split is only derived for lines that were themselves stored
+   *     with a split (`li.boxes != null`); selling-unit lines keep `boxes = null`.
+   *   - `unitsPerBox` is snapshotted so any later recompute (edit form, PDF) uses
+   *     the sale-time box size, not the live product.
+   *
+   * Partial billing uses telescoping cumulative rounding keyed on
+   * `opts.priorBilledQty` (the qty already billed by surviving invoices): each
+   * bill's subtotal = round(S · (prior+bill)/Q) − round(S · prior/Q). This sums to
+   * exactly `S` once the line is fully billed (no per-partial cent drift) and, for
+   * a full bill from scratch (prior 0, bill = qty), copies `S` verbatim.
    */
-  private buildInvoiceItemData(li: any, qty: number, tenantId: string | null) {
-    // For BOXED products the order line stores `unitPrice` as the BOX price and
-    // `qty` as total pieces. Billing `qty * unitPrice` would multiply the box
-    // price by the piece count (a unitsPerBox-fold overcharge). Re-derive the
-    // boxes/pieces split from the (possibly partial) billed qty and prorate
-    // through the shared helper so the invoice line matches the order line.
-    const unitsPerBox = Number(li.product?.unitsPerBox ?? 0);
-    const split = normalizeBoxesPieces({ qty, unitsPerBox });
+  private buildInvoiceItemData(
+    li: any,
+    billQty: number,
+    tenantId: string | null,
+    opts?: { priorBilledQty?: number },
+  ) {
+    const orderQty = Number(li.qty) || 0;
+    const storedSubtotal = li.subtotal != null ? Number(li.subtotal) : null;
     const unitPrice = Number(li.unitPrice);
+    // Snapshot the box size: prefer the order line's own snapshot, fall back to the
+    // live product for legacy rows created before the snapshot column shipped.
+    const unitsPerBox = Number(li.unitsPerBox ?? li.product?.unitsPerBox ?? 0);
+    const isBoxSplit = li.boxes != null; // stored WITH a box/piece split
+
+    // Box/piece split for DISPLAY only (money is the stored subtotal). Selling-unit
+    // and non-boxed lines keep boxes/pieces null so `qty` stays in whatever unit the
+    // order line used — never re-interpreted as pieces.
+    const split = isBoxSplit
+      ? normalizeBoxesPieces({ qty: billQty, unitsPerBox })
+      : { qty: billQty, boxes: null as number | null, pieces: null as number | null };
+
+    const prior = Math.max(0, Number(opts?.priorBilledQty ?? 0));
+    let subtotal: number;
+    if (storedSubtotal == null || orderQty <= 0) {
+      // Legacy/degenerate line with no stored money: fall back to the shared helper
+      // using the STORED split (never a live re-split).
+      subtotal = computeLineSubtotal({
+        unitPrice,
+        qty: split.qty,
+        boxes: split.boxes,
+        pieces: split.pieces,
+        unitsPerBox,
+      });
+    } else {
+      // Telescoping cumulative rounding — exact and drift-free across partials.
+      subtotal = roundMoney(
+        roundMoney((storedSubtotal * (prior + billQty)) / orderQty) -
+          roundMoney((storedSubtotal * prior) / orderQty),
+      );
+    }
+
     return {
       // Catalog lines use the product name; unlisted lines carry a free-text `name`.
       description: li.product?.name ?? li.name ?? `Product`,
       productId: li.productId,
+      // Provenance back to the source order line (null for freeform lines).
+      orderItemId: li.id ?? null,
       qty: split.qty,
       boxes: split.boxes,
       pieces: split.pieces,
+      unitsPerBox: unitsPerBox > 0 ? unitsPerBox : null,
       unitPrice,
       // `unitPrice` is ALREADY the net (post-override) price — the order stores the
       // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
@@ -379,13 +435,7 @@ export class InvoicesService {
       originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
       priceType: li.priceType ?? "STANDARD",
       taxRate: 0,
-      subtotal: computeLineSubtotal({
-        unitPrice,
-        qty: split.qty,
-        boxes: split.boxes,
-        pieces: split.pieces,
-        unitsPerBox,
-      }),
+      subtotal,
       // Phase 4 (W4): carry the line's regulated category onto the invoice line so
       // the split can group by it and reporting/ledger can read it. Prefer the
       // OrderItem sale-time snapshot; fall back to the live product category for
@@ -518,7 +568,12 @@ export class InvoicesService {
 
     const groupData = groups.map((g) => {
       const itemsData = g.items.map(({ li, remainingQty }: any) =>
-        this.buildInvoiceItemData(li, remainingQty, tenantId),
+        // remainingQty = qty − invoicedQty, so prior + bill reaches the full line
+        // qty and the stored subtotal is copied exactly (minus what prior invoices
+        // already billed, via the telescoping rounding in buildInvoiceItemData).
+        this.buildInvoiceItemData(li, remainingQty, tenantId, {
+          priorBilledQty: Number(li.invoicedQty ?? 0),
+        }),
       );
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
       const categoryTax = roundMoney(
@@ -593,7 +648,7 @@ export class InvoicesService {
         out.push(inv);
         // W5: write the regulated-sales ledger from this invoice's regulated lines
         // (built off the created items, so invoiceItemId is real). orderItemId
-        // provenance is a follow-up — invoice items don't store the order line id.
+        // provenance now flows through from the invoice item's stored order-line link.
         await this.ledger.writeSaleEntries({
           tenantId,
           orderId: order.id,
@@ -601,7 +656,7 @@ export class InvoicesService {
           soldAt: inv.issueDate ?? new Date(),
           lines: (inv.items ?? []).map((it: any) => ({
             invoiceItemId: it.id,
-            orderItemId: null,
+            orderItemId: it.orderItemId ?? null,
             trackedCategoryId: it.trackedCategoryId ?? null,
             qty: Number(it.qty),
             netSales: Number(it.subtotal),
@@ -735,11 +790,13 @@ export class InvoicesService {
    * order's line items + totals from the SUM of ALL its non-void invoices, so
    * editing an invoice keeps the order in step with what was actually billed.
    *
-   * Aggregates billed qty + subtotal per product across every surviving invoice,
-   * re-derives the boxes/pieces split + order totals (preserving the order's
-   * effective tax rate), and cancels order lines that no invoice bills. No-op
-   * when the order has no surviving (non-void) invoices — we never wipe an order
-   * just because its last invoice was voided.
+   * Aggregates billed qty + subtotal per SOURCE ORDER LINE (via the invoice item's
+   * `orderItemId` provenance; falls back to productId for legacy invoice rows),
+   * copies the billed subtotal verbatim, and PRESERVES each order line's stored
+   * box/piece denomination + unitsPerBox snapshot — it never re-splits against the
+   * live product (which used to turn selling-unit lines into phantom box splits).
+   * Cancels order lines no invoice bills; preserves the order's effective tax rate.
+   * No-op when the order has no surviving (non-void) invoices.
    */
   async recomputeOrderFromInvoices(orderId: string, tx?: any) {
     const db = tx ?? this.prisma.forTenant();
@@ -755,47 +812,69 @@ export class InvoicesService {
     });
     if (invoices.length === 0) return null;
 
-    // Aggregate billed qty (pieces) + subtotal per product across all invoices.
-    const byProduct = new Map<string, { qty: number; subtotal: number; unitPrice: number }>();
+    const tenantId = this.prisma.getTenantId();
+    const existingById = new Map<string, any>();
+    const existingByProduct = new Map<string, any>();
+    for (const li of order.lineItems as any[]) {
+      existingById.set(li.id, li);
+      if (li.productId) existingByProduct.set(li.productId, li);
+    }
+
+    // Aggregate billed qty + subtotal, resolving each invoice line to its source
+    // order line: prefer the stored orderItemId; else first-match by productId
+    // (legacy rows). An invoice line with a product but no matching order line
+    // becomes a NEW order line (an item added on the invoice). Freeform invoice
+    // lines (no product, no orderItemId) can't map to an order line and are skipped.
+    type Agg = {
+      line: any; // existing order line, or null → create new
+      productId: string | null;
+      qty: number;
+      subtotal: number;
+      unitPrice: number;
+      sample: any; // an invoice item, for the box/piece + upb snapshot
+    };
+    const byTarget = new Map<string, Agg>();
     for (const inv of invoices) {
       for (const it of inv.items as any[]) {
-        if (!it.productId) continue; // freeform invoice lines don't map to an order line
-        const prev = byProduct.get(it.productId) ?? {
+        const line =
+          (it.orderItemId && existingById.get(it.orderItemId)) ||
+          (it.productId && existingByProduct.get(it.productId)) ||
+          null;
+        if (!line && !it.productId) continue; // freeform — nothing to sync
+        const key = line ? `line:${line.id}` : `product:${it.productId}`;
+        const prev = byTarget.get(key) ?? {
+          line,
+          productId: it.productId ?? null,
           qty: 0,
           subtotal: 0,
           unitPrice: Number(it.unitPrice),
+          sample: it,
         };
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
-        byProduct.set(it.productId, prev);
+        prev.sample = it;
+        byTarget.set(key, prev);
       }
     }
 
-    // unitsPerBox for boxed re-split of the aggregated piece qty.
-    const productIds = [...byProduct.keys()];
-    const products = productIds.length
-      ? await db.product.findMany({
-          where: { id: { in: productIds } },
-          select: { id: true, unitsPerBox: true },
-        })
-      : [];
-    const upbMap = new Map<string, number>(
-      products.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
-    );
-
-    const tenantId = this.prisma.getTenantId();
-    const existingByProduct = new Map<string, any>();
-    for (const li of order.lineItems as any[]) {
-      if (li.productId) existingByProduct.set(li.productId, li);
-    }
-
     let subtotal = 0;
-    for (const [productId, agg] of byProduct.entries()) {
-      const split = normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upbMap.get(productId) ?? 0 });
+    for (const agg of byTarget.values()) {
+      const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
       subtotal += lineSubtotal;
-      const existing = existingByProduct.get(productId);
+      // Preserve the denomination. For an existing line use ITS stored box/piece
+      // shape + snapshot upb; for a new line use the invoice item's snapshot. Box
+      // splits re-derive their display split from the billed qty; selling-unit and
+      // non-boxed lines keep boxes/pieces null (qty stays in their own unit). The
+      // live product is NEVER consulted — that is what created phantom splits.
+      const denomSource = existing ?? agg.sample;
+      const isBoxSplit = denomSource?.boxes != null;
+      const upb = Number(existing?.unitsPerBox ?? agg.sample?.unitsPerBox ?? 0);
+      const split = isBoxSplit
+        ? normalizeBoxesPieces({ qty: agg.qty, unitsPerBox: upb })
+        : { qty: agg.qty, boxes: null as number | null, pieces: null as number | null };
+      const upbSnapshot = upb > 0 ? upb : null;
       if (existing) {
         await db.orderItem.update({
           where: { id: existing.id },
@@ -803,21 +882,23 @@ export class InvoicesService {
             qty: split.qty,
             boxes: split.boxes,
             pieces: split.pieces,
+            unitsPerBox: upbSnapshot,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             invoicedQty: split.qty,
             status: "PENDING",
           },
         });
-        existingByProduct.delete(productId);
+        existingById.delete(existing.id);
       } else {
         await db.orderItem.create({
           data: {
             orderId,
-            productId,
+            productId: agg.productId,
             qty: split.qty,
             boxes: split.boxes,
             pieces: split.pieces,
+            unitsPerBox: upbSnapshot,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
             invoicedQty: split.qty,
@@ -829,7 +910,7 @@ export class InvoicesService {
     }
 
     // Order lines billed by no invoice → cancel (they weren't actually sold).
-    for (const orphan of existingByProduct.values()) {
+    for (const orphan of existingById.values()) {
       await db.orderItem.update({
         where: { id: orphan.id },
         data: {
@@ -989,9 +1070,13 @@ export class InvoicesService {
           `Requested qty ${req.qty} exceeds remaining ${remaining} for ${li.product?.name ?? li.productId}`,
         );
       }
-      // Reuse the shared builder so boxed lines prorate (req.qty is in pieces,
-      // unitPrice is the box price) and rounding stays consistent.
-      const itemData = this.buildInvoiceItemData(li, req.qty, this.prisma.getTenantId());
+      // Reuse the shared builder. It copies the order line's stored money and
+      // prorates partials via telescoping cumulative rounding keyed on how much
+      // this line has already been billed, so repeated partials sum to exactly the
+      // order line's subtotal.
+      const itemData = this.buildInvoiceItemData(li, req.qty, this.prisma.getTenantId(), {
+        priorBilledQty: Number(li.invoicedQty ?? 0),
+      });
       subtotal += itemData.subtotal;
       itemsData.push(itemData);
     }
@@ -1331,6 +1416,8 @@ export class InvoicesService {
           subtotal: lineSub,
           boxes,
           pieces,
+          // Snapshot the box size for a box-split line so later recompute is stable.
+          unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });
@@ -1645,7 +1732,7 @@ export class InvoicesService {
         data: { status: InvoiceStatus.VOID },
       });
 
-      await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
+      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, -1);
       // W5: reverse this invoice's regulated ledger rows so filings net to zero.
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
       return voided;
@@ -1653,44 +1740,63 @@ export class InvoicesService {
   }
 
   /**
-   * Decrement OrderItem.invoicedQty for every line on the voided/deleted
-   * invoice that came from an order. Called from voidInvoice and deleteInvoice
-   * so the source order's `qty - invoicedQty` reflects what's still billable.
+   * Adjust OrderItem.invoicedQty for every line on an invoice that came from an
+   * order, by `direction` × the invoice line's qty:
+   *   - direction -1 (void/delete): RELEASE the qty so `qty - invoicedQty` reflects
+   *     what's still billable and the operator can re-split.
+   *   - direction +1 (unvoid): RE-CLAIM the qty the invoice bills again, so a later
+   *     invoice can't double-bill it. Capped at the order line's qty.
    *
-   * Match is by `productId` within the same order. If the order has more than
-   * one line item for the same product (rare — and only happens via legacy
-   * data, since the create-order flow merges duplicate products) we decrement
-   * the first match by the invoice line's qty. Worst-case manual fixup is the
-   * operator can re-bill the remaining qty on the next split.
+   * Match is by the invoice line's `orderItemId` provenance — precise even when an
+   * order has multiple lines for the same product. Legacy invoice rows that predate
+   * the provenance column fall back to first-match-by-productId (the old behaviour).
    */
-  private async releaseInvoicedQtyForVoidedInvoice(
+  private async adjustInvoicedQtyForInvoice(
     tx: any,
     invoiceId: string,
     orderId: string | null,
+    direction: -1 | 1,
   ): Promise<void> {
-    if (!orderId) return; // standalone invoice — nothing to release
+    if (!orderId) return; // standalone invoice — nothing to adjust
     const items = await tx.invoiceItem.findMany({
       where: { invoiceId },
-      select: { productId: true, qty: true },
+      select: { productId: true, qty: true, orderItemId: true },
     });
-    const productQty = new Map<string, number>();
+    if (items.length === 0) return;
+
+    // Precise path: adjust the exact source order line by this invoice line's qty.
+    const byOrderItem = new Map<string, number>();
+    // Legacy path: invoice lines with no provenance, aggregated by product.
+    const byProduct = new Map<string, number>();
     for (const it of items) {
-      if (!it.productId) continue;
-      productQty.set(it.productId, (productQty.get(it.productId) ?? 0) + Number(it.qty));
+      if (it.orderItemId) {
+        byOrderItem.set(it.orderItemId, (byOrderItem.get(it.orderItemId) ?? 0) + Number(it.qty));
+      } else if (it.productId) {
+        byProduct.set(it.productId, (byProduct.get(it.productId) ?? 0) + Number(it.qty));
+      }
     }
-    if (productQty.size === 0) return;
+    if (byOrderItem.size === 0 && byProduct.size === 0) return;
+
     const orderItems = await tx.orderItem.findMany({
       where: { orderId },
-      select: { id: true, productId: true, invoicedQty: true },
+      select: { id: true, productId: true, qty: true, invoicedQty: true },
     });
-    for (const [productId, qtyToFree] of productQty) {
+    const adjust = async (oi: any, qtyDelta: number) => {
+      // Clamp into [0, line qty]: never negative, never claim more than the line has.
+      const next = Math.min(
+        Number(oi.qty ?? 0),
+        Math.max(0, Number(oi.invoicedQty ?? 0) + direction * qtyDelta),
+      );
+      await tx.orderItem.update({ where: { id: oi.id }, data: { invoicedQty: next } });
+    };
+
+    for (const [orderItemId, qty] of byOrderItem) {
+      const target = orderItems.find((oi: any) => oi.id === orderItemId);
+      if (target) await adjust(target, qty);
+    }
+    for (const [productId, qty] of byProduct) {
       const target = orderItems.find((oi: any) => oi.productId === productId);
-      if (!target) continue;
-      const next = Math.max(0, Number(target.invoicedQty ?? 0) - qtyToFree);
-      await tx.orderItem.update({
-        where: { id: target.id },
-        data: { invoicedQty: next },
-      });
+      if (target) await adjust(target, qty);
     }
   }
 
@@ -1717,6 +1823,52 @@ export class InvoicesService {
     });
   }
 
+  /**
+   * When an order with a SENT (non-draft) pending-mirror invoice is edited, bring
+   * that invoice back to DRAFT so the edit re-syncs into it instead of silently
+   * diverging (the "edit after send" price-drift class). Only invoices with ZERO
+   * payments are auto-reverted; a paid/partly-paid invoice throws instead — money
+   * must never silently detach from a sent document. Per-batch delivery invoices
+   * (deliveryBatchId != null, only on delivered orders) are never touched. Returns
+   * the reverted invoice ids (empty when there's nothing to revert). Call BEFORE
+   * mutating the order, so a payment-block aborts the whole edit cleanly.
+   */
+  async revertLinkedInvoicesForOrderEdit(orderId: string, tx?: any): Promise<string[]> {
+    const db = tx ?? this.prisma.forTenant();
+    const linked = await db.invoice.findMany({
+      where: {
+        orderId,
+        deliveryBatchId: null,
+        status: { in: [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE] },
+      },
+      select: { id: true, invoiceNumber: true, internalNotes: true },
+    });
+    if (linked.length === 0) return [];
+
+    const reverted: string[] = [];
+    for (const inv of linked) {
+      const paymentCount = await db.invoicePayment.count({ where: { invoiceId: inv.id } });
+      if (paymentCount > 0) {
+        throw new BadRequestException(
+          `This order can't be edited while invoice ${inv.invoiceNumber} has payments recorded. ` +
+            `Void the invoice or remove its payments first.`,
+        );
+      }
+      const auditLine = `[${new Date().toLocaleDateString()} — reverted to Draft: source order edited]`;
+      await db.invoice.update({
+        where: { id: inv.id },
+        data: {
+          status: InvoiceStatus.DRAFT,
+          sentAt: null,
+          pdfUrl: null,
+          internalNotes: inv.internalNotes ? `${inv.internalNotes}\n${auditLine}` : auditLine,
+        },
+      });
+      reverted.push(inv.id);
+    }
+    return reverted;
+  }
+
   async unvoidInvoice(id: string) {
     const inv = await this.findOneOrThrow(id);
     if (inv.status !== InvoiceStatus.VOID) {
@@ -1724,11 +1876,17 @@ export class InvoicesService {
         `Only VOID invoices can be unvoided. Current status: ${inv.status}`,
       );
     }
-    // Check if there were payments before voiding (there shouldn't be, since void blocks payments)
-    // Revert to DRAFT so operator can review before re-sending
-    return this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.DRAFT },
+    // Voiding RELEASED this invoice's invoicedQty back to the order; bringing it
+    // back to DRAFT re-claims that qty so a later invoice can't double-bill the
+    // same lines. Atomic with the status flip. (Ledger reversal is not un-done here
+    // — regulated-ledger un-reversal on unvoid is a separate follow-up.)
+    return this.prisma.tenantTransaction(async (tx) => {
+      const restored = await tx.invoice.update({
+        where: { id },
+        data: { status: InvoiceStatus.DRAFT },
+      });
+      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, 1);
+      return restored;
     });
   }
 
@@ -2167,7 +2325,7 @@ export class InvoicesService {
       // items (we read them inside the helper). Otherwise a delete leaves the
       // source order's lines flagged as fully invoiced with no surviving
       // record of why — operator can never split again.
-      await this.releaseInvoicedQtyForVoidedInvoice(tx, id, inv.orderId);
+      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, -1);
 
       // W5: reverse this invoice's regulated ledger rows before the invoice + its
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).

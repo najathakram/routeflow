@@ -33,6 +33,10 @@ export interface InvoiceItem {
   /** Boxed split persisted server-side (unitsPerBox > 1 products). */
   boxes?: number | null;
   pieces?: number | null;
+  /** Sale-time box-size snapshot. Recompute this line with THIS, never the live product. */
+  unitsPerBox?: number | null;
+  /** Provenance back to the source order line (null for manual/freeform lines). */
+  orderItemId?: string | null;
   taxable?: boolean;
   total?: number;
 }
