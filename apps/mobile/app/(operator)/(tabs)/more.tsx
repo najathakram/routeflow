@@ -71,6 +71,14 @@ export default function OperatorMoreScreen() {
             chevron
           />
           <ListRow
+            icon={<Ionicons name="repeat-outline" size={16} color={ios.system.orangeInk} />}
+            iconBg={ios.system.orangeWash}
+            title="Recurring Invoices"
+            subtitle="Scheduled auto-billing"
+            onPress={() => router.push("/(operator)/recurring-invoices")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="reader-outline" size={16} color={ios.system.purpleInk} />}
             iconBg={ios.system.purpleWash}
             title="Estimates"
