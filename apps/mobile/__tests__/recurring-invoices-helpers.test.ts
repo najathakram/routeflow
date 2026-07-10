@@ -2,7 +2,7 @@
  * P10-PAR-3 pure-logic guards for the mobile recurring-invoices parity screen.
  * Locks the Active/Paused pill mapping and the human schedule label.
  */
-import { freqLabel, recurringPillFor } from "../lib/recurring-invoices-logic";
+import { freqLabel, recurringActionFlags, recurringPillFor } from "../lib/recurring-invoices-logic";
 import type { RecurringFrequency } from "../lib/api/recurring-invoices";
 
 describe("recurringPillFor", () => {
@@ -11,6 +11,23 @@ describe("recurringPillFor", () => {
     [false, "gray", "Paused"],
   ] as const)("%s → %s / %s", (isActive, variant, label) => {
     expect(recurringPillFor(isActive)).toEqual({ variant, label });
+  });
+});
+
+describe("recurringActionFlags", () => {
+  it("active → generate + pause, never resume", () => {
+    expect(recurringActionFlags(true)).toEqual({
+      canRunNow: true,
+      canPause: true,
+      canActivate: false,
+    });
+  });
+  it("paused → generate + resume, never pause", () => {
+    expect(recurringActionFlags(false)).toEqual({
+      canRunNow: true,
+      canPause: false,
+      canActivate: true,
+    });
   });
 });
 

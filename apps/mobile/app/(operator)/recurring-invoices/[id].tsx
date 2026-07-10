@@ -4,9 +4,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useRecurringInvoice, useRunRecurringInvoice } from "../../../lib/api/recurring-invoices";
-import { freqLabel, recurringPillFor } from "../../../lib/recurring-invoices-logic";
+import {
+  useActivateRecurringInvoice,
+  useDeactivateRecurringInvoice,
+  useRecurringInvoice,
+  useRunRecurringInvoice,
+} from "../../../lib/api/recurring-invoices";
+import {
+  freqLabel,
+  recurringActionFlags,
+  recurringPillFor,
+} from "../../../lib/recurring-invoices-logic";
 import { showToast } from "../../../lib/toast";
+import { confirm } from "../../../lib/confirm";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -19,8 +29,10 @@ export default function RecurringInvoiceDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
 
-  const { data: template, isLoading } = useRecurringInvoice(id ?? "");
+  const { data: template, isLoading, refetch } = useRecurringInvoice(id ?? "");
   const runMut = useRunRecurringInvoice();
+  const pauseMut = useDeactivateRecurringInvoice();
+  const activateMut = useActivateRecurringInvoice();
 
   if (isLoading || !template) {
     return (
@@ -34,6 +46,7 @@ export default function RecurringInvoiceDetailScreen() {
   }
 
   const s = recurringPillFor(template.isActive);
+  const flags = recurringActionFlags(template.isActive);
   const fmtDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : "—");
 
   const handleRunNow = () => {
@@ -43,6 +56,34 @@ export default function RecurringInvoiceDetailScreen() {
         showToast("Invoice generated");
         // run returns the created INVOICE (keyed `id`), not the template.
         router.push(`/(operator)/invoices/${inv.id}`);
+      },
+      onError: onErr,
+    });
+  };
+
+  const handlePause = () => {
+    if (!id) return;
+    confirm(
+      "Pause template?",
+      "No invoices will be generated until you resume it.",
+      () =>
+        pauseMut.mutate(id, {
+          onSuccess: () => {
+            showToast("Template paused");
+            refetch();
+          },
+          onError: onErr,
+        }),
+      { confirmText: "Pause", destructive: true },
+    );
+  };
+
+  const handleActivate = () => {
+    if (!id) return;
+    activateMut.mutate(id, {
+      onSuccess: () => {
+        showToast("Template resumed");
+        refetch();
       },
       onError: onErr,
     });
@@ -73,13 +114,30 @@ export default function RecurringInvoiceDetailScreen() {
             </Text>
           </View>
 
-          {/* Generate now — always available; server runs regardless of active state */}
+          {/* Actions — Generate now (always), Pause (active) / Resume (paused) */}
           <View style={styles.actionsGrid}>
-            <ActionTile
-              icon="flash-outline"
-              label={runMut.isPending ? "Generating…" : "Generate now"}
-              onPress={handleRunNow}
-            />
+            {flags.canRunNow ? (
+              <ActionTile
+                icon="flash-outline"
+                label={runMut.isPending ? "Generating…" : "Generate now"}
+                onPress={handleRunNow}
+              />
+            ) : null}
+            {flags.canPause ? (
+              <ActionTile
+                icon="pause-circle-outline"
+                label="Pause"
+                tone="danger"
+                onPress={handlePause}
+              />
+            ) : null}
+            {flags.canActivate ? (
+              <ActionTile
+                icon="play-circle-outline"
+                label={activateMut.isPending ? "Resuming…" : "Resume"}
+                onPress={handleActivate}
+              />
+            ) : null}
           </View>
 
           {/* Template line items (raw — the real invoice total is computed on generation) */}
@@ -134,15 +192,18 @@ function ActionTile({
   icon,
   label,
   onPress,
+  tone = "default",
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
+  tone?: "default" | "danger";
 }) {
+  const isDanger = tone === "danger";
   return (
-    <Pressable style={styles.tile} onPress={onPress}>
-      <Ionicons name={icon} size={22} color={ios.brand} />
-      <Text style={styles.tileLabel}>{label}</Text>
+    <Pressable style={[styles.tile, isDanger && styles.tileDanger]} onPress={onPress}>
+      <Ionicons name={icon} size={22} color={isDanger ? ios.system.red : ios.brand} />
+      <Text style={[styles.tileLabel, isDanger && { color: ios.system.red }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -172,6 +233,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
+  tileDanger: { backgroundColor: ios.system.redWash },
   tileLabel: {
     fontSize: 13,
     fontFamily: "Inter_600SemiBold",

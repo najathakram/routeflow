@@ -133,6 +133,8 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     messageOptOut: modelProxy(),
     messagingSettings: modelProxy(),
     inboundTriage: modelProxy(),
+    recurringInvoice: modelProxy(),
+    recurringInvoiceItem: modelProxy(),
   });
 
   const txModels = () => ({

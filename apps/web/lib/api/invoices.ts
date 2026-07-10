@@ -606,6 +606,20 @@ export function useDeactivateRecurringInvoice() {
   });
 }
 
+/**
+ * Resume a paused template via the dedicated `POST /:id/activate` endpoint. The
+ * old approach (`useUpdateRecurringInvoice` with `{ isActive: true }`) never
+ * persisted — the PATCH validates against CreateRecurringInvoiceDto (no isActive
+ * field; whitelist ValidationPipe) and was rejected.
+ */
+export function useActivateRecurringInvoice() {
+  const qc = useQueryClient();
+  return useMutation<RecurringInvoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/activate`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["recurring-invoices"] }),
+  });
+}
+
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, string>({

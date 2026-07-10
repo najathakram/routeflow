@@ -60,11 +60,6 @@ export function useRecurringInvoice(id: string) {
  * Invoice keyed `id` (DRAFT, or SENT if the template auto-sends) — NOT a
  * RecurringInvoice — so type it `{ id }` and navigate to that invoice (same
  * class of fix as the estimates convert / credit-notes apply hooks).
- *
- * NOTE: pause (DELETE) / resume (PATCH isActive) are intentionally NOT exposed —
- * resume is a broken server path (the update() service drops isActive and the
- * global ValidationPipe rejects the partial body), so shipping Pause without a
- * working Resume would trap the template. Tracked as a separate backend fix.
  */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
@@ -74,5 +69,28 @@ export function useRunRecurringInvoice() {
       qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
     },
+  });
+}
+
+function invalidateRecurring(qc: ReturnType<typeof useQueryClient>, id: string) {
+  qc.invalidateQueries({ queryKey: ["recurring-invoices"] });
+  qc.invalidateQueries({ queryKey: ["recurring-invoices", id] });
+}
+
+/** Pause a template — `DELETE /:id` soft-deactivates (sets isActive=false). */
+export function useDeactivateRecurringInvoice() {
+  const qc = useQueryClient();
+  return useMutation<RecurringInvoice, Error, string>({
+    mutationFn: (id) => apiClient.delete(`/recurring-invoices/${id}`).then((r) => r.data),
+    onSuccess: (_, id) => invalidateRecurring(qc, id),
+  });
+}
+
+/** Resume a paused template — `POST /:id/activate` (the dedicated reactivate path). */
+export function useActivateRecurringInvoice() {
+  const qc = useQueryClient();
+  return useMutation<RecurringInvoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/activate`).then((r) => r.data),
+    onSuccess: (_, id) => invalidateRecurring(qc, id),
   });
 }

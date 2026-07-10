@@ -8,7 +8,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import {
   useRecurringInvoices,
   useDeactivateRecurringInvoice,
-  useUpdateRecurringInvoice,
+  useActivateRecurringInvoice,
   useRunRecurringInvoice,
   type RecurringInvoice,
 } from "@/lib/api/invoices";
@@ -51,7 +51,7 @@ export default function RecurringInvoicesPage() {
 
   const { data: recurringList, isLoading } = useRecurringInvoices();
   const deactivate = useDeactivateRecurringInvoice();
-  const update = useUpdateRecurringInvoice();
+  const activate = useActivateRecurringInvoice();
   const runNow = useRunRecurringInvoice();
 
   const items: RecurringInvoice[] = recurringList ?? [];
@@ -63,7 +63,7 @@ export default function RecurringInvoicesPage() {
         onError: () => toast({ title: "Failed to deactivate template", variant: "error" }),
       });
     } else {
-      update.mutate({ id: ri.id, isActive: true } as any, {
+      activate.mutate(ri.id, {
         onSuccess: () => toast({ title: "Template activated", variant: "success" }),
         onError: () => toast({ title: "Failed to activate template", variant: "error" }),
       });

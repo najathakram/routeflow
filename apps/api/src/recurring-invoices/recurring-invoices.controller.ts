@@ -47,6 +47,14 @@ export class RecurringInvoicesController {
     return this.recurringInvoicesService.deactivate(id);
   }
 
+  // Resume a paused template. A dedicated endpoint (mirrors DELETE=deactivate)
+  // — the PATCH path can't carry `isActive` (whitelist ValidationPipe + required
+  // CreateRecurringInvoiceDto fields reject a `{ isActive }` partial body).
+  @Post(":id/activate")
+  activate(@Param("id") id: string) {
+    return this.recurringInvoicesService.activate(id);
+  }
+
   @Post(":id/run")
   runNow(@Param("id") id: string) {
     return this.recurringInvoicesService.runNow(id);

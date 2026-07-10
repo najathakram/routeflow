@@ -146,6 +146,15 @@ export class RecurringInvoicesService {
       .recurringInvoice.update({ where: { id }, data: { isActive: false } });
   }
 
+  /** Resume a paused template. Counterpart to deactivate() — the only path that
+   *  sets isActive back to true (update() intentionally never maps isActive). */
+  async activate(id: string) {
+    await this.findOne(id);
+    return this.prisma
+      .forTenant()
+      .recurringInvoice.update({ where: { id }, data: { isActive: true } });
+  }
+
   async runNow(id: string) {
     const ri = await this.prisma.forTenant().recurringInvoice.findUnique({
       where: { id },
