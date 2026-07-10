@@ -196,6 +196,14 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/analytics")}
             chevron
           />
+          <ListRow
+            icon={<Ionicons name="document-text-outline" size={16} color={ios.brand} />}
+            iconBg={ios.brandWash}
+            title="Reports"
+            subtitle="P&L, sales, AR aging, cash flow"
+            onPress={() => router.push("/(operator)/reports")}
+            chevron
+          />
           {hasTobacco ? (
             <ListRow
               icon={<Ionicons name="leaf-outline" size={16} color={ios.system.orangeInk} />}
