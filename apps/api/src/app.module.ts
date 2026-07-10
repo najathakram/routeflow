@@ -35,6 +35,7 @@ import { EstimatesModule } from "./estimates/estimates.module";
 import { VendorBillsModule } from "./vendor-bills/vendor-bills.module";
 import { ReturnsModule } from "./returns/returns.module";
 import { MessagesModule } from "./messages/messages.module";
+import { MessagingModule } from "./messaging/messaging.module";
 import { UploadsModule } from "./uploads/uploads.module";
 import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
@@ -135,6 +136,7 @@ import { AppService } from "./app.service";
     VendorBillsModule,
     ReturnsModule,
     MessagesModule,
+    MessagingModule,
     UploadsModule,
     SuppliersModule,
     RecurringInvoicesModule,

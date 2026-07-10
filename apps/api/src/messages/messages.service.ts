@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { MessageChannel } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateMessageDto } from "./dto/create-message.dto";
 import { ListMessagesDto } from "./dto/list-messages.dto";
@@ -24,8 +25,15 @@ export class MessagesService {
   }
 
   async findByRun(query: ListMessagesDto) {
+    // Run-chat is the INTERNAL channel only. Scope the read to INTERNAL so the
+    // P6-2 messaging engine's customer-facing rows (WHATSAPP/SMS/EMAIL/PORTAL,
+    // runId=null) never leak into the driver↔operator chat — including the
+    // no-runId "all messages" path (`where` was previously `undefined`).
     return this.prisma.forTenant().message.findMany({
-      where: query.runId ? { runId: query.runId } : undefined,
+      where: {
+        channel: MessageChannel.INTERNAL,
+        ...(query.runId ? { runId: query.runId } : {}),
+      },
       orderBy: { createdAt: "asc" },
       include: {
         sender: {
