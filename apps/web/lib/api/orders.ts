@@ -68,6 +68,8 @@ export interface OrderItem {
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
+  /** Cumulative qty actually delivered — advanced by the route completeStop flow. */
+  deliveredQty?: number;
 }
 
 export interface ActiveOrderSummary {
