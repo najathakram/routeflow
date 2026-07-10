@@ -14,7 +14,7 @@ export type InvoiceStatus =
   | "OVERDUE"
   | "WRITTEN_OFF";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED";
+export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 
 export interface InvoiceItem {
   id: string;

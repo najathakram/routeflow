@@ -35,6 +35,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { PromotionsService } from "../promotions/promotions.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -160,6 +161,10 @@ describe("OrdersService", () => {
             checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
           },
         },
+        {
+          provide: PromotionsService,
+          useValue: { activeForCatalog: jest.fn().mockResolvedValue([]) },
+        },
       ],
     }).compile();
 
@@ -266,6 +271,100 @@ describe("OrdersService", () => {
             subtotal: 14.97,
             tax: 1.5,
             total: 16.47,
+          }),
+        }),
+      );
+    });
+
+    it("P5-04: applies the best active promotion to a buyer line (net unitPrice + originalPrice + PROMO)", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      // Two matching promos → the lower net (20% off) must win.
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([
+        {
+          id: "promo-a",
+          type: "PERCENT",
+          value: 10,
+          minQty: null,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+        {
+          id: "promo-b",
+          type: "PERCENT",
+          value: 20,
+          minQty: null,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ]);
+
+      await service.create({ items: [{ productId: "prod-1", qty: 3 }] }, customerPayload);
+
+      // 20% off $4.99 → $3.99 net; strikethrough $4.99; PROMO; subtotal 3 × 3.99 = 11.97.
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  productId: "prod-1",
+                  unitPrice: 3.99,
+                  originalPrice: 4.99,
+                  priceType: "PROMO",
+                  subtotal: 11.97,
+                }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("P5-04: does NOT apply promotions to an operator-created order (staff path unchanged)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, user: { status: "ACTIVE" } });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      const activeForCatalog = (service as any).promotionsService.activeForCatalog as jest.Mock;
+      activeForCatalog.mockResolvedValue([
+        {
+          id: "promo-a",
+          type: "PERCENT",
+          value: 20,
+          minQty: null,
+          scope: "ALL",
+          category: null,
+          productIds: [],
+        },
+      ]);
+
+      await service.create(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 3 }] } as any,
+        operatorPayload,
+      );
+
+      // Promotions are never even fetched for staff, and the line stays at list price.
+      expect(activeForCatalog).not.toHaveBeenCalled();
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  unitPrice: 4.99,
+                  priceType: "STANDARD",
+                  originalPrice: null,
+                }),
+              ]),
+            },
           }),
         }),
       );

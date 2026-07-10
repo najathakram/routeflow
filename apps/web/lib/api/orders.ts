@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
+export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 
 export interface Order {
   id: string;

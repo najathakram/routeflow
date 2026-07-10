@@ -5,10 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-6 mobile Finance Reports parity COMPLETE + LIVE (#176, master `f1ff301`).
-> **This closes the whole P10-PAR parity track** (estimates/credit-notes/recurring/payments/order-templates/reports
-> all shipped). The next targets are P6-3 (blocked on provider creds) and P6-5 — see DO NEXT.
-> Prior: P10-PAR-5 order-templates (#173), P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3,
+> **Last updated:** 2026-07-10 — **P5-04 promotions pricing at cart + checkout COMPLETE** (verify 18/18 +
+> adversarial money review clean; a **schema change** — prod migration must be applied before deploy). This is
+> the first Wave-1 Lane-A buyer increment. Prior: P10-PAR-6 reports (#176) — closed the whole P10-PAR track;
+> P10-PAR-5 order-templates (#173), P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3,
 > P10-PAR-2 (#168), P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
 > ✅ **Railway GitHub auto-deploys
 > FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
@@ -36,6 +36,31 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
+- **P5-04 COMPLETE — promotions pricing at cart + checkout `[money]`** (verify 18/18, adversarial money review
+  clean; **schema change → prod migration `20260713000000_add_pricetype_promo` must be applied before the deploy**):
+  the first Wave-1 Lane-A buyer increment; completes the promotions feature P5-01 started.
+  - **Evaluator** (`pricing.ts` triple mirror — api/web/mobile): pure `applyBestPromotion(base, promos,
+    {productId,category,qtyPieces})` + `promotionMatchesProduct`. PERCENT/QTY_BREAK = % off; **FIXED = $ off per
+    SELLING UNIT** (box price when boxed); **QTY_BREAK gated on total PIECES ≥ minQty**; best-net wins (deterministic
+    id tie-break); net floored at 0; applies only if it lowers the base.
+  - **Server write** (`orders.service.ts`): injects `PromotionsService`; `loadActivePromotions(role)` (CUSTOMER-only,
+    else `[]` no DB hit); `resolveBuyerLinePrice()` (tier base → best promo → net unitPrice + **originalPrice
+    strikethrough + `PriceType.PROMO`**; else SPECIAL/STANDARD) wired into **`create()`** AND the **`updateOrderItems()`
+    CUSTOMER (buyer-merge) branch** — the merge branch **also fixed a pre-existing bug** (billed LIST, now bills TIER).
+    Invoice inherits net/originalPrice via `buildInvoiceItemData` (**discount:0 — no double-count**, unchanged).
+    `getCustomerPriceHistory` **excludes PROMO** (transient promo price mustn't become the operator's remembered price).
+  - **Design decisions:** promo discounts from the **tier** price (stacks with tier); `originalPrice` = pre-promo base
+    (= catalog `buyerPrice`) → **exact client/server cent parity**; single **non-stacking best-price**.
+  - **Web** (api + web per plan): `useBuyerPromotions()` + cart savings line (same evaluator, base=buyerPrice);
+    operator/buyer order-detail + invoice-detail render the PROMO strikethrough/badge. **Mobile = pricing.ts mirror
+    only** (cart UI is P5-16 Wave 4).
+  - **Tests:** `pricing.spec`/`pricing.test.ts` (`applyBestPromotion`) + `orders.service.spec` (buyer-promo integration
+    + staff-unchanged). Adversarial review: 4 money lenses = **0 money defects**; 2 low display gaps → fixed.
+    E2E: promo'd orders flow through the generic CP-03/04/05 total-consistency guards; bespoke buyer-seed E2E deferred.
+  - **Files:** `apps/api/{prisma/schema.prisma,prisma/migrations/20260713000000_add_pricetype_promo/,src/common/pricing.ts,
+    src/common/pricing.spec.ts,src/orders/{orders.service.ts,orders.service.spec.ts,orders.module.ts}}` +
+    `apps/web/{lib/pricing.ts,lib/api/buyer.ts,lib/api/{orders,invoices}.ts,app/buyer/portal/[seller]/{cart,orders/[id]}/page.tsx,
+    app/(dashboard)/{orders,invoices}/[id]/page.tsx}` + `apps/mobile/{lib/pricing.ts,__tests__/pricing.test.ts}`.
 - **P10-PAR-6 COMPLETE + LIVE** (PR #176, master `f1ff301`; mobile deploy `a93c909a` SUCCESS, api/web SKIPPED):
   mobile **Finance Reports** parity, operator, READ-ONLY — the last P10-PAR target. `apps/mobile/lib/api/reports.ts` (`useProfitAndLoss`/`useCashFlow`/`useSalesByCustomer`/
   `useSalesByItem` `{from,to}` + `useArAgingInvoices(intervalDays)` — AR aging is **interval-driven, NOT a date
@@ -114,14 +139,18 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-> **P10-PAR is now fully shipped** (estimates/credit-notes/recurring/payments/order-templates/reports). No more
-> mobile parity screens over already-shipped APIs remain. Next mobile deltas (P10) are the ones that mirror
-> **unbuilt** P5/P6 web surfaces (buyer portal deltas, messaging inbox) — build the web counterpart first.
+> **P10-PAR is fully shipped**; **P5-04 promotions pricing is COMPLETE** (deploy pending — needs the prod migration).
+> Continue **Lane A (P5 Buyer Portal)** — the highest-value lane. `docs/design-package/PHASE-5-6-10-PLAN.md` §2 has the
+> per-increment table. Shipped so far: P5-01 (promotions CRUD), P5-05 (replenishment), **P5-04 (promo pricing)**.
 
-1. **P5 Buyer Portal (Lane A)** or resume backend work — the highest-value UNBUILT lane. `docs/design-package/
-   PHASE-5-6-10-PLAN.md` §2 has the per-increment table (P5-01 promotions + P5-05 replenishment shipped;
-   next unblocked = **P5-04 pricing-time promo application** in `pricing.ts`, and the buyer credits/change-request
-   extensions). Pick from the plan by value×(1/risk). Money paths here DO get the adversarial-review + invariant gate.
+1. **P5-02 — Catalogue v2 shop** (`buyer-shop.html`) `[web, XL]` (← P5-01, P5-05, and now P5-04's promo pricing).
+   The rich buyer catalog: category rail + counts, smart collections, live stock + negotiated/**struck promo price**
+   (reuse `useBuyerPromotions` + `applyBestPromotion` — same as the cart), regulated tiles locked until authorized,
+   "Best for you" sort via the replenishment frequency slice. **OR** the smaller unblocked options:
+   - **P5-08 — Open-order editing + `OrderRevision` versioning** `[api, web, L]` (Wave 0, no deps) — pre-dispatch edits
+     append a revision + countdown to the real cutoff; unblocks P5-09 (post-dispatch change-requests) + P5-10/11.
+   - **P5-12 check lifecycle** / **P5-13 credits wallet** `[money]` — independent money paths (G4/G5/G12 defaults).
+   Pick by value×(1/risk); money paths get the adversarial-review + invariant gate (as P5-04 did).
 
    **Optional lower-value mobile:** **route-templates** (driver-routing `routes.ts` templates — a SEPARATE feature,
    no items/no order generation; NOT order-templates). Only if a mobile increment is wanted over the buyer work.

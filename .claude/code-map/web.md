@@ -56,9 +56,14 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/auth-keys.ts`** — `OP_KEYS`/`BUYER_KEYS`/`DRIVER_KEYS` (prevent cross-context token bleed).
 - **`lib/page-title-context.tsx`** — `usePageTitle()`.
 - **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
-  and the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
-  (box-vs-piece aware; the sale-builder "negotiation floor"). Mirror of `apps/api/src/common/pricing.ts`
-  (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+  the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
+  (box-vs-piece aware; the sale-builder "negotiation floor"), and **`applyBestPromotion`/`promotionMatchesProduct`**
+  (P5-04). Mirror of `apps/api/src/common/pricing.ts` (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+- **Promotions pricing (P5-04):** `lib/api/buyer.ts` `useBuyerPromotions()` + `BuyerPromotion`; the buyer cart
+  `buyer/portal/[seller]/cart/page.tsx` evaluates each line's best promo via the SAME `applyBestPromotion`
+  (base = the catalog `buyerPrice`) → per-line strikethrough + a "Promotion savings" summary line (net line
+  subtotals reconcile to the total). Operator order-detail, buyer order-detail, and invoice-detail render the
+  `PriceType.PROMO` strikethrough/badge (web `PriceType` unions in `lib/api/{orders,invoices}.ts` += `PROMO`).
 - **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
   margin floors via `/settings/margin`) + `floorForCategory()`. Shared **`components/MarginHint.tsx`**
   (cost·margin under a line, red below floor, Set-to-floor / Sell-anyway) is used by both the order-detail

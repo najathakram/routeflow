@@ -2097,7 +2097,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   Special
                                 </span>
                               </>
-                            ) : (li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
+                            ) : (li.priceType === "DISCOUNTED" ||
+                                li.priceType === "MANUAL" ||
+                                li.priceType === "PROMO") &&
                               li.originalPrice != null ? (
                               <>
                                 <span className="strike text-xs">
@@ -2107,7 +2109,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   ${Number(li.unitPrice).toFixed(2)}
                                 </span>
                                 <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                  {li.priceType === "MANUAL" ? "Adjusted" : "Discounted"}
+                                  {li.priceType === "MANUAL"
+                                    ? "Adjusted"
+                                    : li.priceType === "PROMO"
+                                      ? "Promo"
+                                      : "Discounted"}
                                 </span>
                               </>
                             ) : (

@@ -50,8 +50,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **`src/common/`** — `EncryptionService` (AES-256-GCM, refuses placeholder key writes in prod),
   `RedisThrottlerStorage` (cross-instance rate limit, fails closed), ThrottlerExceptionFilter,
   audit interceptor. **`pricing.ts`** — `computeLineSubtotal` (boxed BOX-price proration),
-  `normalizeBoxesPieces` (integer boxes/pieces + rollover), `roundMoney` (cents). **Every money
-  write rounds; boxed lines never use `qty*unitPrice` (over-charges by unitsPerBox).** Mirrored in
+  `normalizeBoxesPieces` (integer boxes/pieces + rollover), `roundMoney` (cents),
+  **`applyBestPromotion`/`promotionMatchesProduct`** (P5-04 — best applicable promo → net selling-unit
+  price + originalPrice; PERCENT/QTY_BREAK % off, FIXED $/selling-unit, QTY_BREAK gated on pieces). **Every money
+  write rounds; boxed lines never use `qty*unitPrice` (over-charges by unitsPerBox); a promo adjusts the
+  selling-unit price then feeds computeLineSubtotal (never per-piece).** Mirrored in
   web/mobile `lib/pricing.ts`. `utils/pricing.ts` = `getTierPrice`. **`computeCategoryTax`** (Phase-4 W3) — regulated per-category levy: per-unit types (EXCISE/PER_VOLUME/DEPOSIT) = `rate × unitBasisQty` (**caller converts to basis**: pieces for excise/deposit, true volume for PER_VOLUME — a 16oz bottle taxed per-oz needs 16×pieces; orthogonal to box-proration, never the boxed subtotal); PERCENT_OF_SALE = `rate × subtotal` (embedded when priceIncludesTax = `subtotal×rate/(1+rate)`). Sign-preserving (reversals). Pure fn — snapshot/integration + add-vs-include decision + PER_VOLUME volume-per-piece source deferred to W4. Specs: `common/pricing.spec.ts`.
 - **Prisma `prisma/schema.prisma`** — models incl. Tenant, User, Customer, Driver, Product,
   Route, RouteStop, RouteRun, RouteRunStop, Order, OrderItem, Invoice, InvoiceItem,
@@ -109,9 +112,10 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **controller** `products` — `barcode/:barcode`, `@Get/:id`, import, `@Delete clear-all|bulk|:id`, `@Patch :id`, images add/remove.
 - **service** — `findAll`, `findByBarcode`, `findOne`, `create`, `update`, `delete`, `import`, `add/removeImage`. `create` defaults a new product's `costingMethod` to the tenant `costing.method` via `resolveCostingMethod()` (WEIGHTED_AVERAGE→AVCO; explicit DTO wins; unset tenant → schema default FIFO) — ProductsModule imports SystemConfigModule (pos-cost-roles §1). side effects: Product/ProductImage writes; image upload; inventory ledger. **P5-01: `UpdateProductDto` gained `isFeatured/isNew/isDeal` merch flags** (pass-through in `update`).
 
-### `promotions/` (P5-01)
+### `promotions/` (P5-01 + P5-04 pricing)
 
-- **controller** `promotions` `@Roles(OPERATOR)` — CRUD + `PATCH :id/active`. **service** `PromotionsService`: tenant-scoped promo CRUD (typed rules PERCENT/FIXED/QTY_BREAK × scope ALL/CATEGORY/PRODUCTS, windowed; `validateRule` guards) + `activeForCatalog(now)` (in-window active promos, flattened `productIds`) consumed by buyer `GET /buyer/promotions`. Prices NOTHING — pricing.ts applies rules at cart time (P5-04). Models `Promotion`/`PromotionProduct` + migration `20260711000000_promotions_merch_flags` (additive). Spec `promotions.service.spec`.
+- **controller** `promotions` `@Roles(OPERATOR)` — CRUD + `PATCH :id/active`. **service** `PromotionsService`: tenant-scoped promo CRUD (typed rules PERCENT/FIXED/QTY_BREAK × scope ALL/CATEGORY/PRODUCTS, windowed; `validateRule` guards) + `activeForCatalog(now)` (in-window active promos, flattened `productIds`) consumed by buyer `GET /buyer/promotions`. Prices NOTHING itself — the pricing.ts evaluator applies rules. Models `Promotion`/`PromotionProduct` + migration `20260711000000_promotions_merch_flags` (additive). Spec `promotions.service.spec`.
+- **P5-04 pricing-time application (SHIPPED):** `common/pricing.ts` (triple mirror) gained pure `applyBestPromotion(base, promos, {productId,category,qtyPieces})` + `promotionMatchesProduct` — PERCENT/QTY_BREAK = % off, FIXED = $ off per SELLING UNIT (box price when boxed), QTY_BREAK gated on total PIECES ≥ minQty, best-net wins (deterministic id tie-break), net floored at 0, only if it lowers. `orders.service` injects `PromotionsService`, `loadActivePromotions(role)` (CUSTOMER only, else `[]`), and `resolveBuyerLinePrice(product,tier,promos,qtyPieces)` (tier base → best promo → net unitPrice + originalPrice strikethrough + `PriceType.PROMO`; falls back to SPECIAL/STANDARD) — wired into **`create()`** line map AND the **`updateOrderItems()` CUSTOMER (buyer-merge) branch** (also **fixed a pre-existing bug**: merge billed LIST, now bills TIER). Invoice inherits net/originalPrice via `buildInvoiceItemData` (discount:0 — no double-count). `getCustomerPriceHistory` excludes `PriceType.PROMO` (transient promo price must not become the remembered operator price). `PriceType` enum += `PROMO` (migration `20260713000000_add_pricetype_promo`, additive). Regressions: `pricing.spec` (`applyBestPromotion`) + `orders.service.spec` (buyer-promo integration + staff-unchanged). Adversarial money review clean (0 money defects). Web cart + operator/buyer order-detail + invoice-detail render the PROMO strikethrough/badge; mobile cart UI deferred (P5-16) — only the mobile pricing.ts mirror synced.
 
 ### `orders/`
 

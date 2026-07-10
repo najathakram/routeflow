@@ -197,6 +197,33 @@ export function useBuyerCategories() {
   });
 }
 
+// ─── Promotions (P5-04) ─────────────────────────────────────────────────────────
+
+/** Active promotion rule for the current seller (GET /buyer/promotions). Shape
+ * matches PromotionsService.activeForCatalog + the `PromotionRule` the shared
+ * `applyBestPromotion` (lib/pricing) evaluator consumes. */
+export interface BuyerPromotion {
+  id: string;
+  name: string;
+  bannerText: string | null;
+  type: "PERCENT" | "FIXED" | "QTY_BREAK";
+  value: number;
+  minQty: number | null;
+  scope: "ALL" | "CATEGORY" | "PRODUCTS";
+  category: string | null;
+  startsAt: string;
+  endsAt: string;
+  productIds: string[];
+}
+
+export function useBuyerPromotions() {
+  return useQuery<BuyerPromotion[]>({
+    queryKey: ["buyer", "promotions"],
+    queryFn: () => buyerApiClient.get("/buyer/promotions").then((r) => r.data),
+    staleTime: 5 * 60 * 1000, // 5 min
+  });
+}
+
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyerActiveOrder() {

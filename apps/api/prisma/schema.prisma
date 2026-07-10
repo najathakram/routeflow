@@ -241,6 +241,7 @@ enum PriceType {
   SPECIAL
   DISCOUNTED
   MANUAL
+  PROMO // P5-04: line priced by an active buyer promotion (net unitPrice + originalPrice strikethrough)
 }
 
 // ─── Buyer Portal Enums ───────────────────────────────────────────────────────
