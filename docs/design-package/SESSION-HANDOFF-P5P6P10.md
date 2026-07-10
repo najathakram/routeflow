@@ -5,10 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-1 mobile estimates parity COMPLETE + LIVE (PR #165); P6-1/F0
-> (#163) + P5-01 (#159) live. ✅ **Railway GitHub auto-deploys FIXED** — the failures were flipping the
-> repo private before Railway cloned it; #165 deployed via GitHub while public. Follow the canonical
-> **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
+> **Last updated:** 2026-07-09 — P6-2 messaging engine COMPLETE + LIVE (PR #167); P10-PAR-1 (#165),
+> P6-1/F0 (#163), P5-01 (#159) live. ✅ **Railway GitHub auto-deploys FIXED** — the failures were
+> flipping the repo private before Railway cloned it. Follow the canonical **public → merge → deploy
+> (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
 
 ---
 
@@ -32,7 +32,16 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **master @ 0171ddd.** **P10-PAR-1 COMPLETE + LIVE** (PR #165): mobile estimates/quotes parity
+- **master @ f03a59a.** **P6-2 COMPLETE + LIVE** (PR #167): messaging **send engine + StubProvider**
+  on the F0 schema — `apps/api/src/messaging/`. `MessagingService.sendMessage` gates (invoice-policy G12
+  → consent → opt-out → contact → quiet-hours) → dispatch via the `MESSAGE_PROVIDER` token → record
+  `Message` on the customer `MessageThread` → bump thread → meter WA/SMS (`MeterService` MSGS; failed
+  send not recorded/metered). `notify(eventKey)` resolves enabled `NotificationRule`s → renders
+  `MessageTemplate` → sends with a fallback chain. StubProvider is the default binding (P6-3/P6-4 swap
+  real adapters). Thin operator controller (`POST /messaging/threads/:customerId/messages`, `/notify`,
+  `GET /messaging/threads[/:id]`). `messages.findByRun` now scoped to `channel=INTERNAL`. 20 specs. No
+  new schema.
+- **P10-PAR-1 COMPLETE + LIVE** (PR #165): mobile estimates/quotes parity
   (operator) — `apps/mobile/lib/api/estimates.ts` (mirrors web; read + send/accept/decline/void +
   convert-to-invoice reading `inv.id`) + `lib/estimates-logic.ts` pure helpers (Convert gated
   ACCEPTED-only per server contract) + `app/(operator)/estimates/{index,[id]}.tsx` + More-hub row +
@@ -58,18 +67,21 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **P6-2 — messaging engine + StubProvider** (next P6 step now that F0 schema is live): the
-   provider-agnostic `MessageProvider` interface + `StubProvider` (logs, no send), a message service that
-   writes `Message` rows on a `MessageThread` with `channel`, resolves templates (`MessageTemplate`), honors
-   `NotificationRule`/`MessageOptOut`/quiet-hours (`MessagingSettings`). Real Meta-WA/Twilio adapters are
-   later (P6-3/P6-4). Everything tenant-scoped; no money.
+1. **More P10-PAR mobile parity screens** over already-shipped web APIs (credit-notes → reports →
+   recurring invoices → route-templates → payments) — same proven pattern as P10-PAR-1: mirror the web
+   `lib/api/*` hooks + build list/detail screens under `app/(operator)/…` + a More-hub row, pure-logic
+   Jest only, no new models. LOW risk — the default for unattended runs.
 
-2. **More P10-PAR mobile parity screens** over already-shipped web APIs (credit-notes, reports, recurring
-   invoices, route-templates, payments) — same pattern as P10-PAR-1 (mirror web hooks + list/detail,
-   pure-logic Jest only, no new models).
+2. **P6-3 — real Meta-WhatsApp Cloud + Twilio SMS adapters** behind the `MESSAGE_PROVIDER` token
+   (StubProvider stays the default binding; flag/env-gated). **BLOCKED on user-provided provider creds**
+   (Meta WA phone-number-id + token; Twilio SID + auth-token) — also needs a MessagingSettings
+   provider-creds migration + EncryptionService. Defer until the user supplies creds.
 
-_(P5-01, P5-05, P6-1/F0, P10-PAR-1 all DONE + live — see Current state. Full backlog + dependencies + 18
-gating decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
+3. **P6-5 — trigger wiring** (domain event → `MessagingService.notify`): needs a real system `User` id
+   for `Message.senderId`'s FK (no synthetic id). Then order-status/reminder/expiry events fire notify.
+
+_(P5-01, P5-05, P6-1/F0, P6-2, P10-PAR-1 all DONE + live — see Current state. Full backlog + 18 gating
+decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
 
 ## Critical rules
 
