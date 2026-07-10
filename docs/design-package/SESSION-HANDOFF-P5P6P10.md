@@ -5,7 +5,7 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-3 mobile recurring-invoices COMPLETE + LIVE; P10-PAR-2 (#168),
+> **Last updated:** 2026-07-09 — recurring-invoice resume FIX LIVE (#170); P10-PAR-3, P10-PAR-2 (#168),
 > P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live. ✅ **Railway GitHub auto-deploys
 > FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
 > **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
@@ -32,12 +32,15 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **P10-PAR-3 COMPLETE + LIVE** (mobile **recurring-invoices** parity, operator): view + **Generate-now**
-  only — `apps/mobile/lib/api/recurring-invoices.ts` (`useRecurringInvoices` [bare array] / `useRecurringInvoice`
-  / `useRunRecurringInvoice` reads `inv.id`) + `lib/recurring-invoices-logic.ts` (`recurringPillFor`/`freqLabel`)
-  + `app/(operator)/recurring-invoices/{index,[id]}.tsx` + More-hub row + 7 tests. **Pause/Resume deferred**
-  — the server resume path is broken (`update()` drops `isActive`; ValidationPipe rejects the partial PATCH),
-  so shipping Pause without a working Resume would trap the template. Backend fix spawned as a task.
+- **Recurring-invoice RESUME FIX + LIVE** (PR #170, user-requested follow-up): added `POST
+  /recurring-invoices/:id/activate` + `service.activate()` (the only path that sets `isActive` back to
+  true — the PATCH path can't, due to the whitelist ValidationPipe + required DTO fields). Wired the web
+  `recurring/page.tsx` resume toggle + **re-enabled mobile Pause/Resume** tiles (`recurringActionFlags`) +
+  `recurring-invoices.service.spec` + `recurringInvoice(+Item)` in the prisma-mock. api+web+mobile deployed.
+- **P10-PAR-3 COMPLETE + LIVE** (mobile **recurring-invoices** parity, operator): `apps/mobile/lib/api/recurring-invoices.ts`
+  (`useRecurringInvoices` [bare array] / `useRecurringInvoice` / `useRun`/`Deactivate`/`ActivateRecurringInvoice`)
+  + `lib/recurring-invoices-logic.ts` (`recurringPillFor`/`freqLabel`/`recurringActionFlags`) +
+  `app/(operator)/recurring-invoices/{index,[id]}.tsx` (view + Generate-now + Pause/Resume) + More-hub row + 9 tests.
 - **P10-PAR-2 COMPLETE + LIVE** (PR #168): mobile **credit-notes** parity
   (operator) — `apps/mobile/lib/api/credit-notes.ts` (read + issue/apply/void; `useOpenInvoicesForCustomer`
   = `GET /invoices?customerId`; apply reads `inv.id`) + `lib/credit-notes-logic.ts` (Apply gated
