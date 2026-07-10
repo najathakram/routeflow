@@ -83,6 +83,12 @@ const c = new Client({ connectionString: url });
        FROM "OrderItem" WHERE "orderId"=$1 AND status <> 'CANCELLED'`,
       [order.id],
     );
+    if (oLines.length === 0) {
+      console.log(
+        `⚠ ${orderNumber}: no active (non-cancelled) order lines — SKIPPED (void the invoice manually instead of repairing it to a lines-less, tax-only total)\n`,
+      );
+      continue;
+    }
     const orderLineSubtotal = round2(oLines.reduce((s, l) => s + Number(l.sub), 0));
     const targetSubtotal = orderLineSubtotal;
     const targetTotal = round2(targetSubtotal + Number(order.t) - Number(order.d)); // shipping 0
@@ -141,12 +147,14 @@ const c = new Client({ connectionString: url });
           for (const ol of oLines) {
             const it = iByProduct.get(ol.productId);
             await c.query(
-              `UPDATE "InvoiceItem" SET subtotal=$1, boxes=$2, pieces=$3, "unitsPerBox"=$4,
-                 "unitPrice"=$5, "originalPrice"=$6, "priceType"=$7, "orderItemId"=$8,
-                 "trackedCategoryId"=$9, "categoryTaxAmount"=$10, discount=0, "updatedAt"=NOW()
-               WHERE id=$11`,
+              `UPDATE "InvoiceItem" SET subtotal=$1, qty=$2, description=$3, boxes=$4, pieces=$5,
+                 "unitsPerBox"=$6, "unitPrice"=$7, "originalPrice"=$8, "priceType"=$9, "orderItemId"=$10,
+                 "trackedCategoryId"=$11, "categoryTaxAmount"=$12, discount=0, "taxRate"=0, "updatedAt"=NOW()
+               WHERE id=$13`,
               [
                 round2(ol.sub),
+                round2(ol.qty),
+                ol.pname ?? ol.name ?? "Product",
                 ol.boxes,
                 ol.pieces,
                 ol.unitsPerBox,
