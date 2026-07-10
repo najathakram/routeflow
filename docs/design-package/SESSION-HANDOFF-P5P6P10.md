@@ -5,9 +5,9 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-10 — **P5-04 promotions pricing at cart + checkout COMPLETE** (verify 18/18 +
-> adversarial money review clean; a **schema change** — prod migration must be applied before deploy). This is
-> the first Wave-1 Lane-A buyer increment. Prior: P10-PAR-6 reports (#176) — closed the whole P10-PAR track;
+> **Last updated:** 2026-07-10 — **P5-04 promotions pricing at cart + checkout COMPLETE + LIVE** (#178, master
+> `6d4f31e`; api+web+mobile deployed, prod migration `20260713000000_add_pricetype_promo` applied; verify 18/18 +
+> adversarial money review clean). First Wave-1 Lane-A buyer increment. Prior: P10-PAR-6 reports (#176) — closed the whole P10-PAR track;
 > P10-PAR-5 order-templates (#173), P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3,
 > P10-PAR-2 (#168), P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
 > ✅ **Railway GitHub auto-deploys
@@ -36,9 +36,9 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **P5-04 COMPLETE — promotions pricing at cart + checkout `[money]`** (verify 18/18, adversarial money review
-  clean; **schema change → prod migration `20260713000000_add_pricetype_promo` must be applied before the deploy**):
-  the first Wave-1 Lane-A buyer increment; completes the promotions feature P5-01 started.
+- **P5-04 COMPLETE + LIVE — promotions pricing at cart + checkout `[money]`** (PR #178, master `6d4f31e`;
+  api+web+mobile deployed; prod migration `20260713000000_add_pricetype_promo` applied; verify 18/18, adversarial
+  money review clean): the first Wave-1 Lane-A buyer increment; completes the promotions feature P5-01 started.
   - **Evaluator** (`pricing.ts` triple mirror — api/web/mobile): pure `applyBestPromotion(base, promos,
     {productId,category,qtyPieces})` + `promotionMatchesProduct`. PERCENT/QTY_BREAK = % off; **FIXED = $ off per
     SELLING UNIT** (box price when boxed); **QTY_BREAK gated on total PIECES ≥ minQty**; best-net wins (deterministic
