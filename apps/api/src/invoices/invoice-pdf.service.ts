@@ -4,8 +4,11 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
+import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
 
 import bwipjs from "bwip-js";
+
+export type { InvoicePdfVariant };
 
 @Injectable()
 export class InvoicePdfService {
@@ -16,23 +19,19 @@ export class InvoicePdfService {
     private readonly storage: StorageService,
   ) {}
 
-  async getOrGenerate(invoiceId: string, opts?: { force?: boolean }): Promise<string> {
-    const inv = await this.prisma.forTenant().invoice.findUnique({
-      where: { id: invoiceId },
-      select: { id: true, pdfUrl: true },
-    });
-    if (!inv) throw new NotFoundException("Invoice not found");
-
-    // If pdfUrl already stored and caller didn't ask for a fresh render, return
-    // a presigned URL for the cached copy.
-    if (inv.pdfUrl && !opts?.force) {
-      return this.storage.presignedUrl(inv.pdfUrl);
-    }
-
-    return this.generateAndUpload(invoiceId);
+  async getOrGenerate(
+    invoiceId: string,
+    opts?: { force?: boolean; variant?: InvoicePdfVariant },
+  ): Promise<string> {
+    // Always render fresh: the DRAFT/FINAL badge + watermark and the
+    // "Generated <datetime>" stamp must reflect the current moment and the
+    // invoice's live stage, so returning a cached copy would show a stale
+    // timestamp (and possibly the wrong stage). `opts.force` is kept for API
+    // compatibility; generation is now unconditional.
+    return this.generateAndUpload(invoiceId, opts?.variant);
   }
 
-  async generateAndUpload(invoiceId: string): Promise<string> {
+  async generateAndUpload(invoiceId: string, variantArg?: InvoicePdfVariant): Promise<string> {
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id: invoiceId },
       include: {
@@ -49,9 +48,14 @@ export class InvoicePdfService {
           include: { product: { select: { id: true, name: true, barcode: true, sku: true } } },
         },
         payments: { orderBy: { paidAt: "asc" } },
+        order: { select: { status: true } },
       },
     });
     if (!inv) throw new NotFoundException("Invoice not found");
+
+    const variant =
+      variantArg ??
+      deriveInvoiceVariant(inv as { status: string; order?: { status: string } | null });
 
     // Load tenant's business info (including logo + primary color) to render
     // a fully branded invoice header.
@@ -141,7 +145,13 @@ export class InvoicePdfService {
       }),
     );
 
-    const invWithBarcodes = { ...inv, items: itemsWithBarcodes, tenant: tenantInfo };
+    const invWithBarcodes = {
+      ...inv,
+      items: itemsWithBarcodes,
+      tenant: tenantInfo,
+      variant,
+      generatedAt: new Date(),
+    };
 
     let pdfBuffer: Buffer;
     try {

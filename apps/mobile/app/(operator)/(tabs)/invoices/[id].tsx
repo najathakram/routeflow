@@ -18,6 +18,7 @@ import { useAdminInvoice } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
   useInvoicePdf,
+  type InvoicePdfVariant,
   useSendInvoice,
   useUpdateInvoice,
   useUpdateInvoiceShipment,
@@ -117,7 +118,7 @@ export default function InvoiceDetailScreen() {
                 },
               ),
           },
-          { label: "Share PDF", style: "default", onPress: handlePdf },
+          { label: "Share final PDF", style: "default", onPress: () => handlePdf("final") },
           { label: "Cancel", style: "cancel" },
         ],
       );
@@ -190,27 +191,32 @@ export default function InvoiceDetailScreen() {
     );
   };
 
-  const handlePdf = () => {
+  const handlePdf = (variant: InvoicePdfVariant) => {
     if (!id) return;
-    pdfMut.mutate(id, {
-      onSuccess: async (data) => {
-        if (!data?.url) {
-          showToast("PDF is still generating, try again in a moment.");
-          return;
-        }
-        // Share the PDF directly to the OS/browser share sheet — no download.
-        try {
-          await sharePdf({
-            url: data.url,
-            filename: `${invoice.invoiceNumber || "invoice"}.pdf`,
-            dialogTitle: `Invoice ${invoice.invoiceNumber ?? ""}`.trim(),
-          });
-        } catch (e: any) {
-          showToast(e?.message ?? "Couldn't share the PDF.");
-        }
+    pdfMut.mutate(
+      { id, variant },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          // Share the PDF directly to the OS/browser share sheet — no download.
+          try {
+            await sharePdf({
+              url: data.url,
+              filename: `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`,
+              dialogTitle: `${variant === "draft" ? "Draft" : "Final"} invoice ${
+                invoice.invoiceNumber ?? ""
+              }`.trim(),
+            });
+          } catch (e: any) {
+            showToast(e?.message ?? "Couldn't share the PDF.");
+          }
+        },
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-    });
+    );
   };
 
   return (
@@ -265,9 +271,14 @@ export default function InvoiceDetailScreen() {
               />
             ) : null}
             <ActionTile
+              icon="document-outline"
+              label={pdfMut.isPending ? "Loading…" : "Share draft"}
+              onPress={() => handlePdf("draft")}
+            />
+            <ActionTile
               icon="share-outline"
-              label={pdfMut.isPending ? "Loading…" : "Share PDF"}
-              onPress={handlePdf}
+              label={pdfMut.isPending ? "Loading…" : "Share final"}
+              onPress={() => handlePdf("final")}
             />
             {!isVoid ? (
               <ActionTile icon="ban-outline" label="Void" tone="danger" onPress={handleVoid} />

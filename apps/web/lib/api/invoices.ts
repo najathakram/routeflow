@@ -272,11 +272,18 @@ export function useSendInvoice() {
   });
 }
 
+/** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
+export type InvoicePdfVariant = "draft" | "final";
+
 export function useSendInvoiceEmail() {
   const qc = useQueryClient();
-  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
-    mutationFn: ({ id, email }) =>
-      apiClient.post(`/invoices/${id}/send-email`, { email }).then((r) => r.data),
+  return useMutation<
+    { success: boolean; sentTo: string },
+    Error,
+    { id: string; email?: string; variant?: InvoicePdfVariant }
+  >({
+    mutationFn: ({ id, email, variant }) =>
+      apiClient.post(`/invoices/${id}/send-email`, { email, variant }).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -380,10 +387,15 @@ export function useDownloadInvoicePdf() {
   // https://api.../api/v1/uploads/... URL that STILL requires a JWT
   // (RF-075). The shared helper picks the right transport: same-origin →
   // auth'd client, external presigned → bare axios.
-  return useMutation<{ url: string; blob: Blob }, Error, string>({
-    mutationFn: async (id) => {
+  return useMutation<
+    { url: string; blob: Blob },
+    Error,
+    string | { id: string; variant?: InvoicePdfVariant }
+  >({
+    mutationFn: async (arg) => {
+      const { id, variant } = typeof arg === "string" ? { id: arg, variant: undefined } : arg;
       const { url } = await apiClient
-        .get<{ url: string }>(`/invoices/${id}/pdf`)
+        .get<{ url: string }>(`/invoices/${id}/pdf`, { params: variant ? { variant } : undefined })
         .then((r) => r.data);
       const blob = await fetchPdfBlob(url, apiClient);
       return { url, blob };
