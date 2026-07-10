@@ -5,11 +5,11 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-5 mobile order-templates (standing orders) COMPLETE + LIVE (#173).
-> **Handoff made cold-start-ready:** the next increment (**P10-PAR-6 reports**) DO-NEXT now carries the full
-> scouted surface (endpoints, files, viz/money constraints, scope decision) so a fresh session can start from
-> this doc alone. Prior: P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3, P10-PAR-2 (#168),
-> P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
+> **Last updated:** 2026-07-09 — P10-PAR-6 mobile Finance Reports parity COMPLETE (verify green; deploying).
+> **This closes the whole P10-PAR parity track** (estimates/credit-notes/recurring/payments/order-templates/reports
+> all shipped). The next targets are P6-3 (blocked on provider creds) and P6-5 — see DO NEXT.
+> Prior: P10-PAR-5 order-templates (#173), P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3,
+> P10-PAR-2 (#168), P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
 > ✅ **Railway GitHub auto-deploys
 > FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
 > **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
@@ -36,6 +36,19 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
+- **P10-PAR-6 COMPLETE** (mobile **Finance Reports** parity, operator, READ-ONLY — verify green, deploying):
+  the last P10-PAR target. `apps/mobile/lib/api/reports.ts` (`useProfitAndLoss`/`useCashFlow`/`useSalesByCustomer`/
+  `useSalesByItem` `{from,to}` + `useArAgingInvoices(intervalDays)` — AR aging is **interval-driven, NOT a date
+  range**, mirroring web's `needsDates=false`; queryKey `["reports",<name>,…]`) + `lib/reports-logic.ts` (**pure,
+  node-testable**: `REPORT_REGISTRY`/`reportGroups`/`reportMetaById` for the **5 v1 reports** [P&L, Cash Flow, Sales
+  by Customer, Sales by Item, AR Aging]; `dateRangeForPreset(preset,today)` presets This-month/Last-month/This-quarter/
+  This-year; `arAgingColumns(interval)` whose **keys mirror the server's dynamic bucket naming** `current`/`days1_<i>`/
+  `days<i+1>_<2i>`/`days<2i+1>_<3i>`/`days<3i>plus`; `arAgingCustomerRows(buckets)` fold+sort) +
+  `app/(operator)/reports/{_layout,index,[report]}.tsx` (index lists reports grouped → `[report]` detail switches on
+  id, `SegmentedControl` period[date]/interval[AR aging], KPI cards + label/value tables, **no charts**) + More-hub
+  row under INSIGHTS (next to Analytics) + 16 tests. **No money writes** — server-computed values via `fmtCurrency`,
+  never derived → no `pricing.ts` risk, no adversarial gate (display surface). Scope v1 = 5 of the web hub's 18
+  reports; **charts + the 13-report long tail + CSV export deferred**. Mobile-only ⇒ only `@routeflow/mobile` deploys.
 - **P10-PAR-5 COMPLETE + LIVE** (mobile **order-templates / standing-orders** parity, operator): read + act,
   no builder. `apps/mobile/lib/api/order-templates.ts` (`useOrderTemplates` [bare array] / `useOrderTemplate`;
   `useGenerateTemplateOrder` typed `{ id }` → navigate to the created/merged order [web leaves it `unknown`];
@@ -101,46 +114,17 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **P10-PAR-6 — mobile `reports` (Finance Reports) parity** — the last P10-PAR target and a good spot to
-   pause + consolidate. **This one needs a short design pass FIRST** (it's a big hub, not a 1:1 copy). Scouted
-   facts so a cold session can start immediately:
-   - **What it is:** the web **Finance Reports** hub — `apps/web/app/(dashboard)/finance/reports/page.tsx`
-     (the golden reference) driven by report hooks in **`apps/web/lib/api/finance.ts`**. NOT the same as the
-     `/analytics/*` set — mobile **already has** `app/(operator)/analytics/index.tsx` (top products/customers,
-     DSO, AOV via `lib/api/analytics.ts`). Reports is genuinely new; don't duplicate analytics.
-   - **Endpoints (all served by `apps/api/src/bookkeeping/bookkeeping.controller.ts`, ~30 `@Get`):**
-     `GET /bookkeeping/reports/{pl, sales-by-customer, sales-by-item, sales-by-driver, ar-aging-details,
-     ar-aging-invoices, bad-debts, cashflow, customer-balance, expense-details, expenses-by-category,
-     expenses-by-customer, invoice-details, payments-received, receivable-summary, refund-history,
-     time-to-get-paid, estimate-details}` — every one takes a **`{ from, to }` date-range** query param;
-     web queryKey is `["reports", <name>, from, to]`. Mirror the exact URLs from `finance.ts` (authoritative).
-   - **Mobile viz constraint:** NO chart kit installed. `react-native-svg` **15.15.3 IS** present (charts
-     *could* be hand-rolled) but **scope v1 to summary cards + tables, no charts** — the data is already
-     mostly tabular (Sales Amount, Qty Sold, counts, Net/Gross Profit, Cash In/Out), so tables lose little.
-   - **Money:** READ-ONLY & **server-computed** (P&L, sales amounts, AR aging, cash flow). Display via
-     `fmtCurrency`; **never derive** a total client-side. No money *writes* → no `pricing.ts` write-path risk,
-     so no adversarial-review gate; it's a display surface. Round-trip is just render-what-the-server-returns.
-   - **SCOPE (the design decision to make first):** 18 reports is too much for one screen. Pick a high-value
-     **subset for v1** (suggest: P&L, Sales by Customer, Sales by Item, AR Aging, Cash Flow) behind a
-     **date-range picker** (default e.g. this-month), and defer the long tail. Shape: a `reports` index that
-     lists the available reports → a detail/section screen per report (or one screen with a report picker +
-     date range). No per-row actions (pure reporting) → simpler than the prior parity screens.
-   - **Files (same 6-file pattern):** `apps/mobile/lib/api/reports.ts` (mirror the `finance.ts` report hooks —
-     bare `.then(r => r.data)`, `{from,to}` params), `lib/reports-logic.ts` (date-range presets + row/section
-     shaping + a report registry; pure, node-Jest-lockable — NO screen imports), `app/(operator)/reports/
-     {_layout,index,[report].tsx or sectioned index}.tsx`, `__tests__/reports-helpers.test.ts`, and a
-     **More-hub row under the INSIGHTS group** (next to Analytics, `more.tsx` ~line 182). No new models.
-   - Cadence: `npm run verify` (typecheck+lint+pure-logic Jest) → deploy via the canonical
-     **public → merge → deploy(WAIT, still public) → private** flow (mobile-only ⇒ only `@routeflow/mobile`
-     deploys; api/web SKIP). Then update this doc + memory + code map.
+> **P10-PAR is now fully shipped** (estimates/credit-notes/recurring/payments/order-templates/reports). No more
+> mobile parity screens over already-shipped APIs remain. Next mobile deltas (P10) are the ones that mirror
+> **unbuilt** P5/P6 web surfaces (buyer portal deltas, messaging inbox) — build the web counterpart first.
 
-   **Also available (lower priority):** **route-templates** (driver-routing `routes.ts` templates) — a SEPARATE,
-   lower-value feature (no items / no order generation), optional; NOT the order-templates screen just shipped.
+1. **P5 Buyer Portal (Lane A)** or resume backend work — the highest-value UNBUILT lane. `docs/design-package/
+   PHASE-5-6-10-PLAN.md` §2 has the per-increment table (P5-01 promotions + P5-05 replenishment shipped;
+   next unblocked = **P5-04 pricing-time promo application** in `pricing.ts`, and the buyer credits/change-request
+   extensions). Pick from the plan by value×(1/risk). Money paths here DO get the adversarial-review + invariant gate.
 
-   General rule for all P10-PAR: mirror the web `lib/api/*` hooks + screens under `app/(operator)/…` + a
-   More-hub row, pure-logic Jest only, no new models. **Ship only working actions** — verify each mutation's
-   server path against the backend before wiring it (the recurring-resume bug); defer + spawn a task for any
-   broken/trap action.
+   **Optional lower-value mobile:** **route-templates** (driver-routing `routes.ts` templates — a SEPARATE feature,
+   no items/no order generation; NOT order-templates). Only if a mobile increment is wanted over the buyer work.
 
 2. **P6-3 — real Meta-WhatsApp Cloud + Twilio SMS adapters** behind the `MESSAGE_PROVIDER` token
    (StubProvider stays the default binding; flag/env-gated). **BLOCKED on user-provided provider creds**
