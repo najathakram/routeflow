@@ -17,6 +17,21 @@ export function recurringPillFor(isActive: boolean): { variant: PillVariant; lab
   return isActive ? { variant: "green", label: "Active" } : { variant: "gray", label: "Paused" };
 }
 
+export interface RecurringActionFlags {
+  canRunNow: boolean;
+  canPause: boolean; // DELETE (soft deactivate)
+  canActivate: boolean; // POST /:id/activate
+}
+
+/**
+ * Detail-screen actions. Generate-now is always available (the server runs the
+ * template regardless of active state); Pause only when active, Resume only when
+ * paused — the pause/resume toggle.
+ */
+export function recurringActionFlags(isActive: boolean): RecurringActionFlags {
+  return { canRunNow: true, canPause: isActive, canActivate: !isActive };
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Human schedule label, e.g. "Weekly — Mon" / "Every 2 weeks — Wed" / "Monthly — day 15". */
