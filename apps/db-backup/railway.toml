@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/db-backup/Dockerfile"
+# Only redeploy when the backup service itself changes.
+watchPatterns = ["apps/db-backup/**"]
+
+[deploy]
+# Daily production pg_dump → Cloudflare R2 at 02:00 UTC. Cron containers run
+# to completion and must NOT restart-loop.
+cronSchedule = "0 2 * * *"
+restartPolicyType = "NEVER"
