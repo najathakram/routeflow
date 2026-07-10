@@ -24,7 +24,22 @@ export interface SplitInvoiceItem {
   qty: number;
   invoicedQty: number;
   unitPrice: number;
+  /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
+  subtotal?: number;
   unit?: string;
+}
+
+/**
+ * Preview line total for billing `billQty` of an order line. Mirrors the server:
+ * prorate the STORED subtotal by qty (so boxed lines, whose unitPrice is the BOX
+ * price, are never multiplied by the piece count). Falls back to qty × unitPrice
+ * only when the line has no stored subtotal.
+ */
+function previewLineTotal(it: SplitInvoiceItem, billQty: number): number {
+  if (it.subtotal != null && it.qty > 0) {
+    return Math.round(((it.subtotal * billQty) / it.qty) * 100) / 100;
+  }
+  return Math.round(billQty * it.unitPrice * 100) / 100;
 }
 
 export interface SplitInvoiceScreenProps {
@@ -226,7 +241,7 @@ export function SplitInvoiceScreen({
     for (const it of billable) {
       const q = Number(draft.qtyById[it.id] ?? 0);
       if (!Number.isFinite(q) || q <= 0) continue;
-      s += q * it.unitPrice;
+      s += previewLineTotal(it, q);
     }
     return s;
   };
@@ -373,7 +388,7 @@ export function SplitInvoiceScreen({
                   const value = draft.qtyById[it.id] ?? "";
                   const numValue = Number(value);
                   const lineTotal =
-                    Number.isFinite(numValue) && numValue > 0 ? numValue * it.unitPrice : 0;
+                    Number.isFinite(numValue) && numValue > 0 ? previewLineTotal(it, numValue) : 0;
                   // Global "left to allocate" (across all drafts in this
                   // session). Updates live as the operator types — that's
                   // what they asked for: "if we have 10 units ... and split

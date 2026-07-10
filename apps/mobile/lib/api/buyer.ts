@@ -35,6 +35,11 @@ export interface BuyerOrder {
     productId: string;
     qty: number;
     unitPrice: number;
+    /** Server-stored line subtotal (the agreed money). Prefer over recomputing. */
+    subtotal?: number;
+    /** Boxed split; boxes==null means qty is in selling units. */
+    boxes?: number | null;
+    pieces?: number | null;
     product?: { id: string; name: string; unit?: string };
   }>;
 }

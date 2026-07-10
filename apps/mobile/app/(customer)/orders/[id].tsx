@@ -71,7 +71,10 @@ export default function CustomerOrderDetailScreen() {
   const p = orderPill(order.status);
   const total =
     Number(order.total) ||
-    order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
+    order.lineItems.reduce(
+      (s, i) => s + (i.subtotal != null ? Number(i.subtotal) : Number(i.qty) * Number(i.unitPrice)),
+      0,
+    );
   const canCancel = order.status === "PENDING" || order.status === "DRAFT";
   const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
 
@@ -160,12 +163,20 @@ export default function CustomerOrderDetailScreen() {
                       {item.product?.name ?? "Product"}
                     </Text>
                     <Text style={styles.itemMeta}>
-                      {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
+                      {item.boxes != null
+                        ? `${item.boxes} box${item.boxes === 1 ? "" : "es"}${
+                            item.pieces ? ` + ${item.pieces}` : ""
+                          } × $${Number(item.unitPrice).toFixed(2)}`
+                        : `${Number(item.qty)} × $${Number(item.unitPrice).toFixed(2)}`}
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
                   </View>
                   <Text style={styles.itemTotal}>
-                    ${(Number(item.qty) * Number(item.unitPrice)).toFixed(2)}
+                    $
+                    {(item.subtotal != null
+                      ? Number(item.subtotal)
+                      : Number(item.qty) * Number(item.unitPrice)
+                    ).toFixed(2)}
                   </Text>
                 </View>
               ))}
