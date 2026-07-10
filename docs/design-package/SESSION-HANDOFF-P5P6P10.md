@@ -5,8 +5,9 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-4 mobile payments COMPLETE + LIVE; recurring-invoice resume FIX
-> (#170), P10-PAR-3, P10-PAR-2 (#168), P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
+> **Last updated:** 2026-07-09 — P10-PAR-5 mobile order-templates (standing orders) COMPLETE + LIVE (#173);
+> P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3, P10-PAR-2 (#168), P6-2 (#167),
+> P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
 > ✅ **Railway GitHub auto-deploys
 > FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
 > **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
@@ -33,6 +34,16 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
+- **P10-PAR-5 COMPLETE + LIVE** (mobile **order-templates / standing-orders** parity, operator): read + act,
+  no builder. `apps/mobile/lib/api/order-templates.ts` (`useOrderTemplates` [bare array] / `useOrderTemplate`;
+  `useGenerateTemplateOrder` typed `{ id }` → navigate to the created/merged order [web leaves it `unknown`];
+  `useUpdateOrderTemplate({id,isActive})` pause/resume; `useDeleteOrderTemplate` hard delete) +
+  `lib/order-templates-logic.ts` (`orderTemplatePillFor`/`orderTemplateActionFlags`/`daysLabel` — **ISO 1–7
+  Mon..Sun**, guards the Sunday=7 indexing bug in the buyer standing-orders screen) +
+  `app/(operator)/order-templates/{_layout,index,[id]}.tsx` (list + detail: Generate now / Pause / Resume /
+  Delete) + More-hub row (top of MANAGE) + 9 tests. **No money** (items are `{productId,qty,notes}`, no price).
+  Pause AND Resume both work via `PATCH {isActive}` — verified backend (all-optional UpdateDto + `update()`
+  maps isActive both ways), so NOT the recurring-resume trap. Create/edit builder + item add/remove deferred.
 - **P10-PAR-4 COMPLETE + LIVE** (mobile **payments** parity, operator): cross-invoice payment history —
   `apps/mobile/lib/api/payments.ts` (`useInvoicePayments` list+summary; `usePayment` via the real
   `GET /invoices/payments/:id`; `useVoidPayment`) + `lib/payments-logic.ts` (`paymentMethodPill`/
@@ -88,12 +99,16 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **More P10-PAR mobile parity screens** over already-shipped web APIs (next: route-templates → reports;
-   estimates + credit-notes + recurring-invoices + payments DONE) — same proven pattern as P10-PAR-1..4:
-   mirror the web `lib/api/*` hooks + list/detail screens under `app/(operator)/…` + a More-hub row,
-   pure-logic Jest only, no new models. LOW risk — the default for unattended runs. **Ship only working
-   actions** (see the recurring-invoices resume bug — don't ship a broken/trap action; defer + spawn a task).
-   NOTE: reports is viz-heavy (web uses recharts; mobile has no chart kit) — scope to summary tables/cards.
+1. **More P10-PAR mobile parity screens** over already-shipped web APIs — estimates + credit-notes +
+   recurring-invoices + payments + **order-templates** DONE. Remaining targets, in priority order:
+   - **reports** (the natural last one — a good spot to pause + consolidate): viz-heavy (web uses recharts;
+     mobile has no chart kit) → scope to **summary tables/cards**, no charts.
+   - **route-templates** (driver-routing `routes.ts` templates) — a SEPARATE, lower-value feature (no items /
+     no order generation), optional; not the same as the order-templates screen just shipped.
+   Same proven pattern as P10-PAR-1..5: mirror the web `lib/api/*` hooks + list/detail under `app/(operator)/…`
+   + a More-hub row, pure-logic Jest only, no new models. LOW risk — the default for unattended runs. **Ship
+   only working actions** (see the recurring-invoices resume bug — verify each mutation's server path against
+   the backend before wiring it; defer + spawn a task for any broken/trap action).
 
 2. **P6-3 — real Meta-WhatsApp Cloud + Twilio SMS adapters** behind the `MESSAGE_PROVIDER` token
    (StubProvider stays the default binding; flag/env-gated). **BLOCKED on user-provided provider creds**
