@@ -5,7 +5,7 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P10-PAR-6 mobile Finance Reports parity COMPLETE (verify green; deploying).
+> **Last updated:** 2026-07-09 — P10-PAR-6 mobile Finance Reports parity COMPLETE + LIVE (#176, master `f1ff301`).
 > **This closes the whole P10-PAR parity track** (estimates/credit-notes/recurring/payments/order-templates/reports
 > all shipped). The next targets are P6-3 (blocked on provider creds) and P6-5 — see DO NEXT.
 > Prior: P10-PAR-5 order-templates (#173), P10-PAR-4 payments (#172), recurring resume FIX (#170), P10-PAR-3,
@@ -36,8 +36,8 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **P10-PAR-6 COMPLETE** (mobile **Finance Reports** parity, operator, READ-ONLY — verify green, deploying):
-  the last P10-PAR target. `apps/mobile/lib/api/reports.ts` (`useProfitAndLoss`/`useCashFlow`/`useSalesByCustomer`/
+- **P10-PAR-6 COMPLETE + LIVE** (PR #176, master `f1ff301`; mobile deploy `a93c909a` SUCCESS, api/web SKIPPED):
+  mobile **Finance Reports** parity, operator, READ-ONLY — the last P10-PAR target. `apps/mobile/lib/api/reports.ts` (`useProfitAndLoss`/`useCashFlow`/`useSalesByCustomer`/
   `useSalesByItem` `{from,to}` + `useArAgingInvoices(intervalDays)` — AR aging is **interval-driven, NOT a date
   range**, mirroring web's `needsDates=false`; queryKey `["reports",<name>,…]`) + `lib/reports-logic.ts` (**pure,
   node-testable**: `REPORT_REGISTRY`/`reportGroups`/`reportMetaById` for the **5 v1 reports** [P&L, Cash Flow, Sales
