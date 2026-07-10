@@ -5,8 +5,9 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — recurring-invoice resume FIX LIVE (#170); P10-PAR-3, P10-PAR-2 (#168),
-> P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live. ✅ **Railway GitHub auto-deploys
+> **Last updated:** 2026-07-09 — P10-PAR-4 mobile payments COMPLETE + LIVE; recurring-invoice resume FIX
+> (#170), P10-PAR-3, P10-PAR-2 (#168), P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live.
+> ✅ **Railway GitHub auto-deploys
 > FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
 > **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
 
@@ -32,6 +33,12 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
+- **P10-PAR-4 COMPLETE + LIVE** (mobile **payments** parity, operator): cross-invoice payment history —
+  `apps/mobile/lib/api/payments.ts` (`useInvoicePayments` list+summary; `usePayment` via the real
+  `GET /invoices/payments/:id`; `useVoidPayment`) + `lib/payments-logic.ts` (`paymentMethodPill`/
+  `paymentStatusPill`/`paymentActionFlags`) + `app/(operator)/payments/{index,[id]}.tsx` (KPIs +
+  receipt detail + Void[gated] + tap-through to invoice) + More-hub row + 15 tests. Standalone
+  record/CSV-export deferred. (Flagged a web latent bug: `payments/[id]` `.find` over 200 rows.)
 - **Recurring-invoice RESUME FIX + LIVE** (PR #170, user-requested follow-up): added `POST
   /recurring-invoices/:id/activate` + `service.activate()` (the only path that sets `isActive` back to
   true — the PATCH path can't, due to the whitelist ValidationPipe + required DTO fields). Wired the web
@@ -81,11 +88,12 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **More P10-PAR mobile parity screens** over already-shipped web APIs (next: reports → route-templates →
-   payments; estimates + credit-notes + recurring-invoices DONE) — same proven pattern as P10-PAR-1/2/3:
+1. **More P10-PAR mobile parity screens** over already-shipped web APIs (next: route-templates → reports;
+   estimates + credit-notes + recurring-invoices + payments DONE) — same proven pattern as P10-PAR-1..4:
    mirror the web `lib/api/*` hooks + list/detail screens under `app/(operator)/…` + a More-hub row,
    pure-logic Jest only, no new models. LOW risk — the default for unattended runs. **Ship only working
    actions** (see the recurring-invoices resume bug — don't ship a broken/trap action; defer + spawn a task).
+   NOTE: reports is viz-heavy (web uses recharts; mobile has no chart kit) — scope to summary tables/cards.
 
 2. **P6-3 — real Meta-WhatsApp Cloud + Twilio SMS adapters** behind the `MESSAGE_PROVIDER` token
    (StubProvider stays the default binding; flag/env-gated). **BLOCKED on user-provided provider creds**
