@@ -71,6 +71,14 @@ export default function OperatorMoreScreen() {
             chevron
           />
           <ListRow
+            icon={<Ionicons name="card-outline" size={16} color={ios.system.greenInk} />}
+            iconBg={ios.system.greenWash}
+            title="Payments"
+            subtitle="Receipts across all invoices"
+            onPress={() => router.push("/(operator)/payments")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="repeat-outline" size={16} color={ios.system.orangeInk} />}
             iconBg={ios.system.orangeWash}
             title="Recurring Invoices"
