@@ -16,8 +16,13 @@ import {
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
-import { useBuyerProducts, useBuyerCreateOrder, useBuyerActiveOrder } from "@/lib/api/buyer";
-import { computeLineSubtotal } from "@/lib/pricing";
+import {
+  useBuyerProducts,
+  useBuyerCreateOrder,
+  useBuyerActiveOrder,
+  useBuyerPromotions,
+} from "@/lib/api/buyer";
+import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@/lib/pricing";
 import { objectPositionForUrl } from "@/lib/image-focal";
 
 function fmt(n: number) {
@@ -52,31 +57,89 @@ export default function BuyerCartPage() {
   const { data: productsResult } = useBuyerProducts(
     cartProductIds.length > 0 ? { limit: 100 } : { limit: 0 },
   );
+  const { data: promotions } = useBuyerPromotions();
 
-  // Build price map from available products
-  const priceMap = React.useMemo(() => {
-    const map = new Map<string, number>();
-    if (productsResult?.data) {
-      for (const p of productsResult.data) {
-        map.set(p.id, p.buyerPrice);
-      }
+  // Catalog meta (price/category/box) keyed by product id — category drives
+  // CATEGORY-scoped promo matching, unitsPerBox drives boxed proration.
+  const productMeta = React.useMemo(() => {
+    const map = new Map<
+      string,
+      { buyerPrice: number; category: string | null; unitsPerBox: number | null }
+    >();
+    for (const p of productsResult?.data ?? []) {
+      map.set(p.id, {
+        buyerPrice: p.buyerPrice,
+        category: p.category,
+        unitsPerBox: p.unitsPerBox,
+      });
     }
     return map;
   }, [productsResult]);
 
-  const subtotal = cart.items.reduce((sum, item) => {
-    const price = priceMap.get(item.productId) ?? 0;
-    return (
-      sum +
-      computeLineSubtotal({
-        unitPrice: price,
+  // P5-04: evaluate the best active promotion per line via the SAME pricing.ts
+  // helper the server uses at order-write, so the displayed savings equals the
+  // billed savings to the cent. `net` is the promo-adjusted selling-unit price;
+  // `original` is the pre-promo price for the strikethrough (null = no promo).
+  const promoRules = React.useMemo(
+    () =>
+      (promotions ?? []).map((p) => ({
+        id: p.id,
+        type: p.type,
+        value: p.value,
+        minQty: p.minQty,
+        scope: p.scope,
+        category: p.category,
+        productIds: p.productIds,
+      })),
+    [promotions],
+  );
+
+  const pricedLines = React.useMemo(() => {
+    return cart.items.map((item) => {
+      const meta = productMeta.get(item.productId);
+      const base = meta?.buyerPrice ?? 0;
+      const unitsPerBox = item.unitsPerBox ?? meta?.unitsPerBox ?? null;
+      const qtyPieces = normalizeBoxesPieces({
+        boxes: item.boxes ?? null,
+        pieces: item.pieces ?? null,
+        qty: item.qty,
+        unitsPerBox,
+      }).qty;
+      const promo = applyBestPromotion(base, promoRules, {
+        productId: item.productId,
+        category: meta?.category ?? null,
+        qtyPieces,
+      });
+      const lineArgs = {
         qty: item.qty,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
-        unitsPerBox: item.unitsPerBox ?? null,
-      })
-    );
-  }, 0);
+        unitsPerBox,
+      };
+      const net = promo.unitPrice;
+      const original = promo.originalPrice; // null when no promo applied
+      return {
+        item,
+        base,
+        net,
+        original,
+        appliedPromoId: promo.appliedPromoId,
+        lineSubtotal: computeLineSubtotal({ unitPrice: net, ...lineArgs }),
+        lineOriginalSubtotal: computeLineSubtotal({ unitPrice: original ?? net, ...lineArgs }),
+      };
+    });
+  }, [cart.items, productMeta, promoRules]);
+
+  const lineByProduct = React.useMemo(
+    () => new Map(pricedLines.map((l) => [l.item.productId, l])),
+    [pricedLines],
+  );
+
+  const subtotal = pricedLines.reduce((sum, l) => sum + l.lineSubtotal, 0);
+  const savings = pricedLines.reduce(
+    (sum, l) => sum + (l.lineOriginalSubtotal - l.lineSubtotal),
+    0,
+  );
 
   // Redirect checks
   React.useEffect(() => {
@@ -247,7 +310,9 @@ export default function BuyerCartPage() {
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {cart.items.map((item) => {
-                  const price = priceMap.get(item.productId) ?? 0;
+                  const priced = lineByProduct.get(item.productId);
+                  const price = priced?.net ?? 0;
+                  const original = priced?.original ?? null;
                   return (
                     <tr key={item.productId} className="hover:bg-surface-raised/50">
                       <td className="px-4 py-3">
@@ -374,17 +439,20 @@ export default function BuyerCartPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right text-sm text-navy/70">{fmt(price)}</td>
-                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {fmt(
-                          computeLineSubtotal({
-                            unitPrice: price,
-                            qty: item.qty,
-                            boxes: item.boxes ?? null,
-                            pieces: item.pieces ?? null,
-                            unitsPerBox: item.unitsPerBox ?? null,
-                          }),
+                      <td className="px-4 py-3 text-right text-sm">
+                        {original != null && original > price ? (
+                          <span className="flex flex-col items-end leading-tight">
+                            <span className="text-[11px] text-navy/40 line-through">
+                              {fmt(original)}
+                            </span>
+                            <span className="font-medium text-buyer-600">{fmt(price)}</span>
+                          </span>
+                        ) : (
+                          <span className="text-navy/70">{fmt(price)}</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        {fmt(priced?.lineSubtotal ?? 0)}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -446,6 +514,18 @@ export default function BuyerCartPage() {
           {/* Summary */}
           <div className="rounded-xl border border-surface-border bg-white p-4 space-y-3">
             <h3 className="text-sm font-semibold text-navy">Order Summary</h3>
+            {savings > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-navy/70">Items</span>
+                <span className="text-navy/70 line-through">{fmt(subtotal + savings)}</span>
+              </div>
+            )}
+            {savings > 0 && (
+              <div className="flex justify-between text-sm">
+                <span className="text-buyer-600">Promotion savings</span>
+                <span className="font-medium text-buyer-600">−{fmt(savings)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-navy/70">Subtotal ({cart.totalQty} items)</span>
               <span className="font-medium text-navy">{fmt(subtotal)}</span>

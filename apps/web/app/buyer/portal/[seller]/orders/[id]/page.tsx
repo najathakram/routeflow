@@ -491,7 +491,11 @@ export default function BuyerOrderDetailPage() {
                                 : "bg-buyer-50 text-buyer-600"
                             }`}
                           >
-                            {li.priceType === "DISCOUNTED" ? "Discounted" : "Special"}
+                            {li.priceType === "DISCOUNTED"
+                              ? "Discounted"
+                              : li.priceType === "PROMO"
+                                ? "Promo"
+                                : "Special"}
                           </span>
                         )}
                       </p>

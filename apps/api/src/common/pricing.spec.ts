@@ -7,6 +7,9 @@ import {
   priceForMarginFloor,
   classifyMargin,
   computeCategoryTax,
+  applyBestPromotion,
+  promotionMatchesProduct,
+  type PromotionRule,
 } from "./pricing";
 
 /**
@@ -364,5 +367,166 @@ describe("computeCategoryTax — regulated items (W3)", () => {
         lineSubtotal: Number.NaN,
       }),
     ).toBe(0);
+  });
+});
+
+// ─── Promotions (P5-04) ───────────────────────────────────────────────────────
+
+const promo = (
+  over: Partial<PromotionRule> & Pick<PromotionRule, "id" | "type">,
+): PromotionRule => ({
+  value: 0,
+  scope: "ALL",
+  minQty: null,
+  category: null,
+  productIds: null,
+  ...over,
+});
+
+describe("promotionMatchesProduct — scope matching", () => {
+  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1 };
+  it("ALL matches every product", () => {
+    expect(promotionMatchesProduct(promo({ id: "a", type: "PERCENT", scope: "ALL" }), ctx)).toBe(
+      true,
+    );
+  });
+  it("CATEGORY matches only the exact category string", () => {
+    expect(
+      promotionMatchesProduct(
+        promo({ id: "a", type: "PERCENT", scope: "CATEGORY", category: "Beverages" }),
+        ctx,
+      ),
+    ).toBe(true);
+    expect(
+      promotionMatchesProduct(
+        promo({ id: "a", type: "PERCENT", scope: "CATEGORY", category: "Snacks" }),
+        ctx,
+      ),
+    ).toBe(false);
+    // Empty/mismatched category never matches (no silent ALL fallthrough).
+    expect(
+      promotionMatchesProduct(
+        promo({ id: "a", type: "PERCENT", scope: "CATEGORY", category: null }),
+        ctx,
+      ),
+    ).toBe(false);
+  });
+  it("PRODUCTS matches only ids in the set", () => {
+    expect(
+      promotionMatchesProduct(
+        promo({ id: "a", type: "PERCENT", scope: "PRODUCTS", productIds: ["p1", "p2"] }),
+        ctx,
+      ),
+    ).toBe(true);
+    expect(
+      promotionMatchesProduct(
+        promo({ id: "a", type: "PERCENT", scope: "PRODUCTS", productIds: ["p9"] }),
+        ctx,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("applyBestPromotion", () => {
+  const ctx = (
+    over: Partial<{ productId: string; category: string | null; qtyPieces: number }> = {},
+  ) => ({
+    productId: "p1",
+    category: "Beverages",
+    qtyPieces: 1,
+    ...over,
+  });
+
+  it("PERCENT lowers the price and records the pre-promo original", () => {
+    const r = applyBestPromotion(100, [promo({ id: "a", type: "PERCENT", value: 10 })], ctx());
+    expect(r.unitPrice).toBe(90);
+    expect(r.originalPrice).toBe(100);
+    expect(r.appliedPromoId).toBe("a");
+  });
+
+  it("FIXED subtracts $ off the SELLING-UNIT (box) price, floored at 0", () => {
+    // $5 off a $43.75 box → $38.75 (never $5 × unitsPerBox).
+    const r = applyBestPromotion(43.75, [promo({ id: "a", type: "FIXED", value: 5 })], ctx());
+    expect(r.unitPrice).toBe(38.75);
+    expect(r.originalPrice).toBe(43.75);
+    // Floors at 0 — a fixed amount bigger than the price can't go negative.
+    const r2 = applyBestPromotion(8, [promo({ id: "b", type: "FIXED", value: 10 })], ctx());
+    expect(r2.unitPrice).toBe(0);
+  });
+
+  it("QTY_BREAK applies ONLY at/above the minQty piece threshold", () => {
+    const p = promo({ id: "a", type: "QTY_BREAK", value: 15, minQty: 12 });
+    // Below threshold → no promo, base unchanged, no strikethrough.
+    const below = applyBestPromotion(100, [p], ctx({ qtyPieces: 11 }));
+    expect(below.unitPrice).toBe(100);
+    expect(below.originalPrice).toBeNull();
+    expect(below.appliedPromoId).toBeNull();
+    // At threshold → 15% off.
+    const at = applyBestPromotion(100, [p], ctx({ qtyPieces: 12 }));
+    expect(at.unitPrice).toBe(85);
+    expect(at.appliedPromoId).toBe("a");
+  });
+
+  it("picks the promo that yields the lowest net price (best for the buyer)", () => {
+    const promos = [
+      promo({ id: "a", type: "PERCENT", value: 10 }), // → 90
+      promo({ id: "b", type: "FIXED", value: 25 }), // → 75
+      promo({ id: "c", type: "PERCENT", value: 5 }), // → 95
+    ];
+    const r = applyBestPromotion(100, promos, ctx());
+    expect(r.unitPrice).toBe(75);
+    expect(r.appliedPromoId).toBe("b");
+  });
+
+  it("breaks ties deterministically by promo id", () => {
+    const promos = [
+      promo({ id: "zzz", type: "PERCENT", value: 10 }),
+      promo({ id: "aaa", type: "PERCENT", value: 10 }),
+    ];
+    expect(applyBestPromotion(100, promos, ctx()).appliedPromoId).toBe("aaa");
+  });
+
+  it("returns the base unchanged when nothing applies (no promos, wrong scope, non-lowering)", () => {
+    expect(applyBestPromotion(50, [], ctx())).toEqual({
+      unitPrice: 50,
+      originalPrice: null,
+      appliedPromoId: null,
+    });
+    // Scope mismatch.
+    const scoped = applyBestPromotion(
+      50,
+      [promo({ id: "a", type: "PERCENT", value: 10, scope: "PRODUCTS", productIds: ["other"] })],
+      ctx(),
+    );
+    expect(scoped.appliedPromoId).toBeNull();
+    // A 0% / non-positive promo never applies.
+    expect(applyBestPromotion(50, [promo({ id: "z", type: "PERCENT", value: 0 })], ctx())).toEqual({
+      unitPrice: 50,
+      originalPrice: null,
+      appliedPromoId: null,
+    });
+  });
+
+  it("CRITICAL: a boxed promo line prorates through computeLineSubtotal, never per-piece", () => {
+    // Boxed product: unitsPerBox=6, box price $43.75, sell 2 boxes + 0 pieces = 12 pieces.
+    const norm = normalizeBoxesPieces({ boxes: 2, pieces: 0, unitsPerBox: 6 });
+    expect(norm.qty).toBe(12);
+    // 20% off the BOX price → net box price $35.00.
+    const r = applyBestPromotion(43.75, [promo({ id: "a", type: "PERCENT", value: 20 })], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: norm.qty,
+    });
+    expect(r.unitPrice).toBe(35);
+    const subtotal = computeLineSubtotal({
+      unitPrice: r.unitPrice,
+      qty: norm.qty,
+      boxes: norm.boxes,
+      pieces: norm.pieces,
+      unitsPerBox: 6,
+    });
+    expect(subtotal).toBe(70); // 2 boxes × $35.00
+    // Guard the classic over-charge: net-per-piece × 12 pieces.
+    expect(subtotal).not.toBe(420); // $35 × 12
   });
 });

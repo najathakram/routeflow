@@ -1613,6 +1613,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               Discounted price
                             </span>
                           </div>
+                        ) : item.priceType === "PROMO" && item.originalPrice != null ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="strike text-xs">
+                              {fmt(Number(item.originalPrice))}
+                            </span>
+                            <span className="money text-brand-600">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
+                              Promo price
+                            </span>
+                          </div>
                         ) : (
                           <span className="money text-navy/70">{fmt(Number(item.unitPrice))}</span>
                         )}

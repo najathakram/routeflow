@@ -13,7 +13,13 @@ import { InjectQueue } from "@nestjs/bull";
 import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
+import {
+  computeLineSubtotal,
+  roundMoney,
+  normalizeBoxesPieces,
+  applyBestPromotion,
+  type PromotionRule,
+} from "../common/pricing";
 import {
   OrderStatus,
   UserRole,
@@ -44,6 +50,7 @@ import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { PromotionsService } from "../promotions/promotions.service";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -58,7 +65,61 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly systemConfig: SystemConfigService,
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
+    private readonly promotionsService: PromotionsService,
   ) {}
+
+  /**
+   * P5-04: active promotions for the current tenant (window + isActive filtered).
+   * Only loaded for the buyer (CUSTOMER) self-service path; empty for staff so
+   * operator/driver order pricing is byte-for-byte unchanged.
+   */
+  private async loadActivePromotions(role: UserRole): Promise<PromotionRule[]> {
+    if (role !== UserRole.CUSTOMER) return [];
+    const promos = await this.promotionsService.activeForCatalog();
+    return promos.map((p) => ({
+      id: p.id,
+      type: p.type as PromotionRule["type"],
+      value: Number(p.value),
+      minQty: p.minQty,
+      scope: p.scope as PromotionRule["scope"],
+      category: p.category,
+      productIds: p.productIds,
+    }));
+  }
+
+  /**
+   * P5-04: resolve a buyer catalog line's price = tier price, then the best
+   * applicable promotion (net unitPrice + originalPrice strikethrough, priceType
+   * PROMO). With no promo it reproduces the standard ladder (SPECIAL for tier≠1
+   * with the list price as the strikethrough, else STANDARD). Boxed proration is
+   * left to computeLineSubtotal by the caller — this only sets the SELLING-UNIT
+   * price. `promos` is empty for staff, so this is a no-op tier resolver there.
+   */
+  private resolveBuyerLinePrice(
+    product: { id: string; category: string | null; pricePerUnit: unknown },
+    tierForProduct: number,
+    promos: PromotionRule[],
+    qtyPieces: number,
+  ): { unitPrice: number; originalPrice: number | null; priceType: PriceType } {
+    const listPrice = Number(product.pricePerUnit);
+    const base = getTierPrice(product, tierForProduct);
+    const promo = applyBestPromotion(base, promos, {
+      productId: product.id,
+      category: product.category,
+      qtyPieces,
+    });
+    if (promo.appliedPromoId) {
+      return {
+        unitPrice: promo.unitPrice,
+        originalPrice: promo.originalPrice,
+        priceType: PriceType.PROMO,
+      };
+    }
+    if (tierForProduct !== 1) {
+      return { unitPrice: base, originalPrice: listPrice, priceType: PriceType.SPECIAL };
+    }
+    return { unitPrice: base, originalPrice: null, priceType: PriceType.STANDARD };
+  }
 
   /**
    * Read the tax rate from the tenant's Settings (SystemConfig) at request time.
@@ -179,6 +240,10 @@ export class OrdersService implements OnApplicationBootstrap {
    * Only lines where originalPrice is set are returned — those are the lines
    * where an operator gave a one-time price below the catalog price.
    * Used by the order-creation UI to pre-fill the price field on scan.
+   *
+   * P5-04: PROMO lines are excluded — a promotion's net price is transient
+   * (window-bound) and must NOT become the customer's remembered operator price,
+   * or an expired promo price would silently pre-fill future operator orders.
    */
   async getCustomerPriceHistory(
     tenantId: string,
@@ -192,6 +257,7 @@ export class OrdersService implements OnApplicationBootstrap {
           status: { notIn: [OrderStatus.CANCELLED] },
         },
         originalPrice: { not: null },
+        priceType: { not: PriceType.PROMO },
       },
       // Order by updatedAt so the MOST RECENTLY SAVED override wins — editing a
       // line's price on any order and saving makes it the customer's remembered
@@ -869,6 +935,9 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
+    // P5-04: active promotions — only for the buyer (CUSTOMER) self-service path.
+    const activePromos = await this.loadActivePromotions(user.role);
+
     // RF-198: price-race check — buyer cart may have been built with a stale price.
     // Re-fetch (already done above) and compare against the cart unitPrice for each item.
     // Only applies when the CUSTOMER role sends unitPrice values (buyer portal checkout).
@@ -953,7 +1022,6 @@ export class OrdersService implements OnApplicationBootstrap {
 
       // Resolve tier: per-product override > customer default tier
       const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-      const tierPrice = getTierPrice(product, tierForProduct);
       const listPrice = Number(product.pricePerUnit); // tier 1 = list price
       const overridePrice = item.unitPrice;
 
@@ -961,18 +1029,20 @@ export class OrdersService implements OnApplicationBootstrap {
       let priceType: PriceType;
       let originalPrice: number | null = null;
 
-      // Price priority: operator one-time override (DISCOUNTED) > tier-resolved price (SPECIAL if not tier 1) > list price (STANDARD)
+      // Price priority: operator one-time override (DISCOUNTED) > best buyer
+      // promotion (PROMO) / tier price (SPECIAL) / list price (STANDARD). Promos
+      // populate `activePromos` only on the buyer (CUSTOMER) path (P5-04); staff
+      // orders get [] so this reproduces the prior tier/standard ladder exactly.
+      // `qty` here is the normalized total PIECES — the QTY_BREAK threshold basis.
       if (overridePrice != null && overridePrice < listPrice) {
         unitPrice = overridePrice;
         priceType = PriceType.DISCOUNTED;
         originalPrice = listPrice;
-      } else if (tierForProduct !== 1) {
-        unitPrice = tierPrice;
-        priceType = PriceType.SPECIAL;
-        originalPrice = listPrice;
       } else {
-        unitPrice = tierPrice;
-        priceType = PriceType.STANDARD;
+        const resolved = this.resolveBuyerLinePrice(product, tierForProduct, activePromos, qty);
+        unitPrice = resolved.unitPrice;
+        priceType = resolved.priceType;
+        originalPrice = resolved.originalPrice;
       }
 
       // For boxed products `unitPrice` is the BOX price; loose pieces are
@@ -1489,6 +1559,26 @@ export class OrdersService implements OnApplicationBootstrap {
         .product.findMany({ where: { id: { in: productIds } } });
       const productMap = new Map(products.map((p) => [p.id, p]));
 
+      // P5-04: buyer pricing context (tier + per-product override + active promos).
+      // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
+      // legacy list pricing unchanged. This also corrects a pre-existing bug where
+      // the buyer merge billed LIST price, ignoring the customer's tier.
+      const isBuyerEdit = user.role === UserRole.CUSTOMER;
+      const buyerTierCtx = isBuyerEdit
+        ? await this.prisma
+            .forTenant()
+            .customer.findUnique({ where: { id: order.customerId }, select: { pricingTier: true } })
+        : null;
+      const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
+      const buyerCustomerPrices =
+        isBuyerEdit && productIds.length > 0
+          ? await this.prisma.forTenant().customerPrice.findMany({
+              where: { customerId: order.customerId, productId: { in: productIds } },
+            })
+          : [];
+      const buyerCpMap = new Map(buyerCustomerPrices.map((cp) => [cp.productId, cp.pricingTier]));
+      const buyerPromos = await this.loadActivePromotions(user.role);
+
       // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
       // existing line was stored with a box/piece split (box-aware create). Lines
       // created box-UNAWARE (mobile cart, operator add-line) store `qty` as a
@@ -1527,7 +1617,6 @@ export class OrdersService implements OnApplicationBootstrap {
         if (!item.qty) continue;
         const product = productMap.get(item.productId);
         if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-        const unitPrice = Number(product.pricePerUnit);
         // Boxed + piece-denominated line: `qty` is the piece count, so re-split it
         // and prorate by the BOX price (mirrors createOrder + the operator path).
         // Without this a plain qty*unitPrice over-charges boxed lines by
@@ -1540,15 +1629,40 @@ export class OrdersService implements OnApplicationBootstrap {
         const boxes = split ? split.boxes : null;
         const pieces = split ? split.pieces : null;
         const qty = split ? split.qty : item.qty;
+        // P5-04: buyers get their tier price + best active promotion. The
+        // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
+        // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
+        // DRIVER edits keep the legacy list price (unchanged).
+        const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
+        const priced = isBuyerEdit
+          ? this.resolveBuyerLinePrice(
+              product,
+              buyerCpMap.get(item.productId) ?? buyerDefaultTier,
+              buyerPromos,
+              qtyPieces,
+            )
+          : {
+              unitPrice: Number(product.pricePerUnit),
+              originalPrice: null as number | null,
+              priceType: PriceType.STANDARD,
+            };
         await this.prisma.forTenant().orderItem.create({
           data: {
             orderId,
             productId: item.productId,
             qty,
-            unitPrice,
-            subtotal: computeLineSubtotal({ unitPrice, qty, boxes, pieces, unitsPerBox: upb }),
+            unitPrice: priced.unitPrice,
+            subtotal: computeLineSubtotal({
+              unitPrice: priced.unitPrice,
+              qty,
+              boxes,
+              pieces,
+              unitsPerBox: upb,
+            }),
             boxes,
             pieces,
+            originalPrice: priced.originalPrice,
+            priceType: priced.priceType,
             status: "PENDING",
             notes: item.notes,
             // Snapshot the regulated category so an edited-in line invoices/ledgers

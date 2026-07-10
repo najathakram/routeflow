@@ -9,6 +9,7 @@ import { InvoicesModule } from "../invoices/invoices.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { InventoryModule } from "../inventory/inventory.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
+import { PromotionsModule } from "../promotions/promotions.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AuthorizationsModule } from "../authorizations/authorizations.module";
     SystemConfigModule,
     InventoryModule,
     AuthorizationsModule,
+    PromotionsModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService],

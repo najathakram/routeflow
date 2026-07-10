@@ -227,3 +227,126 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
       return 0;
   }
 }
+
+// ─── Promotions (P5-04) ───────────────────────────────────────────────────────
+// A promotion adjusts the per-SELLING-UNIT price of a matching line. It composes
+// with computeLineSubtotal exactly like any other unitPrice: resolve the NET
+// selling-unit price here, then feed it (with boxes/pieces/unitsPerBox) through
+// computeLineSubtotal so boxed lines are prorated. NEVER multiply a per-piece
+// discount by the piece count — that re-introduces the unitsPerBox over-charge.
+//
+// Discount convention (mirrors the operator override): a promoted line stores the
+// NET unitPrice + the pre-promo price as originalPrice (strikethrough); the saving
+// is (originalPrice − unitPrice), never a separate discount amount (no double-count).
+// This block is byte-identical in the web + mobile mirrors — change all three.
+
+export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK";
+export type PromotionScope = "ALL" | "CATEGORY" | "PRODUCTS";
+
+/** A promotion's typed rule — already tenant- and window-filtered by the caller. */
+export interface PromotionRule {
+  id: string;
+  type: PromotionType;
+  /** PERCENT / QTY_BREAK: percent off (0–100). FIXED: $ off per SELLING UNIT (the box price when boxed). */
+  value: number;
+  /** QTY_BREAK threshold in PIECES; the break applies only when qtyPieces ≥ minQty. */
+  minQty?: number | null;
+  scope: PromotionScope;
+  /** scope=CATEGORY: matched (exact string) against the product's category. */
+  category?: string | null;
+  /** scope=PRODUCTS: the product ids the promo is scoped to. */
+  productIds?: string[] | null;
+}
+
+/** The line facts a promo needs to decide applicability + the qty-break gate. */
+export interface PromoContext {
+  productId: string;
+  category?: string | null;
+  /** Total line quantity in PIECES (post-normalizeBoxesPieces) — for the QTY_BREAK gate. */
+  qtyPieces: number;
+}
+
+export interface PromoResult {
+  /** Net (post-promo) selling-unit price. Equals the base when no promo applied. */
+  unitPrice: number;
+  /** Pre-promo base price for the strikethrough — null when no promo applied. */
+  originalPrice: number | null;
+  /** The winning promotion id, or null when none applied. */
+  appliedPromoId: string | null;
+}
+
+/** Does a promotion's scope cover this product? */
+export function promotionMatchesProduct(promo: PromotionRule, ctx: PromoContext): boolean {
+  switch (promo.scope) {
+    case "ALL":
+      return true;
+    case "CATEGORY":
+      return !!promo.category && !!ctx.category && promo.category === ctx.category;
+    case "PRODUCTS":
+      return (promo.productIds ?? []).includes(ctx.productId);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Net selling-unit price for ONE promo, or null if it doesn't apply to this line
+ * (wrong scope, qty-break threshold not met) or doesn't actually lower the price.
+ * `basePrice` is the customer's pre-promo selling-unit price (their tier price).
+ * Rounded to cents; a promo may never raise the price and never go below 0.
+ */
+function promoNetPrice(basePrice: number, promo: PromotionRule, ctx: PromoContext): number | null {
+  if (!promotionMatchesProduct(promo, ctx)) return null;
+  const value = Number(promo.value) || 0;
+  if (value <= 0) return null;
+  let net: number;
+  switch (promo.type) {
+    case "PERCENT":
+      net = basePrice * (1 - Math.min(value, 100) / 100);
+      break;
+    case "QTY_BREAK": {
+      const threshold = Number(promo.minQty ?? 0);
+      if (!(threshold > 0) || ctx.qtyPieces < threshold) return null; // gated on the PIECE count
+      net = basePrice * (1 - Math.min(value, 100) / 100);
+      break;
+    }
+    case "FIXED":
+      net = basePrice - value; // $ off per selling unit (never per piece — see header)
+      break;
+    default:
+      return null;
+  }
+  net = roundMoney(Math.max(0, net));
+  return net < basePrice ? net : null; // only apply when it genuinely lowers the price
+}
+
+/**
+ * Apply the best (lowest-net) applicable promotion to a base selling-unit price.
+ * Single, non-stacking: the promo yielding the lowest net price wins (ties broken
+ * by promo id for determinism). Returns the base unchanged when none apply.
+ */
+export function applyBestPromotion(
+  basePrice: number,
+  promos: PromotionRule[],
+  ctx: PromoContext,
+): PromoResult {
+  const base = roundMoney(basePrice);
+  let bestNet: number | null = null;
+  let bestId: string | null = null;
+  for (const promo of promos) {
+    const net = promoNetPrice(base, promo, ctx);
+    if (net == null) continue;
+    if (
+      bestNet == null ||
+      net < bestNet ||
+      (net === bestNet && bestId != null && promo.id < bestId)
+    ) {
+      bestNet = net;
+      bestId = promo.id;
+    }
+  }
+  if (bestNet == null || bestId == null) {
+    return { unitPrice: base, originalPrice: null, appliedPromoId: null };
+  }
+  return { unitPrice: bestNet, originalPrice: base, appliedPromoId: bestId };
+}
