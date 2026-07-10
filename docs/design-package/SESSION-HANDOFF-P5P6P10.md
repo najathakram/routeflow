@@ -5,10 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P6-1/F0 messaging-thread schema COMPLETE + LIVE (PR #163). P5-01 also
-> live (#159). ⚠️ Railway GitHub auto-deploys still broken since 07-08 (root cause: App can't clone the
-> private repo — "Snapshot code → repository not found"). Ship with `railway up` until the user reinstalls
-> the Railway GitHub App. Canonical flow now in CLAUDE.md: **public → merge → deploy (wait) → private.**
+> **Last updated:** 2026-07-09 — P10-PAR-1 mobile estimates parity COMPLETE + LIVE (PR #165); P6-1/F0
+> (#163) + P5-01 (#159) live. ✅ **Railway GitHub auto-deploys FIXED** — the failures were flipping the
+> repo private before Railway cloned it; #165 deployed via GitHub while public. Follow the canonical
+> **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
 
 ---
 
@@ -32,48 +32,44 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **master @ 66d550d.** **P6-1 / F0 COMPLETE + LIVE** (PR #163): additive messaging-thread schema
+- **master @ 0171ddd.** **P10-PAR-1 COMPLETE + LIVE** (PR #165): mobile estimates/quotes parity
+  (operator) — `apps/mobile/lib/api/estimates.ts` (mirrors web; read + send/accept/decline/void +
+  convert-to-invoice reading `inv.id`) + `lib/estimates-logic.ts` pure helpers (Convert gated
+  ACCEPTED-only per server contract) + `app/(operator)/estimates/{index,[id]}.tsx` + More-hub row +
+  14 tests. Create/quote-builder deferred. **Deployed via the GitHub flow** (first successful GitHub
+  auto-deploy since 07-08 — pipeline confirmed fixed).
+- **P6-1 / F0 COMPLETE + LIVE** (PR #163): additive messaging-thread schema
   foundation. `Message` gained `threadId?` + `channel MessageChannel @default(INTERNAL)` (run-chat
   **unregressed** — create/read paths untouched, locked by `apps/api/src/messages/messages.service.spec.ts`);
   6 new tenant-scoped models (`MessageThread`, `MessageTemplate`, `NotificationRule`, `MessageOptOut`,
   `MessagingSettings`, `InboundTriage`) + 5 enums; `Customer` +`smsConsent`/`waConsent`/`consentUpdatedAt`.
-  Migration `20260712000000_messaging_threads` applied to prod; deployed via `railway up` (GitHub deploy
-  still broken). Providers/engine/inbox/settings-UI = later P6 increments (P6-2…P6-14).
+  Migration `20260712000000_messaging_threads` applied to prod. Providers/engine/inbox/settings-UI =
+  later P6 increments (P6-2…P6-14).
 - **P5-01 COMPLETE + LIVE** (PR #159): merchandising promotions + product merch flags, backend + operator
   web UI. Migration `20260711000000_promotions_merch_flags` applied. `/promotions` manager + product merch
   toggles/badges; `GET /buyer/promotions`. Pricing-time application is still **P5-04** (not built). P5-05
   replenishment (#158) also live.
-- **⚠️ RAILWAY GITHUB AUTO-DEPLOYS BROKEN SINCE 2026-07-08 — ROOT CAUSE CONFIRMED (Railway dashboard).**
-  Every GitHub-triggered deploy (web + api) FAILS at **"Initialization › Snapshot code" with
-  `##NOT-FOUND## repository not found`** — build/deploy never start. Railway **cannot clone the repo**:
-  it's private (RouteFlow flips public only briefly for CI, then back to private right after merge) and
-  **Railway's GitHub App no longer has access to `najathakram/routeflow`**. Source connection config is
-  intact (repo/branch/auto-deploy all set); it's purely a repo-access problem. Not code — failures
-  predate P5-01 and line up with #157/#158/#159 merges. Account tangle to know: repo owner = `najathakram`
-  (gh CLI), a *different* GitHub account `najathakram91` is logged into the browser, Railway =
-  `najathakram1@gmail.com`.
-  - **PROVEN workaround (used for P5-01):** `railway up --service @routeflow/api --ci` then
-    `--service @routeflow/web --ci` — force-deploys local source, bypasses the GitHub clone. Succeeds.
-    Then run `post-deploy-check`. Prod DB is fully migrated.
-  - **Permanent fix (user action — I can't grant App access):** reinstall/grant the **Railway GitHub App**
-    access to `najathakram/routeflow` on the owner account (Railway → each service → Settings → Source →
-    edit/reconnect repo, OR github.com/apps/railway → Configure → add repo). Then GitHub deploys clone the
-    private repo fine. Alternatives: keep the repo PUBLIC until Railway finishes each deploy, or make it
-    permanently public (exposes source). See memory `project_railway_deploy_outage_2026-07`.
+- **✅ RAILWAY DEPLOY PIPELINE FIXED (was "broken" 07-08→07-09).** GitHub deploys had been 404ing at
+  "Snapshot code → repository not found" — NOT an App-access loss (Railway's repo picker lists the
+  private repo as accessible), but the repo being flipped **private before Railway cloned it**. The fix
+  is purely procedural: **stay PUBLIC until the Railway deploy finishes**, per the CLAUDE.md flow. Proven
+  by #165 (mobile) deploying via GitHub while public (BUILDING→SUCCESS). #157/#158/#159 were force-shipped
+  via `railway up` earlier (still a valid fallback). See memory `project_railway_deploy_outage_2026-07`.
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **P10-PAR-1 — mobile estimates/quotes parity screen** (apps/mobile), mirroring the shipped web estimates
-   API. No new models. Mobile Jest = pure-logic only.
-
-2. **P6-2 — messaging engine + StubProvider** (next P6 step now that F0 schema is live): the
+1. **P6-2 — messaging engine + StubProvider** (next P6 step now that F0 schema is live): the
    provider-agnostic `MessageProvider` interface + `StubProvider` (logs, no send), a message service that
    writes `Message` rows on a `MessageThread` with `channel`, resolves templates (`MessageTemplate`), honors
    `NotificationRule`/`MessageOptOut`/quiet-hours (`MessagingSettings`). Real Meta-WA/Twilio adapters are
    later (P6-3/P6-4). Everything tenant-scoped; no money.
 
-_(P6-1/F0 schema foundation is DONE — see Current state. Full backlog + dependencies + 18 gating
-decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
+2. **More P10-PAR mobile parity screens** over already-shipped web APIs (credit-notes, reports, recurring
+   invoices, route-templates, payments) — same pattern as P10-PAR-1 (mirror web hooks + list/detail,
+   pure-logic Jest only, no new models).
+
+_(P5-01, P5-05, P6-1/F0, P10-PAR-1 all DONE + live — see Current state. Full backlog + dependencies + 18
+gating decisions: `docs/design-package/PHASE-5-6-10-PLAN.md`.)_
 
 ## Critical rules
 
