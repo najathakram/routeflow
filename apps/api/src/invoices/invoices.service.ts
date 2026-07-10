@@ -1490,7 +1490,7 @@ export class InvoicesService {
   }
 
   /** Send the invoice as an actual email and mark as SENT. */
-  async sendEmail(id: string, overrideEmail?: string) {
+  async sendEmail(id: string, overrideEmail?: string, variant?: "draft" | "final") {
     const inv = await this.prisma.forTenant().invoice.findUnique({
       where: { id },
       include: {
@@ -1509,10 +1509,11 @@ export class InvoicesService {
         "No email address on file for this customer. Provide an email address.",
       );
 
-    // Get PDF URL (non-blocking — include in email if available)
+    // Get PDF URL (non-blocking — include in email if available). `variant`
+    // controls whether the DRAFT proforma or the FINAL invoice is attached.
     let pdfUrl: string | undefined;
     try {
-      pdfUrl = await this.pdfService.getOrGenerate(id);
+      pdfUrl = await this.pdfService.getOrGenerate(id, { variant });
     } catch {
       this.logger.warn(
         `Could not generate PDF for invoice ${id} — email will be sent without PDF link`,

@@ -8,6 +8,15 @@ export interface InvoicePdfData {
   id: string;
   invoiceNumber: string;
   status: string;
+  /**
+   * Document stage: "draft" renders a DRAFT watermark + badge (a pre-delivery
+   * proforma the wholesaler can print/send before the order ships); "final"
+   * renders a FINAL badge (the issued invoice, typically post-delivery).
+   * Undefined = legacy render (no draft/final marker).
+   */
+  variant?: "draft" | "final";
+  /** When this PDF was generated/extracted — stamped small at the page bottom. */
+  generatedAt?: Date | string;
   issueDate: Date | string;
   dueDate?: Date | string | null;
   paidAt?: Date | string | null;
@@ -82,6 +91,16 @@ const fmtDate = (val: Date | string | null | undefined): string => {
     year: "numeric",
   });
 };
+const fmtDateTime = (val: Date | string | null | undefined): string => {
+  if (!val) return "—";
+  return new Date(val).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
 
 const DEFAULT_NAVY = "#1B3A5C";
 const DEFAULT_BRAND = "#3B6FCA";
@@ -144,6 +163,27 @@ function buildStyles(primary: string, navy: string) {
     invoiceTitle: { fontSize: 22, fontFamily: "Helvetica-Bold", color: navy, letterSpacing: 1 },
     invoiceNumber: { fontSize: 9, color: GRAY, marginTop: 4 },
     badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20, marginTop: 6 },
+    // DRAFT/FINAL stage badge — more prominent than the payment-status badge.
+    docBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, marginTop: 6 },
+    docBadgeText: { fontSize: 11, fontFamily: "Helvetica-Bold", letterSpacing: 2 },
+    // Full-page diagonal DRAFT watermark (draft variant only; repeats on every page).
+    watermark: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    watermarkText: {
+      fontSize: 130,
+      fontFamily: "Helvetica-Bold",
+      color: DANGER,
+      opacity: 0.07,
+      transform: "rotate(-45deg)",
+      letterSpacing: 12,
+    },
     billGrid: { flexDirection: "row", justifyContent: "space-between", marginBottom: 24 },
     billSection: { flex: 1, paddingRight: 16 },
     billLabel: {
@@ -317,8 +357,15 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const navy = primary === DEFAULT_BRAND ? DEFAULT_NAVY : darken(primary);
   const styles = buildStyles(primary, navy);
 
+  const variant = invoice.variant;
+  const generatedAt = invoice.generatedAt ?? new Date();
+  const titlePrefix = variant === "draft" ? "DRAFT " : "";
+
   return (
-    <Document title={`Invoice ${invoice.invoiceNumber}`} author={tenant?.businessName ?? undefined}>
+    <Document
+      title={`${titlePrefix}Invoice ${invoice.invoiceNumber}`}
+      author={tenant?.businessName ?? undefined}
+    >
       <Page size="A4" style={styles.page}>
         {/*
           Wrap everything *above* the Terms in a flexGrow:1 container.
@@ -366,6 +413,20 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <View style={{ alignItems: "flex-end" }}>
               <Text style={styles.invoiceTitle}>INVOICE</Text>
               <Text style={styles.invoiceNumber}>{invoice.invoiceNumber}</Text>
+              {variant === "draft" ? (
+                <View
+                  style={[
+                    styles.docBadge,
+                    { backgroundColor: "#fef2f2", borderWidth: 1, borderColor: "#fecaca" },
+                  ]}
+                >
+                  <Text style={[styles.docBadgeText, { color: DANGER }]}>DRAFT</Text>
+                </View>
+              ) : variant === "final" ? (
+                <View style={[styles.docBadge, { backgroundColor: "#dcfce7" }]}>
+                  <Text style={[styles.docBadgeText, { color: SUCCESS }]}>FINAL</Text>
+                </View>
+              ) : null}
               <StatusBadge status={invoice.status} styles={styles} />
             </View>
           </View>
@@ -548,8 +609,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           of body copy.
         */}
         {invoice.terms ? (
-          <View style={styles.termsWrapper} wrap={false}>
-            <View style={styles.termsBox}>
+          // The wrapper stays un-wrapped (marginTop:auto pins it to the bottom of
+          // the page when short); the inner box wraps so LONG terms flow onto
+          // additional pages instead of clipping.
+          <View style={styles.termsWrapper}>
+            <View style={styles.termsBox} wrap>
               <Text style={styles.termsLabel}>Terms &amp; Conditions</Text>
               <Text style={styles.termsBody}>{invoice.terms}</Text>
             </View>
@@ -564,8 +628,19 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               : "RouteFlow"}
           </Text>
           <Text style={styles.footerMuted}>Powered by RouteFlow</Text>
-          <Text style={styles.footerText}>Generated {fmtDate(new Date())}</Text>
+          <Text style={styles.footerText}>Generated {fmtDateTime(generatedAt)}</Text>
         </View>
+
+        {/*
+          DRAFT watermark — drawn last (over the content) at a very low opacity so
+          it clearly marks the page as a non-final proforma without harming
+          readability. `fixed` repeats it on every page.
+        */}
+        {variant === "draft" ? (
+          <View style={styles.watermark} fixed>
+            <Text style={styles.watermarkText}>DRAFT</Text>
+          </View>
+        ) : null}
       </Page>
     </Document>
   );

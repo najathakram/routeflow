@@ -41,6 +41,7 @@ import {
   useUpdateInvoicePayment,
   useDeleteInvoicePayment,
   useDownloadInvoicePdf,
+  type InvoicePdfVariant,
   useRevertInvoiceToDraft,
   useUnvoidInvoice,
   useAdjustInvoicePrices,
@@ -929,6 +930,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isNoEmailOpen, setIsNoEmailOpen] = React.useState(false);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
+  // Explicit Draft/Final PDF-stage override; null = follow the smart default.
+  const [pdfVariantOverride, setPdfVariant] = React.useState<InvoicePdfVariant | null>(null);
 
   React.useEffect(() => {
     if (invoice) setTitle(invoice.invoiceNumber);
@@ -957,6 +960,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const payments: InvoicePayment[] = invoice.payments ?? [];
   const amountPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
   const status = invoice.status;
+
+  // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
+  // pre-delivery proforma; FINAL once the order is delivered or the invoice is
+  // issued. The operator can flip it and print/download/email either version
+  // at any time (`pdfVariantOverride`).
+  const defaultPdfVariant: InvoicePdfVariant =
+    invoice.status !== "DRAFT" || invoice.order?.status === "DELIVERED" ? "final" : "draft";
+  const pdfVariant: InvoicePdfVariant = pdfVariantOverride ?? defaultPdfVariant;
   const balanceDue =
     status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
   const discount = Number(invoice.discount ?? 0);
@@ -988,11 +999,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       return;
     }
     sendInvoiceEmail.mutate(
-      { id: invoice.id, email: customerEmail },
+      { id: invoice.id, email: customerEmail, variant: pdfVariant },
       {
         onSuccess: (res) =>
           toast({
-            title: "Invoice emailed",
+            title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
             description: `Sent to ${res.sentTo}`,
             variant: "success",
           }),
@@ -1021,28 +1032,31 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   };
 
   const handlePrint = () => {
-    downloadPdf.mutate(invoice.id, {
-      onSuccess: ({ blob }) => {
-        const blobUrl = URL.createObjectURL(blob);
-        const iframe = document.createElement("iframe");
-        iframe.style.display = "none";
-        iframe.src = blobUrl;
-        document.body.appendChild(iframe);
-        iframe.onload = () => {
-          iframe.contentWindow?.print();
-          setTimeout(() => {
-            iframe.remove();
-            URL.revokeObjectURL(blobUrl);
-          }, 60_000);
-        };
+    downloadPdf.mutate(
+      { id: invoice.id, variant: pdfVariant },
+      {
+        onSuccess: ({ blob }) => {
+          const blobUrl = URL.createObjectURL(blob);
+          const iframe = document.createElement("iframe");
+          iframe.style.display = "none";
+          iframe.src = blobUrl;
+          document.body.appendChild(iframe);
+          iframe.onload = () => {
+            iframe.contentWindow?.print();
+            setTimeout(() => {
+              iframe.remove();
+              URL.revokeObjectURL(blobUrl);
+            }, 60_000);
+          };
+        },
+        onError: () =>
+          toast({
+            title: "Failed to generate PDF",
+            description: "Please try again.",
+            variant: "error",
+          }),
       },
-      onError: () =>
-        toast({
-          title: "Failed to generate PDF",
-          description: "Please try again.",
-          variant: "error",
-        }),
-    });
+    );
   };
 
   const handleReminder = () => {
@@ -1243,30 +1257,33 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   };
 
   const handleDownloadPdf = () => {
-    downloadPdf.mutate(invoice.id, {
-      onSuccess: ({ blob }) => {
-        // Trigger the download via a same-origin blob URL — `window.open(url)`
-        // can't be used here because the storage endpoint requires a JWT and a
-        // top-level navigation has no token in localStorage scope.
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = `${invoice.invoiceNumber || invoice.id}.pdf`;
-        a.rel = "noopener noreferrer";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        // Revoke after the browser has had a chance to start the download.
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    downloadPdf.mutate(
+      { id: invoice.id, variant: pdfVariant },
+      {
+        onSuccess: ({ blob }) => {
+          // Trigger the download via a same-origin blob URL — `window.open(url)`
+          // can't be used here because the storage endpoint requires a JWT and a
+          // top-level navigation has no token in localStorage scope.
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = `${invoice.invoiceNumber || invoice.id}-${pdfVariant}.pdf`;
+          a.rel = "noopener noreferrer";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          // Revoke after the browser has had a chance to start the download.
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        },
+        onError: () => {
+          toast({
+            title: "Failed to generate PDF",
+            description: "Please try again.",
+            variant: "error",
+          });
+        },
       },
-      onError: () => {
-        toast({
-          title: "Failed to generate PDF",
-          description: "Please try again.",
-          variant: "error",
-        });
-      },
-    });
+    );
   };
 
   // For edit payment: max amount = total - (all other payments)
@@ -1349,6 +1366,30 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               Send Reminder
             </Button>
           )}
+
+          {/* Draft/Final version toggle — controls which stage the printed,
+              downloaded, or emailed PDF renders as (both available anytime). */}
+          <div
+            className="inline-flex items-center rounded-lg border border-surface-border p-0.5"
+            role="group"
+            aria-label="Invoice PDF version"
+          >
+            {(["draft", "final"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setPdfVariant(v)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                  pdfVariant === v
+                    ? "bg-brand-500 text-white"
+                    : "text-navy/70 hover:bg-surface-raised",
+                )}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
 
           {/* Print — always available */}
           <Button

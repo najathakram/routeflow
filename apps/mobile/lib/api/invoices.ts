@@ -272,11 +272,21 @@ export function useCreatePartialInvoiceFromOrder() {
   });
 }
 
+/** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
+export type InvoicePdfVariant = "draft" | "final";
+
 export function useInvoicePdf() {
-  return useMutation<{ url: string } | null, Error, string>({
-    mutationFn: async (id) => {
+  return useMutation<
+    { url: string } | null,
+    Error,
+    string | { id: string; variant?: InvoicePdfVariant }
+  >({
+    mutationFn: async (arg) => {
+      const { id, variant } = typeof arg === "string" ? { id: arg, variant: undefined } : arg;
       try {
-        const r = await apiClient.get(`/invoices/${id}/pdf`);
+        const r = await apiClient.get(`/invoices/${id}/pdf`, {
+          params: variant ? { variant } : undefined,
+        });
         return r.data ?? null;
       } catch (e: any) {
         if (e?.response?.status === 202) return null;

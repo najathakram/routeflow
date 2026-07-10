@@ -136,10 +136,13 @@ export class InvoicesController {
     return this.invoicesService.send(id);
   }
 
-  /** Send the invoice as an actual email (marks as SENT). */
+  /** Send the invoice as an actual email (marks as SENT). Optional `variant`
+   * (draft|final) controls which version of the PDF is attached. */
   @Post(":id/send-email")
-  sendEmail(@Param("id") id: string, @Body() body: { email?: string }) {
-    return this.invoicesService.sendEmail(id, body?.email);
+  sendEmail(@Param("id") id: string, @Body() body: { email?: string; variant?: string }) {
+    const variant =
+      body?.variant === "draft" || body?.variant === "final" ? body.variant : undefined;
+    return this.invoicesService.sendEmail(id, body?.email, variant);
   }
 
   /** Send a payment reminder email (does not change invoice status). */
@@ -170,9 +173,14 @@ export class InvoicesController {
   }
 
   @Get(":id/pdf")
-  async getPdf(@Param("id") id: string, @Query("refresh") refresh?: string) {
+  async getPdf(
+    @Param("id") id: string,
+    @Query("refresh") refresh?: string,
+    @Query("variant") variant?: string,
+  ) {
     const force = refresh === "1" || refresh === "true";
-    const url = await this.invoicePdfService.getOrGenerate(id, { force });
+    const v = variant === "draft" || variant === "final" ? variant : undefined;
+    const url = await this.invoicePdfService.getOrGenerate(id, { force, variant: v });
     return { url };
   }
 
