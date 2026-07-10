@@ -15,8 +15,14 @@
  *   SMOKE_WAIT_RETRIES       — how many times to retry the health check (default: 30)
  */
 
+import { assertTestTenant } from "./lib/test-tenants.cjs";
+
 const BASE = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
-const TENANT = process.env.SMOKE_TENANT_SLUG || "e2e-routeflow";
+// Only approved test tenants may be smoke-tested — never a live client tenant.
+const TENANT = assertTestTenant(
+  process.env.SMOKE_TENANT_SLUG || "e2e-routeflow",
+  "post-deploy-check",
+);
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 20_000);
 const WAIT_RETRIES = Number(process.env.SMOKE_WAIT_RETRIES || 0); // 0 = no wait loop
 const OP_USER = process.env.SMOKE_OPERATOR_USERNAME || "admin";

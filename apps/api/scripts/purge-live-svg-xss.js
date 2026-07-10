@@ -2,8 +2,8 @@
  * purge-live-svg-xss.js
  * ─────────────────────
  * Deletes SVG files that were uploaded before the RF-076/RF-157 MIME allowlist
- * was enforced. Targets ONLY the ux-audit tenant — never touches "affa" or any
- * other tenant.
+ * was enforced. Targets ONLY the ux-audit tenant — never any live client
+ * tenant (enforced via assertTestTenant).
  *
  * What it does:
  *   1. Queries ProductImage rows (via Product.imageKeys) where the key ends in
@@ -25,12 +25,14 @@ const { Client } = require("pg");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const TARGET_TENANT_SLUG = "ux-audit-1777265477001";
+assertTestTenant(TARGET_TENANT_SLUG, "purge-live-svg-xss");
 
-// Reads DATABASE_URL from apps/api/.env if present, else falls back to Railway prod URL.
+// Reads DATABASE_URL from apps/api/.env if present, else from the environment.
 function resolveDatabaseUrl() {
   const envPath = path.join(__dirname, "../.env");
   if (fs.existsSync(envPath)) {
@@ -38,8 +40,11 @@ function resolveDatabaseUrl() {
     const match = raw.match(/^DATABASE_URL\s*=\s*"?([^"\r\n]+)"?/m);
     if (match) return match[1];
   }
-  // Hard-coded Railway prod URL — same as used in other scripts.
-  return "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  console.error(
+    "[purge-svg-xss] DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/purge-live-svg-xss.js",
+  );
+  process.exit(1);
 }
 
 // Local upload directory — mirrors StorageService default.
@@ -75,10 +80,11 @@ async function main() {
   const tenantId = tenantRes.rows[0].id;
   console.log(`[purge-svg-xss] Target tenant: ${TARGET_TENANT_SLUG} (id=${tenantId})`);
 
-  // Safety: double-check we are NOT touching the "affa" tenant.
-  const affaRes = await client.query('SELECT id FROM "Tenant" WHERE slug = $1 LIMIT 1', ["affa"]);
-  if (affaRes.rows.length > 0 && affaRes.rows[0].id === tenantId) {
-    console.error("[purge-svg-xss] ABORT: resolved tenant is 'affa' — refusing to run.");
+  // Safety: double-check the resolved slug is still an approved test tenant.
+  try {
+    assertTestTenant(tenantRes.rows[0].slug, "purge-live-svg-xss resolved tenant");
+  } catch (err) {
+    console.error(`[purge-svg-xss] ABORT: ${err.message}`);
     await client.end();
     process.exit(1);
   }

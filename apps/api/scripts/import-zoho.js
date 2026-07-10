@@ -8,10 +8,22 @@ const fs = require("fs");
 const { parse } = require("../../../node_modules/csv-parse/lib/sync");
 const crypto = require("crypto");
 
-const pool = new Pool({ connectionString: "postgresql://user:pass@localhost:5432/routeflow_dev" });
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "DATABASE_URL not set. Point it at the target database explicitly before importing.",
+  );
+  process.exit(1);
+}
+if (!process.argv.includes("--execute")) {
+  console.error(
+    "This importer writes directly to the target database. Re-run with --execute to proceed.",
+  );
+  process.exit(1);
+}
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
-const DOWNLOADS = "C:/Users/nakram/Downloads";
+const DOWNLOADS = process.env.ZOHO_CSV_DIR || "C:/Users/nakram/Downloads";
 
 function readCsv(filename) {
   const content = fs.readFileSync(`${DOWNLOADS}/${filename}`, "utf8");

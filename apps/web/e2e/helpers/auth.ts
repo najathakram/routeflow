@@ -1,5 +1,5 @@
 import type { Page, BrowserContext } from "@playwright/test";
-import { TENANT_SLUG } from "./constants";
+import { CREDENTIALS, TENANT_SLUG } from "./constants";
 
 /**
  * Injects the x-tenant-slug request header for all subsequent navigations.
@@ -22,8 +22,8 @@ export async function setTenantCookie(
  */
 export async function loginAsSuperAdmin(page: Page) {
   await page.goto("/admin-login");
-  await page.getByPlaceholder("Platform admin username").fill("najathakram");
-  await page.getByPlaceholder("Password").fill("Najath123!");
+  await page.getByPlaceholder("Platform admin username").fill(CREDENTIALS.superAdmin.username);
+  await page.getByPlaceholder("Password").fill(CREDENTIALS.superAdmin.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.waitForURL("**/admin/dashboard", { timeout: 30_000 });
 }

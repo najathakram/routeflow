@@ -24,7 +24,7 @@ Or create a tenant manually via the Platform Admin UI and use the credentials be
 ## Role 1: SUPER_ADMIN
 
 **Login endpoint:** `POST /api/v1/platform-admin/login`
-**Credentials:** `najathakram / Najath123!`
+**Credentials:** `najathakram / <redacted>`
 
 ### 1.1 Authentication
 
@@ -75,7 +75,7 @@ Or create a tenant manually via the Platform Admin UI and use the credentials be
 ## Role 2: OPERATOR (Tenant Admin / Operator)
 
 **Login endpoint:** `POST /api/v1/auth/login`
-**Credentials:** `admin / Admin@123` (from fresh-data seed)
+**Credentials:** `admin / <redacted>` (from fresh-data seed)
 **Header:** `X-Tenant-Slug: demo`
 
 ### 2.1 Authentication
@@ -193,7 +193,7 @@ Or create a tenant manually via the Platform Admin UI and use the credentials be
 ## Role 3: DRIVER
 
 **Login endpoint:** `POST /api/v1/auth/login`
-**Credentials:** `driver_tom / Driver1!` (or `driver_sara / Driver1!`)
+**Credentials:** `driver_tom / <redacted>` (or `driver_sara / <redacted>`)
 **Header:** `X-Tenant-Slug: demo`
 
 ### 3.1 Authentication
@@ -249,7 +249,7 @@ Or create a tenant manually via the Platform Admin UI and use the credentials be
 ## Role 4: CUSTOMER
 
 **Login endpoint:** `POST /api/v1/auth/login`
-**Credentials:** `harbor_cafe / Customer1!` (has a delivered order)
+**Credentials:** `harbor_cafe / <redacted>` (has a delivered order)
 **Header:** `X-Tenant-Slug: demo`
 
 ### 4.1 Authentication

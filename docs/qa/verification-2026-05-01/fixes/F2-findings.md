@@ -32,7 +32,7 @@ This means images served via the local file server are also forced to download, 
 
 Idempotent cleanup script for the `ux-audit-1777265477001` tenant only.  
 Scans `Product.imageKeys` and `CustomerDocument` rows for `.svg` keys, deletes the files, and removes the DB references.  
-Never touches the `affa` tenant. **Operator must run manually after deploy.**
+Never touches the `<live-tenant>` tenant. **Operator must run manually after deploy.**
 
 ### 5. `apps/api/src/uploads/uploads-xss.security.spec.ts` (new)
 

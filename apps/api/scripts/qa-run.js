@@ -28,8 +28,12 @@ const fs = require("fs");
 const path = require("path");
 
 const BASE = process.env.API_URL || "https://routeflowapi-production-d504.up.railway.app/api/v1";
-const SA_USERNAME = process.env.SUPER_ADMIN_USERNAME || "najathakram";
-const SA_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "Najath123!";
+const SA_USERNAME = process.env.SUPER_ADMIN_USERNAME;
+const SA_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+if (!SA_USERNAME || !SA_PASSWORD) {
+  console.error("SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD must be set in the environment.");
+  process.exit(1);
+}
 const KEEP = process.argv.includes("--keep");
 
 // ─── Colours ─────────────────────────────────────────────────────────────────
@@ -817,7 +821,7 @@ async function section1() {
   });
 
   await test(18, "Tenant isolation — setup creates tenant B, A cannot see B data", async () => {
-    state.qa2Slug = `qa2-${Date.now()}`;
+    state.qa2Slug = `qa-iso-${Date.now()}`;
     const t2 = await superApi(
       "POST",
       "/platform-admin/tenants",

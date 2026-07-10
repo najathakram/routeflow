@@ -141,7 +141,7 @@ All status changes require buyer page reload. No toast, badge, or notification m
 
 ### P8 - Low: Possible cross-tenant invoice data in operator Sent filter
 
-Invoices from Blue Dreamz (product: Bam Bam AAA Flower) appeared in ux-audit tenant Sent filter. Does not belong to this tenant. Possible cross-tenant leak or affa data contamination.
+Invoices from <live product A> (product: <live product B>) appeared in ux-audit tenant Sent filter. Does not belong to this tenant. Possible cross-tenant leak or <live-tenant> data contamination.
 
 ## Resources Created During Testing
 

@@ -7,6 +7,10 @@ description: >
 
 # Skill: DB Migration & Seeding (RouteFlow / Railway / Prisma)
 
+> **Test-tenant policy**: any tenant a test/seed/QA run touches MUST satisfy
+> `scripts/lib/test-tenants.cjs` (`test`, `e2e-routeflow`, or `qa-*`/`e2e-*`/`ux-audit-*`).
+> Never target a live client tenant — see CLAUDE.md "Test tenants & real-client data".
+
 Encodes the production-safety rules in `CLAUDE_SESSION_PREAMBLE.md`. Prisma 7 + PostgreSQL,
 schema at `apps/api/prisma/schema.prisma`, migrations in `apps/api/prisma/migrations/`.
 

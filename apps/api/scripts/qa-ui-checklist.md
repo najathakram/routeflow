@@ -44,19 +44,19 @@ Before starting:
 
 | Role                       | Surface      | Username / Email | Password     | Notes                                    |
 | -------------------------- | ------------ | ---------------- | ------------ | ---------------------------------------- |
-| Super Admin                | Web          | `najathakram`    | `Najath123!` | Platform admin (`/admin-login`)          |
-| Operator                   | Web + Mobile | `admin`          | `Admin@123`  | From `fresh-data.js` seed                |
-| Customer                   | Web + Mobile | `harbor_cafe`    | `Customer1!` | Has delivered order, return, credit note |
-| Customer (standing orders) | Mobile       | `north_deli`     | `Customer1!` | Has Mon/Wed/Fri standing order           |
-| Driver (completed route)   | Mobile       | `driver_tom`     | `Driver1!`   | Completed Route A                        |
-| Driver (completed route)   | Mobile       | `driver_sara`    | `Driver1!`   | Completed Route B                        |
-| Buyer                      | Web + Mobile | Register fresh   | `Buyer@123!` | Create new account during audit          |
+| Super Admin                | Web          | `najathakram`    | `<redacted>` | Platform admin (`/admin-login`)          |
+| Operator                   | Web + Mobile | `admin`          | `<redacted>` | From `fresh-data.js` seed                |
+| Customer                   | Web + Mobile | `harbor_cafe`    | `<redacted>` | Has delivered order, return, credit note |
+| Customer (standing orders) | Mobile       | `north_deli`     | `<redacted>` | Has Mon/Wed/Fri standing order           |
+| Driver (completed route)   | Mobile       | `driver_tom`     | `<redacted>` | Completed Route A                        |
+| Driver (completed route)   | Mobile       | `driver_sara`    | `<redacted>` | Completed Route B                        |
+| Buyer                      | Web + Mobile | Register fresh   | `<redacted>` | Create new account during audit          |
 
 ---
 
 ## Section 1 — Platform Super Admin (Web)
 
-**Entry point:** `/admin-login` with `najathakram` / `Najath123!`
+**Entry point:** `/admin-login` with `najathakram` / `<redacted>`
 
 ### Auth
 
@@ -142,7 +142,7 @@ Before starting:
 
 ## Section 2 — Operator / Tenant Admin (Web)
 
-**Entry point:** `/login` — enter tenant company code (slug from `fresh-data.js`), then `admin` / `Admin@123`
+**Entry point:** `/login` — enter tenant company code (slug from `fresh-data.js`), then `admin` / `<redacted>`
 
 ### Auth
 
@@ -486,7 +486,7 @@ Before starting:
 
 ## Section 3 — Customer (Web — Limited Access)
 
-**Entry point:** `/login` with same company code and `harbor_cafe` / `Customer1!`
+**Entry point:** `/login` with same company code and `harbor_cafe` / `<redacted>`
 
 - [x] **T-106** Customer logs in → redirected correctly (limited dashboard or orders view)
   - _Expected:_ Customer lands on appropriate page; no admin-only widgets visible
@@ -603,7 +603,7 @@ Before starting:
 
 ## Section 5 — Operator / Tenant Admin (Mobile)
 
-**Setup:** Tap "Sign in as Staff" or enter company code on app launch. Use `admin` / `Admin@123`.
+**Setup:** Tap "Sign in as Staff" or enter company code on app launch. Use `admin` / `<redacted>`.
 
 > **Note:** Mobile (React Native / Expo Go) not tested in this audit session. All Section 5 cases are skipped.
 
@@ -768,7 +768,7 @@ Before starting:
 
 ## Section 6 — Customer (Mobile)
 
-**Setup:** Enter company code, log in with `harbor_cafe` / `Customer1!`
+**Setup:** Enter company code, log in with `harbor_cafe` / `<redacted>`
 
 > **Note:** Mobile not tested in this audit session. All Section 6 cases are skipped.
 
@@ -927,7 +927,7 @@ Before starting:
 
 ## Section 7 — Driver (Mobile)
 
-**Setup:** Enter company code, log in with `driver_tom` / `Driver1!`
+**Setup:** Enter company code, log in with `driver_tom` / `<redacted>`
 
 > **Note:** Mobile not tested in this audit session. All Section 7 cases are skipped.
 

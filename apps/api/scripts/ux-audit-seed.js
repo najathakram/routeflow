@@ -31,16 +31,22 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const readline = require("readline");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const API = "http://localhost:3000/api/v1";
 
-// Railway production DB — same URL used by qa-multi-seller.js
-const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error(
+    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/ux-audit-seed.js",
+  );
+  process.exit(1);
+}
 
 const ts = Date.now();
-const SLUG = `ux-audit-${ts}`;
+const SLUG = assertTestTenant(`ux-audit-${ts}`, "ux-audit-seed");
 const PASS = {
   admin: "UxAdmin@123!",
   owner: "UxOwner@123!",

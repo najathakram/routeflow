@@ -151,7 +151,7 @@ export function middleware(request: NextRequest) {
   const parts = hostname.split(".");
 
   // Tenant resolution precedence:
-  //   1. Real subdomain (e.g. affa.routeflow.info) → authoritative, overwrites cookie
+  //   1. Real subdomain (e.g. acme.routeflow.info) → authoritative, overwrites cookie
   //   2. Existing cookie (user picked a workspace on the login form, or
   //      previous successful login anchored it to the user's actual tenant) → preserve
   //   3. Otherwise → no cookie set; the login page asks the user for a workspace.

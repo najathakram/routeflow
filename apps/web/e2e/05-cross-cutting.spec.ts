@@ -14,7 +14,7 @@ import {
   loginAsBuyer,
   logout,
 } from "./helpers/auth";
-import { TENANT_SLUG, CREDENTIALS } from "./helpers/constants";
+import { TENANT_SLUG, CREDENTIALS, HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
 
 test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   // ── Unauthenticated redirects ──────────────────────────────────────────────
@@ -89,6 +89,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   });
 
   test("CC-05 super admin impersonation grants tenant-scoped access", async ({ page }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
     // Impersonation issues a 15-min token with the tenant-admin's claims +
     // `impersonatedBy`; writes are AUDIT-LOGGED, not blocked (see
     // platform-admin.service impersonate()). Verify the token is accepted for a
@@ -198,6 +199,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   });
 
   test("CC-10 session persists across page reload — SA stays logged in", async ({ page }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
     await loginAsSuperAdmin(page);
     await page.reload();
     await page.waitForURL(/\/admin\/dashboard/, { timeout: 15_000 });

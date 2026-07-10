@@ -28,7 +28,7 @@ ENV
 - Deployed:
   - https://routeflowmobile-production.up.railway.app  (Expo web — buyer + operator + driver UI today)
   - https://routeflowapi-production.up.railway.app/api/v1  (NestJS API)
-- Test tenant ONLY (NEVER touch affa or any other tenant): ux-audit-1777265477001
+- Test tenant ONLY (NEVER touch <live-tenant> or any other tenant): ux-audit-1777265477001
   - tenantId:   8ee7bbf5-991b-41b1-adcb-4a6c20981401
   - operator:   ux_admin                                  / UxAdmin@123!
   - driver A:   ux_driver_a                               / UxDriver@123!
@@ -53,7 +53,7 @@ GLOBAL RULES
    and keep going. Do not silently fix unrelated issues — they evade review.
 5. NEVER call /api directly with curl during a fix-verification step. The verification
    harness in Wave 4 drives the GUI. Your fix tests run in unit/integration test layers.
-6. NEVER use the `affa` tenant for anything. Test profiles only.
+6. NEVER use the `<live-tenant>` tenant for anything. Test profiles only.
 
 OUTPUT FORMAT (every worker, exactly this — no extra prose)
   # {worker-id}
@@ -271,7 +271,7 @@ Each writes to `docs/qa/verification-2026-05-02/workers/{worker}/findings.md`.
 ## Anti-patterns to refuse
 
 - ❌ "While I'm in there, refactor X." — log NEW-{worker}-N, don't widen scope.
-- ❌ Touching the `affa` tenant for any reason.
+- ❌ Touching the `<live-tenant>` tenant for any reason.
 - ❌ `git commit --amend`, `git push --force`, `--no-verify`, auto-`prisma migrate deploy` on Railway.
 - ❌ "API works in curl" as proof — the verification step is GUI-only, by user mandate.
 - ❌ Any sub-agent skipping the cached preamble to "save tokens" — the cache hit is the saving.

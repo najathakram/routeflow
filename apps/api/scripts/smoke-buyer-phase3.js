@@ -38,12 +38,19 @@ function ng(n, msg) {
   fail++;
 }
 
+const SA_USERNAME = process.env.SUPER_ADMIN_USERNAME;
+const SA_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+if (!SA_USERNAME || !SA_PASSWORD) {
+  console.error("SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD must be set in the environment.");
+  process.exit(1);
+}
+
 async function main() {
   // ─── Setup ───────────────────────────────────────────────────────────────
-  const sa = await req("POST", "/auth/login", { username: "najathakram", password: "Najath123!" });
+  const sa = await req("POST", "/auth/login", { username: SA_USERNAME, password: SA_PASSWORD });
   const saToken = sa.body.accessToken;
   const ts = Date.now();
-  const slug = "bsmoke3-" + ts;
+  const slug = "qa-bsmoke3-" + ts;
   const buyerEmail = "bphase3-" + ts + "@test.io";
 
   const tt = await req(

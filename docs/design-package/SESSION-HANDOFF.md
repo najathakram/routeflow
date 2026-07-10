@@ -178,9 +178,9 @@ Re-verify anytime: `cd apps/web && SKIP_E2E_SEED=true PLAYWRIGHT_TENANT_SLUG=e2e
 
 - Prod: web `www.routeflow.info`; API `routeflowapi-production.up.railway.app`; web service
   `routeflowweb-production.up.railway.app`. Tenants: `test` (Google `najathakram1@gmail.com`), owner
-  `affa`/`affa_admin`, e2e `e2e-routeflow` (operator `admin`/`Admin@123`, super-admin
-  `najathakram`/`Najath123!`).
-- Railway CLI is authed + linked to `@routeflow/api`. Public PG proxy `gondola.proxy.rlwy.net:41006`
+  `<live-tenant>`/`<live-tenant-admin>`, e2e `e2e-routeflow` (operator `admin`/`<redacted>`, super-admin
+  `<redacted>`/`<redacted>`).
+- Railway CLI is authed + linked to `@routeflow/api`. Public PG proxy `<RAILWAY_TCP_PROXY_DOMAIN>:<RAILWAY_TCP_PROXY_PORT>`
   (creds from `railway variables --service postgres --json`; build
   `postgresql://<POSTGRES_USER>:<enc(POSTGRES_PASSWORD)>@<RAILWAY_TCP_PROXY_DOMAIN>:<RAILWAY_TCP_PROXY_PORT>/<POSTGRES_DB>`).
 - Money math mirrors: `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three in sync.

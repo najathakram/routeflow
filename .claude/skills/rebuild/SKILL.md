@@ -9,6 +9,10 @@ description: >
 
 # Skill: RouteFlow Rebuild Routine
 
+> **Test-tenant policy**: any tenant a test/seed/QA run touches MUST satisfy
+> `scripts/lib/test-tenants.cjs` (`test`, `e2e-routeflow`, or `qa-*`/`e2e-*`/`ux-audit-*`).
+> Never target a live client tenant — see CLAUDE.md "Test tenants & real-client data".
+
 **MANDATORY — run ALL 3 steps in order every time the user asks to rebuild/deploy.**
 
 This is a standing behavioral instruction. Never skip steps or reorder them.

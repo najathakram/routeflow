@@ -9,11 +9,14 @@
  * Idempotent: re-running after consolidation is a no-op.
  *
  * Usage:
- *   node apps/api/scripts/merge-pending-orders.js
+ *   node apps/api/scripts/merge-pending-orders.js            # dry run (counts only)
+ *   node apps/api/scripts/merge-pending-orders.js --execute  # actually merge
  */
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+
+const EXECUTE = process.argv.includes("--execute");
 
 (async () => {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -35,6 +38,12 @@ const { Pool } = require("pg");
   });
 
   console.log(`${groups.length} customer(s) have >1 mergeable PENDING order.`);
+
+  if (!EXECUTE) {
+    console.log("DRY RUN — re-run with --execute to merge.");
+    await pool.end();
+    return;
+  }
 
   let mergedOrders = 0;
   let winners = 0;

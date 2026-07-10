@@ -19,9 +19,16 @@ const axios = require("axios");
 const bcrypt = require("bcrypt");
 const { Client } = require("pg");
 const crypto = require("crypto");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 const API = "http://localhost:3000/api/v1";
-const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error(
+    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/qa-multi-seller.js",
+  );
+  process.exit(1);
+}
 
 // ── Result tracking ─────────────────────────────────────────────────────────
 const results = [];
@@ -174,26 +181,28 @@ async function phase0_setup() {
 
   // 3. Create 3 test tenants
   const ts = Date.now();
+  // Slugs are qa-prefixed so they satisfy the test-tenant policy pattern.
   const tenantDefs = [
     {
-      slug: `alpha-foods-${ts}`,
+      slug: `qa-alpha-foods-${ts}`,
       businessName: "Alpha Foods Wholesale",
       adminUsername: `alpha_admin_${ts}`,
       adminEmail: `alpha_admin_${ts}@test.io`,
     },
     {
-      slug: `beta-produce-${ts}`,
+      slug: `qa-beta-produce-${ts}`,
       businessName: "Beta Produce Co",
       adminUsername: `beta_admin_${ts}`,
       adminEmail: `beta_admin_${ts}@test.io`,
     },
     {
-      slug: `gamma-dry-${ts}`,
+      slug: `qa-gamma-dry-${ts}`,
       businessName: "Gamma Dry Goods Ltd",
       adminUsername: `gamma_admin_${ts}`,
       adminEmail: `gamma_admin_${ts}@test.io`,
     },
   ];
+  for (const td of tenantDefs) assertTestTenant(td.slug, "qa-multi-seller");
 
   for (const td of tenantDefs) {
     try {

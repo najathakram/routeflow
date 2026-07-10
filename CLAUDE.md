@@ -72,6 +72,26 @@ Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` be
 - **Mobile mirrors web**: reuse the same API endpoints/DTOs/flows; only the UI differs.
 - **Prettier**: semicolons, double quotes, `printWidth` 100, trailing commas.
 
+## Test tenants & real-client data (POLICY — no exceptions)
+
+Live client tenants (and their users, products, orders, and documents) are **real businesses'
+production data**. They are never test targets and never examples.
+
+- **Approved test tenants**: `test`, `e2e-routeflow`, and throwaway slugs matching `qa-*`,
+  `e2e-*`, or `ux-audit-*`. ALL testing, seeding, QA, and cleanup — local **or production** —
+  happens ONLY on these, with dummy retailers/buyers. Enforced in code by
+  [`scripts/lib/test-tenants.cjs`](scripts/lib/test-tenants.cjs) (`assertTestTenant`); every
+  tenant-scoped script/test entry point must call it before any write.
+- **Never reference a live client** (slug, business name, product names, order/invoice numbers,
+  tenant UUIDs) in code, tests, fixtures, UI placeholders, examples, docs, or the code map — use
+  `acme`-style placeholders instead.
+- **Never hardcode credentials or production connection strings** anywhere; read `DATABASE_URL`
+  / `SUPER_ADMIN_*` / `PLAYWRIGHT_SA_*` from the environment. Prod DB access goes through
+  `railway run --service postgres node <script>`.
+- Debugging or changing a live tenant's data happens **only at the client's explicit request**,
+  with a fresh backup first, and via read-only reports or dry-run-first scripts
+  (`--live-tenant-override` + type-back confirmation where supported).
+
 ## DO NOT introduce
 
 Vitest · Biome · Supabase · Vercel · a second HTTP client · a root-level test runner or root ESLint config.

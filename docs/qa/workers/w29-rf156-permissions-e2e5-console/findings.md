@@ -17,7 +17,7 @@ Tenant: ux-audit-1777265477001 (tenantId: 8ee7bbf5-991b-41b1-adcb-4a6c20981401)
 
 - Total returned: 14
 - Unique tenantIds: ["8ee7bbf5-991b-41b1-adcb-4a6c20981401"] — ux-audit tenant only
-- Blue Dreamz / Bam Bam records found: 0
+- <live product A> / <live product B> records found: 0
 
 ### SENT Invoices (GET /invoices?status=SENT)
 
