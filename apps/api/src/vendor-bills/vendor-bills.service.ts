@@ -10,6 +10,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { Prisma, MovementType } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
+import { roundMoney } from "../common/pricing";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 
@@ -761,9 +762,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     return this.prisma.tenantTransaction(async (tx) => {
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");
-      const alreadyPaid = bill.payments.reduce((s, p) => s + Number(p.amount), 0);
-      const remaining = Number(bill.totalOwed) - alreadyPaid;
+      const alreadyPaid = roundMoney(bill.payments.reduce((s, p) => s + Number(p.amount), 0));
+      const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
       if (remaining <= 0) throw new BadRequestException("Bill already fully paid");
+      if (Number(dto.amount) > remaining + 0.001) {
+        throw new BadRequestException(
+          `Payment amount exceeds the remaining balance of ${remaining.toFixed(2)}.`,
+        );
+      }
       await tx.billPayment.create({
         data: {
           vendorBillId: id,
@@ -772,7 +778,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           reference: dto.reference,
         },
       });
-      const newPaid = alreadyPaid + dto.amount;
+      const newPaid = roundMoney(alreadyPaid + Number(dto.amount));
       const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
       return tx.vendorBill.update({
         where: { id },

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { roundMoney } from "../common/pricing";
 import { parse } from "csv-parse/sync";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
@@ -636,7 +637,9 @@ export class ImportService {
         if (qty <= 0) continue;
         const unitPrice = parseFloat(row["Item Price"] || "0") || 0;
         const itemDiscount = parseFloat(row["Discount Amount"] || "0") || 0;
-        const sub = parseFloat(row["Item Total"] || "0") || qty * unitPrice - itemDiscount;
+        const sub = roundMoney(
+          parseFloat(row["Item Total"] || "0") || qty * unitPrice - itemDiscount,
+        );
         const sku = (row["SKU"] || "").trim();
 
         let productId: string | undefined;
