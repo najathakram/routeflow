@@ -1,18 +1,9 @@
 import { apiClient } from "./api-client";
 import { setTenantCookie, clearTenantCookie } from "./tenant-cookie";
 import { OP_KEYS } from "./auth-keys";
+import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 
-export const OP_PRESENCE_COOKIE = "rf-op-auth";
-
-function setOpPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${OP_PRESENCE_COOKIE}=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-}
-
-function clearOpPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${OP_PRESENCE_COOKIE}=; path=/; max-age=0; samesite=lax`;
-}
+export { OP_PRESENCE_COOKIE, clearOpPresenceCookie } from "./presence-cookies";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -140,8 +131,16 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
     });
     localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
     localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
+    // Sliding window: keep the middleware-visible presence signal alive only
+    // as long as the session actually refreshes.
+    setOpPresenceCookie();
     return data;
-  } catch {
+  } catch (err) {
+    // The session is dead (token rejected) → drop the presence signal so the
+    // landing page stops auto-redirecting. Network blips keep the cookie —
+    // failing toward "no redirect" is the safe direction.
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 401 || status === 403) clearOpPresenceCookie();
     return null;
   }
 }
