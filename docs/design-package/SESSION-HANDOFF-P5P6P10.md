@@ -5,10 +5,10 @@
 > **Keep it current — see [§ Maintenance](#maintenance) at the bottom. Update it at the end of
 > every increment before you finish.**
 >
-> **Last updated:** 2026-07-09 — P6-2 messaging engine COMPLETE + LIVE (PR #167); P10-PAR-1 (#165),
-> P6-1/F0 (#163), P5-01 (#159) live. ✅ **Railway GitHub auto-deploys FIXED** — the failures were
-> flipping the repo private before Railway cloned it. Follow the canonical **public → merge → deploy
-> (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
+> **Last updated:** 2026-07-09 — P10-PAR-3 mobile recurring-invoices COMPLETE + LIVE; P10-PAR-2 (#168),
+> P6-2 (#167), P10-PAR-1 (#165), P6-1/F0 (#163), P5-01 (#159) live. ✅ **Railway GitHub auto-deploys
+> FIXED** — the failures were flipping the repo private before Railway cloned it. Follow the canonical
+> **public → merge → deploy (WAIT, still public) → private** flow (CLAUDE.md). No App reinstall needed.
 
 ---
 
@@ -32,7 +32,18 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## Current state
 
-- **master @ f03a59a.** **P6-2 COMPLETE + LIVE** (PR #167): messaging **send engine + StubProvider**
+- **P10-PAR-3 COMPLETE + LIVE** (mobile **recurring-invoices** parity, operator): view + **Generate-now**
+  only — `apps/mobile/lib/api/recurring-invoices.ts` (`useRecurringInvoices` [bare array] / `useRecurringInvoice`
+  / `useRunRecurringInvoice` reads `inv.id`) + `lib/recurring-invoices-logic.ts` (`recurringPillFor`/`freqLabel`)
+  + `app/(operator)/recurring-invoices/{index,[id]}.tsx` + More-hub row + 7 tests. **Pause/Resume deferred**
+  — the server resume path is broken (`update()` drops `isActive`; ValidationPipe rejects the partial PATCH),
+  so shipping Pause without a working Resume would trap the template. Backend fix spawned as a task.
+- **P10-PAR-2 COMPLETE + LIVE** (PR #168): mobile **credit-notes** parity
+  (operator) — `apps/mobile/lib/api/credit-notes.ts` (read + issue/apply/void; `useOpenInvoicesForCustomer`
+  = `GET /invoices?customerId`; apply reads `inv.id`) + `lib/credit-notes-logic.ts` (Apply gated
+  ISSUED-only) + `app/(operator)/credit-notes/{index,[id]}.tsx` (detail has an `ApplyInvoicePicker`
+  Modal) + More-hub row + 8 tests. Create/issue-builder deferred.
+- **P6-2 COMPLETE + LIVE** (PR #167): messaging **send engine + StubProvider**
   on the F0 schema — `apps/api/src/messaging/`. `MessagingService.sendMessage` gates (invoice-policy G12
   → consent → opt-out → contact → quiet-hours) → dispatch via the `MESSAGE_PROVIDER` token → record
   `Message` on the customer `MessageThread` → bump thread → meter WA/SMS (`MeterService` MSGS; failed
@@ -67,10 +78,11 @@ increment is deployed. Before you finish, update this doc's CURRENT STATE + DO N
 
 ## DO NEXT (in order — one branch/PR per increment)
 
-1. **More P10-PAR mobile parity screens** over already-shipped web APIs (credit-notes → reports →
-   recurring invoices → route-templates → payments) — same proven pattern as P10-PAR-1: mirror the web
-   `lib/api/*` hooks + build list/detail screens under `app/(operator)/…` + a More-hub row, pure-logic
-   Jest only, no new models. LOW risk — the default for unattended runs.
+1. **More P10-PAR mobile parity screens** over already-shipped web APIs (next: reports → route-templates →
+   payments; estimates + credit-notes + recurring-invoices DONE) — same proven pattern as P10-PAR-1/2/3:
+   mirror the web `lib/api/*` hooks + list/detail screens under `app/(operator)/…` + a More-hub row,
+   pure-logic Jest only, no new models. LOW risk — the default for unattended runs. **Ship only working
+   actions** (see the recurring-invoices resume bug — don't ship a broken/trap action; defer + spawn a task).
 
 2. **P6-3 — real Meta-WhatsApp Cloud + Twilio SMS adapters** behind the `MESSAGE_PROVIDER` token
    (StubProvider stays the default binding; flag/env-gated). **BLOCKED on user-provided provider creds**
