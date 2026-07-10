@@ -127,6 +127,7 @@ describe("OrdersService", () => {
             send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
           },
         },
@@ -1153,6 +1154,44 @@ describe("OrdersService", () => {
       expect(created.qty).toBe(27);
       expect(created.boxes).toBe(2);
       expect(created.pieces).toBe(3);
+    });
+
+    it("qty-ONLY edit of a box-split line re-derives the split and prorates the box price (reverse-divergence fix)", async () => {
+      // Existing box-split line: 1 box of 12 @ $28.35/box, snapshot upb=12.
+      // Editing qty to 24 pieces (2 boxes) must prorate to $56.70 and refresh the
+      // split to boxes=2/pieces=0 — NOT bill 24 × $28.35 and leave boxes=1 stale.
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-box",
+            qty: 12,
+            unitPrice: 28.35,
+            subtotal: 28.35,
+            status: "PENDING",
+            boxes: 1,
+            pieces: 0,
+            unitsPerBox: 12,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 56.7, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 24 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      const updated = prisma.orderItem.update.mock.calls[0][0].data;
+      expect(updated.subtotal).toBeCloseTo(56.7, 2);
+      expect(updated.subtotal).not.toBeCloseTo(680.4, 2); // 24 × 28.35 (the old bug)
+      expect(updated.qty).toBe(24);
+      expect(updated.boxes).toBe(2);
+      expect(updated.pieces).toBe(0);
     });
   });
 

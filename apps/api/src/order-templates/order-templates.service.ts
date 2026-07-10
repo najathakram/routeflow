@@ -16,6 +16,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
+import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -351,8 +352,11 @@ export class OrderTemplatesService {
       const product = productMap.get(item.productId);
       if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
       const unitPrice = Number(product.pricePerUnit);
-      const itemSubtotal = unitPrice * item.qty;
-      subtotal += itemSubtotal;
+      // A template qty is a SELLING-UNIT count (a box for boxed products), so the
+      // line subtotal is unitPrice × qty — but go through the shared helper (which
+      // rounds) rather than raw float math, so totals never carry sub-cent drift.
+      const itemSubtotal = computeLineSubtotal({ unitPrice, qty: item.qty });
+      subtotal = roundMoney(subtotal + itemSubtotal);
       return {
         productId: item.productId,
         qty: item.qty,
@@ -369,8 +373,8 @@ export class OrderTemplatesService {
       };
     });
 
-    const tax = subtotal * this.taxRate;
-    const total = subtotal + tax;
+    const tax = roundMoney(subtotal * this.taxRate);
+    const total = roundMoney(subtotal + tax);
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
     const skipNote =

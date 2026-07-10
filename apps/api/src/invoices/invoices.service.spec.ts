@@ -518,21 +518,23 @@ describe("InvoicesService", () => {
       expect(res).toMatchObject({ subtotal: 440, total: 484 });
     });
 
-    it("re-derives the boxes/pieces split for boxed products", async () => {
+    it("re-derives a box-split line's split from the SNAPSHOT upb (never the live product)", async () => {
+      // The order line is genuinely box-split and carries its own unitsPerBox
+      // snapshot (11). Recompute preserves that denomination and re-derives the
+      // split from the aggregated billed qty — it does NOT consult the live product.
       prisma.order.findUnique.mockResolvedValue({
         id: "o1",
         subtotal: 100,
         tax: 0,
-        lineItems: [{ id: "li1", productId: "p1" }],
+        lineItems: [{ id: "li1", productId: "p1", boxes: 2, pieces: 0, unitsPerBox: 11 }],
       });
       prisma.invoice.findMany.mockResolvedValue([
         {
           id: "a",
           status: InvoiceStatus.SENT,
-          items: [{ productId: "p1", qty: 22, subtotal: 440, unitPrice: 220 }],
+          items: [{ productId: "p1", orderItemId: "li1", qty: 22, subtotal: 440, unitPrice: 220 }],
         },
       ]);
-      prisma.product.findMany.mockResolvedValue([{ id: "p1", unitsPerBox: 11 }]);
       prisma.orderItem.update.mockResolvedValue({});
       prisma.order.update.mockResolvedValue({});
 
@@ -540,7 +542,41 @@ describe("InvoicesService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ qty: 22, boxes: 2, pieces: 0, subtotal: 440 }),
+          data: expect.objectContaining({
+            qty: 22,
+            boxes: 2,
+            pieces: 0,
+            unitsPerBox: 11,
+            subtotal: 440,
+          }),
+        }),
+      );
+    });
+
+    it("preserves a selling-unit line's denomination (never manufactures a phantom split)", async () => {
+      // Order line is selling-unit (boxes null). Even though the invoice item's qty
+      // could be re-split by some live upb, recompute must keep boxes null.
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o1",
+        subtotal: 100,
+        tax: 0,
+        lineItems: [{ id: "li1", productId: "p1", boxes: null, pieces: null }],
+      });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "a",
+          status: InvoiceStatus.SENT,
+          items: [{ productId: "p1", orderItemId: "li1", qty: 4, subtotal: 80, unitPrice: 20 }],
+        },
+      ]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({});
+
+      await service.recomputeOrderFromInvoices("o1");
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ qty: 4, boxes: null, pieces: null, subtotal: 80 }),
         }),
       );
     });
@@ -848,6 +884,180 @@ describe("InvoicesService", () => {
       await expect(
         service.updateInvoiceShipment("inv-1", { shippingTrackingNumber: "X" }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── buildInvoiceItemData: copy-don't-recompute (order↔invoice divergence) ──────
+  // Regression guard for the prod bug where an invoice line showed the per-unit
+  // (box) price as the whole line total: the builder re-derived the box/piece split
+  // from the billed qty and the LIVE product.unitsPerBox instead of copying the
+  // order line's stored money + denomination. buildInvoiceItemData is pure, so we
+  // exercise it directly.
+  describe("buildInvoiceItemData (order line → invoice line)", () => {
+    const build = (li: any, billQty: number, opts?: { priorBilledQty?: number }) =>
+      (service as any).buildInvoiceItemData(li, billQty, "test-tenant", opts);
+
+    it("copies a selling-unit line verbatim even when the live product is now boxed (the 246-vs-426 bug)", () => {
+      // Order line: 4 selling units @ $20 = $80, boxes=null (box-UNAWARE create).
+      // Live product later became unitsPerBox=4. The OLD code re-split qty=4 with
+      // upb=4 → 1 box → $20 (per-box price as the whole line). We must copy $80.
+      const li = {
+        id: "oi-1",
+        productId: "p-1",
+        qty: 4,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null, // no snapshot (selling-unit line)
+        unitPrice: 20,
+        subtotal: 80,
+        product: { name: "Astro Eight Kit", unitsPerBox: 4 }, // live upb changed
+      };
+      const line = build(li, 4);
+      expect(line.subtotal).toBe(80);
+      expect(line.boxes).toBeNull();
+      expect(line.pieces).toBeNull();
+      expect(line.qty).toBe(4);
+      expect(line.orderItemId).toBe("oi-1");
+    });
+
+    it("copies a box-split line verbatim and carries its split + snapshot upb", () => {
+      // 2 boxes of 6 @ $43.75/box = $87.50, stored as boxes=2/pieces=0/qty=12.
+      const li = {
+        id: "oi-2",
+        productId: "p-2",
+        qty: 12,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 6,
+        unitPrice: 43.75,
+        subtotal: 87.5,
+        product: { name: "Boxed", unitsPerBox: 6 },
+      };
+      const line = build(li, 12);
+      expect(line.subtotal).toBe(87.5);
+      expect(line.boxes).toBe(2);
+      expect(line.pieces).toBe(0);
+      expect(line.unitsPerBox).toBe(6);
+    });
+
+    it("copies the stored subtotal exactly on a full bill instead of re-deriving qty×unitPrice (rounding drift)", () => {
+      // 24 pieces, true price $35.00 total (unitPrice rounds to $1.46). OLD code
+      // billed 24 × 1.46 = 35.04. Copy the stored 35.00.
+      const li = {
+        id: "oi-3",
+        productId: "p-3",
+        qty: 24,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 1.46,
+        subtotal: 35.0,
+        product: { name: "Pills", unitsPerBox: null },
+      };
+      expect(build(li, 24).subtotal).toBe(35.0);
+    });
+
+    it("prorates a partial bill and telescopes to exactly the stored subtotal across partials", () => {
+      // qty 3 @ stored $10.00, billed 1 + 1 + 1. Naive round(10/3) three times = 9.99.
+      const li = {
+        id: "oi-4",
+        productId: "p-4",
+        qty: 3,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 3.33,
+        subtotal: 10.0,
+        product: { name: "Thirds", unitsPerBox: null },
+      };
+      const b1 = build(li, 1, { priorBilledQty: 0 }).subtotal;
+      const b2 = build(li, 1, { priorBilledQty: 1 }).subtotal;
+      const b3 = build(li, 1, { priorBilledQty: 2 }).subtotal;
+      expect(b1 + b2 + b3).toBeCloseTo(10.0, 5);
+      expect(b1).toBe(3.33);
+      expect(b2).toBe(3.34);
+      expect(b3).toBe(3.33);
+    });
+
+    it("falls back to the shared helper (using the STORED split) when the order line has no stored subtotal", () => {
+      // 2 boxes of 6 = 12 pieces, $40/box, no stored subtotal (legacy row).
+      const li = {
+        id: "oi-5",
+        productId: "p-5",
+        qty: 12,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 6,
+        unitPrice: 40,
+        subtotal: null, // legacy row, no money
+        product: { name: "Legacy", unitsPerBox: 6 },
+      };
+      // billing all 12 pieces → 2 boxes @ $40 = $80 via computeLineSubtotal.
+      expect(build(li, 12).subtotal).toBe(80);
+    });
+  });
+
+  // ── Auto-revert a SENT pending-mirror invoice when its order is edited ──────────
+  describe("revertLinkedInvoicesForOrderEdit", () => {
+    it("reverts an unpaid SENT pending-mirror invoice to DRAFT (auto-revert on edit)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
+      ]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
+
+      const reverted = await service.revertLinkedInvoicesForOrderEdit("ord-1");
+
+      expect(reverted).toEqual(["inv-1"]);
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-1" },
+          data: expect.objectContaining({ status: "DRAFT", sentAt: null, pdfUrl: null }),
+        }),
+      );
+    });
+
+    it("blocks the edit (throws) when a linked invoice has payments — money never detaches", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { id: "inv-1", invoiceNumber: "INV-1", internalNotes: null },
+      ]);
+      prisma.invoicePayment.count.mockResolvedValue(1);
+
+      await expect(service.revertLinkedInvoicesForOrderEdit("ord-1")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when the order has no SENT pending-mirror invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      const reverted = await service.revertLinkedInvoicesForOrderEdit("ord-1");
+      expect(reverted).toEqual([]);
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("unvoidInvoice restores invoicedQty", () => {
+    it("re-claims each line's invoicedQty (capped at line qty) when unvoiding", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: "VOID",
+        orderId: "ord-1",
+      });
+      prisma.invoice.update.mockResolvedValue({ id: "inv-1", status: "DRAFT" });
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { productId: "p1", qty: 4, orderItemId: "oi-1" },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "oi-1", productId: "p1", qty: 10, invoicedQty: 0 },
+      ]);
+      prisma.orderItem.update.mockResolvedValue({});
+
+      await service.unvoidInvoice("inv-1");
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "oi-1" }, data: { invoicedQty: 4 } }),
+      );
     });
   });
 });
