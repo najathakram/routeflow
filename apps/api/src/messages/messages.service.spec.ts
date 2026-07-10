@@ -47,17 +47,17 @@ describe("MessagesService (run-chat)", () => {
     expect(prisma.message.create.mock.calls[0][0].data.runId).toBeNull();
   });
 
-  it("reads a run's messages with the exact same where/orderBy/include", async () => {
+  it("reads a run's messages scoped to the INTERNAL channel", async () => {
     await service.findByRun({ runId: "run-1" });
     expect(prisma.message.findMany).toHaveBeenCalledWith({
-      where: { runId: "run-1" },
+      where: { channel: "INTERNAL", runId: "run-1" },
       orderBy: { createdAt: "asc" },
       include: { sender: { select: { id: true, username: true, role: true } } },
     });
   });
 
-  it("uses where:undefined (tenant-scoped full list) when no runId is given", async () => {
+  it("scopes the no-runId list to INTERNAL so engine messages never leak in", async () => {
     await service.findByRun({});
-    expect(prisma.message.findMany.mock.calls[0][0].where).toBeUndefined();
+    expect(prisma.message.findMany.mock.calls[0][0].where).toEqual({ channel: "INTERNAL" });
   });
 });
