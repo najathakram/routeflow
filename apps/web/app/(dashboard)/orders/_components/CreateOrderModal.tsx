@@ -176,6 +176,19 @@ export function CreateOrderModal({
     (tempId: string) => setFloorAcked((prev) => new Set(prev).add(tempId)),
     [],
   );
+  // Cost eye: lines whose cost/margin the operator revealed. OFF by default on
+  // every line and NEVER serialized into parked drafts — privacy at the counter.
+  const [costRevealed, setCostRevealed] = React.useState<Set<string>>(new Set());
+  const toggleCostRevealed = React.useCallback(
+    (tempId: string) =>
+      setCostRevealed((prev) => {
+        const next = new Set(prev);
+        if (next.has(tempId)) next.delete(tempId);
+        else next.add(tempId);
+        return next;
+      }),
+    [],
+  );
 
   // Debounce customer search
   React.useEffect(() => {
@@ -1340,6 +1353,8 @@ export function CreateOrderModal({
                             acked={floorAcked.has(li.tempId)}
                             onSetToFloor={(fp) => setDiscountedPrice(li.tempId, fp)}
                             onSellAnyway={() => ackFloor(li.tempId)}
+                            concealed={!costRevealed.has(li.tempId)}
+                            onToggleConcealed={() => toggleCostRevealed(li.tempId)}
                           />
                         </div>
                         {(li.noteOpen || li.note?.trim()) && (
