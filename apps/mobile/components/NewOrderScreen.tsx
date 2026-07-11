@@ -99,15 +99,14 @@ type Product = {
   category?: string | null;
   /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
   trackedCategoryId?: string | null;
-  /** Per-piece average cost — drives the live margin hint (web uses averageCost, not standardCost). */
+  /** Per-piece average cost — drives the live margin hint + the cost eye (web uses
+   *  averageCost, not standardCost). Operator/driver endpoints return it; buyers
+   *  never get this screen and their endpoints strip cost fields. */
   averageCost?: number | string | null;
+  standardCost?: number | string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
-  /** Per-piece costs (operator/driver endpoints return them; buyers never get
-   *  this screen and their endpoints strip cost fields). For the cost eye. */
-  averageCost?: number | string | null;
-  standardCost?: number | string | null;
 };
 
 /**
@@ -1545,14 +1544,6 @@ function CartRow({
   const isBoxed = upb > 1;
   const effUnit = effectiveUnitPrice(line, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
-  // Live margin hint (mirrors web MarginHint): margin on the effective price
-  // against the product's per-piece averageCost. Hidden when no cost is known.
-  const unitCost = product.averageCost != null ? Number(product.averageCost) : null;
-  const marginFrac =
-    unitCost != null && Number.isFinite(unitCost)
-      ? computeMarginFraction(effUnit, unitCost, product.unitsPerBox)
-      : null;
-  const marginClass = classifyMargin(marginFrac, marginFloor);
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: effUnit,
@@ -1562,7 +1553,9 @@ function CartRow({
     unitsPerBox: product.unitsPerBox ?? null,
   });
 
-  // Cost eye — hidden by default on every line, session-local only.
+  // Cost eye + live margin hint (mirror web): both read one per-piece cost —
+  // averageCost, else standardCost. Cost eye is hidden by default (session-local);
+  // the margin pill (classifyMargin vs the category floor) hides when no cost.
   const [costVisible, setCostVisible] = useState(false);
   const pieceCost =
     product.averageCost != null
@@ -1570,12 +1563,13 @@ function CartRow({
       : product.standardCost != null
         ? toNumber(product.standardCost)
         : null;
-  // 0 is a real cost; only null hides the eye entirely.
+  // 0 is a real cost; only null hides the eye/hint entirely.
   const hasCost = pieceCost != null && Number.isFinite(pieceCost);
   const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
   const marginFrac = hasCost
     ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
     : null;
+  const marginClass = classifyMargin(marginFrac, marginFloor);
 
   return (
     <View style={styles.cartRow}>
