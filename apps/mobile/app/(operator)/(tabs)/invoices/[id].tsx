@@ -26,6 +26,7 @@ import {
 } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
+import { formatQtySplit } from "../../../../lib/pricing";
 import { sharePdf } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
@@ -314,8 +315,19 @@ export default function InvoiceDetailScreen() {
                       {it.description}
                     </Text>
                     <Text style={styles.itemSub}>
-                      {it.qty} × {fmtCurrency(it.unitPrice)}
+                      {it.boxes != null || it.pieces != null
+                        ? // Boxed line: unitPrice is the BOX price — "qty × price"
+                          // would read as pieces × box-price (visually wrong).
+                          `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
+                        : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                     </Text>
+                    {it.priceType === "MANUAL" &&
+                    it.originalPrice != null &&
+                    Number(it.unitPrice) > Number(it.originalPrice) ? (
+                      <Text style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}>
+                        Upsell
+                      </Text>
+                    ) : null}
                   </View>
                   <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
                 </View>

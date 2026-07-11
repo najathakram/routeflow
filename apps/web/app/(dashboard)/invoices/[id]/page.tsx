@@ -52,6 +52,7 @@ import {
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { useTenant } from "@/components/tenant-provider";
@@ -1630,7 +1631,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     <tr key={item.id} className="hover:bg-surface-raised">
                       <td className="px-8 py-3 font-medium text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className="mono text-navy/70">{item.qty}</span>
+                        <span
+                          className="mono text-navy/70"
+                          title={
+                            item.boxes != null || item.pieces != null
+                              ? `${Number(item.qty)} pcs total`
+                              : undefined
+                          }
+                        >
+                          {formatQtySplit({
+                            qty: item.qty,
+                            boxes: item.boxes,
+                            pieces: item.pieces,
+                          })}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-right">
                         {item.priceType === "SPECIAL" ? (
@@ -1667,6 +1681,31 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             </span>
                             <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
                               Promo price
+                            </span>
+                          </div>
+                        ) : item.priceType === "MANUAL" &&
+                          item.originalPrice != null &&
+                          Number(item.unitPrice) > Number(item.originalPrice) ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            {/* Upsell (above list): green, no strikethrough — the base
+                                is never shown to the buyer. */}
+                            <span className="money text-success">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
+                              Upsell
+                            </span>
+                          </div>
+                        ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="strike text-xs">
+                              {fmt(Number(item.originalPrice))}
+                            </span>
+                            <span className="money text-warning">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
+                              Adjusted
                             </span>
                           </div>
                         ) : (

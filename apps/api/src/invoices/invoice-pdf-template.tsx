@@ -1,6 +1,7 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
+import { formatQtySplit } from "../common/pricing";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -49,6 +50,10 @@ export interface InvoicePdfData {
     discount: DecimalLike;
     taxRate: DecimalLike;
     subtotal: DecimalLike;
+    /** Boxed denomination snapshot — rendered as "2 boxes + 3 pcs" when present. */
+    boxes?: number | null;
+    pieces?: number | null;
+    unitsPerBox?: number | null;
     product?: { name: string } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
@@ -486,7 +491,7 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 ) : null}
               </View>
               <Text style={[styles.cellTextRight, styles.colQty]}>
-                {toNum(item.qty).toFixed(2)}
+                {formatQtySplit({ qty: toNum(item.qty), boxes: item.boxes, pieces: item.pieces })}
               </Text>
               <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
               <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>

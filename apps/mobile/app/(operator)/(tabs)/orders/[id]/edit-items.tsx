@@ -383,10 +383,9 @@ export default function EditOrderItemsScreen() {
                   return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
                 }
                 // Fresh add: pre-fill the remembered price for this customer +
-                // product (only when below catalog), else catalog.
+                // product (discount OR upsell), else catalog.
                 const hist = priceHistory?.[p.id];
-                const startPrice =
-                  hist && hist.lastPrice < catalogPrice ? hist.lastPrice : catalogPrice;
+                const startPrice = hist ? hist.lastPrice : catalogPrice;
                 // 1 box for boxed, 1 piece for non-boxed.
                 if (Number(unitsPerBox ?? 0) > 1) {
                   const upb = Number(unitsPerBox ?? 0);
@@ -554,6 +553,9 @@ function DraftItemCard({
   onRemove: () => void;
 }) {
   const isOverridden = item.unitPrice !== item.catalogPrice;
+  const isUpsell = item.unitPrice > item.catalogPrice;
+  // Green for an upsell (sold above catalog), orange for a discount.
+  const overrideColor = isUpsell ? ios.system.greenInk : ios.system.orangeInk;
   const upb = Number(item.unitsPerBox ?? 0);
   const isBoxed = upb > 1 && canSplitBoxes;
   const qty = effectiveQty(item, item.unitsPerBox);
@@ -578,28 +580,38 @@ function DraftItemCard({
           <View style={styles.cardMetaRow}>
             {canEditPrice ? (
               <Pressable onPress={onPressPrice} style={styles.priceTap} hitSlop={6}>
-                {isOverridden ? (
+                {isOverridden && !isUpsell ? (
                   <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
                 ) : null}
-                <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
+                <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
                 </Text>
+                {isUpsell ? (
+                  <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
+                    Upsell
+                  </Text>
+                ) : null}
                 <Ionicons
                   name="pencil-outline"
                   size={11}
-                  color={isOverridden ? ios.system.orangeInk : ios.label3}
+                  color={isOverridden ? overrideColor : ios.label3}
                 />
               </Pressable>
             ) : (
               <View style={styles.priceTap}>
-                {isOverridden ? (
+                {isOverridden && !isUpsell ? (
                   <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
                 ) : null}
-                <Text style={[styles.cardMeta, isOverridden && { color: ios.system.orangeInk }]}>
+                <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
                 </Text>
+                {isUpsell ? (
+                  <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
+                    Upsell
+                  </Text>
+                ) : null}
               </View>
             )}
           </View>

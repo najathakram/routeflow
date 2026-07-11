@@ -11,6 +11,10 @@ export interface InvoiceItem {
   productId?: string;
   qty: number;
   unitPrice: number;
+  /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
+  originalPrice?: number | null;
+  /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
+  priceType?: string;
   subtotal: number;
 }
 

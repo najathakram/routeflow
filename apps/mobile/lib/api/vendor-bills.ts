@@ -30,25 +30,30 @@ export interface VendorBill {
   createdAt: string;
 }
 
+/** One extracted line as the API actually returns it (mirrors web lib/api/invoice-scan.ts). */
 export interface ScannedItem {
-  description: string;
-  qty?: number;
-  unitCost?: number;
-  lineTotal?: number;
-  productId?: string;
-  productName?: string;
+  extractedName: string;
+  qty?: number | null;
+  unitCost?: number | null;
+  lineTotal?: number | null;
+  matchedProductId?: string | null;
+  matchedProductName?: string | null;
   confidence: "high" | "medium" | "low" | "none";
 }
 
+/** Header fields as the API actually returns them (`supplier`, `invoiceDate` — not
+ * `supplierName`/`billDate`; the old names silently read as undefined). */
 export interface ScanResult {
-  supplierName?: string;
-  billDate?: string;
-  invoiceNumber?: string;
-  subtotal?: number;
-  tax?: number;
-  total?: number;
+  supplier?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  expenseDescription?: string | null;
+  expenseCategory?: string | null;
+  subtotal?: number | null;
+  tax?: number | null;
+  total?: number | null;
+  notes?: string | null;
   items: ScannedItem[];
-  supplierId?: string;
 }
 
 /** Payload of the 409 thrown when receiving a bill with unmapped lines. */

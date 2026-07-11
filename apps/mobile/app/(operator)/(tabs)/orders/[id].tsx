@@ -15,6 +15,7 @@ import {
 } from "../../../../lib/api/orders";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
+import { formatQtySplit } from "../../../../lib/pricing";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
 function formatCurrency(n: number | string | undefined): string {
@@ -357,17 +358,12 @@ export default function OrderDetailScreen() {
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
                 const isBoxed = upb > 1;
                 // Show "1 box + 2 pcs · $30 / box" when split, otherwise the
-                // existing "8 ea · $5.00" form.
-                const qtyLine = (() => {
-                  if (li.boxes != null && li.boxes >= 0 && (li.boxes > 0 || (li.pieces ?? 0) > 0)) {
-                    const parts: string[] = [];
-                    if (li.boxes > 0) parts.push(`${li.boxes} box${li.boxes === 1 ? "" : "es"}`);
-                    if ((li.pieces ?? 0) > 0)
-                      parts.push(`${li.pieces} ${li.product?.unit ?? "pcs"}`);
-                    return parts.join(" + ");
-                  }
-                  return `${li.qty} ${li.product?.unit ?? "ea"}`;
-                })();
+                // existing "8 ea · $5.00" form. Shared formatter — reads the
+                // same on web order/invoice detail and the PDF.
+                const qtyLine =
+                  li.boxes != null || li.pieces != null
+                    ? formatQtySplit({ qty: li.qty, boxes: li.boxes, pieces: li.pieces })
+                    : `${li.qty} ${li.product?.unit ?? "ea"}`;
                 return (
                   <View
                     key={li.id}
@@ -394,6 +390,20 @@ export default function OrderDetailScreen() {
                         {qtyLine} · {formatCurrency(li.unitPrice)}
                         {isBoxed ? ` / box of ${upb}` : ""}
                       </Text>
+                      {li.priceType === "MANUAL" &&
+                      li.originalPrice != null &&
+                      Number(li.unitPrice) > Number(li.originalPrice) ? (
+                        <Text
+                          style={{
+                            color: ios.system.greenInk,
+                            fontSize: 12,
+                            fontWeight: "600",
+                            marginTop: 2,
+                          }}
+                        >
+                          Upsell
+                        </Text>
+                      ) : null}
                     </View>
                     <View style={{ alignItems: "flex-end", gap: 4 }}>
                       <Text style={styles.itemTotal}>{formatCurrency(li.subtotal)}</Text>

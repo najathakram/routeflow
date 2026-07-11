@@ -98,6 +98,15 @@ export class UsersController {
     return this.usersService.resetPassword(id);
   }
 
+  /** Clear a login lockout early (10 failed attempts → 15-min lock) so the
+   *  tenant's admin can self-serve instead of waiting out the window. */
+  @Post(":id/unlock")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  unlock(@Param("id") id: string) {
+    return this.usersService.unlockUser(id);
+  }
+
   @Patch(":id/admin")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)

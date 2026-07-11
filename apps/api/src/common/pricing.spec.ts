@@ -9,6 +9,9 @@ import {
   computeCategoryTax,
   applyBestPromotion,
   promotionMatchesProduct,
+  isUpsellLine,
+  effectiveBuyerPrice,
+  formatQtySplit,
   type PromotionRule,
 } from "./pricing";
 
@@ -528,5 +531,77 @@ describe("applyBestPromotion", () => {
     expect(subtotal).toBe(70); // 2 boxes × $35.00
     // Guard the classic over-charge: net-per-piece × 12 pieces.
     expect(subtotal).not.toBe(420); // $35 × 12
+  });
+});
+
+describe("pricing — upsell direction & sticky effective price", () => {
+  describe("isUpsellLine", () => {
+    it("true only for a MANUAL line priced ABOVE its catalog base", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: 10 })).toBe(true);
+    });
+
+    it("false for a MANUAL discount (net below base)", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 8, originalPrice: 10 })).toBe(false);
+    });
+
+    it("false for non-MANUAL types even when net > original (e.g. a premium SPECIAL tier)", () => {
+      expect(isUpsellLine({ priceType: "SPECIAL", unitPrice: 12, originalPrice: 10 })).toBe(false);
+      expect(isUpsellLine({ priceType: "PROMO", unitPrice: 12, originalPrice: 10 })).toBe(false);
+    });
+
+    it("false when originalPrice is null or equal to unitPrice", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: null })).toBe(false);
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 10, originalPrice: 10 })).toBe(false);
+    });
+
+    it("coerces Decimal-like string fields", () => {
+      expect(
+        isUpsellLine({ priceType: "MANUAL", unitPrice: "12.50", originalPrice: "10.00" }),
+      ).toBe(true);
+    });
+  });
+
+  describe("effectiveBuyerPrice", () => {
+    it("a remembered UPSELL (above list) sticks and overrides the tier", () => {
+      // tier 8, list 10, remembered upsell 12 → charge 12
+      expect(effectiveBuyerPrice(8, 10, 12)).toBe(12);
+    });
+
+    it("a remembered price at/below LIST never sticks (keeps tier) — a discount can't RAISE a low tier", () => {
+      // tier 8, list 10, remembered 9 (a discount off list, but above tier) → keep tier 8
+      expect(effectiveBuyerPrice(8, 10, 9)).toBe(8);
+      // remembered exactly at list → keep tier
+      expect(effectiveBuyerPrice(8, 10, 10)).toBe(8);
+    });
+
+    it("returns the tier price when there is no remembered price", () => {
+      expect(effectiveBuyerPrice(8, 10, null)).toBe(8);
+      expect(effectiveBuyerPrice(8, 10, undefined)).toBe(8);
+    });
+  });
+});
+
+describe("formatQtySplit", () => {
+  it("renders the stored split", () => {
+    expect(formatQtySplit({ qty: 13, boxes: 2, pieces: 3 })).toBe("2 boxes + 3 pcs");
+    expect(formatQtySplit({ qty: 5, boxes: 1, pieces: 0 })).toBe("1 box");
+    expect(formatQtySplit({ qty: 4, boxes: 0, pieces: 4 })).toBe("4 pcs");
+    expect(formatQtySplit({ qty: 0, boxes: 0, pieces: 0 })).toBe("0");
+  });
+
+  it("supports a custom loose-piece label", () => {
+    expect(formatQtySplit({ qty: 4, boxes: 0, pieces: 4, unitLabel: "cans" })).toBe("4 cans");
+  });
+
+  it("renders plain qty for non-boxed lines (no split stored)", () => {
+    expect(formatQtySplit({ qty: 5 })).toBe("5");
+    expect(formatQtySplit({ qty: 2.5 })).toBe("2.5");
+    expect(formatQtySplit({ qty: "3.000" })).toBe("3");
+    expect(formatQtySplit({ qty: 1.2345 })).toBe("1.234"); // Decimal(10,3) storage
+  });
+
+  it("coerces junk defensively", () => {
+    expect(formatQtySplit({ qty: 7, boxes: 2.9, pieces: -1 })).toBe("2 boxes");
+    expect(formatQtySplit({ qty: "abc" })).toBe("abc");
   });
 });

@@ -4,6 +4,8 @@ import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "../utils/pricing";
+import { effectiveBuyerPrice } from "../common/pricing";
+import { OrdersService } from "../orders/orders.service";
 
 export interface BuyerProduct {
   id: string;
@@ -30,7 +32,17 @@ export class BuyerCatalogService {
     private readonly productsService: ProductsService,
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
+    private readonly ordersService: OrdersService,
   ) {}
+
+  /**
+   * The customer's remembered override prices per product (their last agreed
+   * operator price). Used to make a sticky UPSELL the effective buyer price so the
+   * catalog never reveals the lower base — see {@link effectiveBuyerPrice}.
+   */
+  private getRememberedPrices(customerId: string) {
+    return this.ordersService.getCustomerPriceHistory(customerId);
+  }
 
   /**
    * Get paginated product catalog with buyer-specific pricing.
@@ -78,10 +90,18 @@ export class BuyerCatalogService {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
+    // Sticky upsell: a remembered above-list price becomes the effective catalog
+    // price (hides the base; matches what self-serve checkout charges).
+    const priceHist = await this.getRememberedPrices(customerId);
+
     // Map to buyer-safe objects with resolved pricing
     let products: BuyerProduct[] = result.data.map((p: any) => {
       const effectiveTier = cpMap.get(p.id) ?? defaultTier;
-      const buyerPrice = getTierPrice(p, effectiveTier);
+      const buyerPrice = effectiveBuyerPrice(
+        getTierPrice(p, effectiveTier),
+        Number(p.pricePerUnit),
+        priceHist[p.id]?.lastPrice ?? null,
+      );
 
       const stock = Number(p.currentStock ?? 0);
       const lowThreshold = Number(p.lowStockThreshold ?? 5);
@@ -164,7 +184,12 @@ export class BuyerCatalogService {
       where: { customerId, productId },
     });
     const effectiveTier = cpOverride?.pricingTier ?? defaultTier;
-    const buyerPrice = getTierPrice(product, effectiveTier);
+    const priceHist = await this.getRememberedPrices(customerId);
+    const buyerPrice = effectiveBuyerPrice(
+      getTierPrice(product, effectiveTier),
+      Number(product.pricePerUnit),
+      priceHist[product.id]?.lastPrice ?? null,
+    );
 
     return {
       id: product.id,
@@ -181,7 +206,11 @@ export class BuyerCatalogService {
         id: v.id,
         name: v.variantName,
         sku: v.sku,
-        buyerPrice: getTierPrice(v, effectiveTier),
+        buyerPrice: effectiveBuyerPrice(
+          getTierPrice(v, effectiveTier),
+          Number(v.pricePerUnit),
+          priceHist[v.id]?.lastPrice ?? null,
+        ),
         unit: v.unit,
       })),
     };
@@ -237,6 +266,7 @@ export class BuyerCatalogService {
           })
         : [];
     const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const priceHist = await this.getRememberedPrices(customerId);
 
     return activeFavorites.map((f) => {
       const effectiveTier = cpMap.get(f.productId) ?? defaultTier;
@@ -247,7 +277,11 @@ export class BuyerCatalogService {
         sku: f.product.sku,
         unit: f.product.unit,
         category: f.product.category,
-        buyerPrice: getTierPrice(f.product, effectiveTier),
+        buyerPrice: effectiveBuyerPrice(
+          getTierPrice(f.product, effectiveTier),
+          Number(f.product.pricePerUnit),
+          priceHist[f.productId]?.lastPrice ?? null,
+        ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
         imageKeys: f.product.imageKeys ?? [],
         createdAt: f.createdAt,

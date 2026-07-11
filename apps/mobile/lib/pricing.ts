@@ -6,20 +6,27 @@ interface TierPriceable {
   priceTier5?: number | string | null;
 }
 
+/**
+ * Mobile mirror of `apps/api/src/utils/pricing.ts#getTierPrice` — keep in sync.
+ * The `|| fallback` guard matters: tier columns default to 0 in the DB, and an
+ * unset (0) tier means "inherit the list price", never "$0.00". Behavior locked
+ * by `apps/api/src/utils/pricing.spec.ts` + `apps/mobile/__tests__/pricing.test.ts`.
+ */
 export function getTierPrice(product: TierPriceable, tier: number): number {
+  const fallback = Number(product.pricePerUnit) || 0;
   switch (tier) {
     case 1:
-      return Number(product.pricePerUnit ?? 0);
+      return fallback;
     case 2:
-      return Number(product.priceTier2 ?? product.pricePerUnit ?? 0);
+      return Number(product.priceTier2 ?? product.pricePerUnit) || fallback;
     case 3:
-      return Number(product.priceTier3 ?? product.pricePerUnit ?? 0);
+      return Number(product.priceTier3 ?? product.pricePerUnit) || fallback;
     case 4:
-      return Number(product.priceTier4 ?? product.pricePerUnit ?? 0);
+      return Number(product.priceTier4 ?? product.pricePerUnit) || fallback;
     case 5:
-      return Number(product.priceTier5 ?? product.pricePerUnit ?? 0);
+      return Number(product.priceTier5 ?? product.pricePerUnit) || fallback;
     default:
-      return Number(product.pricePerUnit ?? 0);
+      return fallback;
   }
 }
 
@@ -349,4 +356,75 @@ export function applyBestPromotion(
     return { unitPrice: base, originalPrice: null, appliedPromoId: null };
   }
   return { unitPrice: bestNet, originalPrice: base, appliedPromoId: bestId };
+}
+
+// ─── Price-override direction: upsell vs discount ─────────────────────────────
+// A one-time operator override stores the NET unitPrice + the catalog base as
+// originalPrice (the discount convention above). The DIRECTION is derived, not
+// stored: an UPSELL sells ABOVE the base, a DISCOUNT below. Scoped to MANUAL so a
+// premium tier (SPECIAL, where originalPrice = list < unitPrice = tier) is never
+// mistaken for an upsell. Keep all three mirrors in sync.
+
+export interface PriceOverrideLine {
+  priceType?: string | null;
+  unitPrice: number | string;
+  originalPrice?: number | string | null;
+}
+
+/** True when a line is an operator MANUAL override priced ABOVE the catalog base. */
+export function isUpsellLine(line: PriceOverrideLine): boolean {
+  if (line.priceType !== "MANUAL" || line.originalPrice == null) return false;
+  return Number(line.unitPrice) > Number(line.originalPrice);
+}
+
+/**
+ * A customer's EFFECTIVE buyer price for a product. An operator's remembered
+ * upsell — a saved override net price ABOVE the catalog LIST price — is sticky and
+ * overrides the tier everywhere the buyer is priced (catalog, cart, checkout). A
+ * remembered price at or below list does NOT stick, so a one-time discount never
+ * becomes a standing buyer price (and never RAISES a low-tier customer). Returns
+ * the tier price when there is no sticky upsell.
+ */
+export function effectiveBuyerPrice(
+  tierPrice: number,
+  listPrice: number,
+  rememberedPrice: number | null | undefined,
+): number {
+  const tier = Number(tierPrice) || 0;
+  if (rememberedPrice == null) return tier;
+  const remembered = Number(rememberedPrice);
+  return remembered > Number(listPrice) ? roundMoney(remembered) : tier;
+}
+
+// ─── Qty display: boxes + pieces split ────────────────────────────────────────
+// A boxed line stores its denomination (boxes/pieces/unitsPerBox snapshots) on
+// the order AND invoice line, but read surfaces used to render only the raw
+// piece count. One shared formatter so "2 boxes + 3 pcs" reads identically on
+// the order detail, invoice detail, and PDF. Keep all three mirrors in sync.
+
+export interface QtySplitInput {
+  /** Total quantity (pieces for boxed lines). Used when no split is stored. */
+  qty: number | string;
+  /** Stored split — null/undefined ⇒ not a boxed line (render plain qty). */
+  boxes?: number | null;
+  pieces?: number | null;
+  /** Label for loose pieces; defaults to "pcs". */
+  unitLabel?: string | null;
+}
+
+/** "2 boxes + 3 pcs" | "1 box" | "4 pcs" | plain trimmed qty (non-boxed line). */
+export function formatQtySplit({ qty, boxes, pieces, unitLabel }: QtySplitInput): string {
+  if (boxes == null && pieces == null) {
+    const n = Number(qty);
+    if (!Number.isFinite(n)) return String(qty);
+    // Integers render bare; fractional qty keeps up to 3 dp (Decimal(10,3)).
+    return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  }
+  const b = Math.max(0, Math.trunc(Number(boxes ?? 0)));
+  const p = Math.max(0, Math.trunc(Number(pieces ?? 0)));
+  const label = (unitLabel ?? "").trim() || "pcs";
+  const parts: string[] = [];
+  if (b > 0) parts.push(`${b} ${b === 1 ? "box" : "boxes"}`);
+  if (p > 0) parts.push(`${p} ${label}`);
+  return parts.length > 0 ? parts.join(" + ") : "0";
 }

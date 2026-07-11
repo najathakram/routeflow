@@ -18,6 +18,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
+  effectiveBuyerPrice,
   type PromotionRule,
 } from "../common/pricing";
 import {
@@ -45,6 +46,7 @@ import {
 } from "../common/regulated-delivery";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { getTierPrice } from "../utils/pricing";
+import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -100,9 +102,25 @@ export class OrdersService implements OnApplicationBootstrap {
     tierForProduct: number,
     promos: PromotionRule[],
     qtyPieces: number,
+    rememberedPrice?: number | null,
   ): { unitPrice: number; originalPrice: number | null; priceType: PriceType } {
     const listPrice = Number(product.pricePerUnit);
-    const base = getTierPrice(product, tierForProduct);
+    const tierBase = getTierPrice(product, tierForProduct);
+    const remembered = rememberedPrice ?? null;
+    // Sticky upsell: ONLY a remembered ABOVE-LIST price becomes a MANUAL upsell.
+    // It overrides the tier AND takes precedence over promotions (a deliberate
+    // above-market price is never auto-discounted). Stored as MANUAL with the list
+    // base so the operator sees the upsell and the customer's read is redacted
+    // (upsell-redaction.ts). A premium tier (tierBase > list) is the customer's
+    // normal price, NOT an upsell — it must not trip this branch.
+    if (remembered != null && Number(remembered) > listPrice) {
+      return {
+        unitPrice: roundMoney(Number(remembered)),
+        originalPrice: listPrice,
+        priceType: PriceType.MANUAL,
+      };
+    }
+    const base = tierBase;
     const promo = applyBestPromotion(base, promos, {
       productId: product.id,
       category: product.category,
@@ -230,30 +248,33 @@ export class OrdersService implements OnApplicationBootstrap {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
+      // A customer must never see an upsell's base price / that they were upsold.
+      redactUpsellForCustomer(order);
     }
 
     return order;
   }
 
   /**
-   * Return the last-given (discounted) unitPrice per product for a customer.
-   * Only lines where originalPrice is set are returned — those are the lines
-   * where an operator gave a one-time price below the catalog price.
-   * Used by the order-creation UI to pre-fill the price field on scan.
+   * Return the last-given override unitPrice per product for a customer — a prior
+   * DISCOUNT (below catalog) OR UPSELL (above catalog). Only lines where
+   * originalPrice is set are returned. Used to pre-fill the operator price field
+   * on scan and to resolve a customer's sticky effective buyer price.
+   *
+   * Tenant scoping comes from `forTenant()` (the request ALS tenant) — every
+   * caller is request-scoped, so no tenantId argument is needed.
    *
    * P5-04: PROMO lines are excluded — a promotion's net price is transient
    * (window-bound) and must NOT become the customer's remembered operator price,
    * or an expired promo price would silently pre-fill future operator orders.
    */
   async getCustomerPriceHistory(
-    tenantId: string,
     customerId: string,
   ): Promise<Record<string, { lastPrice: number; listPriceAtTime: number }>> {
-    const items = await this.prisma.orderItem.findMany({
+    const items = await this.prisma.forTenant().orderItem.findMany({
       where: {
         order: {
           customerId,
-          tenantId,
           status: { notIn: [OrderStatus.CANCELLED] },
         },
         originalPrice: { not: null },
@@ -935,6 +956,12 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
     const cpMap = new Map(customerPrices.map((cp) => [cp.productId, cp.pricingTier]));
 
+    // Sticky upsell: the customer's remembered above-list price is their effective
+    // price. Loaded once, applied via effectiveBuyerPrice in the price-race check
+    // and resolveBuyerLinePrice below.
+    const priceHistory =
+      catalogIds.length > 0 ? await this.getCustomerPriceHistory(customerId) : {};
+
     // P5-04: active promotions — only for the buyer (CUSTOMER) self-service path.
     const activePromos = await this.loadActivePromotions(user.role);
 
@@ -953,7 +980,13 @@ export class OrdersService implements OnApplicationBootstrap {
         const product = productMap.get(item.productId);
         if (!product) continue; // missing product caught in lineItemsData.map below
         const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
-        const currentPrice = Number(getTierPrice(product, tierForProduct));
+        // Compare against the customer's EFFECTIVE price (tier or sticky upsell) so
+        // a legitimately-upsold cart doesn't 409 at checkout.
+        const currentPrice = effectiveBuyerPrice(
+          Number(getTierPrice(product, tierForProduct)),
+          Number(product.pricePerUnit),
+          priceHistory[item.productId]?.lastPrice ?? null,
+        );
         if (Math.abs(currentPrice - item.unitPrice) > 0.01) {
           changedItems.push({
             productId: item.productId,
@@ -1044,12 +1077,29 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice = overridePrice;
         priceType = PriceType.DISCOUNTED;
         originalPrice = listPrice;
+      } else if (isStaffRole && overridePrice != null && overridePrice > listPrice) {
+        // Upsell: an operator deliberately sells ABOVE catalog. Stored as a MANUAL
+        // override with the catalog base as originalPrice (< unitPrice). The base
+        // is redacted before the order reaches the customer (upsell-redaction.ts);
+        // the operator sees a green "Upsell" indicator. Staff-only — buyers never
+        // send unitPrice, and the price-race check below guards their path anyway.
+        unitPrice = overridePrice;
+        priceType = PriceType.MANUAL;
+        originalPrice = listPrice;
       } else {
+        // Apply the customer's sticky upsell when no explicit staff price was typed
+        // (buyers never type one). A staff member who enters a price — even == list —
+        // is honored verbatim, so they can still sell at list for one order.
+        const rememberedForLine =
+          user.role === UserRole.CUSTOMER || overridePrice == null
+            ? (priceHistory[item.productId]?.lastPrice ?? null)
+            : null;
         const resolved = this.resolveBuyerLinePrice(
           product,
           tierForProduct,
           activePromos,
           qtyPieces,
+          rememberedForLine,
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
@@ -1599,6 +1649,10 @@ export class OrdersService implements OnApplicationBootstrap {
           : [];
       const buyerCpMap = new Map(buyerCustomerPrices.map((cp) => [cp.productId, cp.pricingTier]));
       const buyerPromos = await this.loadActivePromotions(user.role);
+      // Sticky upsell for the buyer merge/edit path (mirrors create()).
+      const buyerPriceHistory = isBuyerEdit
+        ? await this.getCustomerPriceHistory(order.customerId)
+        : {};
 
       // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
       // existing line was stored with a box/piece split (box-aware create). Lines
@@ -1661,6 +1715,7 @@ export class OrdersService implements OnApplicationBootstrap {
               buyerCpMap.get(item.productId) ?? buyerDefaultTier,
               buyerPromos,
               qtyPieces,
+              buyerPriceHistory[item.productId]?.lastPrice ?? null,
             )
           : {
               unitPrice: Number(product.pricePerUnit),
@@ -1992,6 +2047,19 @@ export class OrdersService implements OnApplicationBootstrap {
             const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
             const isManualOverride = overridePrice !== null && overridePrice !== existingUnitPrice;
             const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
+            // Anchor the struck-through original to the CATALOG list price (like the
+            // replace-all / new-item branches), never the line's prior net price —
+            // otherwise re-editing an override (e.g. an upsell nudged down but still
+            // above list) would flip its derived upsell/discount direction and show a
+            // bogus "was" price to the customer/operator.
+            let catalogPrice = existingUnitPrice;
+            if (isManualOverride && !isUnlisted && li.productId) {
+              const prod = await this.prisma.forTenant().product.findUnique({
+                where: { id: li.productId },
+                select: { pricePerUnit: true },
+              });
+              if (prod) catalogPrice = Number(prod.pricePerUnit);
+            }
             const subtotal = computeLineSubtotal({
               unitPrice,
               qty,
@@ -2020,7 +2088,7 @@ export class OrdersService implements OnApplicationBootstrap {
                       { priceType: PriceType.MANUAL, originalPrice: null }
                     : {
                         priceType: PriceType.MANUAL,
-                        originalPrice: existingUnitPrice,
+                        originalPrice: catalogPrice,
                         overrideReason: item.overrideReason ?? null,
                         overriddenBy: user?.sub ?? null,
                       }

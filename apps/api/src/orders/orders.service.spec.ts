@@ -371,6 +371,108 @@ describe("OrdersService", () => {
       );
     });
 
+    // ── Tier ladder (previously zero coverage — every earlier test mocked tier 1) ──
+
+    const TIERED_PRODUCT = {
+      id: "prod-1",
+      name: "Tomatoes",
+      pricePerUnit: 10,
+      priceTier3: 8,
+      priceTier4: 0, // DB default — tier never configured
+      priceTier5: 7,
+      unit: "each",
+    };
+
+    /** Buyer-path mocks for a customer on `tier`, no promos, no overrides. */
+    const seedBuyerTierMocks = (tier: number) => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: tier });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      (service as any).promotionsService.activeForCatalog.mockResolvedValue([]);
+    };
+
+    it("bills a tier-3 customer the tier-3 price as SPECIAL with the list strikethrough", async () => {
+      seedBuyerTierMocks(3);
+
+      await service.create({ items: [{ productId: "prod-1", qty: 2 }] }, customerPayload);
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  unitPrice: 8,
+                  originalPrice: 10,
+                  priceType: "SPECIAL",
+                  subtotal: 16,
+                }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("a per-product CustomerPrice override beats the customer's default tier", async () => {
+      seedBuyerTierMocks(1); // default tier 1 …
+      prisma.customerPrice.findMany.mockResolvedValue([
+        { productId: "prod-1", pricingTier: 5 }, // … but this product is on tier 5
+      ]);
+
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ unitPrice: 7, originalPrice: 10, priceType: "SPECIAL" }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("an unset tier column (DB default 0) falls back to the list price — never $0.00", async () => {
+      seedBuyerTierMocks(4); // priceTier4 is 0 → inherit list
+
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ unitPrice: 10, subtotal: 10 }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("RF-198 price-race compares against the TIER price, not list", async () => {
+      // Buyer on tier 3 echoes the tier price → no conflict.
+      seedBuyerTierMocks(3);
+      await expect(
+        service.create({ items: [{ productId: "prod-1", qty: 1, unitPrice: 8 }] }, customerPayload),
+      ).resolves.toBeDefined();
+
+      // Same buyer echoing the (different) list price → the cart is stale.
+      seedBuyerTierMocks(3);
+      await expect(
+        service.create(
+          { items: [{ productId: "prod-1", qty: 1, unitPrice: 10 }] },
+          customerPayload,
+        ),
+      ).rejects.toThrow(/Prices have been updated/);
+    });
+
     it("should throw BadRequestException when operator creates without valid customerId", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.create({ items: [] } as any, operatorPayload)).rejects.toThrow(
@@ -701,6 +803,67 @@ describe("OrdersService", () => {
       // Order totals recomputed from the discounted line subtotal.
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ subtotal: 12 }) }),
+      );
+    });
+
+    it("flags a RAISED unit price as a MANUAL upsell anchored to the catalog price", async () => {
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      // The anchor reads the live catalog price for originalPrice.
+      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 4.99 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8, overrideReason: "market" }],
+        },
+        operatorPayload,
+      );
+
+      // Upsell: net unitPrice ABOVE catalog, originalPrice = catalog base (< unitPrice),
+      // priceType MANUAL. Subtotal via computeLineSubtotal → 8 × 3 = 24 (no double-count).
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 8,
+            subtotal: 24,
+            priceType: "MANUAL",
+            originalPrice: 4.99,
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+
+    it("re-editing an upsell down but still above catalog stays an upsell (anchors originalPrice to catalog, not the prior net)", async () => {
+      // Line already carries a prior upsell net of 8; catalog is 5.
+      const upsoldOrder = {
+        ...draftOrder,
+        lineItems: [
+          { ...draftOrder.lineItems[0], unitPrice: 8, originalPrice: 5, priceType: "MANUAL" },
+        ],
+      };
+      prisma.order.findUnique.mockResolvedValue(upsoldOrder);
+      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 5 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 18, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 6 }] },
+        operatorPayload,
+      );
+
+      // originalPrice must be the CATALOG (5), never the prior net (8) — otherwise the
+      // line would flip to a fake discount (5 < 6, but 8 > 6) and leak a bogus "was" price.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 6,
+            priceType: "MANUAL",
+            originalPrice: 5,
+          }),
+        }),
       );
     });
 

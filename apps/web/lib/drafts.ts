@@ -18,7 +18,7 @@ export interface DraftLineItem {
   specialPrice?: number;
   discountedPrice?: number;
   unitPrice: number;
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number;
   unitsPerBox?: number;
   boxes?: number;
