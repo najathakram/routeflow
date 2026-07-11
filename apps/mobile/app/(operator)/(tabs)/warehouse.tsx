@@ -307,6 +307,13 @@ export default function WarehouseScreen() {
                 bg={ios.system.greenWash}
                 onPress={() => router.push("/(operator)/products/adjust-picker" as any)}
               />
+              <QuickBtn
+                icon="clipboard-outline"
+                label="Count"
+                color={ios.brand}
+                bg={ios.brandWash}
+                onPress={() => router.push("/(operator)/products/stock-count" as any)}
+              />
             </View>
 
             <SectionRow title={sectionLabel} />
