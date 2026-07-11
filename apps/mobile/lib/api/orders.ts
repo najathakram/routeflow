@@ -75,6 +75,8 @@ export type CreateOrderItemInput =
       pieces?: number;
       /** One-time discounted price override (per catalog unit; box price for boxed). */
       unitPrice?: number;
+      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+      notes?: string;
     }
   | {
       /** Free-text label for an unlisted (non-catalog) line. */
@@ -82,6 +84,8 @@ export type CreateOrderItemInput =
       qty: number;
       /** Required for unlisted lines — there is no catalog price to fall back to. */
       unitPrice: number;
+      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+      notes?: string;
     };
 
 export interface CreateOrderAsDriverDto {
@@ -190,12 +194,16 @@ export type UpdateOrderItemInput =
       pieces?: number;
       unitPrice: number;
       overrideReason?: string;
+      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+      notes?: string;
     }
   | {
       /** Free-text label for an unlisted (non-catalog) line. */
       name: string;
       qty: number;
       unitPrice: number;
+      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+      notes?: string;
     };
 
 export function useUpdateOrderItems() {

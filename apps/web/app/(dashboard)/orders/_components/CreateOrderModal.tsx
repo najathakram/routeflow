@@ -4,7 +4,7 @@ import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, AlertTriangle, ChevronRight, Plus, Minus } from "lucide-react";
+import { X, AlertTriangle, ChevronRight, Plus, Minus, StickyNote } from "lucide-react";
 import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
@@ -67,6 +67,10 @@ interface LineItem {
   trackedCategoryId?: string | null;
   /** True for a free-text, non-catalog line (sent as { name, qty, unitPrice }). */
   isUnlisted?: boolean;
+  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+  note?: string;
+  /** Note input expanded for this row (icon toggle; note text survives collapse). */
+  noteOpen?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -437,6 +441,15 @@ export function CreateOrderModal({
   };
 
   // Inline edit of an unlisted line's name / unit price.
+  const setLineNote = (tempId: string, note: string) => {
+    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, note } : li)));
+  };
+  const toggleNoteOpen = (tempId: string) => {
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, noteOpen: !li.noteOpen } : li)),
+    );
+  };
+
   const updateUnlistedName = (tempId: string, name: string) => {
     setLineItems((prev) =>
       prev.map((li) => (li.tempId === tempId ? { ...li, productName: name } : li)),
@@ -677,10 +690,12 @@ export function CreateOrderModal({
             (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
           )
         : lineItems
-    ).map((li) =>
-      li.isUnlisted
+    ).map((li) => {
+      // Optional per-line note (trimmed) — carried onto the invoice line.
+      const note = li.note?.trim() ? { notes: li.note.trim() } : {};
+      return li.isUnlisted
         ? // Unlisted (ad-hoc) line — no productId; unitPrice required.
-          { name: li.productName.trim(), qty: li.qty, unitPrice: li.unitPrice }
+          { name: li.productName.trim(), qty: li.qty, unitPrice: li.unitPrice, ...note }
         : {
             productId: li.productId,
             qty: li.qty,
@@ -692,8 +707,9 @@ export function CreateOrderModal({
             li.discountedPrice != null
               ? { unitPrice: li.discountedPrice }
               : {}),
-          },
-    );
+            ...note,
+          };
+    });
     createOrder.mutate(
       {
         customerId: selectedCustomer!.id,
@@ -1230,6 +1246,16 @@ export function CreateOrderModal({
                           </span>
                           <span className="text-[10px] text-navy/70">/ {li.unit}</span>
                         </div>
+                        {(li.noteOpen || li.note?.trim()) && (
+                          <input
+                            type="text"
+                            maxLength={500}
+                            value={li.note ?? ""}
+                            onChange={(e) => setLineNote(li.tempId, e.target.value)}
+                            placeholder="Note for this line (prints on invoice)"
+                            className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </div>
                     ) : (
                       <div className="min-w-0 flex-1">
@@ -1316,6 +1342,16 @@ export function CreateOrderModal({
                             onSellAnyway={() => ackFloor(li.tempId)}
                           />
                         </div>
+                        {(li.noteOpen || li.note?.trim()) && (
+                          <input
+                            type="text"
+                            maxLength={500}
+                            value={li.note ?? ""}
+                            onChange={(e) => setLineNote(li.tempId, e.target.value)}
+                            placeholder="Note for this line (prints on invoice)"
+                            className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                          />
+                        )}
                       </div>
                     )}
                     {/* Qty controls */}
@@ -1388,6 +1424,17 @@ export function CreateOrderModal({
                         unitsPerBox: li.unitsPerBox ?? null,
                       }).toFixed(2)}
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleNoteOpen(li.tempId)}
+                      className={cn(
+                        "shrink-0 rounded p-1 transition-colors hover:bg-surface-raised",
+                        li.note?.trim() ? "text-brand-500" : "text-navy/30 hover:text-navy",
+                      )}
+                      title={li.note?.trim() ? "Edit line note" : "Add a note for this line"}
+                    >
+                      <StickyNote className="h-3.5 w-3.5" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => removeLineItem(li.tempId)}

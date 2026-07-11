@@ -45,6 +45,8 @@ type DraftItem = {
   name: string;
   unit?: string;
   overrideReason?: string;
+  /** Per-line note (buyer-visible) — must round-trip through the replace-all save. */
+  notes?: string;
 };
 
 /**
@@ -58,6 +60,8 @@ type UnlistedDraft = {
   name: string;
   unitPrice: number;
   qty: number;
+  /** Per-line note (buyer-visible) — must round-trip through the replace-all save. */
+  notes?: string;
 };
 
 function newLocalId(): string {
@@ -108,6 +112,7 @@ export default function EditOrderItemsScreen() {
           name: li.name ?? "Unlisted item",
           unitPrice: toNumber(li.unitPrice),
           qty: toNumber(li.qty),
+          notes: (li as any).notes ?? undefined,
         });
         continue;
       }
@@ -126,6 +131,7 @@ export default function EditOrderItemsScreen() {
         name: product.name ?? "Item",
         unit: product.unit,
         overrideReason: li.overrideReason ?? undefined,
+        notes: (li as any).notes ?? undefined,
       };
     }
     setDraft(next);
@@ -252,6 +258,7 @@ export default function EditOrderItemsScreen() {
           boxes?: number;
           pieces?: number;
           overrideReason?: string;
+          notes?: string;
         } = {
           productId: i.productId,
           qty,
@@ -262,13 +269,20 @@ export default function EditOrderItemsScreen() {
           base.pieces = i.pieces ?? 0;
         }
         if (i.overrideReason) base.overrideReason = i.overrideReason;
+        // This save is a replace-all — re-send the note or it is silently wiped.
+        if (i.notes?.trim()) base.notes = i.notes.trim();
         return base;
       })
       .filter((i) => "productId" in i && i.qty > 0);
     // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
     const unlistedItems: UpdateOrderItemInput[] = unlisted
       .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
-      .map((u) => ({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice }));
+      .map((u) => ({
+        name: u.name.trim(),
+        qty: u.qty,
+        unitPrice: u.unitPrice,
+        ...(u.notes?.trim() ? { notes: u.notes.trim() } : {}),
+      }));
     const items = [...catalogItems, ...unlistedItems];
     if (items.length === 0) {
       showToast("Orders can't be saved empty.");

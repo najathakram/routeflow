@@ -97,6 +97,10 @@ type LineState = {
    * the catalog price unit; computeLineSubtotal prorates loose pieces.
    */
   unitPrice?: number;
+  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+  note?: string;
+  /** Note input expanded for this row (note text survives collapse). */
+  noteOpen?: boolean;
 };
 
 /**
@@ -109,6 +113,9 @@ type UnlistedLine = {
   name: string;
   unitPrice: number;
   qty: number;
+  /** Optional per-line note — carried onto the invoice line (buyer-visible). */
+  note?: string;
+  noteOpen?: boolean;
 };
 
 function newLocalId(): string {
@@ -475,6 +482,11 @@ function ProductPickView({
       return next;
     });
 
+  const setLineNote = (id: string, note: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], note } } : m));
+  const toggleLineNote = (id: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], noteOpen: !m[id].noteOpen } } : m));
+
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it
   // so the line falls back to the catalog price.
   const setLinePrice = (id: string, value: number | null) =>
@@ -500,6 +512,10 @@ function ProductPickView({
       const price = value == null || value < 0 ? 0 : value;
       return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
     });
+  const updateUnlistedNote = (id: string, note: string) =>
+    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, note } : x)));
+  const toggleUnlistedNote = (id: string) =>
+    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   const handleBarcodeScanned = async (code: string) => {
@@ -641,7 +657,8 @@ function ProductPickView({
         const catalog = p ? toNumber(p.pricePerUnit) : 0;
         const override =
           line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
-        const base = { productId, qty, ...override };
+        const note = line.note?.trim() ? { notes: line.note.trim() } : {};
+        const base = { productId, qty, ...override, ...note };
         // Include boxes/pieces when set so the server uses the BOX-price math
         // for proration and stores the split alongside the order line.
         if (line.boxes != null || line.pieces != null) {
@@ -657,7 +674,12 @@ function ProductPickView({
     // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
     const unlistedPayload: CreateOrderItemInput[] = unlisted
       .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
-      .map((u) => ({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice }));
+      .map((u) => ({
+        name: u.name.trim(),
+        qty: u.qty,
+        unitPrice: u.unitPrice,
+        ...(u.note?.trim() ? { notes: u.note.trim() } : {}),
+      }));
     const itemPayload = [...catalogPayload, ...unlistedPayload];
 
     createOrder.mutate(
@@ -1018,11 +1040,15 @@ function ProductPickView({
         onChangePieces={setPieces}
         onChangeQty={setQty}
         onChangePrice={setLinePrice}
+        onChangeNote={setLineNote}
+        onToggleNote={toggleLineNote}
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
+        onChangeUnlistedNote={updateUnlistedNote}
+        onToggleUnlistedNote={toggleUnlistedNote}
         onRemoveUnlisted={removeUnlisted}
         onAddUnlisted={() => setUnlistedModalOpen(true)}
         onSave={() => {
@@ -1066,11 +1092,15 @@ function CartModal({
   onChangePieces,
   onChangeQty,
   onChangePrice,
+  onChangeNote,
+  onToggleNote,
   onIncrement,
   onDecrement,
   onRemove,
   onChangeUnlistedQty,
   onChangeUnlistedPrice,
+  onChangeUnlistedNote,
+  onToggleUnlistedNote,
   onRemoveUnlisted,
   onAddUnlisted,
   onSave,
@@ -1088,11 +1118,15 @@ function CartModal({
   onChangePieces: (id: string, n: number) => void;
   onChangeQty: (id: string, n: number) => void;
   onChangePrice: (id: string, value: number | null) => void;
+  onChangeNote: (id: string, text: string) => void;
+  onToggleNote: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
   onChangeUnlistedPrice: (id: string, value: number | null) => void;
+  onChangeUnlistedNote: (id: string, text: string) => void;
+  onToggleUnlistedNote: (id: string) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
   onSave: () => void;
@@ -1146,6 +1180,8 @@ function CartModal({
                     onChangePieces={(n) => onChangePieces(id, n)}
                     onChangeQty={(n) => onChangeQty(id, n)}
                     onChangePrice={(raw) => onChangePrice(id, raw)}
+                    onChangeNote={(t) => onChangeNote(id, t)}
+                    onToggleNote={() => onToggleNote(id)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onRemove={() => onRemove(id)}
@@ -1157,6 +1193,8 @@ function CartModal({
                     line={u}
                     onChangeQty={(n) => onChangeUnlistedQty(u.id, n)}
                     onChangePrice={(raw) => onChangeUnlistedPrice(u.id, raw)}
+                    onChangeNote={(t) => onChangeUnlistedNote(u.id, t)}
+                    onToggleNote={() => onToggleUnlistedNote(u.id)}
                     onRemove={() => onRemoveUnlisted(u.id)}
                   />
                 ))}
@@ -1208,6 +1246,8 @@ function CartRow({
   onChangePieces,
   onChangeQty,
   onChangePrice,
+  onChangeNote,
+  onToggleNote,
   onIncrement,
   onDecrement,
   onRemove,
@@ -1219,6 +1259,8 @@ function CartRow({
   onChangePieces: (n: number) => void;
   onChangeQty: (n: number) => void;
   onChangePrice: (value: number | null) => void;
+  onChangeNote: (text: string) => void;
+  onToggleNote: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
@@ -1299,6 +1341,24 @@ function CartRow({
           onIncrement={onIncrement}
           onDecrement={onDecrement}
         />
+      )}
+
+      {/* Per-line note — carried onto the invoice line (buyer-visible). */}
+      {line.noteOpen || line.note?.trim() ? (
+        <TextInput
+          value={line.note ?? ""}
+          onChangeText={onChangeNote}
+          placeholder="Note for this item (prints on invoice)"
+          placeholderTextColor={ios.label3}
+          maxLength={500}
+          returnKeyType="done"
+          style={styles.cartNoteInput}
+        />
+      ) : (
+        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons name="create-outline" size={14} color={ios.brand} />
+          <Text style={styles.cartNoteAddText}>Add note</Text>
+        </Pressable>
       )}
 
       <View style={styles.cartRowFooter}>
@@ -1394,11 +1454,15 @@ function UnlistedCartRow({
   line,
   onChangeQty,
   onChangePrice,
+  onChangeNote,
+  onToggleNote,
   onRemove,
 }: {
   line: UnlistedLine;
   onChangeQty: (n: number) => void;
   onChangePrice: (value: number | null) => void;
+  onChangeNote: (text: string) => void;
+  onToggleNote: () => void;
   onRemove: () => void;
 }) {
   const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
@@ -1441,6 +1505,24 @@ function UnlistedCartRow({
         onIncrement={() => onChangeQty(line.qty + 1)}
         onDecrement={() => onChangeQty(Math.max(0, line.qty - 1))}
       />
+
+      {/* Per-line note — carried onto the invoice line (buyer-visible). */}
+      {line.noteOpen || line.note?.trim() ? (
+        <TextInput
+          value={line.note ?? ""}
+          onChangeText={onChangeNote}
+          placeholder="Note for this item (prints on invoice)"
+          placeholderTextColor={ios.label3}
+          maxLength={500}
+          returnKeyType="done"
+          style={styles.cartNoteInput}
+        />
+      ) : (
+        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons name="create-outline" size={14} color={ios.brand} />
+          <Text style={styles.cartNoteAddText}>Add note</Text>
+        </Pressable>
+      )}
 
       <View style={styles.cartRowFooter}>
         <Text style={styles.cartRowFooterLabel}>Line total</Text>
@@ -1903,6 +1985,23 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  cartNoteAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
+  cartNoteInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    marginBottom: 6,
   },
   cartRowFooter: {
     flexDirection: "row",

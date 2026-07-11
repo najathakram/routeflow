@@ -390,6 +390,11 @@ export default function OrderDetailScreen() {
                         {qtyLine} · {formatCurrency(li.unitPrice)}
                         {isBoxed ? ` / box of ${upb}` : ""}
                       </Text>
+                      {li.notes?.trim() ? (
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                          {li.notes}
+                        </Text>
+                      ) : null}
                       {li.priceType === "MANUAL" &&
                       li.originalPrice != null &&
                       Number(li.unitPrice) > Number(li.originalPrice) ? (

@@ -35,6 +35,8 @@ export interface InvoiceItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Recompute this line with THIS, never the live product. */
   unitsPerBox?: number | null;
+  /** Per-line note carried from the order line (buyer-visible; prints on the PDF). */
+  notes?: string | null;
   /** Provenance back to the source order line (null for manual/freeform lines). */
   orderItemId?: string | null;
   taxable?: boolean;
@@ -206,6 +208,8 @@ export interface CreateInvoiceItem {
   discount?: number;
   boxes?: number;
   pieces?: number;
+  /** Per-line note (buyer-visible; prints on the PDF). */
+  notes?: string;
 }
 
 export interface CreateInvoiceDto {

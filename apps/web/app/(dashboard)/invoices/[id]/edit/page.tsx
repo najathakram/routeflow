@@ -162,6 +162,9 @@ interface LineItemState {
   /** Set when the product has box packaging (unitsPerBox > 1). `qty` stays in
    *  total pieces; boxes/pieces are derived from it so boxed lines prorate. */
   unitsPerBox?: number;
+  /** Per-line note (buyer-visible) — MUST round-trip: the update endpoint
+   *  delete-and-recreates items, so dropping this wipes order-carried notes. */
+  notes?: string;
 }
 
 /**
@@ -266,6 +269,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 taxRate: Number(it.taxRate ?? 0),
                 discount: Number(it.discount ?? 0),
                 unitsPerBox: isBoxSplit && upb > 1 ? upb : undefined,
+                notes: it.notes ?? undefined,
               };
             })
           : [createEmptyItem()],
@@ -346,6 +350,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
           ...(it.unitsPerBox && it.productId ? { boxes: boxes ?? 0, pieces: pieces ?? 0 } : {}),
+          // Round-trip the per-line note — the server recreates all items on update.
+          ...(it.notes?.trim() ? { notes: it.notes.trim() } : {}),
         };
       }),
     };
