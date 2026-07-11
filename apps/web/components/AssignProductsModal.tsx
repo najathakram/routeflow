@@ -4,6 +4,7 @@ import * as React from "react";
 import { Search, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
 import {
   useTrackedCategories,
   useAssignProductsToCategory,
@@ -35,19 +36,8 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
   // scalar (a variant can be independently regulated) and `productCount` counts
   // every row, so the list must too or the count can't reconcile.
   const products = React.useMemo(() => productsData?.data ?? [], [productsData]);
-  const nameById = React.useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const p of products) m[p.id] = p.name;
-    return m;
-  }, [products]);
   // Variants store only their own name (e.g. "Strawberry"); compose parent context.
-  const displayName = React.useCallback(
-    (p: any) =>
-      p.parentProductId && nameById[p.parentProductId]
-        ? `${nameById[p.parentProductId]} · ${p.name}`
-        : p.name,
-    [nameById],
-  );
+  const displayName = React.useCallback((p: any) => displayProductName(p, products), [products]);
   const catName = React.useMemo(() => {
     const m: Record<string, string> = {};
     for (const c of categories) m[c.id] = c.name;

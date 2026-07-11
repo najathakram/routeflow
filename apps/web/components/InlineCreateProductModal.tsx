@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
+import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
@@ -17,6 +18,12 @@ interface CreatedProduct {
   unit: string;
   pricePerUnit: string;
   averageCost?: string;
+  /** Present so callers can enable the Boxes+Pcs editor for boxed products. */
+  unitsPerBox?: number | null;
+  /** Variant linkage so callers can label the line "Parent - Flavor". */
+  parentProductId?: string | null;
+  variantName?: string | null;
+  parent?: { name: string } | null;
 }
 
 interface InlineCreateProductModalProps {
@@ -115,9 +122,9 @@ export function InlineCreateProductModal({
 
     // For variants the `name` field stores ONLY the variant name (e.g. "Strawberry").
     // The parent context comes from `parentProductId` — UI components compose the
-    // display name as `<parent.name> · <variant.variantName>` when needed. This
-    // keeps the parent product's own name unchanged and avoids redundant prefixes
-    // baked into every variant row.
+    // display name as `<parent.name> - <variant.variantName>` (displayProductName)
+    // when needed. This keeps the parent product's own name unchanged and avoids
+    // redundant prefixes baked into every variant row.
     let productName = form.name.trim();
     if (form.parentProductId) {
       if (!form.variantName.trim()) {
@@ -237,7 +244,7 @@ export function InlineCreateProductModal({
                 <p className="mt-1.5 rounded bg-surface-raised px-2.5 py-1.5 text-xs text-navy/70">
                   Will appear as:{" "}
                   <span className="font-medium text-navy">{selectedParent.name}</span>
-                  <span className="text-navy/70"> · </span>
+                  <span className="text-navy/70">{PRODUCT_NAME_SEPARATOR}</span>
                   <span className="font-medium text-navy">{form.variantName.trim() || "…"}</span>
                 </p>
               )}

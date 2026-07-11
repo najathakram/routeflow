@@ -1,3 +1,4 @@
+// Hand-synced mirror of apps/web/lib/product-display.ts — keep in sync.
 /**
  * Compose the display name for a Product the way users want to see it on
  * invoices, orders, line items, and any other customer-facing surface.

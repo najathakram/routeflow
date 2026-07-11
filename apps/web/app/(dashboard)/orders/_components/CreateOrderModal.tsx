@@ -1487,11 +1487,14 @@ export function CreateOrderModal({
         onCreated={(product) => {
           addLineItem({
             id: product.id,
-            name: product.name,
+            // A just-created variant's `name` is the bare flavor — compose
+            // "Parent - Flavor" so the line label matches picked products.
+            name: displayProductName(product),
             sku: product.sku,
             unit: product.unit,
             pricePerUnit: product.pricePerUnit,
-            unitsPerBox: undefined,
+            // Real box size so boxed products get the Boxes+Pcs editor.
+            unitsPerBox: product.unitsPerBox ?? undefined,
           });
           setCreateProductOpen(false);
         }}

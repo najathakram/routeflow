@@ -1841,6 +1841,9 @@ export default function NewInvoicePage() {
         }}
         onCreated={(product) => {
           if (createProductTargetIdx !== null) {
+            // Real box size so a just-created boxed product gets the Boxes+Pcs
+            // editor — mirrors the ProductSearchInput onChange handler above.
+            const upb = product.unitsPerBox ?? undefined;
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx
@@ -1849,6 +1852,10 @@ export default function NewInvoicePage() {
                       description: displayProductName(product),
                       productId: product.id,
                       unitPrice: parseFloat(product.pricePerUnit) || 0,
+                      unitsPerBox: upb,
+                      boxes: upb ? 1 : undefined,
+                      pieces: upb ? 0 : undefined,
+                      qty: upb ? upb : item.qty || 1,
                     }
                   : item,
               ),
