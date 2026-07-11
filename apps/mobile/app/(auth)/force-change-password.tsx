@@ -1,39 +1,42 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
-import { changePassword, refreshTokens } from "../../lib/auth";
+import { changePassword, refreshTokens, setPassword } from "../../lib/auth";
+import { apiClient } from "../../lib/api-client";
 import { useAuthStore } from "../../lib/auth-store";
-
-const schema = z
-  .object({
-    currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z
-      .string()
-      .min(8, "Must be at least 8 characters")
-      .regex(/[A-Z]/, "Must contain an uppercase letter")
-      .regex(/[0-9]/, "Must contain a number"),
-    confirmPassword: z.string().min(1, "Please confirm your new password"),
-  })
-  .refine((d) => d.newPassword === d.confirmPassword, {
-    message: "Passwords do not match",
-    path: ["confirmPassword"],
-  });
-
-type FormValues = z.infer<typeof schema>;
+import { buildPasswordSchema, type PasswordFormValues } from "../../lib/password-form";
 
 export default function ForceChangePasswordScreen() {
   const setUser = useAuthStore((s) => s.setUser);
+  const logout = useAuthStore((s) => s.logout);
   const [apiError, setApiError] = useState<string | null>(null);
+  // A temp-password account normally knows its current password, but if the
+  // account somehow has NONE (Google-only), demanding one is an inescapable
+  // trap — offer set mode instead. Change mode until /users/me answers.
+  const [hasPassword, setHasPassword] = useState(true);
 
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get<{ hasPassword?: boolean }>("/users/me")
+      .then(({ data }) => {
+        if (!cancelled && typeof data.hasPassword === "boolean") setHasPassword(data.hasPassword);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const schema = useMemo(() => buildPasswordSchema(hasPassword ? "change" : "set"), [hasPassword]);
   const {
     control,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({
+  } = useForm<PasswordFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       currentPassword: "",
@@ -42,10 +45,11 @@ export default function ForceChangePasswordScreen() {
     },
   });
 
-  const onSubmit = async (data: FormValues) => {
+  const onSubmit = async (data: PasswordFormValues) => {
     setApiError(null);
     try {
-      await changePassword(data.currentPassword, data.newPassword);
+      if (hasPassword) await changePassword(data.currentPassword, data.newPassword);
+      else await setPassword(data.newPassword);
       // Refresh tokens to get a new JWT with forcePasswordChange: false
       const refreshed = await refreshTokens();
       if (refreshed) {
@@ -79,20 +83,22 @@ export default function ForceChangePasswordScreen() {
             </View>
           )}
 
-          <Controller
-            control={control}
-            name="currentPassword"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <MobileInput
-                label="Current Password"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                secureTextEntry
-                error={errors.currentPassword?.message}
-              />
-            )}
-          />
+          {hasPassword && (
+            <Controller
+              control={control}
+              name="currentPassword"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <MobileInput
+                  label="Current Password"
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  secureTextEntry
+                  error={errors.currentPassword?.message}
+                />
+              )}
+            />
+          )}
 
           <Controller
             control={control}
@@ -132,6 +138,12 @@ export default function ForceChangePasswordScreen() {
           >
             Set New Password
           </MobileButton>
+
+          {/* Escape hatch — never trap a user who can't produce the current
+              password (e.g. an admin reset they never received). */}
+          <TouchableOpacity onPress={() => void logout()} activeOpacity={0.7}>
+            <Text style={styles.signOutText}>Sign out</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -181,5 +193,13 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginTop: 8,
+  },
+  signOutText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+    color: "#64748b",
+    textAlign: "center",
+    marginTop: 16,
+    textDecorationLine: "underline",
   },
 });
