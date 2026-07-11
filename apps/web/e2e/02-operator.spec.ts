@@ -194,8 +194,12 @@ test.describe("Operator — Tenant Dashboard", () => {
     // Products defaults to Grid view (cards, no <table>) — switch to Table view
     // so the row-click locator below has a table to match.
     await page.getByRole("button", { name: /table view/i }).click();
-    // Open the first product's detail page
-    await page.locator("table tbody tr a, table tbody tr").first().click();
+    // Open the first product's detail page. Click the FIRST cell specifically
+    // (product name/thumbnail) — several other cells (SKU, Category, Price)
+    // wrap their content in onClick={e => e.stopPropagation()} for their own
+    // inline-edit controls, so a raw row click can land there and silently
+    // swallow the row's onRowClick navigation.
+    await page.locator("table tbody tr td").first().click();
     await page.waitForURL(/\/products\/.+/);
     // Enter edit mode (icon button)
     await page.locator('button[title="Edit product"]').first().click();
@@ -254,7 +258,10 @@ test.describe("Operator — Tenant Dashboard", () => {
     // Products defaults to Grid view (cards, no <table>) — switch to Table view
     // so the row-click locator below has a table to match.
     await page.getByRole("button", { name: /table view/i }).click();
-    await page.locator("table tbody tr a, table tbody tr").first().click();
+    // Click the FIRST cell specifically — see OP-09c's comment: other cells
+    // (SKU, Category, Price) stopPropagation() for their own inline-edit
+    // controls, so a raw row click can silently swallow the navigation.
+    await page.locator("table tbody tr td").first().click();
     await page.waitForURL(/\/products\/.+/);
     await page.locator('button[title="Edit product"]').first().click();
     const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
