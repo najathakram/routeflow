@@ -40,6 +40,7 @@ import { fmt } from "@/lib/formatting";
 import { computeLineSubtotal } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
+import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 
 // ─── Terms options ─────────────────────────────────────────────────────────────
 
@@ -1608,14 +1609,11 @@ export default function NewInvoicePage() {
                         <span className="text-[9px] text-navy/30 text-right">{item.qty} pcs</span>
                       </div>
                     ) : (
-                      <input
-                        type="number"
-                        min={0.01}
-                        step={0.01}
+                      <DecimalInput
+                        decimals={3}
+                        min={0}
                         value={item.qty}
-                        onChange={(e) =>
-                          updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })
-                        }
+                        onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
                         className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
                     )}
@@ -1627,14 +1625,10 @@ export default function NewInvoicePage() {
                           ${item.regularPrice.toFixed(2)}
                         </p>
                       )}
-                      <input
-                        type="number"
+                      <MoneyInput
                         min={0}
-                        step={0.01}
                         value={item.unitPrice}
-                        onChange={(e) =>
-                          updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
-                        }
+                        onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
@@ -1662,15 +1656,11 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Discount */}
-                    <input
-                      type="number"
+                    <MoneyInput
                       min={0}
-                      step={0.01}
                       placeholder="0.00"
-                      value={item.discount || ""}
-                      onChange={(e) =>
-                        updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })
-                      }
+                      value={item.discount || null}
+                      onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
                       className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
 
@@ -1762,15 +1752,14 @@ export default function NewInvoicePage() {
                       <span>{fmt(tax)}</span>
                     </div>
                   )}
-                  {/* Adjustment row */}
+                  {/* Adjustment row (may be negative) */}
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-navy/70">Adjustment</span>
-                    <input
-                      type="number"
-                      step={0.01}
+                    <MoneyInput
+                      allowNegative
                       placeholder="0.00"
-                      value={adjustment || ""}
-                      onChange={(e) => setAdjustment(parseFloat(e.target.value) || 0)}
+                      value={adjustment || null}
+                      onChange={(v) => setAdjustment(v ?? 0)}
                       className="w-28 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                     />
                   </div>

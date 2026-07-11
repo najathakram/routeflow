@@ -46,6 +46,7 @@ import {
 import { useCostHistory } from "@/lib/api/cost-history";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { DecimalInput } from "@/components/MoneyInput";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -164,15 +165,15 @@ function MerchFlagToggle({
 }
 
 // ─── Inline number field ──────────────────────────────────────────────────────
+// Thin wrapper over DecimalInput so price/tier fields never reformat while
+// typing (the old numeric-bound input ate decimal points mid-keystroke).
 
 function EditableNumber({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
-    <input
-      type="number"
+    <DecimalInput
       min={0}
-      step={0.01}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
+      value={Number.isFinite(value) ? value : null}
+      onChange={(v) => onChange(v ?? 0)}
       className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
     />
   );

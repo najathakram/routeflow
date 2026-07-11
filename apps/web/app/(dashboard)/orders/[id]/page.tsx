@@ -47,6 +47,7 @@ import { useProducts } from "@/lib/api/products";
 import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
+import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -527,41 +528,27 @@ function PriceEditRow({
   // "Sell anyway" acknowledges a below-floor price for this session; the override
   // is logged via overrideReason so reports can isolate below-floor sales.
   const [floorAcked, setFloorAcked] = React.useState(false);
-  const [priceText, setPriceText] = React.useState(unitPrice.toFixed(2));
-  const [offText, setOffText] = React.useState(
-    unitPrice < basePrice ? roundMoney(basePrice - unitPrice).toFixed(2) : "",
-  );
 
-  // Re-sync local text when the line's price changes from elsewhere (e.g. substitute).
-  React.useEffect(() => {
-    setPriceText(unitPrice.toFixed(2));
-    setOffText(unitPrice < basePrice ? roundMoney(basePrice - unitPrice).toFixed(2) : "");
-  }, [unitPrice, basePrice]);
+  // Price ↔ $-off lens on MoneyInput: each field keeps its own draft while
+  // focused (typing is never reformatted — the old toFixed(2) echo effect here
+  // was the "type 2.50, get 2.05" bug); the unfocused sibling re-syncs from
+  // the parent's unitPrice.
+  const offValue = unitPrice < basePrice ? roundMoney(basePrice - unitPrice) : null;
 
-  const commitPrice = (raw: string) => {
-    setPriceText(raw);
-    const parsed = parseFloat(raw);
-    if (raw === "" || isNaN(parsed)) {
+  const commitPrice = (v: number | null) => {
+    if (v == null) {
       onPriceChange(basePrice); // empty → clear override
-      setOffText("");
       return;
     }
-    const net = roundMoney(Math.max(0, parsed));
-    onPriceChange(net);
-    setOffText(net < basePrice ? roundMoney(basePrice - net).toFixed(2) : "");
+    onPriceChange(roundMoney(Math.max(0, v)));
   };
 
-  const commitOff = (raw: string) => {
-    setOffText(raw);
-    const parsed = parseFloat(raw);
-    if (raw === "" || isNaN(parsed) || parsed <= 0) {
+  const commitOff = (v: number | null) => {
+    if (v == null || v <= 0) {
       onPriceChange(basePrice); // no discount → back to list price
-      setPriceText(basePrice.toFixed(2));
       return;
     }
-    const net = roundMoney(Math.max(0, basePrice - parsed));
-    onPriceChange(net);
-    setPriceText(net.toFixed(2));
+    onPriceChange(roundMoney(Math.max(0, basePrice - v)));
   };
 
   const overridden = Math.abs(unitPrice - basePrice) > 0.0001;
@@ -573,13 +560,10 @@ function PriceEditRow({
         <span>Unit price</span>
         <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
           <span className="text-navy/40">$</span>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            className="w-16 bg-transparent py-1 text-right text-navy outline-none"
-            value={priceText}
-            onChange={(e) => commitPrice(e.target.value)}
+          <MoneyInput
+            value={unitPrice}
+            onChange={commitPrice}
+            className="w-16 rounded-none border-0 bg-transparent px-0 py-1 text-right text-xs focus:ring-0"
           />
         </span>
       </label>
@@ -587,14 +571,11 @@ function PriceEditRow({
         <span>$ off / unit</span>
         <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
           <span className="text-navy/40">−$</span>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
+          <MoneyInput
+            value={offValue}
+            onChange={commitOff}
             placeholder="0.00"
-            className="w-14 bg-transparent py-1 text-right text-navy outline-none placeholder:text-navy/40"
-            value={offText}
-            onChange={(e) => commitOff(e.target.value)}
+            className="w-14 rounded-none border-0 bg-transparent px-0 py-1 text-right text-xs placeholder:text-navy/40 focus:ring-0"
           />
         </span>
       </label>

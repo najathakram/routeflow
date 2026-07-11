@@ -20,6 +20,7 @@ import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/in
 import { showToast } from "../../../../lib/toast";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/pricing";
+import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { BarcodeFab } from "../../../../components/BarcodeFab";
 
@@ -322,16 +323,15 @@ function InvoiceComposer({
     });
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it.
-  const setLinePrice = (id: string, raw: string) =>
+  const setLinePrice = (id: string, value: number | null) =>
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      const parsed = parseFloat(raw);
-      if (raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0) {
+      if (value == null || value < 0) {
         const { unitPrice: _drop, ...rest } = prev;
         return { ...m, [id]: rest };
       }
-      return { ...m, [id]: { ...prev, unitPrice: parsed } };
+      return { ...m, [id]: { ...prev, unitPrice: value } };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -341,10 +341,9 @@ function InvoiceComposer({
     setUnlisted((u) =>
       qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
     );
-  const updateUnlistedPrice = (id: string, raw: string) =>
+  const updateUnlistedPrice = (id: string, value: number | null) =>
     setUnlisted((u) => {
-      const parsed = parseFloat(raw);
-      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      const price = value == null || value < 0 ? 0 : value;
       return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
     });
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
@@ -710,9 +709,9 @@ function ReviewSheet({
   onRemove: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
-  onSetPrice: (id: string, raw: string) => void;
+  onSetPrice: (id: string, value: number | null) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
-  onChangeUnlistedPrice: (id: string, raw: string) => void;
+  onChangeUnlistedPrice: (id: string, value: number | null) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
 }) {
@@ -770,11 +769,10 @@ function ReviewSheet({
                       <Text style={styles.reviewName}>{displayName(product)}</Text>
                       <View style={styles.priceEditRow}>
                         <Text style={styles.priceCurrency}>$</Text>
-                        <TextInput
-                          value={line.unitPrice != null ? String(line.unitPrice) : ""}
-                          onChangeText={(t) => onSetPrice(id, t)}
+                        <MoneyTextInput
+                          value={line.unitPrice ?? null}
+                          onChangeValue={(v) => onSetPrice(id, v)}
                           placeholder={catalogPrice.toFixed(2)}
-                          keyboardType="decimal-pad"
                           style={[styles.priceInput, isOverridden && styles.priceInputActive]}
                         />
                         <Text style={styles.reviewMeta}>
@@ -817,11 +815,10 @@ function ReviewSheet({
                     </View>
                     <View style={styles.priceEditRow}>
                       <Text style={styles.priceCurrency}>$</Text>
-                      <TextInput
-                        value={u.unitPrice ? String(u.unitPrice) : ""}
-                        onChangeText={(t) => onChangeUnlistedPrice(u.id, t)}
+                      <MoneyTextInput
+                        value={u.unitPrice || null}
+                        onChangeValue={(v) => onChangeUnlistedPrice(u.id, v)}
                         placeholder="0.00"
-                        keyboardType="decimal-pad"
                         style={[styles.priceInput, styles.priceInputActive]}
                       />
                       <Text style={styles.reviewMeta}>/ unit</Text>

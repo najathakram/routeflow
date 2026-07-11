@@ -21,6 +21,7 @@ import { apiClient } from "@/lib/api-client";
 import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
+import { MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { LicenseGuardModal } from "./LicenseGuardModal";
@@ -441,12 +442,11 @@ export function CreateOrderModal({
       prev.map((li) => (li.tempId === tempId ? { ...li, productName: name } : li)),
     );
   };
-  const updateUnlistedPrice = (tempId: string, rawValue: string) => {
+  const updateUnlistedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
-        const parsed = parseFloat(rawValue);
-        const price = rawValue === "" || isNaN(parsed) || parsed < 0 ? 0 : parsed;
+        const price = value == null || value < 0 ? 0 : value;
         return { ...li, unitPrice: price, listPrice: price };
       }),
     );
@@ -485,12 +485,11 @@ export function CreateOrderModal({
     );
   };
 
-  const setDiscountedPrice = (tempId: string, rawValue: string) => {
+  const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
-        const parsed = parseFloat(rawValue);
-        if (rawValue === "" || isNaN(parsed)) {
+        if (value == null) {
           // Clear override — revert to special or list price
           const revertPrice = li.specialPrice ?? li.listPrice;
           return {
@@ -500,7 +499,7 @@ export function CreateOrderModal({
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
           };
         }
-        const enteredPrice = Math.max(0, parsed);
+        const enteredPrice = Math.max(0, value);
         if (enteredPrice < li.listPrice) {
           return {
             ...li,
@@ -1223,13 +1222,10 @@ export function CreateOrderModal({
                           <span className="text-[10px] text-navy/70">Price:</span>
                           <span className="flex items-center rounded border border-surface-border bg-white px-1.5 focus-within:ring-1 focus-within:ring-brand-500">
                             <span className="text-navy/40 text-xs">$</span>
-                            <input
-                              type="number"
-                              min={0}
-                              step="0.01"
+                            <MoneyInput
                               value={li.unitPrice}
-                              onChange={(e) => updateUnlistedPrice(li.tempId, e.target.value)}
-                              className="w-16 bg-transparent py-0.5 text-right text-xs text-navy outline-none"
+                              onChange={(v) => updateUnlistedPrice(li.tempId, v)}
+                              className="w-16 rounded-none border-0 bg-transparent px-0 py-0.5 text-right text-xs focus:ring-0"
                             />
                           </span>
                           <span className="text-[10px] text-navy/70">/ {li.unit}</span>
@@ -1291,13 +1287,11 @@ export function CreateOrderModal({
                         {li.priceType !== "SPECIAL" && (
                           <div className="mt-1 flex items-center gap-1 flex-wrap">
                             <span className="text-[10px] text-navy/70">Price:</span>
-                            <input
-                              type="number"
+                            <MoneyInput
                               min={0}
-                              step="0.01"
                               placeholder={li.listPrice.toFixed(2)}
-                              value={li.discountedPrice != null ? li.discountedPrice : ""}
-                              onChange={(e) => setDiscountedPrice(li.tempId, e.target.value)}
+                              value={li.discountedPrice ?? null}
+                              onChange={(v) => setDiscountedPrice(li.tempId, v)}
                               className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                             />
                             {priceHistory?.[li.productId] &&
@@ -1318,7 +1312,7 @@ export function CreateOrderModal({
                             productId={li.productId || undefined}
                             floor={floorForCategory(marginConfig, li.category)}
                             acked={floorAcked.has(li.tempId)}
-                            onSetToFloor={(fp) => setDiscountedPrice(li.tempId, String(fp))}
+                            onSetToFloor={(fp) => setDiscountedPrice(li.tempId, fp)}
                             onSellAnyway={() => ackFloor(li.tempId)}
                           />
                         </div>
@@ -1427,13 +1421,11 @@ export function CreateOrderModal({
               <div className="flex items-center justify-between text-navy/70">
                 <label className="flex items-center gap-2 text-sm">
                   Order discount
-                  <input
-                    type="number"
+                  <MoneyInput
                     min={0}
-                    step="0.01"
                     placeholder="0.00"
-                    value={orderDiscount}
-                    onChange={(e) => setOrderDiscount(e.target.value)}
+                    value={orderDiscount === "" ? null : parseFloat(orderDiscount)}
+                    onChange={(v) => setOrderDiscount(v == null ? "" : String(v))}
                     className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                 </label>
