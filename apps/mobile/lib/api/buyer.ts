@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -155,6 +155,39 @@ export function useBuyerProducts(params?: {
         .get("/buyer/products", { params: { limit: 50, ...params } })
         .then((r) => r.data),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Paged catalog for the browse screen. Pages through the seller's WHOLE
+ * catalog (the old single-shot `limit:100` call cut off everything past row
+ * 100). Key stays under "buyer-products" so socket invalidation covers it.
+ * Buyer meta only carries `total`, so the next page is derived from the
+ * accumulated row count.
+ */
+export function useBuyerProductsInfinite(params?: {
+  search?: string;
+  category?: string;
+  limit?: number;
+}) {
+  const limit = params?.limit ?? 50;
+  return useInfiniteQuery({
+    queryKey: ["buyer-products", "infinite", params],
+    queryFn: ({ pageParam }) =>
+      buyerApiClient.get("/buyer/products", { params: { ...params, limit, page: pageParam } }).then(
+        (r) =>
+          r.data as {
+            data: BuyerProduct[];
+            meta: { total: number };
+            hiddenCategories?: LockedCategory[];
+          },
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (last, all) => {
+      const loaded = all.reduce((sum, p) => sum + p.data.length, 0);
+      return loaded < (last.meta?.total ?? 0) && last.data.length > 0 ? all.length + 1 : undefined;
+    },
+    staleTime: 15_000,
   });
 }
 

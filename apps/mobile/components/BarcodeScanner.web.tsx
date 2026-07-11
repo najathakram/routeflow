@@ -1,10 +1,18 @@
 import * as React from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { gateScan, ScanGateState, ScanOutcome, ScanFeedback } from "../lib/scan-loop";
 
 interface Props {
-  onScanned: (code: string) => void;
+  /**
+   * Called with each accepted code. In `continuous` mode the (possibly async)
+   * return value drives the overlay: `{feedback}` shows a banner and keeps
+   * scanning, `{close:true}` closes via `onClose`.
+   */
+  onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
   onClose: () => void;
+  /** Keep the camera open after a scan so the operator can scan the next item. */
+  continuous?: boolean;
 }
 
 type DetectedBarcode = { rawValue: string };
@@ -21,15 +29,25 @@ declare global {
   }
 }
 
-export function BarcodeScanner({ onScanned, onClose }: Props) {
+export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
   const rafRef = React.useRef<number | null>(null);
   const readerRef = React.useRef<any>(null);
   const firedRef = React.useRef(false);
+  const gateRef = React.useRef<ScanGateState | null>(null);
+  const busyRef = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
   const [manualMode, setManualMode] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
+  const [feedback, setFeedback] = React.useState<ScanFeedback | null>(null);
+  const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Parents recreate these callbacks every render; route them through refs so
+  // `fire` stays stable and the camera effect doesn't restart after each scan.
+  const onScannedRef = React.useRef(onScanned);
+  onScannedRef.current = onScanned;
+  const onCloseRef = React.useRef(onClose);
+  onCloseRef.current = onClose;
 
   const stop = React.useCallback(() => {
     if (rafRef.current != null) {
@@ -51,14 +69,60 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
     }
   }, []);
 
-  const fire = React.useCallback(
-    (code: string) => {
-      if (firedRef.current) return;
-      firedRef.current = true;
-      stop();
-      onScanned(code);
+  const showFeedback = React.useCallback((fb: ScanFeedback) => {
+    setFeedback(fb);
+    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
+  }, []);
+
+  React.useEffect(
+    () => () => {
+      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
     },
-    [onScanned, stop],
+    [],
+  );
+
+  /**
+   * One decoded code from any source (BarcodeDetector, zxing, manual input).
+   * `deliberate` skips the repeat-gate (manual submits are always intentional).
+   */
+  const fire = React.useCallback(
+    async (code: string, deliberate = false) => {
+      if (!continuous) {
+        if (firedRef.current) return;
+        firedRef.current = true;
+        stop();
+        onScannedRef.current(code);
+        return;
+      }
+      if (busyRef.current) return;
+      if (!deliberate) {
+        const gated = gateScan(code, gateRef.current, Date.now());
+        gateRef.current = gated.state;
+        if (!gated.accept) return;
+      }
+      busyRef.current = true;
+      try {
+        const outcome = await onScannedRef.current(code);
+        if (outcome?.close) {
+          stop();
+          onCloseRef.current();
+          return;
+        }
+        if (outcome?.feedback) showFeedback(outcome.feedback);
+      } finally {
+        // While onScanned was awaited, detections short-circuited at the busyRef
+        // guard (or the BarcodeDetector tick was blocked on the await) WITHOUT
+        // calling gateScan, so the sliding window's lastAt stayed frozen at
+        // scan-start. If the lookup outran the cooldown, the next detection of
+        // the SAME code would be re-accepted → double-add. Re-anchor the
+        // cooldown to completion so a held item can't re-add until it leaves the
+        // frame for a full window; a different code still differs and is accepted.
+        gateRef.current = { lastCode: code, lastAt: Date.now() };
+        busyRef.current = false;
+      }
+    },
+    [continuous, stop, showFeedback],
   );
 
   React.useEffect(() => {
@@ -107,8 +171,9 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
           try {
             const codes = await detector.detect(videoRef.current);
             if (codes && codes.length > 0 && codes[0]?.rawValue) {
-              fire(codes[0].rawValue);
-              return;
+              await fire(codes[0].rawValue);
+              // Single-shot: fire() latched + stopped — end the loop.
+              if (firedRef.current) return;
             }
           } catch {
             /* ignore per-frame errors */
@@ -130,7 +195,7 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
         reader.decodeFromStream(stream, videoEl, (result, err) => {
           if (cancelled) return;
           if (result) {
-            fire(result.getText());
+            void fire(result.getText());
           } else if (err && (err as any).name !== "NotFoundException") {
             // real error, ignore transient "not found" per-frame errors
           }
@@ -158,7 +223,9 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
 
   const submitManual = () => {
     const trimmed = manualValue.trim();
-    if (trimmed) fire(trimmed);
+    if (!trimmed) return;
+    void fire(trimmed, true);
+    if (continuous) setManualValue("");
   };
 
   return (
@@ -186,6 +253,19 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
       )}
 
       <View style={styles.overlay} pointerEvents="box-none">
+        {feedback ? (
+          <View style={[styles.feedback, feedback.kind === "error" && styles.feedbackError]}>
+            <Ionicons
+              name={feedback.kind === "added" ? "checkmark-circle" : "alert-circle"}
+              size={18}
+              color="#fff"
+            />
+            <Text style={styles.feedbackText} numberOfLines={2}>
+              {feedback.text}
+            </Text>
+          </View>
+        ) : null}
+
         {!manualMode ? <View style={styles.scanWindow} pointerEvents="none" /> : null}
 
         <View style={styles.bottomCard}>
@@ -193,7 +273,11 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
             <Text style={styles.error}>{error}</Text>
           ) : (
             <Text style={styles.help}>
-              {manualMode ? "Enter the barcode or SKU manually." : "Align barcode within the box."}
+              {manualMode
+                ? "Enter the barcode or SKU manually."
+                : continuous
+                  ? "Scan items one after another — tap Done when finished."
+                  : "Align barcode within the box."}
             </Text>
           )}
 
@@ -227,6 +311,12 @@ export function BarcodeScanner({ onScanned, onClose }: Props) {
               <Text style={styles.linkText}>Or enter code manually</Text>
             </Pressable>
           )}
+
+          {continuous ? (
+            <Pressable onPress={handleClose} style={styles.doneBtn}>
+              <Text style={styles.doneBtnText}>Done</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
 
@@ -274,6 +364,27 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.85)",
     backgroundColor: "transparent",
   },
+  feedback: {
+    position: "absolute",
+    top: 84,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(22,163,74,0.92)",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    maxWidth: 340,
+  },
+  feedbackError: {
+    backgroundColor: "rgba(220,38,38,0.92)",
+  },
+  feedbackText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+    flexShrink: 1,
+  },
   bottomCard: {
     position: "absolute",
     left: 16,
@@ -316,6 +427,13 @@ const styles = StyleSheet.create({
   manualBtnText: { color: "#fff", fontWeight: "600", fontSize: 15 },
   linkBtn: { alignItems: "center", paddingVertical: 4 },
   linkText: { color: "rgba(255,255,255,0.85)", fontSize: 13 },
+  doneBtn: {
+    alignItems: "center",
+    backgroundColor: "#3b82f6",
+    borderRadius: 10,
+    paddingVertical: 12,
+  },
+  doneBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   closeButton: {
     position: "absolute",
     top: 18,

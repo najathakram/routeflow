@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,7 +17,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import {
-  useBuyerProducts,
+  useBuyerProductsInfinite,
   useBuyerCategories,
   useBuyerFavorites,
   useToggleFavorite,
@@ -35,12 +37,27 @@ export default function CustomerCatalogScreen() {
   const [category, setCategory] = useState("");
   const { data: categoriesData } = useBuyerCategories();
   const categories = categoriesData ?? [];
-  const { data, isLoading } = useBuyerProducts({
-    search: search.trim() || undefined,
-    category: category || undefined,
-    limit: 100,
-  });
-  const products = data?.data ?? [];
+  // Infinite pages through the seller's whole catalog — the previous single
+  // `limit:100` request cut the list off at 100 rows.
+  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
+    useBuyerProductsInfinite({
+      search: search.trim() || undefined,
+      category: category || undefined,
+    });
+  // De-dupe by id: offset pagination can re-emit a page-boundary row if the
+  // catalog is mutated between page fetches — duplicate keys crash FlatList.
+  const products = useMemo(() => {
+    const seen = new Set<string>();
+    const out: BuyerProduct[] = [];
+    for (const pg of data?.pages ?? [])
+      for (const p of pg.data)
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          out.push(p);
+        }
+    return out;
+  }, [data]);
+  const hiddenCategories = data?.pages[0]?.hiddenCategories;
   const cart = useCartStore((s) => s.items);
   // Count selling units: boxes for a boxed line (qty is pieces), else pieces.
   const cartCount = cart.reduce(
@@ -129,39 +146,57 @@ export default function CustomerCatalogScreen() {
         </ScrollView>
       )}
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}
-      >
-        {data?.hiddenCategories && data.hiddenCategories.length > 0 ? (
-          <LockedCategoriesTile categories={data.hiddenCategories} />
-        ) : null}
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : products.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.empty}>No products found.</Text>
-          </View>
-        ) : (
-          <View style={styles.grid}>
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                isFavorite={favoriteIds.has(product.id)}
-                onToggleFavorite={() =>
-                  toggleFavorite.mutate({
-                    productId: product.id,
-                    isFavorite: favoriteIds.has(product.id),
-                  })
-                }
-              />
-            ))}
-          </View>
+      <FlatList
+        data={products}
+        keyExtractor={(p) => p.id}
+        renderItem={({ item }) => (
+          <ProductCard
+            product={item}
+            isFavorite={favoriteIds.has(item.id)}
+            onToggleFavorite={() =>
+              toggleFavorite.mutate({
+                productId: item.id,
+                isFavorite: favoriteIds.has(item.id),
+              })
+            }
+          />
         )}
-      </ScrollView>
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.grid, { paddingBottom: cartCount > 0 ? 100 : 32 }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={isFetching && !isLoading && !isFetchingNextPage}
+            onRefresh={refetch}
+          />
+        }
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+        }}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={
+          hiddenCategories && hiddenCategories.length > 0 ? (
+            <LockedCategoriesTile categories={hiddenCategories} />
+          ) : null
+        }
+        ListEmptyComponent={
+          isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.empty}>No products found.</Text>
+            </View>
+          )
+        }
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <View style={{ paddingVertical: 16 }}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : null
+        }
+      />
 
       {/* Floating cart bar */}
       {cartCount > 0 ? (
@@ -305,7 +340,7 @@ const styles = StyleSheet.create({
   lockedTile: {
     flexDirection: "row",
     gap: 10,
-    marginHorizontal: 16,
+    // Horizontal inset comes from the FlatList contentContainer padding.
     marginBottom: 8,
     padding: 12,
     borderRadius: 14,

@@ -110,7 +110,17 @@ export class ProductsService {
 
     // Server-side stock-status filtering so pagination counts are accurate
     if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
-      where.OR = [...(where.OR ?? []), { isActive: false }, { currentStock: { lte: 0 } }];
+      // "Out" = inactive OR zero/negative stock. Keep it as its own disjunction
+      // AND-ed with any search OR — reusing `where.OR` would merge the two into a
+      // single OR, so every out-of-stock product would match regardless of the
+      // search text (and every search hit would show even if in stock).
+      const outOfStock = [{ isActive: false }, { currentStock: { lte: 0 } }];
+      if (where.OR) {
+        where.AND = [...(where.AND ?? []), { OR: where.OR }, { OR: outOfStock }];
+        delete where.OR;
+      } else {
+        where.OR = outOfStock;
+      }
     } else if (query.stockStatus === StockStatusFilter.LOW) {
       where.isActive = true;
       // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7

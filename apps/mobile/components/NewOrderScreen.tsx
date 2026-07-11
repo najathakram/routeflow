@@ -35,6 +35,8 @@ import { useAuthStore } from "../lib/auth-store";
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { BarcodeFab } from "./BarcodeFab";
+import { ScanOutcome } from "../lib/scan-loop";
+import { withCartRows } from "../lib/visible-cart";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -329,12 +331,25 @@ function ProductPickView({
   const listTopRef = useRef(0);
   const rowYRef = useRef<Map<string, number>>(new Map());
   const [scrollToId, setScrollToId] = useState<string | null>(null);
+  // The pending scroll target survives across renders so a freshly-pinned row
+  // (a just-scanned out-of-catalog item, mounted this commit) can complete the
+  // scroll from its own onLayout — which fires AFTER this effect. Without it,
+  // rowYRef has no entry yet at effect time and the scroll silently no-ops.
+  const scrollToIdRef = useRef<string | null>(null);
+  const scrollToRow = (id: string) => {
+    const y = rowYRef.current.get(id);
+    if (y == null) return false;
+    scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
+    return true;
+  };
   useEffect(() => {
     if (!scrollToId) return;
-    const y = rowYRef.current.get(scrollToId);
-    if (y != null)
-      scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
-    setScrollToId(null);
+    scrollToIdRef.current = scrollToId;
+    if (scrollToRow(scrollToId)) {
+      scrollToIdRef.current = null;
+      setScrollToId(null);
+    }
+    // else: leave it pending for the row's onLayout to finish once measured.
   }, [scrollToId, items]);
   /**
    * Products discovered via barcode scan that aren't in the locally-cached
@@ -392,8 +407,14 @@ function ProductPickView({
       if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
       return { ...m, [id]: line };
     });
-    if (productSnapshot && !productById.has(id)) {
-      setScannedById((m) => ({ ...m, [id]: productSnapshot }));
+    // Always retain a scanned product's snapshot — even one currently in the
+    // local list. The empty-search products query can be GC'd (~5min) while a
+    // non-empty search is held, so the setSearch("") after a local scan may hit
+    // a cold refetch where `products` is briefly []; the snapshot keeps this row
+    // resolvable for the totals and list. productById prefers the live entry, so
+    // the snapshot only ever acts as a fallback.
+    if (productSnapshot) {
+      setScannedById((m) => (id in m ? m : { ...m, [id]: productSnapshot }));
     }
   };
 
@@ -502,8 +523,10 @@ function ProductPickView({
     });
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
-  const handleBarcodeScanned = async (code: string) => {
-    setScanOpen(false);
+  // Continuous-scan handler: the scanner overlay stays open between items and
+  // renders the returned feedback ("Added … — scan next"); only the
+  // create-product hand-off (and the Done button) closes it.
+  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
 
@@ -519,9 +542,9 @@ function ProductPickView({
     );
     if (local) {
       addOne(local.id, local);
+      setSearch(""); // an active search would hide the added row (web clears too)
       setScrollToId(local.id);
-      showToast(`Added ${displayName(local)}`);
-      return;
+      return { feedback: { kind: "added", text: `Added ${displayName(local)}` } };
     }
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
@@ -529,16 +552,15 @@ function ProductPickView({
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
         addOne(result.product.id, result.product);
+        setSearch("");
         setScrollToId(result.product.id);
-        showToast(`Added ${displayName(result.product)}`);
-        return;
+        return { feedback: { kind: "added", text: `Added ${displayName(result.product)}` } };
       }
     } catch (err: any) {
       // Network / 5xx — surface so the operator can retry instead of silently
       // showing "no product found" (which implies the item doesn't exist).
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      showToast(msg);
-      return;
+      return { feedback: { kind: "error", text: msg } };
     }
 
     // 3) Nothing matched. Mirror web's behaviour: offer to create the product
@@ -559,9 +581,9 @@ function ProductPickView({
           },
         ],
       );
-    } else {
-      showToast(`No product for "${trimmed}"`);
+      return { close: true };
     }
+    return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
   };
 
   const categories = useMemo(() => {
@@ -571,9 +593,12 @@ function ProductPickView({
   }, [products]);
 
   const filtered = useMemo(() => {
-    if (category === "All") return products;
-    return products.filter((p) => p.category === category);
-  }, [products, category]);
+    const base = category === "All" ? products : products.filter((p) => p.category === category);
+    // While browsing (no active search), pin cart lines the filter would hide
+    // — scanned items outside the category/page must keep a visible row.
+    if (search.trim()) return base;
+    return withCartRows(base, Object.keys(items), (id) => productById.get(id));
+  }, [products, category, search, items, productById]);
 
   // Total + count, computed from items + the unified product map so scanned
   // items that aren't in the local list still contribute. Subtotal uses the
@@ -815,7 +840,14 @@ function ProductPickView({
               return (
                 <View
                   key={p.id}
-                  onLayout={(e) => rowYRef.current.set(p.id, e.nativeEvent.layout.y)}
+                  onLayout={(e) => {
+                    rowYRef.current.set(p.id, e.nativeEvent.layout.y);
+                    // Complete a scroll waiting on this row's first measurement.
+                    if (scrollToIdRef.current === p.id && scrollToRow(p.id)) {
+                      scrollToIdRef.current = null;
+                      setScrollToId(null);
+                    }
+                  }}
                   style={[
                     styles.productRow,
                     // Boxed + added: switch to a column layout so we can stack
@@ -971,14 +1003,18 @@ function ProductPickView({
       </View>
 
       {scanOpen ? (
-        <BarcodeScanner onScanned={handleBarcodeScanned} onClose={() => setScanOpen(false)} />
+        <BarcodeScanner
+          continuous
+          onScanned={handleBarcodeScanned}
+          onClose={() => setScanOpen(false)}
+        />
       ) : null}
 
       {/* Floating, draggable scan button — keeps the scanner one tap away even
           when the operator has scrolled deep into the product list. Hidden
           while the cart sheet or the in-list scanner is up so it doesn't
           stack on top of either. */}
-      <BarcodeFab onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+      <BarcodeFab continuous onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
 
       <CartModal
         open={cartOpen}

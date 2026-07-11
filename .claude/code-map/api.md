@@ -113,7 +113,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 ### `products/`
 
 - **controller** `products` — `barcode/:barcode`, `@Get/:id`, import, `@Delete clear-all|bulk|:id`, `@Patch :id`, images add/remove.
-- **service** — `findAll`, `findByBarcode`, `findOne`, `create`, `update`, `delete`, `import`, `add/removeImage`. `create` defaults a new product's `costingMethod` to the tenant `costing.method` via `resolveCostingMethod()` (WEIGHTED_AVERAGE→AVCO; explicit DTO wins; unset tenant → schema default FIFO) — ProductsModule imports SystemConfigModule (pos-cost-roles §1). side effects: Product/ProductImage writes; image upload; inventory ledger. **P5-01: `UpdateProductDto` gained `isFeatured/isNew/isDeal` merch flags** (pass-through in `update`).
+- **service** — `findAll`, `findByBarcode`, `findOne`, `create`, `update`, `delete`, `import`, `add/removeImage`. `create` defaults a new product's `costingMethod` to the tenant `costing.method` via `resolveCostingMethod()` (WEIGHTED_AVERAGE→AVCO; explicit DTO wins; unset tenant → schema default FIFO) — ProductsModule imports SystemConfigModule (pos-cost-roles §1). side effects: Product/ProductImage writes; image upload; inventory ledger. **P5-01: `UpdateProductDto` gained `isFeatured/isNew/isDeal` merch flags** (pass-through in `update`). **`findAll` OUT_OF_STOCK+search fix:** "Out" (inactive OR stock≤0) is AND-ed with the search OR via `where.AND` — previously it reused `where.OR`, collapsing AND→OR so every out-of-stock row matched regardless of the search text (spec'd in `products.service.spec`).
 
 ### `promotions/` (P5-01 + P5-04 pricing)
 

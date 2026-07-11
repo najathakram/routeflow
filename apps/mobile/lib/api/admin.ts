@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
 export interface PaginationMeta {
@@ -395,6 +395,32 @@ export function useAdminProducts(params?: {
     queryKey: ["admin", "products", params],
     queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Paged product list for scrollable screens. Pages through the WHOLE catalog
+ * (the old single-shot `limit:100` call silently dropped everything past row
+ * 100 — the "products missing on mobile" report). Key stays under
+ * ["admin","products"] so the existing socket invalidation covers it.
+ */
+export function useAdminProductsInfinite(params?: {
+  search?: string;
+  stockStatus?: StockStatusFilter;
+  isActive?: boolean;
+  limit?: number;
+}) {
+  const limit = params?.limit ?? 50;
+  return useInfiniteQuery({
+    queryKey: ["admin", "products", "infinite", params],
+    queryFn: ({ pageParam }) =>
+      apiClient
+        .get("/products", { params: { ...params, limit, page: pageParam } })
+        .then((r) => r.data as { data: AdminProduct[]; meta: PaginationMeta }),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
+    staleTime: 15_000,
   });
 }
 

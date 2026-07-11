@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -22,7 +22,7 @@ import {
   SearchBar,
 } from "@routeflow/ui/mobile/ios";
 import {
-  useAdminProducts,
+  useAdminProductsInfinite,
   type AdminProduct,
   type StockStatusFilter,
 } from "../../../lib/api/admin";
@@ -47,13 +47,27 @@ export default function ProductsListScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<StockStatusFilter | undefined>(undefined);
   const [search, setSearch] = useState("");
-  const { data, isLoading, isFetching, refetch } = useAdminProducts({
-    stockStatus: filter,
-    search: search.trim() || undefined,
-    limit: 100,
-  });
+  // Infinite pages through the whole catalog — the previous single
+  // `limit:100` request cut the list off at 100 rows.
+  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
+    useAdminProductsInfinite({
+      stockStatus: filter,
+      search: search.trim() || undefined,
+    });
 
-  const products = data?.data ?? [];
+  // De-dupe by id: offset pagination can re-emit a page-boundary row if the
+  // catalog is mutated between page fetches — duplicate keys crash FlatList.
+  const products = useMemo(() => {
+    const seen = new Set<string>();
+    const out: AdminProduct[] = [];
+    for (const pg of data?.pages ?? [])
+      for (const p of pg.data)
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          out.push(p);
+        }
+    return out;
+  }, [data]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -82,41 +96,52 @@ export default function ProductsListScreen() {
         onChange={(label) => setFilter(FILTERS.find((f) => f.label === label)?.id)}
       />
 
-      <ScrollView
+      <FlatList
+        data={products}
+        keyExtractor={(p) => p.id}
+        renderItem={({ item }) => (
+          <ProductRow p={item} onPress={() => router.push(`/(operator)/products/${item.id}`)} />
+        )}
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={isFetching && !isLoading} onRefresh={refetch} />
+          <RefreshControl
+            refreshing={isFetching && !isLoading && !isFetchingNextPage}
+            onRefresh={refetch}
+          />
         }
-      >
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : products.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>
-              {search ? "No products match." : "No products yet."}
-            </Text>
-            <Pressable
-              style={styles.primaryBtn}
-              onPress={() => router.push("/(operator)/products/new")}
-            >
-              <Ionicons name="add" size={16} color="#fff" />
-              <Text style={styles.primaryBtnText}>Add product</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
-            {products.map((p) => (
-              <ProductRow
-                key={p.id}
-                p={p}
-                onPress={() => router.push(`/(operator)/products/${p.id}`)}
-              />
-            ))}
-          </View>
-        )}
-      </ScrollView>
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+        }}
+        onEndReachedThreshold={0.5}
+        ListEmptyComponent={
+          isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>
+                {search ? "No products match." : "No products yet."}
+              </Text>
+              <Pressable
+                style={styles.primaryBtn}
+                onPress={() => router.push("/(operator)/products/new")}
+              >
+                <Ionicons name="add" size={16} color="#fff" />
+                <Text style={styles.primaryBtnText}>Add product</Text>
+              </Pressable>
+            </View>
+          )
+        }
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <View style={{ paddingVertical: 16 }}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : null
+        }
+      />
     </SafeAreaView>
   );
 }

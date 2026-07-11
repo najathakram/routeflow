@@ -3,13 +3,19 @@ import { Animated, Dimensions, PanResponder, Pressable, StyleSheet, View } from 
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { BarcodeScanner } from "./BarcodeScanner";
+import { ScanOutcome } from "../lib/scan-loop";
 import { useFabPositionStore } from "../lib/fab-position-store";
 
 interface Props {
-  /** Called with the scanned code string. */
-  onScanned: (code: string) => void;
+  /**
+   * Called with the scanned code string. In `continuous` mode its return
+   * value (see `ScanOutcome`) drives the scanner overlay's feedback/close.
+   */
+  onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
   /** Hide the FAB when something else has focus (e.g. a modal is open). */
   hidden?: boolean;
+  /** Keep the scanner open after each scan (order/invoice builders). */
+  continuous?: boolean;
 }
 
 const FAB_SIZE = 56;
@@ -39,7 +45,7 @@ const TOP_RESERVED = 60;
  * scanner button. A floating button keeps the action one tap away regardless
  * of scroll position.
  */
-export function BarcodeFab({ onScanned, hidden = false }: Props) {
+export function BarcodeFab({ onScanned, hidden = false, continuous = false }: Props) {
   const { width, height } = Dimensions.get("window");
   const persisted = useFabPositionStore();
 
@@ -149,9 +155,12 @@ export function BarcodeFab({ onScanned, hidden = false }: Props) {
       {scanOpen ? (
         <View style={styles.scannerOverlay}>
           <BarcodeScanner
+            continuous={continuous}
             onScanned={(code) => {
-              setScanOpen(false);
-              onScanned(code);
+              // Continuous mode: the scanner stays open and shows the outcome's
+              // feedback itself; it closes via the outcome or the Done button.
+              if (!continuous) setScanOpen(false);
+              return onScanned(code);
             }}
             onClose={() => setScanOpen(false)}
           />

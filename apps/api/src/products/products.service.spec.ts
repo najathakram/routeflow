@@ -99,6 +99,35 @@ describe("ProductsService", () => {
         }),
       );
     });
+
+    it("out-of-stock alone uses a top-level OR of the stock predicates", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ stockStatus: "OUT_OF_STOCK" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([{ isActive: false }, { currentStock: { lte: 0 } }]);
+      expect(where.AND).toBeUndefined();
+    });
+
+    it("AND-s search with out-of-stock instead of collapsing them into one OR", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ search: "tomato", stockStatus: "OUT_OF_STOCK" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      // The search disjunction must NOT be flattened into the stock disjunction —
+      // otherwise every out-of-stock product matches regardless of the search text.
+      expect(where.OR).toBeUndefined();
+      expect(where.AND).toEqual([
+        { OR: expect.arrayContaining([expect.objectContaining({ name: expect.any(Object) })]) },
+        { OR: [{ isActive: false }, { currentStock: { lte: 0 } }] },
+      ]);
+      // count must use the identical where so pagination stays consistent
+      expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
+    });
   });
 
   // ─── listCategories ───────────────────────────────────────────────────────
