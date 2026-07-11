@@ -4,6 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
+  UnprocessableEntityException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
@@ -53,6 +55,10 @@ export class VendorBillsService {
         0,
       );
     }
+    // Sales tax on the supplier invoice is owed too (the scan flow passes it as
+    // taxAmount — line items only carry the pre-tax unit costs). totalOwed is a
+    // monetary write, so round it.
+    totalOwed = roundMoney(totalOwed + (Number(dto.taxAmount) || 0));
 
     const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
@@ -531,7 +537,9 @@ export class VendorBillsService {
     // server-side with sharp before sending. PDFs go through as-is via the
     // `document` content block.
     const fileContentBlocks: any[] = [];
-    for (const f of files) {
+    const skippedPages: number[] = [];
+    for (let pageNo = 0; pageNo < files.length; pageNo++) {
+      const f = files[pageNo];
       const isPdf = f.mimeType === "application/pdf";
       if (isPdf) {
         fileContentBlocks.push({
@@ -554,10 +562,11 @@ export class VendorBillsService {
           buf = await sharp(f.buffer).rotate().jpeg({ quality: 85 }).toBuffer();
           mediaType = "image/jpeg";
         } catch (e) {
+          // One unreadable page must not discard the readable ones — skip it
+          // and disclose the gap in the result notes.
           this.logger.error(`scanInvoice: HEIC→JPEG conversion failed: ${(e as Error).message}`);
-          throw new BadRequestException(
-            "Couldn't read one of the HEIC images. Try exporting it as JPEG and re-uploading.",
-          );
+          skippedPages.push(pageNo + 1);
+          continue;
         }
       }
       fileContentBlocks.push({
@@ -568,6 +577,11 @@ export class VendorBillsService {
           data: buf.toString("base64"),
         },
       });
+    }
+    if (fileContentBlocks.length === 0) {
+      throw new BadRequestException(
+        "Couldn't read any of the uploaded images. Try exporting them as JPEG and re-uploading.",
+      );
     }
 
     // Phase 1 uses Haiku — cheap OCR, no catalog reasoning required at this step.
@@ -601,19 +615,48 @@ Return exactly this structure:
 IMPORTANT: Always read the actual quantity from each line item. Do not default to 1 unless the invoice truly shows no quantity. Return ONLY the JSON object.`;
 
     // Phase 1 uses Haiku — cheap OCR, no catalog reasoning required at this step.
-    const message = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 4096,
-      messages: [
+    // Typed failures instead of opaque 500s: the client switches on `code`.
+    // Per-request timeout stays under the client's 120s so the server doesn't
+    // keep paying for a scan the browser already abandoned (the SDK retries
+    // 429/5xx internally before we map the error).
+    let message: Anthropic.Message;
+    try {
+      message = await anthropic.messages.create(
         {
-          role: "user",
-          content: [...fileContentBlocks, { type: "text", text: promptText }],
+          model: "claude-haiku-4-5",
+          max_tokens: 4096,
+          messages: [
+            {
+              role: "user",
+              content: [...fileContentBlocks, { type: "text", text: promptText }],
+            },
+          ],
         },
-      ],
-    });
+        { timeout: 110_000 },
+      );
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      this.logger.error(`scanInvoice: Anthropic call failed (status ${status}): ${String(err)}`);
+      if (status === 401 || status === 403) {
+        throw new BadRequestException({
+          message:
+            "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
+          code: "AI_KEY_INVALID",
+        });
+      }
+      throw new ServiceUnavailableException({
+        message: "The AI scanner is temporarily unavailable. Try again in a minute.",
+        code: "AI_UNAVAILABLE",
+      });
+    }
 
     const content = message.content[0];
-    if (content.type !== "text") throw new Error("Unexpected response from Claude");
+    if (content.type !== "text") {
+      throw new UnprocessableEntityException({
+        message: "The AI scanner returned an unexpected response. Try again.",
+        code: "AI_PARSE_FAILED",
+      });
+    }
 
     let parsed: Record<string, unknown>;
     try {
@@ -629,7 +672,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       parsed = JSON.parse(text) as Record<string, unknown>;
     } catch (_e) {
       this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
-      throw new Error("Failed to parse AI response as JSON");
+      throw new UnprocessableEntityException({
+        message: "Couldn't read the scan result. Try again — a retry usually works.",
+        code: "AI_PARSE_FAILED",
+      });
+    }
+    // Disclose pages that were skipped (unreadable HEIC) in the result notes.
+    if (skippedPages.length > 0) {
+      const skipNote = `Page${skippedPages.length === 1 ? "" : "s"} ${skippedPages.join(", ")} couldn't be read (HEIC conversion failed) and ${skippedPages.length === 1 ? "was" : "were"} skipped — re-export as JPEG if lines are missing.`;
+      const priorNotes = typeof parsed.notes === "string" ? parsed.notes.trim() : "";
+      parsed.notes = priorNotes ? `${priorNotes} ${skipNote}` : skipNote;
     }
 
     // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
