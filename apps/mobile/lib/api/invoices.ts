@@ -306,6 +306,33 @@ export function useCreatePartialInvoiceFromOrder() {
   });
 }
 
+/**
+ * Create (or fetch, idempotently) the full invoice for a delivered order —
+ * `POST /invoices/from-order/:orderId`. Returns `Invoice[]` because a regulated
+ * order can split into multiple invoices (one per license category). Safe to call
+ * after the DELIVERED transition even though the server also fire-and-forget
+ * auto-creates the draft: the endpoint returns the existing invoice(s) rather
+ * than duplicating, and calling it here is how the client gets the id(s)
+ * synchronously (the changeStatus auto-create doesn't block the response).
+ */
+export function useCreateInvoiceFromOrder() {
+  const qc = useQueryClient();
+  return useMutation<Invoice[], Error, string>({
+    mutationFn: (orderId) =>
+      apiClient.post(`/invoices/from-order/${orderId}`).then((r) => {
+        const d = r.data;
+        return Array.isArray(d) ? d : [d];
+      }),
+    onSuccess: (_, orderId) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders", orderId] });
+    },
+  });
+}
+
 /** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
 export type InvoicePdfVariant = "draft" | "final";
 

@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -14,10 +23,23 @@ import {
   useUpdateOrderShipment,
   type OrderStatus,
 } from "../../../../lib/api/orders";
+import {
+  useCreateInvoiceFromOrder,
+  useInvoicePdf,
+  useSendInvoice,
+} from "../../../../lib/api/invoices";
+import {
+  invoiceReadyMessage,
+  preferredPhone,
+  smsUrl,
+  whatsappUrl,
+} from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
+import { sharePdf } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -199,7 +221,15 @@ export default function OrderDetailScreen() {
   const deleteMut = useDeleteOrder();
   const urgentMut = useToggleOrderUrgent();
   const shipmentMut = useUpdateOrderShipment();
+  const createInvoiceMut = useCreateInvoiceFromOrder();
+  const sendMut = useSendInvoice();
+  const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
+  const [sendSheet, setSendSheet] = useState<{
+    invoiceId: string;
+    invoiceNumber: string;
+    totalFmt: string;
+  } | null>(null);
 
   if (isLoading) {
     return (
@@ -234,16 +264,43 @@ export default function OrderDetailScreen() {
     order.status === "DRAFT" || order.status === "PENDING" || order.status === "CONFIRMED";
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
+  const toastError = (e: unknown, fallback = "Try again.") => {
+    const err = e as { response?: { data?: { message?: string } }; message?: string };
+    showToast(err?.response?.data?.message ?? err?.message ?? fallback);
+  };
+
+  /**
+   * Create-or-fetch the invoice for this order (idempotent) and open the send
+   * sheet. Mirrors web's handleDeliver: the server auto-creates the DRAFT on
+   * DELIVERED fire-and-forget, so we call from-order here to get the id back
+   * synchronously. A regulated order can split into several invoices — we send
+   * the first; the rest are reachable from the Invoices list.
+   */
+  const openSendForOrder = () => {
+    createInvoiceMut.mutate(order.id, {
+      onSuccess: (invoices) => {
+        const inv = invoices[0];
+        if (!inv) {
+          showToast("Invoice created — open it from Invoices to send.");
+          return;
+        }
+        setSendSheet({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          totalFmt: formatCurrency(inv.total),
+        });
+      },
+      onError: (e) => toastError(e, "Couldn't prepare the invoice. Create it from Invoices."),
+    });
+  };
+
   const handleStatusChange = (action: StatusAction) => {
     const onDone = (msg: string) => ({
       onSuccess: () => {
         showToast(msg);
         refetch();
       },
-      onError: (e: unknown) => {
-        const err = e as { response?: { data?: { message?: string } }; message?: string };
-        showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
-      },
+      onError: (e: unknown) => toastError(e),
     });
     const doChange = () => {
       if (action.reopenCancelled) {
@@ -252,7 +309,15 @@ export default function OrderDetailScreen() {
       }
       changeMut.mutate(
         { id: order.id, status: action.toStatus, reason: action.reason },
-        onDone(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`),
+        {
+          onSuccess: () => {
+            showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
+            refetch();
+            // Post-delivery: offer to send the invoice (any path into DELIVERED).
+            if (action.toStatus === "DELIVERED") openSendForOrder();
+          },
+          onError: (e: unknown) => toastError(e),
+        },
       );
     };
 
@@ -261,6 +326,71 @@ export default function OrderDetailScreen() {
     } else {
       doChange();
     }
+  };
+
+  // Channel handlers for the send sheet. WhatsApp/SMS are client deep-links with
+  // no status change (mirrors web); Email is a real server send; Share PDF pushes
+  // the file bytes through the OS share sheet.
+  const sendPhone = preferredPhone(order.customer?.mobile, order.customer?.phone);
+  const sendEmail = order.customer?.email;
+  const buildMessage = () =>
+    sendSheet
+      ? invoiceReadyMessage(
+          order.customer?.businessName ?? "there",
+          sendSheet.invoiceNumber,
+          sendSheet.totalFmt,
+        )
+      : "";
+
+  const handleWhatsApp = () => {
+    if (!sendSheet || !sendPhone) return;
+    Linking.openURL(whatsappUrl(sendPhone, buildMessage())).catch(() =>
+      showToast("Couldn't open WhatsApp."),
+    );
+  };
+  const handleSms = () => {
+    if (!sendSheet || !sendPhone) return;
+    const sep = Platform.OS === "ios" ? "&" : "?";
+    Linking.openURL(smsUrl(sendPhone, buildMessage(), sep)).catch(() =>
+      showToast("Couldn't open Messages."),
+    );
+  };
+  const handleEmailInvoice = () => {
+    if (!sendSheet || !sendEmail) return;
+    sendMut.mutate(
+      { id: sendSheet.invoiceId, email: sendEmail },
+      {
+        onSuccess: () => {
+          showToast("Invoice emailed");
+          setSendSheet(null);
+        },
+        onError: (e) => toastError(e),
+      },
+    );
+  };
+  const handleSharePdf = () => {
+    if (!sendSheet) return;
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          try {
+            await sharePdf({
+              url: data.url,
+              filename: `${sendSheet.invoiceNumber || "invoice"}.pdf`,
+              dialogTitle: `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim(),
+            });
+          } catch (e) {
+            toastError(e, "Couldn't share the PDF.");
+          }
+        },
+        onError: (e) => toastError(e),
+      },
+    );
   };
 
   const handleDelete = () => {
@@ -539,6 +669,20 @@ export default function OrderDetailScreen() {
                   <Text style={styles.actionBtnText}>Split into invoice…</Text>
                 </Pressable>
               ) : null}
+              {/* Re-open the post-delivery send sheet — the invoice is auto-created
+                  on DELIVERED, so this is a re-send affordance (idempotent). */}
+              {order.status === "DELIVERED" ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={openSendForOrder}
+                  disabled={createInvoiceMut.isPending}
+                >
+                  <Ionicons name="paper-plane-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>
+                    {createInvoiceMut.isPending ? "Preparing…" : "Send invoice…"}
+                  </Text>
+                </Pressable>
+              ) : null}
               {!isTerminal ? (
                 <Pressable
                   style={[styles.actionBtn, styles.secondaryAction]}
@@ -584,6 +728,22 @@ export default function OrderDetailScreen() {
         saving={shipmentMut.isPending}
         onClose={() => setShipmentModal(false)}
         onSave={handleSaveShipment}
+      />
+
+      <SendInvoiceSheet
+        open={sendSheet !== null}
+        onClose={() => setSendSheet(null)}
+        customerName={order.customer?.businessName ?? "Customer"}
+        invoiceNumber={sendSheet?.invoiceNumber ?? ""}
+        totalFmt={sendSheet?.totalFmt ?? ""}
+        phone={sendPhone}
+        email={sendEmail}
+        emailSending={sendMut.isPending}
+        pdfSending={pdfMut.isPending}
+        onWhatsApp={handleWhatsApp}
+        onSms={handleSms}
+        onEmail={handleEmailInvoice}
+        onSharePdf={handleSharePdf}
       />
     </SafeAreaView>
   );

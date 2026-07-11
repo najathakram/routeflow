@@ -124,6 +124,9 @@ export interface AdminOrder {
     businessName: string;
     contactName?: string;
     phone?: string;
+    /** Mobile number — preferred for WhatsApp/SMS over the landline `phone`. */
+    mobile?: string;
+    email?: string;
   };
   lineItems: Array<{
     id: string;
