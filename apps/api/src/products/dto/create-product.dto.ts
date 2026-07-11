@@ -8,7 +8,9 @@ import {
   IsUUID,
   Matches,
 } from "class-validator";
+import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
+import { emptyToUndefined, toOptionalDecimalString } from "../../common/dto-transforms";
 
 export class CreateProductDto {
   @IsString() name: string;
@@ -26,10 +28,12 @@ export class CreateProductDto {
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
   @IsOptional() @IsDecimal() standardCost?: string;
   @IsOptional() @IsInt() unitsPerBox?: number;
-  @IsOptional() @IsDecimal() priceTier2?: string;
-  @IsOptional() @IsDecimal() priceTier3?: string;
-  @IsOptional() @IsDecimal() priceTier4?: string;
-  @IsOptional() @IsDecimal() priceTier5?: string;
-  @IsOptional() @IsUUID() parentProductId?: string;
+  // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
+  // whole save — see fix/tier-pricing-save).
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier2?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier3?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier4?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
   @IsOptional() @IsString() variantName?: string;
 }

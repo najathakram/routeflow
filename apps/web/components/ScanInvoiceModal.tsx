@@ -13,6 +13,7 @@ import {
   ShoppingCart,
   Receipt,
   Layers,
+  Plus,
 } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
 import { scanInvoice, type ScannedItem, type ScanResult } from "@/lib/api/invoice-scan";
@@ -25,7 +26,9 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
+import { InlineCreateProductModal } from "./InlineCreateProductModal";
 import { displayProductName } from "@/lib/product-display";
+import { roundMoney } from "@/lib/pricing";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -94,6 +97,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const [step, setStep] = React.useState<"upload" | "processing" | "review">("upload");
   const [scanResult, setScanResult] = React.useState<ScanResult | null>(null);
   const [reviewItems, setReviewItems] = React.useState<ReviewItem[]>([]);
+  // Row index a "Create product from this line" quick-create is open for.
+  const [createFromRow, setCreateFromRow] = React.useState<number | null>(null);
   const [createMode, setCreateMode] = React.useState<CreateMode>("bill");
   const [isDragging, setIsDragging] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -551,6 +556,19 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           ];
         });
 
+        // Unlinked lines never restock — make skipping them an EXPLICIT choice
+        // instead of silently acknowledging on the operator's behalf.
+        const unlinkedCount = billItems.filter((it) => !it.productId).length;
+        if (unlinkedCount > 0) {
+          const proceed = window.confirm(
+            `${unlinkedCount} line${unlinkedCount === 1 ? "" : "s"} ${
+              unlinkedCount === 1 ? "isn't" : "aren't"
+            } linked to a product and won't update stock or costs.\n\n` +
+              `Link or create products for them first, or click OK to create & receive anyway.`,
+          );
+          if (!proceed) return;
+        }
+
         const bill = await createBill.mutateAsync({
           supplierId,
           billDate,
@@ -563,8 +581,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         const matchedItems = billItems.filter((it) => it.productId).length;
         if (billId) {
           try {
-            // The operator just reviewed every line's product mapping in this
-            // modal, so unmapped lines are an informed choice — acknowledge.
+            // acknowledgeUnlinked is safe here: with unlinked lines present the
+            // operator explicitly confirmed above; without them it's a no-op.
             await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             results.push(
               matchedItems > 0
@@ -995,6 +1013,26 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           <p className="mt-0.5 text-xs text-navy/70">
                             Matched products will be added to inventory when you create the bill.
                           </p>
+                          {(() => {
+                            const unmatched = reviewItems.filter((it) => !it.productId).length;
+                            return unmatched > 0 ? (
+                              <div
+                                className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5"
+                                data-testid="unmatched-banner"
+                              >
+                                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                                <p className="text-xs text-amber-800">
+                                  <span className="font-semibold">
+                                    {unmatched} item{unmatched === 1 ? "" : "s"} didn&apos;t match
+                                    any product.
+                                  </span>{" "}
+                                  Link each to an existing product, create a new product from the
+                                  line, or leave it as a custom line — custom lines never update
+                                  stock or costs.
+                                </p>
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                         {previewUrl && (
                           <button
@@ -1108,15 +1146,25 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                           ))}
                                         </select>
                                         {!item.productId && (
-                                          <input
-                                            type="text"
-                                            value={item.description}
-                                            onChange={(e) =>
-                                              updateItem(i, { description: e.target.value })
-                                            }
-                                            placeholder="Custom description (won't update stock)"
-                                            className="w-full rounded-lg border border-surface-border px-2.5 py-1.5 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                          />
+                                          <>
+                                            <input
+                                              type="text"
+                                              value={item.description}
+                                              onChange={(e) =>
+                                                updateItem(i, { description: e.target.value })
+                                              }
+                                              placeholder="Custom description (won't update stock)"
+                                              className="w-full rounded-lg border border-surface-border px-2.5 py-1.5 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={() => setCreateFromRow(i)}
+                                              className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline"
+                                            >
+                                              <Plus className="h-3 w-3" />
+                                              Create product from this line
+                                            </button>
+                                          </>
                                         )}
                                       </div>
                                     </td>
@@ -1438,6 +1486,46 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           )}
         </div>
       </div>
+
+      {/* Quick-create a product from an unmatched extracted line: name pre-filled
+          from the invoice text, sell price suggested at cost + 30% (editable),
+          the invoice cost saved as standardCost — finish setup later. */}
+      {createFromRow != null && reviewItems[createFromRow] && (
+        <InlineCreateProductModal
+          isOpen
+          onClose={() => setCreateFromRow(null)}
+          initialName={
+            reviewItems[createFromRow].extractedName || reviewItems[createFromRow].description
+          }
+          initialPrice={
+            parseFloat(reviewItems[createFromRow].unitCost) > 0
+              ? roundMoney(parseFloat(reviewItems[createFromRow].unitCost) * 1.3)
+              : undefined
+          }
+          initialCost={parseFloat(reviewItems[createFromRow].unitCost) || undefined}
+          onCreated={(product) => {
+            const i = createFromRow;
+            const item = reviewItems[i];
+            // Link the row directly — the fresh product isn't in the cached
+            // catalog list yet, so handleProductSelect's lookup would miss it.
+            updateItem(i, {
+              productId: product.id,
+              description: product.name,
+              splits: undefined,
+            });
+            // Teach the matcher this supplier's wording for next time.
+            const detectedSupplier = scanResult?.supplier;
+            if (detectedSupplier && item.extractedName) {
+              saveMapping.mutate({
+                supplierName: detectedSupplier,
+                rawDescription: item.extractedName,
+                productId: product.id,
+              });
+            }
+            setCreateFromRow(null);
+          }}
+        />
+      )}
     </div>
   );
 }

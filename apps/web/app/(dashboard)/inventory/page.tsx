@@ -19,6 +19,9 @@ import {
   RefreshCcw,
 } from "lucide-react";
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
+import { SearchableProductPicker } from "@/components/SearchableProductPicker";
+import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useStockOverview,
@@ -169,6 +172,32 @@ function QuickRestockModal({
   const selectedProduct = products.find((p) => p.id === form.productId);
   const decimalQty = selectedProduct ? isDecimalUnit(selectedProduct.unit) : true;
 
+  // Scan-to-pick: USB wedge (listens on the picker's search input) or webcam.
+  const pickerInputRef = React.useRef<HTMLInputElement | null>(null);
+  const qtyInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [scanLoading, setScanLoading] = React.useState(false);
+  const { toast: scanToast } = useToast();
+  const handleScan = async (code: string) => {
+    setScanLoading(true);
+    try {
+      const result = await resolveProductByCode(code);
+      if (!result.notFound) {
+        setForm((f) => ({ ...f, productId: result.product.id }));
+        qtyInputRef.current?.focus();
+      } else {
+        scanToast({
+          title: "No product for that code",
+          description: "Add it from the Products page first, then restock it.",
+          variant: "error",
+        });
+      }
+    } catch {
+      scanToast({ title: "Scan lookup failed — try again", variant: "error" });
+    } finally {
+      setScanLoading(false);
+    }
+  };
+
   // Reference combobox state
   const [refSearch, setRefSearch] = React.useState("");
   const [refOpen, setRefOpen] = React.useState(false);
@@ -204,6 +233,11 @@ function QuickRestockModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // The picker isn't a native required control — enforce selection here.
+    if (!form.productId) {
+      scanToast({ title: "Pick a product first", variant: "error" });
+      return;
+    }
     const qty = Number(form.quantity);
     if (!decimalQty && !Number.isInteger(qty)) {
       alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
@@ -248,20 +282,22 @@ function QuickRestockModal({
 
           <div>
             <label className="mb-1 block text-xs text-navy">Product *</label>
-            <select
-              required
-              value={form.productId}
-              onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Select product…</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.sku ? ` (${p.sku})` : ""}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-stretch gap-2">
+              <SearchableProductPicker
+                value={form.productId}
+                onChange={(id) => setForm((f) => ({ ...f, productId: id }))}
+                products={products}
+                placeholder="Type a name or SKU, or scan…"
+                className="flex-1"
+                inputRef={pickerInputRef}
+              />
+              <BarcodeScannerButton
+                onScan={(code) => void handleScan(code)}
+                inputRef={pickerInputRef}
+                title="Scan a barcode to pick the product (USB scanner: focus the search box and scan)"
+              />
+            </div>
+            {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
                 Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
@@ -277,6 +313,7 @@ function QuickRestockModal({
               </label>
               <input
                 required
+                ref={qtyInputRef}
                 type="number"
                 min={decimalQty ? 0.001 : 1}
                 step={decimalQty ? 0.001 : 1}

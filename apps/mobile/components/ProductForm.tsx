@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
+import { CategoryInput } from "./CategoryInput";
 
 export interface ProductFormValues {
   name: string;
@@ -170,7 +171,7 @@ export function ProductForm({
           />
         </FormField>
         <FormField label="Category">
-          <FormTextInput
+          <CategoryInput
             value={form.category}
             onChangeText={(v) => set("category", v)}
             placeholder="Bakery"

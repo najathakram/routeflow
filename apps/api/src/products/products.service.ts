@@ -167,6 +167,31 @@ export class ProductsService {
     };
   }
 
+  /**
+   * Distinct category strings for this tenant, for autocomplete. Trimmed,
+   * de-duplicated case-insensitively (first casing wins), sorted. Rides the
+   * `@@index([category])` — no product rows or thumbnails are materialized.
+   */
+  async listCategories(): Promise<string[]> {
+    const rows = await this.prisma.forTenant().product.findMany({
+      where: { category: { not: null } },
+      select: { category: true },
+      distinct: ["category"],
+      orderBy: { category: "asc" },
+    });
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const { category } of rows) {
+      const trimmed = category?.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(trimmed);
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }
+
   async findOne(id: string) {
     const product = await this.prisma.forTenant().product.findUnique({
       where: { id },

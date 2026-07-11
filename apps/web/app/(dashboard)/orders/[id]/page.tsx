@@ -44,7 +44,12 @@ import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
+import {
+  computeLineSubtotal,
+  formatQtySplit,
+  normalizeBoxesPieces,
+  roundMoney,
+} from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -2093,13 +2098,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right text-navy/70">
-                          {li.boxes != null ? (
-                            <span title={`${Number(li.qty)} ${li.product?.unit ?? "pcs"} total`}>
-                              {li.boxes} box{li.boxes !== 1 ? "es" : ""}
-                              {li.pieces ? ` + ${li.pieces} pcs` : ""}
+                          {li.boxes != null || li.pieces != null ? (
+                            <span title={`${Number(li.qty)} pcs total`}>
+                              {formatQtySplit({
+                                qty: li.qty,
+                                boxes: li.boxes,
+                                pieces: li.pieces,
+                              })}
                             </span>
                           ) : (
-                            <span className="mono">{Number(li.qty)}</span>
+                            <span className="mono">{formatQtySplit({ qty: li.qty })}</span>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">

@@ -101,6 +101,35 @@ describe("ProductsService", () => {
     });
   });
 
+  // ─── listCategories ───────────────────────────────────────────────────────
+
+  describe("listCategories", () => {
+    it("returns distinct trimmed categories, deduped case-insensitively, sorted", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { category: "Produce" },
+        { category: "bakery" },
+        { category: "Bakery" }, // case-dupe of "bakery" — first casing wins
+        { category: "  Drinks  " }, // trimmed
+        { category: "   " }, // whitespace-only → dropped
+        { category: null }, // defensive; excluded by the where anyway
+      ]);
+
+      await expect(service.listCategories()).resolves.toEqual(["bakery", "Drinks", "Produce"]);
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { category: { not: null } },
+          select: { category: true },
+          distinct: ["category"],
+        }),
+      );
+    });
+
+    it("returns an empty array for a tenant with no categorized products", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      await expect(service.listCategories()).resolves.toEqual([]);
+    });
+  });
+
   // ─── findOne ──────────────────────────────────────────────────────────────
 
   describe("findOne", () => {

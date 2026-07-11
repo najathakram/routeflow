@@ -7,6 +7,7 @@ import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
+import { CategoryCombobox } from "./CategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 
 interface CreatedProduct {
@@ -27,6 +28,10 @@ interface InlineCreateProductModalProps {
   initialName?: string;
   /** Pre-fill SKU from a scanned barcode */
   initialSku?: string;
+  /** Suggested sell price (e.g. invoice cost + 30% from a vendor-bill scan) — editable */
+  initialPrice?: number;
+  /** Purchase cost carried from a vendor-bill line; saved as the product's standardCost */
+  initialCost?: number;
 }
 
 export function InlineCreateProductModal({
@@ -35,6 +40,8 @@ export function InlineCreateProductModal({
   onCreated,
   initialName = "",
   initialSku = "",
+  initialPrice,
+  initialCost,
 }: InlineCreateProductModalProps) {
   const { toast } = useToast();
   const createProduct = useCreateProduct();
@@ -63,12 +70,17 @@ export function InlineCreateProductModal({
   // Derived: the selected parent product object (for name preview)
   const selectedParent = parentCandidates.find((p: any) => p.id === form.parentProductId) as any;
 
-  // Sync initialName / initialSku when modal opens
+  // Sync initial prefills when modal opens
   React.useEffect(() => {
     if (isOpen) {
-      setForm((f) => ({ ...f, name: initialName, sku: initialSku || "" }));
+      setForm((f) => ({
+        ...f,
+        name: initialName,
+        sku: initialSku || "",
+        ...(initialPrice != null ? { pricePerUnit: initialPrice.toFixed(2) } : {}),
+      }));
     }
-  }, [isOpen, initialName, initialSku]);
+  }, [isOpen, initialName, initialSku, initialPrice]);
 
   if (!isOpen) return null;
 
@@ -127,6 +139,8 @@ export function InlineCreateProductModal({
         unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
         parentProductId: form.parentProductId || undefined,
         variantName: form.variantName.trim() || undefined,
+        // Purchase cost carried from a vendor-bill line (finish-later quick create).
+        ...(initialCost != null && initialCost > 0 ? { standardCost: String(initialCost) } : {}),
       },
       {
         onSuccess: (product: CreatedProduct) => {
@@ -289,14 +303,18 @@ export function InlineCreateProductModal({
                 className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 placeholder="0.00"
               />
+              {initialCost != null && initialCost > 0 && (
+                <p className="mt-1 text-[11px] text-navy/70">
+                  Suggested from invoice cost ${initialCost.toFixed(2)} + 30%. Cost is saved to the
+                  product — finish setup later from its page.
+                </p>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Category</label>
-              <input
-                type="text"
+              <CategoryCombobox
                 value={form.category}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                onChange={(v) => setForm((f) => ({ ...f, category: v }))}
                 placeholder="e.g. Bakery"
               />
             </div>

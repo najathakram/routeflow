@@ -37,6 +37,15 @@ export function useProductByBarcode(barcode: string | null) {
   });
 }
 
+/** Distinct tenant categories for autocomplete. Invalidated with the ["products"] prefix. */
+export function useProductCategories() {
+  return useQuery<string[]>({
+    queryKey: ["products", "categories"],
+    queryFn: () => apiClient.get("/products/categories").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 /** Invalidate every query whose data depends on the set of products. */
 function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["products"] });

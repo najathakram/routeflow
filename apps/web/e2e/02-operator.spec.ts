@@ -150,6 +150,71 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-09b category autocomplete — endpoint serves suggestions; typing a new one is kept", async ({
+    page,
+  }) => {
+    // Locks the GET /products/categories route ordering (declared before /:id —
+    // a regression turns this into a silent 404/400 from findOne("categories")).
+    const categoriesResp = page.waitForResponse(
+      (r) => r.url().includes("/products/categories") && r.request().method() === "GET",
+    );
+    await page.goto("/products");
+    await page
+      .getByRole("button", { name: /new product/i })
+      .first()
+      .click();
+    const categoryInput = page.getByPlaceholder("Select or type a new category");
+    await expect(categoryInput).toBeVisible({ timeout: 15_000 });
+    await categoryInput.click();
+    const resp = await categoriesResp;
+    expect(resp.status()).toBe(200);
+    const categories: string[] = await resp.json();
+    expect(Array.isArray(categories)).toBe(true);
+
+    if (categories.length > 0) {
+      // Suggestions listed; clicking one fills the input.
+      const first = categories[0];
+      const option = page.getByRole("button", { name: first, exact: true }).first();
+      await expect(option).toBeVisible();
+      await option.click();
+      await expect(categoryInput).toHaveValue(first);
+    }
+
+    // A brand-new category is kept as typed (created implicitly on save).
+    await categoryInput.fill("E2E Novel Category");
+    await expect(page.getByText(/new category/i).first()).toBeVisible();
+    await expect(categoryInput).toHaveValue("E2E Novel Category");
+    await page.keyboard.press("Escape");
+  });
+
+  test('OP-09c tier prices save on a standalone product (regression: parentProductId "" → 400)', async ({
+    page,
+  }) => {
+    await page.goto("/products");
+    // Open the first product's detail page
+    await page.locator("table tbody tr a, table tbody tr").first().click();
+    await page.waitForURL(/\/products\/.+/);
+    // Enter edit mode (icon button)
+    await page.locator('button[title="Edit product"]').first().click();
+    // Set Tier 2 to a valid price. (The tier editor is a DecimalInput —
+    // type="text" inputMode="decimal" since the money-input fix.)
+    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    await expect(tier2).toBeVisible({ timeout: 10_000 });
+    await tier2.fill("9.75");
+    // Save must produce a 2xx PATCH — the old spread payload sent
+    // parentProductId: "" and 400'd EVERY save from this form.
+    const patchResp = page.waitForResponse(
+      (r) => r.url().includes("/products/") && r.request().method() === "PATCH",
+    );
+    await page.getByRole("button", { name: /save/i }).first().click();
+    const resp = await patchResp;
+    expect(resp.status()).toBeLessThan(300);
+    // Edit mode closes back to the pencil button (no error toast path).
+    await expect(page.locator('button[title="Edit product"]').first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
   // ── Routes ────────────────────────────────────────────────────────────────
 
   test("OP-10 routes list loads", async ({ page }) => {
@@ -254,6 +319,103 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-17b vendor-bill scan surfaces unmatched lines: banner + create-product prefill + explicit acknowledge", async ({
+    page,
+  }) => {
+    // Canned AI extraction: two lines, neither matches a product. Unmatched
+    // lines must be SURFACED (banner + per-line create), never silently dropped.
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          supplier: "E2E Wholesale Co",
+          invoiceNumber: "INV-E2E-1",
+          invoiceDate: "2026-07-01",
+          expenseDescription: null,
+          expenseCategory: null,
+          subtotal: 70,
+          tax: 0,
+          total: 70,
+          notes: null,
+          items: [
+            {
+              extractedName: "ACME COLA 24PK",
+              qty: 2,
+              unitCost: 20,
+              lineTotal: 40,
+              matchedProductId: null,
+              matchedProductName: null,
+              confidence: "none",
+            },
+            {
+              extractedName: "MYSTERY SNACK BOX",
+              qty: 3,
+              unitCost: 10,
+              lineTotal: 30,
+              matchedProductId: null,
+              matchedProductName: null,
+              confidence: "none",
+            },
+          ],
+        }),
+      }),
+    );
+
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "invoice.png", mimeType: "image/png", buffer: Buffer.from("fake") });
+
+    // Review step: the unmatched banner names the count.
+    const banner = page.getByTestId("unmatched-banner");
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    await expect(banner).toContainText(/2 items didn't match/i);
+
+    // Per-line quick-create opens pre-filled from the extracted line:
+    // name verbatim, sell price suggested at cost 20 × 1.3 = 26.00.
+    await page
+      .getByRole("button", { name: /create product from this line/i })
+      .first()
+      .click();
+    const createModal = page.getByRole("heading", { name: "New Product" }).locator("xpath=../..");
+    await expect(
+      createModal.getByText("Name *", { exact: true }).locator("xpath=..").locator("input"),
+    ).toHaveValue("ACME COLA 24PK");
+    await expect(
+      createModal.getByText("Price ($)", { exact: true }).locator("xpath=..").locator("input"),
+    ).toHaveValue("26.00");
+    await expect(page.getByText(/suggested from invoice cost/i)).toBeVisible();
+    // Close without creating (don't pollute the seeded catalog).
+    await page
+      .getByRole("heading", { name: "New Product" })
+      .locator("xpath=..")
+      .locator("button")
+      .click();
+
+    // Creating the bill with unmatched lines requires an EXPLICIT confirm —
+    // dismissing it must abort before any bill is created.
+    const supplierSelect = page.locator('select:has(option:text("— Select supplier —"))').first();
+    await supplierSelect.selectOption({ index: 1 });
+    let billPosted = false;
+    await page.route(
+      "**/vendor-bills",
+      (route) => {
+        if (route.request().method() === "POST") billPosted = true;
+        void route.continue();
+      },
+      { times: 1 },
+    );
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toMatch(/aren't linked to a product/i);
+      void dialog.dismiss();
+    });
+    await page.getByRole("button", { name: /create vendor bill/i }).click();
+    await page.waitForTimeout(800);
+    expect(billPosted).toBe(false);
+  });
+
   // ── Suppliers ─────────────────────────────────────────────────────────────
 
   test("OP-18 suppliers list loads", async ({ page }) => {
@@ -262,6 +424,37 @@ test.describe("Operator — Tenant Dashboard", () => {
       .locator("[class*='card'], [class*='grid'], table, [class*='empty']")
       .first();
     await expect(content).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("OP-18b quick restock — type-ahead picks a product and records the purchase", async ({
+    page,
+  }) => {
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /quick restock/i }).click();
+
+    // Type-ahead by name: type a letter, pick the first suggestion.
+    const picker = page.getByPlaceholder("Type a name or SKU, or scan…");
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+    await picker.fill("a");
+    const firstOption = page.getByRole("option").first();
+    await expect(firstOption).toBeVisible({ timeout: 10_000 });
+    await firstOption.click();
+
+    // Current-stock hint proves the selection registered.
+    await expect(page.getByText(/current stock:/i)).toBeVisible();
+
+    // The modal's labels aren't htmlFor-associated — target by position:
+    // the qty/cost grid renders them as the first two number inputs.
+    const numberInputs = page.locator('form input[type="number"]');
+    await numberInputs.nth(0).fill("1");
+    await numberInputs.nth(1).fill("1.00");
+
+    const purchaseResp = page.waitForResponse(
+      (r) => r.url().includes("/inventory/movements/purchase") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Record Restock" }).click();
+    const resp = await purchaseResp;
+    expect(resp.status()).toBeLessThan(300);
   });
 
   // ── Settings ──────────────────────────────────────────────────────────────
