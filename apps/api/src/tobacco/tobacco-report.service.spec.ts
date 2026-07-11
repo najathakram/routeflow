@@ -37,7 +37,7 @@ describe("TobaccoReportService", () => {
     prisma.invoiceItem.findMany.mockResolvedValue([
       { productId: "p1", qty: D(10), subtotal: D(80), taxRate: D(0.08) },
     ]);
-    prisma.tenantConfig.findUnique.mockResolvedValue({ businessName: "Affa Wholesale" });
+    prisma.tenantConfig.findUnique.mockResolvedValue({ businessName: "Acme Wholesale" });
   };
 
   beforeEach(async () => {

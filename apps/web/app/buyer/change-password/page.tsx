@@ -15,11 +15,13 @@ import { buyerChangePassword } from "@/lib/buyer-auth";
 const schema = z
   .object({
     currentPassword: z.string().min(1, "Current password is required"),
+    // Mirrors the server policy (BuyerChangePasswordDto): upper + lower + digit-or-special.
     newPassword: z
       .string()
       .min(8, "New password must be at least 8 characters")
       .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[0-9]/, "Must contain at least one number"),
+      .regex(/[a-z]/, "Must contain at least one lowercase letter")
+      .regex(/[\d\W]/, "Must contain at least one number or special character"),
     confirmPassword: z.string().min(1, "Please confirm your new password"),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
@@ -135,7 +137,7 @@ export default function BuyerChangePasswordPage() {
                 error={errors.newPassword?.message}
               />
               <p className="text-xs text-navy/70">
-                At least 8 characters, one uppercase letter, one number.
+                At least 8 characters, with upper and lower case and a number or symbol.
               </p>
               <PasswordInput
                 label="Confirm new password"

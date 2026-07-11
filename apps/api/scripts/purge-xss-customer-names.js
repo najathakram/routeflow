@@ -12,9 +12,10 @@
  *   4. It has zero associated Invoices (customerId FK count = 0).
  *
  * Idempotent — re-running after the rows are gone is safe (prints "nothing to do").
- * DO NOT run against the "affa" tenant or any tenant that has real customer data.
+ * Only approved test tenants may be targeted (enforced via assertTestTenant) —
+ * never a tenant with real customer data.
  *
- * Run from repo root:
+ * Run from repo root (DATABASE_URL required, e.g. via railway run):
  *   node apps/api/scripts/purge-xss-customer-names.js
  */
 
@@ -23,14 +24,12 @@
 const { Client } = require("pg");
 const path = require("path");
 const fs = require("fs");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 /** Hard-coded target — only this tenant is touched. */
 const TARGET_TENANT_ID = "8ee7bbf5-991b-41b1-adcb-4a6c20981401";
-
-/** Safety guard — we refuse to run if the resolved tenant happens to be "affa". */
-const PROTECTED_SLUG = "affa";
 
 function resolveDatabaseUrl() {
   const envPath = path.join(__dirname, "../.env");
@@ -39,7 +38,11 @@ function resolveDatabaseUrl() {
     const match = raw.match(/^DATABASE_URL\s*=\s*"?([^"\r\n]+)"?/m);
     if (match) return match[1];
   }
-  return "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  console.error(
+    "[purge-xss-names] DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/purge-xss-customer-names.js",
+  );
+  process.exit(1);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -62,9 +65,11 @@ async function main() {
   const tenantSlug = tenantRes.rows[0].slug;
   console.log(`[purge-xss-names] Target tenant: ${tenantSlug} (id=${TARGET_TENANT_ID})`);
 
-  // 2. Safety: refuse to run if this is the "affa" production tenant.
-  if (tenantSlug === PROTECTED_SLUG) {
-    console.error(`[purge-xss-names] ABORT: tenant slug is "${PROTECTED_SLUG}" — refusing to run.`);
+  // 2. Safety: only approved test tenants may be purged — never a live client.
+  try {
+    assertTestTenant(tenantSlug, "purge-xss-customer-names");
+  } catch (err) {
+    console.error(`[purge-xss-names] ABORT: ${err.message}`);
     await client.end();
     process.exit(1);
   }

@@ -4,10 +4,13 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 
-const pool = new Pool({
-  connectionString:
-    "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow",
-});
+if (!process.env.DATABASE_URL) {
+  console.error(
+    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/check-discrepancies.js",
+  );
+  process.exit(1);
+}
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 

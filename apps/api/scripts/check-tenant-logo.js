@@ -10,7 +10,11 @@ if (!url) {
   process.exit(1);
 }
 const isRailway = /\.railway\.internal|\.proxy\.rlwy\.net/i.test(url);
-const slug = process.argv[2] ?? "affa";
+const slug = process.argv[2];
+if (!slug) {
+  console.error("Usage: node apps/api/scripts/check-tenant-logo.js <tenant-slug>");
+  process.exit(1);
+}
 
 (async () => {
   const c = new Client({

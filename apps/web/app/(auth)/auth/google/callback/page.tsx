@@ -6,6 +6,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS, BUYER_KEYS } from "@/lib/auth-keys";
+import { setOpPresenceCookie, setBuyerPresenceCookie } from "@/lib/presence-cookies";
 
 // ─── Error messages shown to the user ────────────────────────────────────────
 
@@ -135,7 +136,7 @@ function GoogleCallbackInner() {
         // Set the buyer presence cookie that the dashboard middleware checks
         // (without this the middleware can't tell a buyer apart from a
         // logged-out user and may misroute them).
-        document.cookie = `rf-buyer-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+        setBuyerPresenceCookie();
         // Redirect to buyer portal — show linked banner if just accepted an invite.
         // Use a full document navigation (NOT router.replace): the auth providers
         // live at the app root and only read localStorage on mount. A client-side
@@ -154,7 +155,7 @@ function GoogleCallbackInner() {
         localStorage.setItem("accessToken", accessToken);
         localStorage.setItem("refreshToken", refreshToken);
         // Set the operator presence cookie so middleware path guards work.
-        document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+        setOpPresenceCookie();
 
         // Restore tenant cookie so API calls include X-Tenant-Slug header
         if (tenantSlug) {

@@ -5,23 +5,24 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 
 ## Where to find (this area)
 
-| Need                  | File → symbol                                                                       |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| Auth & tenant context | `middleware.ts` — tenant slug, mobile redirect, buyer-vs-operator guard             |
-| Operator auth model   | `lib/auth.ts` — `migrateLegacyOpToken()`, `AuthUser`, refresh-on-401                |
-| Auth hook             | `lib/auth-context.tsx` — `useAuth()`, sign-in/out, user/role state                  |
-| Token namespaces      | `lib/auth-keys.ts` — `OP_KEYS`, `BUYER_KEYS`, `DRIVER_KEYS` (localStorage)          |
-| Tenant slug cookie    | `lib/tenant-cookie.ts` — `setTenantCookie()`, `clearTenantCookie()` (non-httpOnly)  |
-| HTTP client & headers | `lib/api-client.ts` — axios, base URL, Bearer + X-Tenant-Slug, 401 refresh queue    |
-| Buyer HTTP client     | `lib/buyer-api-client.ts` — isolated, reads BUYER_KEYS only                         |
-| Super-admin client    | `lib/admin-api.ts` — `superAdminClient`, impersonation                              |
-| Operator login        | `app/(auth)/login/page.tsx` — workspace picker, legacy token migration              |
-| OAuth callback        | `app/(auth)/platform/auth/callback/page.tsx`                                        |
-| Buyer login & portal  | `app/buyer/login/page.tsx`, `app/buyer/layout.tsx`                                  |
-| Buyer auth hook       | `lib/buyer-auth-context.tsx` — `useBuyerAuth()`, active seller, multi-seller switch |
-| Tenant branding       | `components/tenant-provider.tsx` — fetch branding, inject CSS vars                  |
-| Security & headers    | `next.config.mjs` — CSP, X-Frame-Options DENY, hardening                            |
-| Socket.io realtime    | `lib/socket.ts` — `connectSocket()`, `getSocket()`, reconnect                       |
+| Need                  | File → symbol                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth & tenant context | `middleware.ts` — tenant slug, mobile redirect, buyer-vs-operator guard, signed-in landing 307 (`/` → /dashboard or /buyer/portal)                                  |
+| Presence cookies      | `lib/presence-cookies.ts` — `rf-op-auth`/`rf-buyer-auth`, 3-day TTL = refresh-token TTL; re-set on refresh, cleared on dead session (feeds the middleware redirect) |
+| Operator auth model   | `lib/auth.ts` — `migrateLegacyOpToken()`, `AuthUser`, refresh-on-401                                                                                                |
+| Auth hook             | `lib/auth-context.tsx` — `useAuth()`, sign-in/out, user/role state                                                                                                  |
+| Token namespaces      | `lib/auth-keys.ts` — `OP_KEYS`, `BUYER_KEYS`, `DRIVER_KEYS` (localStorage)                                                                                          |
+| Tenant slug cookie    | `lib/tenant-cookie.ts` — `setTenantCookie()`, `clearTenantCookie()` (non-httpOnly)                                                                                  |
+| HTTP client & headers | `lib/api-client.ts` — axios, base URL, Bearer + X-Tenant-Slug, 401 refresh queue                                                                                    |
+| Buyer HTTP client     | `lib/buyer-api-client.ts` — isolated, reads BUYER_KEYS only                                                                                                         |
+| Super-admin client    | `lib/admin-api.ts` — `superAdminClient`, impersonation                                                                                                              |
+| Operator login        | `app/(auth)/login/page.tsx` — workspace picker, legacy token migration                                                                                              |
+| OAuth callback        | `app/(auth)/platform/auth/callback/page.tsx`                                                                                                                        |
+| Buyer login & portal  | `app/buyer/login/page.tsx`, `app/buyer/layout.tsx`                                                                                                                  |
+| Buyer auth hook       | `lib/buyer-auth-context.tsx` — `useBuyerAuth()`, active seller, multi-seller switch                                                                                 |
+| Tenant branding       | `components/tenant-provider.tsx` — fetch branding, inject CSS vars                                                                                                  |
+| Security & headers    | `next.config.mjs` — CSP, X-Frame-Options DENY, hardening                                                                                                            |
+| Socket.io realtime    | `lib/socket.ts` — `connectSocket()`, `getSocket()`, reconnect                                                                                                       |
 
 ## App shell & lib
 

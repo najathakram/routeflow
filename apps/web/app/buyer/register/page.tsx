@@ -15,11 +15,13 @@ const registerSchema = z
   .object({
     name: z.string().min(2, "Name must be at least 2 characters"),
     email: z.string().email("Please enter a valid email address"),
+    // Mirrors the server policy (BuyerRegisterDto): upper + lower + digit-or-special.
     password: z
       .string()
       .min(8, "Password must be at least 8 characters")
       .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-      .regex(/[0-9]/, "Password must contain at least one number"),
+      .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+      .regex(/[\d\W]/, "Password must contain at least one number or special character"),
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -185,7 +187,7 @@ function BuyerRegisterInner() {
                 <input
                   id="buyer-password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="At least 8 characters, 1 uppercase, 1 number"
+                  placeholder="8+ chars, upper & lower case, number or symbol"
                   autoComplete="new-password"
                   className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:outline-none focus:ring-2 focus:ring-buyer-500 focus:border-transparent"
                   {...register("password")}

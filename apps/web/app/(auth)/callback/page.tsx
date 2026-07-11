@@ -6,6 +6,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { OP_KEYS } from "@/lib/auth-keys";
+import { setOpPresenceCookie } from "@/lib/presence-cookies";
 
 // This page handles the redirect after Google OAuth completes.
 // The API redirects here with ?accessToken=...&refreshToken=...&role=...
@@ -33,7 +34,7 @@ function AuthCallbackInner() {
       localStorage.setItem("accessToken", accessToken);
       localStorage.setItem("refreshToken", refreshToken);
       // Set the operator presence cookie so middleware path guards work.
-      document.cookie = `rf-op-auth=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+      setOpPresenceCookie();
       // Restore the tenant cookie so API calls include the right X-Tenant-Slug header
       if (tenantSlug) {
         setTenantCookie(tenantSlug);

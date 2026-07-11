@@ -10,13 +10,14 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const side = getSideFromPath(pathname);
 
-  // Note: AutoRedirectIfAuthed used to live here (sending logged-in users
-  // straight to /dashboard from `/`, `/retailers`, `/wholesalers`). It was
-  // removed because its localStorage-only check would falsely fire for any
-  // user with a stale token left over from an expired session — they'd get
-  // bounced from `/` to `/dashboard` to `/login` and never see the marketing
-  // site at all. Marketing pages now always render; users who want their
-  // dashboard click "Sign in" in the nav.
+  // Note: signed-in users are redirected away from `/` by the middleware
+  // (rf-op-auth → /dashboard, rf-buyer-auth → /buyer/portal), keyed on the
+  // presence cookies which track the live session (lib/presence-cookies.ts).
+  // An earlier client-side AutoRedirectIfAuthed component here was removed
+  // because its localStorage-only check falsely fired on stale tokens and
+  // hid the marketing site; the middleware approach avoids that because the
+  // cookies are cleared whenever a token refresh fails. All marketing pages
+  // other than `/` always render, even while signed in.
   return (
     <div className="rf-marketing" data-side={side}>
       <MarketingNav />

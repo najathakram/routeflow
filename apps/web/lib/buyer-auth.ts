@@ -1,5 +1,6 @@
 import axios from "axios";
 import { BUYER_KEYS } from "./auth-keys";
+import { setBuyerPresenceCookie, clearBuyerPresenceCookie } from "./presence-cookies";
 
 const BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1").replace(
   /\/$/,
@@ -99,17 +100,7 @@ export function clearActiveSeller(): void {
   localStorage.removeItem(BUYER_KEYS.activeSeller);
 }
 
-export const BUYER_PRESENCE_COOKIE = "rf-buyer-auth";
-
-function setBuyerPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${BUYER_PRESENCE_COOKIE}=1; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
-}
-
-function clearBuyerPresenceCookie(): void {
-  if (typeof document === "undefined") return;
-  document.cookie = `${BUYER_PRESENCE_COOKIE}=; path=/; max-age=0; samesite=lax`;
-}
+export { BUYER_PRESENCE_COOKIE, clearBuyerPresenceCookie } from "./presence-cookies";
 
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, {
@@ -170,8 +161,12 @@ export async function buyerRefreshTokens(): Promise<BuyerAuthResponse | null> {
     });
     localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
     localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
+    // Sliding window — see presence-cookies.ts.
+    setBuyerPresenceCookie();
     return data;
-  } catch {
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 401 || status === 403) clearBuyerPresenceCookie();
     return null;
   }
 }

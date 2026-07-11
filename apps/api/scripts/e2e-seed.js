@@ -17,6 +17,7 @@ const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 
@@ -24,7 +25,7 @@ const pool = new Pool({ connectionString: dbUrl });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-const TENANT_SLUG = "e2e-routeflow";
+const TENANT_SLUG = assertTestTenant("e2e-routeflow", "e2e-seed");
 const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";

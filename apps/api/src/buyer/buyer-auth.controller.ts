@@ -20,6 +20,8 @@ import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { BuyerRefreshDto } from "./dto/buyer-refresh.dto";
+import { BuyerChangePasswordDto } from "./dto/buyer-change-password.dto";
+import { BuyerUpdateAccountDto } from "./dto/buyer-update-account.dto";
 
 @ApiTags("buyer-auth")
 @Controller("buyer/auth")
@@ -73,10 +75,7 @@ export class BuyerAuthController {
   @UseGuards(BuyerJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Change buyer account password" })
-  changePassword(
-    @CurrentBuyer() buyer: BuyerJwtPayload,
-    @Body() dto: { currentPassword: string; newPassword: string },
-  ) {
+  changePassword(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: BuyerChangePasswordDto) {
     return this.buyerAuthService.changePassword(buyer.sub, dto.currentPassword, dto.newPassword);
   }
 
@@ -85,10 +84,7 @@ export class BuyerAuthController {
   @UseGuards(BuyerJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Update buyer profile (name, phone, mobile)" })
-  updateProfile(
-    @CurrentBuyer() buyer: BuyerJwtPayload,
-    @Body() dto: { name?: string; phone?: string; mobile?: string },
-  ) {
+  updateProfile(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: BuyerUpdateAccountDto) {
     return this.buyerAuthService.updateProfile(buyer.sub, dto);
   }
 

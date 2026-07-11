@@ -9,26 +9,29 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ## Where to find (this area)
 
-| Need                                     | File → symbol                                                                                |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Auth login/register/JWT                  | `auth/auth.controller.ts` + `auth.service.ts` → `login(dto)`, `refresh()`, reset-password    |
-| Tenant context isolation                 | `tenant/tenant-context.service.ts` → `get()`, `getOrNull()`, `isSuperAdmin()`                |
-| Tenant scoping in Prisma                 | `prisma/prisma.service.ts` → `forTenant(tenantId)`, `tenantTransaction(fn)`                  |
-| Rate limiting (100 req/60s)              | `app.module.ts` → `ThrottlerModule` + `common/redis-throttler.storage.ts`                    |
-| Tenant status guard                      | `tenant/tenant-status.guard.ts` → blocks SUSPENDED/CANCELLED tenants globally                |
-| Role-based access                        | `auth/guards/roles.guard.ts` → `@Roles(UserRole.DRIVER, ...)`                                |
-| Config & secrets                         | `config/configuration.ts` → env, JWT, Redis, R2, storage signing (HKDF derived)              |
-| Startup (migrations, secrets)            | `main.ts` → `assertSecrets()`, `runStartupMigration()`, CORS, helmet, trust proxy 2          |
-| Encryption at rest                       | `common/encryption.service.ts` → encrypt/decrypt (refuses placeholder key in prod)           |
-| File uploads/storage                     | `uploads/uploads.controller.ts` → multipart, disk write, HMAC-signed URLs                    |
-| Platform admin (tenants, billing, audit) | `platform-admin/platform-admin.controller.ts` → stats, tenant CRUD, impersonation            |
-| Buyer portal (multi-tenant identity)     | `buyer/buyer.controller.ts`, `buyer-auth.controller.ts` → register, link sellers, invites    |
-| Orders & tracking                        | `orders/orders.controller.ts` → CRUD, status transitions, sweep-pending consolidation        |
-| Routes & runs (driver)                   | `routes/routes.controller.ts` → stops, run completion, POD photos                            |
-| Invoices                                 | `invoices/invoices.controller.ts` → from-order, payments, PDF, send-email, write-off         |
-| Returns & refunds                        | `returns/returns.controller.ts` → approve/reject/in-transit/receive/refund                   |
-| Customers                                | `customers/customers.controller.ts` → CRUD, tags, addresses, price overrides, documents      |
-| Products & inventory                     | `products/products.controller.ts`, `inventory/inventory.controller.ts` → barcode, stock, POs |
+| Need                                     | File → symbol                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth login/register/JWT                  | `auth/auth.controller.ts` + `auth.service.ts` → `login(dto)`, `refresh()`, reset-password                                                                                                                    |
+| Account lockout (staff + buyer)          | `auth.service.ts` `validateUser`/`recordFailedLogin` (10 fails → 15-min lock, enumeration-safe) + `buyer/buyer-auth.service.ts` mirror; unlock `POST /users/:id/unlock` (`users.service.unlockUser`)         |
+| Buyer credential policy                  | `buyer/dto/buyer-register.dto.ts` + `buyer-change-password.dto.ts` + `buyer-update-account.dto.ts` — staff complexity regex; typed bodies (ValidationPipe active); specs `buyer/dto/buyer-auth-dtos.spec.ts` |
+| Prod DB backups (Railway cron)           | `apps/db-backup/` — `backup.sh` (pg_dump→R2, dead-man healthcheck, MODE=verify restore test), `RESTORE.md` runbook                                                                                           |
+| Tenant context isolation                 | `tenant/tenant-context.service.ts` → `get()`, `getOrNull()`, `isSuperAdmin()`                                                                                                                                |
+| Tenant scoping in Prisma                 | `prisma/prisma.service.ts` → `forTenant(tenantId)`, `tenantTransaction(fn)`                                                                                                                                  |
+| Rate limiting (100 req/60s)              | `app.module.ts` → `ThrottlerModule` + `common/redis-throttler.storage.ts`                                                                                                                                    |
+| Tenant status guard                      | `tenant/tenant-status.guard.ts` → blocks SUSPENDED/CANCELLED tenants globally                                                                                                                                |
+| Role-based access                        | `auth/guards/roles.guard.ts` → `@Roles(UserRole.DRIVER, ...)`                                                                                                                                                |
+| Config & secrets                         | `config/configuration.ts` → env, JWT, Redis, R2, storage signing (HKDF derived)                                                                                                                              |
+| Startup (migrations, secrets)            | `main.ts` → `assertSecrets()`, `runStartupMigration()`, CORS, helmet, trust proxy 2                                                                                                                          |
+| Encryption at rest                       | `common/encryption.service.ts` → encrypt/decrypt (refuses placeholder key in prod)                                                                                                                           |
+| File uploads/storage                     | `uploads/uploads.controller.ts` → multipart, disk write, HMAC-signed URLs                                                                                                                                    |
+| Platform admin (tenants, billing, audit) | `platform-admin/platform-admin.controller.ts` → stats, tenant CRUD, impersonation                                                                                                                            |
+| Buyer portal (multi-tenant identity)     | `buyer/buyer.controller.ts`, `buyer-auth.controller.ts` → register, link sellers, invites                                                                                                                    |
+| Orders & tracking                        | `orders/orders.controller.ts` → CRUD, status transitions, sweep-pending consolidation                                                                                                                        |
+| Routes & runs (driver)                   | `routes/routes.controller.ts` → stops, run completion, POD photos                                                                                                                                            |
+| Invoices                                 | `invoices/invoices.controller.ts` → from-order, payments, PDF, send-email, write-off                                                                                                                         |
+| Returns & refunds                        | `returns/returns.controller.ts` → approve/reject/in-transit/receive/refund                                                                                                                                   |
+| Customers                                | `customers/customers.controller.ts` → CRUD, tags, addresses, price overrides, documents                                                                                                                      |
+| Products & inventory                     | `products/products.controller.ts`, `inventory/inventory.controller.ts` → barcode, stock, POs                                                                                                                 |
 
 ## Bootstrap & cross-cutting
 
@@ -267,7 +270,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `buyer/` (multi-tenant customer identity)
 
-- **buyer-auth controller** `buyer/auth` — register, login, refresh, logout, delete account, change-password, profile, sessions.
+- **buyer-auth controller** `buyer/auth` — register, login, refresh, logout, delete account, change-password (`BuyerChangePasswordDto`), profile (`BuyerUpdateAccountDto` — whitelisted, closes the BuyerAccount mass-assignment hole), sessions. Login enforces the account lockout (see service).
 - **buyer controller** `buyer` — sellers, invites details/accept, sellers request/disconnect, profile, orders, invoices(+/:id), statement, products(+categories/:id), orders active/:id, dashboard, **replenishment**, authorizations.
 - **replenishment.service (P5-05)** — `estimates(customerId, now?)`: read-only cadence inference over `Order`/`OrderItem` history (last 180d, non-cancelled). Per product: median inter-order gap = `cadenceDays`, `estDaysLeft`, median `typicalQty`, `suggestedQty` rounded to usual pack (`normalizeBoxesPieces` + whole-box), `state` low/due-soon/ok; sorted urgent-first. No model, no money write. `GET /buyer/replenishment` (seller-scoped, `@CurrentBuyerCustomer` ctx). Feeds Your Shelf / running-low strip / dashboard chips (P5-06/07). Spec `replenishment.service.spec`.
 - **buyer-admin controller** `platform-admin/buyer-accounts` + `customer-links` — manage buyer accounts, approve links.

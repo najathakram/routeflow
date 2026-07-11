@@ -2,11 +2,15 @@
  * Super Admin UI tests — platform admin panel at /admin-login
  *
  * Covers: SA-01 through SA-12
- * Role: SUPER_ADMIN (najathakram / Najath123!)
+ * Role: SUPER_ADMIN (credentials via PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD;
+ * all tests skip when those env vars are not set)
  */
 
 import { test, expect } from "@playwright/test";
 import { loginAsSuperAdmin, logout } from "./helpers/auth";
+import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
+
+test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
 
 test.describe("Super Admin — Platform Admin Panel", () => {
   // Storage state (super-admin.json) is pre-loaded by the "super-admin" Playwright
@@ -30,7 +34,7 @@ test.describe("Super Admin — Platform Admin Panel", () => {
     await logout(page);
     await context.clearCookies();
     await page.goto("/admin-login");
-    await page.getByPlaceholder("Platform admin username").fill("najathakram");
+    await page.getByPlaceholder("Platform admin username").fill(CREDENTIALS.superAdmin.username);
     await page.getByPlaceholder("Password").fill("wrong_password_xyz!");
     // Use exact: true to avoid matching "Sign in with Google"
     await page.getByRole("button", { name: "Sign in", exact: true }).click();

@@ -75,6 +75,37 @@ export function middleware(request: NextRequest) {
     }
   }
 
+  // Signed-in users skip the landing page: operators → dashboard, buyers →
+  // buyer portal. Keyed on the presence cookies, which now track the live
+  // session (3-day sliding window re-set on every token refresh, cleared on
+  // refresh failure — see lib/presence-cookies.ts). Deliberately scoped to
+  // exactly "/": every other marketing page stays reachable while signed in.
+  // Runs AFTER the mobile-UA proxy so phones land in the mobile-web build,
+  // which does its own role-based routing. Operator wins when both cookies
+  // are present (consistent with the buyer guard below). 307 (never 308) so
+  // nothing is cached if the user signs out.
+  if (pathname === "/") {
+    const opAuthed = request.cookies.get("rf-op-auth")?.value === "1";
+    const buyerAuthed = request.cookies.get("rf-buyer-auth")?.value === "1";
+    const target = opAuthed ? "/dashboard" : buyerAuthed ? "/buyer/portal" : null;
+    if (target) {
+      const dest = url.clone();
+      dest.pathname = target;
+      dest.search = "";
+      const res = NextResponse.redirect(dest, 307);
+      // Preserve the desktop opt-out even though we return before the
+      // prefer-desktop block below.
+      if (url.searchParams.get("desktop") === "1") {
+        res.cookies.set("prefer-desktop", "1", {
+          sameSite: "lax",
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+        });
+      }
+      return res;
+    }
+  }
+
   // Buyer-only guard: signed-in buyers without an operator session must not be
   // able to reach operator surfaces — bounce them back to the buyer portal.
   const OPERATOR_PATH_PREFIXES = [
@@ -151,7 +182,7 @@ export function middleware(request: NextRequest) {
   const parts = hostname.split(".");
 
   // Tenant resolution precedence:
-  //   1. Real subdomain (e.g. affa.routeflow.info) → authoritative, overwrites cookie
+  //   1. Real subdomain (e.g. acme.routeflow.info) → authoritative, overwrites cookie
   //   2. Existing cookie (user picked a workspace on the login form, or
   //      previous successful login anchored it to the user's actual tenant) → preserve
   //   3. Otherwise → no cookie set; the login page asks the user for a workspace.

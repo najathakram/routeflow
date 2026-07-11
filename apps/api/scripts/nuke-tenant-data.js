@@ -9,23 +9,18 @@
  *            Drivers, Products, Suppliers, Orders, Invoices, Routes, etc.)
  *            All BuyerAccount and CustomerLink records.
  *
+ * LOCAL DEV ONLY — blocked against Railway/production by productionGuard.
+ *
  * Usage (from repo root):
- *   Local:   node apps/api/scripts/nuke-tenant-data.js --confirm
- *   Railway: DATABASE_URL="postgresql://..." node apps/api/scripts/nuke-tenant-data.js --confirm
+ *   node apps/api/scripts/nuke-tenant-data.js --confirm
  */
 
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
+const { productionGuard } = require("./lib/production-guard");
 
-if (!process.argv.includes("--confirm")) {
-  console.error(
-    "\n⚠️  DESTRUCTIVE OPERATION — This will delete ALL tenant data.\n" +
-      "   Re-run with --confirm to proceed:\n\n" +
-      "   node apps/api/scripts/nuke-tenant-data.js --confirm\n",
-  );
-  process.exit(1);
-}
+productionGuard({ requireFlag: "--confirm" });
 
 const dbUrl = process.env.DATABASE_URL ?? "postgresql://user:pass@localhost:5432/routeflow_dev";
 

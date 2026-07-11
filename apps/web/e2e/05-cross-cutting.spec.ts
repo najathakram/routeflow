@@ -14,7 +14,7 @@ import {
   loginAsBuyer,
   logout,
 } from "./helpers/auth";
-import { TENANT_SLUG, CREDENTIALS } from "./helpers/constants";
+import { TENANT_SLUG, CREDENTIALS, HAS_SUPER_ADMIN_CREDS } from "./helpers/constants";
 
 test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   // ── Unauthenticated redirects ──────────────────────────────────────────────
@@ -89,6 +89,7 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   });
 
   test("CC-05 super admin impersonation grants tenant-scoped access", async ({ page }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
     // Impersonation issues a 15-min token with the tenant-admin's claims +
     // `impersonatedBy`; writes are AUDIT-LOGGED, not blocked (see
     // platform-admin.service impersonate()). Verify the token is accepted for a
@@ -198,10 +199,84 @@ test.describe("Cross-cutting — Auth Guards & Role Isolation", () => {
   });
 
   test("CC-10 session persists across page reload — SA stays logged in", async ({ page }) => {
+    test.skip(!HAS_SUPER_ADMIN_CREDS, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
     await loginAsSuperAdmin(page);
     await page.reload();
     await page.waitForURL(/\/admin\/dashboard/, { timeout: 15_000 });
     await expect(page).toHaveURL(/\/admin\/dashboard/);
     await logout(page);
+  });
+});
+
+// ── Landing-page auto-redirect (middleware, keyed on presence cookies) ────────
+// The middleware 307s signed-in users away from exactly "/": rf-op-auth →
+// /dashboard, rf-buyer-auth → /buyer/portal, operator wins when both are set.
+// The raw-request tests pin the middleware contract; CC-15 covers the
+// stale-cookie journey that killed the earlier client-side redirect.
+
+test.describe("Cross-cutting — Landing-page auto-redirect", () => {
+  const BASE_URL =
+    process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+
+  async function seedPresenceCookies(
+    context: import("@playwright/test").BrowserContext,
+    names: string[],
+  ) {
+    await context.addCookies(
+      names.map((name) => ({
+        name,
+        value: "1",
+        domain: new URL(BASE_URL).hostname,
+        path: "/",
+      })),
+    );
+  }
+
+  test.beforeEach(async ({ context }) => {
+    await context.clearCookies();
+  });
+
+  test("CC-11 landing 307s operators to /dashboard", async ({ context }) => {
+    await seedPresenceCookies(context, ["rf-op-auth"]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/dashboard");
+  });
+
+  test("CC-12 landing 307s buyers to /buyer/portal", async ({ context }) => {
+    await seedPresenceCookies(context, ["rf-buyer-auth"]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/buyer/portal");
+  });
+
+  test("CC-13 operator wins when both presence cookies are set", async ({ context }) => {
+    await seedPresenceCookies(context, ["rf-op-auth", "rf-buyer-auth"]);
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(307);
+    expect(resp.headers()["location"]).toContain("/dashboard");
+  });
+
+  test("CC-14 signed-out landing renders marketing with no redirect", async ({ page, context }) => {
+    const resp = await context.request.get("/", { maxRedirects: 0 });
+    expect(resp.status()).toBe(200);
+    await page.goto("/");
+    await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
+  });
+
+  test("CC-15 stale op cookie → bounded bounce to /login, then self-heals", async ({
+    page,
+    context,
+  }) => {
+    // Presence cookie without any localStorage tokens = the dead-session case.
+    await seedPresenceCookies(context, ["rf-op-auth"]);
+    await page.goto("/");
+    // / → 307 /dashboard → AuthGuard finds no tokens → /login. Bounded, no loop.
+    await page.waitForURL(/\/login/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/\/login/);
+    // AuthProvider's failed restore cleared the stale cookie — the landing page
+    // must render normally now (self-healing, marketing site never hidden).
+    await page.goto("/");
+    await expect(page).toHaveURL(`${BASE_URL.replace(/\/$/, "")}/`);
   });
 });

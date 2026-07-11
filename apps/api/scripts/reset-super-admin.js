@@ -1,14 +1,19 @@
 /**
- * Reset the SUPER_ADMIN password for najathakram.
- * Run from repo root: node apps/api/scripts/reset-super-admin.js
+ * Reset the SUPER_ADMIN password.
+ * Run from repo root:
+ *   SUPER_ADMIN_USERNAME=<user> SUPER_ADMIN_PASSWORD=<new-password> node apps/api/scripts/reset-super-admin.js
  */
 require("dotenv").config({ path: require("path").join(__dirname, "../.env") });
 
 const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 
-const NEW_PASSWORD = "Najath123!";
-const USERNAME = "najathakram";
+const NEW_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+const USERNAME = process.env.SUPER_ADMIN_USERNAME;
+if (!NEW_PASSWORD || !USERNAME) {
+  console.error("SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD must be set in the environment.");
+  process.exit(1);
+}
 
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
