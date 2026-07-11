@@ -71,10 +71,10 @@ export default function CustomerMoreScreen() {
               <Text
                 style={[
                   styles.statValue,
-                  (dashboard.stats.unpaidInvoices ?? 0) > 0 && { color: ios.system.orangeInk },
+                  (dashboard.stats.unpaidInvoiceCount ?? 0) > 0 && { color: ios.system.orangeInk },
                 ]}
               >
-                {dashboard.stats.unpaidInvoices ?? 0}
+                {dashboard.stats.unpaidInvoiceCount ?? 0}
               </Text>
               <Text style={styles.statLabel}>Unpaid</Text>
             </View>

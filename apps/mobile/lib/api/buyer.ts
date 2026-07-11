@@ -122,9 +122,13 @@ export interface BuyerDashboard {
     activeOrders: number;
     pendingDeliveries: number;
     templateCount: number;
+    /** Open invoices (SENT/VIEWED/PARTIAL/OVERDUE) — matches /buyer/analytics summary. */
+    unpaidInvoiceCount: number;
+    unpaidInvoiceTotal: number;
     // Legacy aliases — may be absent depending on API version
     totalOrders?: number;
     totalSpend?: number;
+    /** @deprecated the API never returned this — use unpaidInvoiceCount. */
     unpaidInvoices?: number;
   };
 }
