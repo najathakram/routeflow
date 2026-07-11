@@ -24,9 +24,18 @@ import {
   type ScannedItem,
 } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
-import { buildBillDtoFromScan, mappingsFromScan } from "../../../lib/vendor-bill-scan";
+import {
+  buildBillDtoFromScan,
+  mappingsFromScan,
+  unmatchedCount,
+  linkScanItem,
+} from "../../../lib/vendor-bill-scan";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { roundMoney } from "../../../lib/pricing";
+import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
+import { InlineCreateProductSheet } from "../../../components/InlineCreateProductSheet";
+import type { CreatedProduct } from "../../../lib/api/products";
 
 type Step = "upload" | "scanning" | "review";
 
@@ -206,6 +215,7 @@ function ConfidenceDot({ confidence }: { confidence: ScannedItem["confidence"] }
 
 function ReviewStep({
   result,
+  onChange,
   onSave,
   saving,
   imageUri,
@@ -216,6 +226,16 @@ function ReviewStep({
   saving: boolean;
   imageUri: string | null;
 }) {
+  // Row index whose "link existing product" picker / "create product" sheet is
+  // open (mutually exclusive).
+  const [linkFor, setLinkFor] = useState<number | null>(null);
+  const [createFor, setCreateFor] = useState<number | null>(null);
+  const unmatched = unmatchedCount(result);
+
+  const applyLink = (index: number, productId: string, productName: string) => {
+    onChange(linkScanItem(result, index, productId, productName));
+  };
+
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
       {imageUri ? (
@@ -241,33 +261,65 @@ function ReviewStep({
       {result.items.length > 0 ? (
         <View style={styles.reviewSection}>
           <Text style={styles.reviewSectionTitle}>Line items ({result.items.length})</Text>
+
+          {unmatched > 0 ? (
+            <View style={styles.unmatchedBanner}>
+              <Ionicons name="alert-circle" size={16} color={ios.system.orangeInk} />
+              <Text style={styles.unmatchedText}>
+                {unmatched} item{unmatched === 1 ? "" : "s"} didn&apos;t match a product. Link or
+                create each so it updates stock — unlinked lines won&apos;t restock.
+              </Text>
+            </View>
+          ) : null}
+
           <View style={styles.itemsCard}>
-            {result.items.map((item, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.reviewItemRow,
-                  i > 0 && {
-                    borderTopWidth: StyleSheet.hairlineWidth,
-                    borderTopColor: ios.separator,
-                  },
-                ]}
-              >
-                <ConfidenceDot confidence={item.confidence} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.reviewItemName} numberOfLines={1}>
-                    {item.matchedProductName ?? item.extractedName}
-                  </Text>
-                  <Text style={styles.reviewItemMeta}>
-                    {item.qty != null ? `${item.qty} × ` : ""}
-                    {item.unitCost != null ? `$${item.unitCost.toFixed(2)}` : ""}
-                  </Text>
+            {result.items.map((item, i) => {
+              const isMatched = !!item.matchedProductId;
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.reviewItemRow,
+                    i > 0 && {
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: ios.separator,
+                    },
+                  ]}
+                >
+                  <ConfidenceDot confidence={item.confidence} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reviewItemName} numberOfLines={1}>
+                      {item.matchedProductName ?? item.extractedName}
+                    </Text>
+                    <Text style={styles.reviewItemMeta}>
+                      {item.qty != null ? `${item.qty} × ` : ""}
+                      {item.unitCost != null ? `$${item.unitCost.toFixed(2)}` : ""}
+                      {isMatched && item.matchedProductName ? " · linked" : ""}
+                    </Text>
+                    {!isMatched ? (
+                      <View style={styles.lineActions}>
+                        <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
+                          <Ionicons name="link" size={13} color={ios.brand} />
+                          <Text style={styles.lineActionText}>Link</Text>
+                        </Pressable>
+                        <Pressable style={styles.lineActionBtn} onPress={() => setCreateFor(i)}>
+                          <Ionicons name="add-circle-outline" size={13} color={ios.brand} />
+                          <Text style={styles.lineActionText}>Create</Text>
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
+                        <Ionicons name="swap-horizontal" size={13} color={ios.label2} />
+                        <Text style={[styles.lineActionText, { color: ios.label2 }]}>Change</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                  {item.lineTotal != null ? (
+                    <Text style={styles.reviewItemTotal}>${item.lineTotal.toFixed(2)}</Text>
+                  ) : null}
                 </View>
-                {item.lineTotal != null ? (
-                  <Text style={styles.reviewItemTotal}>${item.lineTotal.toFixed(2)}</Text>
-                ) : null}
-              </View>
-            ))}
+              );
+            })}
           </View>
           <View style={styles.confidenceLegend}>
             <View style={[styles.confidenceDot, { backgroundColor: ios.system.greenInk }]} />
@@ -286,6 +338,38 @@ function ReviewStep({
           <Text style={styles.saveBtnText}>{saving ? "Creating bill…" : "Create vendor bill"}</Text>
         </Pressable>
       </View>
+
+      <ProductPickerSheet
+        visible={linkFor != null}
+        title="Link to product"
+        selectedId={
+          linkFor != null ? (result.items[linkFor]?.matchedProductId ?? undefined) : undefined
+        }
+        onClose={() => setLinkFor(null)}
+        onSelect={(p) => {
+          if (linkFor != null)
+            applyLink(linkFor, p.id, p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
+          setLinkFor(null);
+        }}
+      />
+
+      <InlineCreateProductSheet
+        visible={createFor != null}
+        initialName={createFor != null ? result.items[createFor]?.extractedName : undefined}
+        initialPrice={
+          createFor != null && (result.items[createFor]?.unitCost ?? 0) > 0
+            ? roundMoney((result.items[createFor]!.unitCost as number) * 1.3)
+            : undefined
+        }
+        initialCost={
+          createFor != null ? (result.items[createFor]?.unitCost ?? undefined) : undefined
+        }
+        onClose={() => setCreateFor(null)}
+        onCreated={(product: CreatedProduct) => {
+          if (createFor != null) applyLink(createFor, product.id, product.name);
+          setCreateFor(null);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -396,6 +480,25 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  unmatchedBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+  },
+  unmatchedText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.system.orangeInk,
+    lineHeight: 16,
+  },
+  lineActions: { flexDirection: "row", gap: 12, marginTop: 6 },
+  lineActionBtn: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 6 },
+  lineActionText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
   confidenceLegend: {
     flexDirection: "row",
     alignItems: "center",

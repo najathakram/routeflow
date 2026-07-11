@@ -32,14 +32,20 @@ export function InlineCreateProductSheet({
   visible,
   initialName,
   initialCode,
+  initialPrice,
+  initialCost,
   onClose,
   onCreated,
 }: {
   visible: boolean;
-  /** Prefill the name from a typed search term. */
+  /** Prefill the name from a typed search term or an extracted invoice line. */
   initialName?: string;
   /** Prefill the barcode from the scanned code. */
   initialCode?: string;
+  /** Prefill the sell price (e.g. invoice cost + 30% from a vendor-bill line). */
+  initialPrice?: number;
+  /** Prefill the standard cost (e.g. the invoice unit cost). */
+  initialCost?: number;
   onClose: () => void;
   onCreated: (product: CreatedProduct) => void;
 }) {
@@ -51,10 +57,16 @@ export function InlineCreateProductSheet({
   // Re-seed each time the sheet opens (the scanned code / typed name changes).
   React.useEffect(() => {
     if (visible) {
-      setForm({ ...emptyProductForm(), name: initialName ?? "", barcode: initialCode ?? "" });
+      setForm({
+        ...emptyProductForm(),
+        name: initialName ?? "",
+        barcode: initialCode ?? "",
+        pricePerUnit: initialPrice != null ? initialPrice.toFixed(2) : "",
+        standardCost: initialCost != null ? String(initialCost) : "",
+      });
       setError(null);
     }
-  }, [visible, initialName, initialCode]);
+  }, [visible, initialName, initialCode, initialPrice, initialCost]);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
