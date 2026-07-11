@@ -137,7 +137,7 @@ export default function BuyerChangePasswordPage() {
                 error={errors.newPassword?.message}
               />
               <p className="text-xs text-navy/70">
-                At least 8 characters, one uppercase letter, one number.
+                At least 8 characters, with upper and lower case and a number or symbol.
               </p>
               <PasswordInput
                 label="Confirm new password"
