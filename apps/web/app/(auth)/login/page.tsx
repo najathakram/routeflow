@@ -30,7 +30,7 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
-// If the page is loaded on a tenant subdomain (e.g. affa.routeflow.info),
+// If the page is loaded on a tenant subdomain (e.g. acme.routeflow.info),
 // the workspace is implied by the URL — pre-fill and lock the field.
 // On platform hosts (www.routeflow.info, app.routeflow.info, hosting-provider
 // domains, localhost) the user must type which workspace they're signing into.
@@ -203,7 +203,7 @@ export default function LoginPage() {
   // (buyer/invite, buyer/portal) correctly use `${apiUrl}/uploads/<key>`.
   //
   // Tenant branding is ONLY applied on a tenant subdomain (e.g.
-  // `affa.routeflow.info/login`). On platform hosts (`www.routeflow.info`,
+  // `acme.routeflow.info/login`). On platform hosts (`www.routeflow.info`,
   // `app.routeflow.info`, localhost) this is the generic RouteFlow entry
   // point — operators here may be signing into any workspace. A stale
   // tenant-slug cookie from a previous session would otherwise leak that
@@ -409,7 +409,7 @@ export default function LoginPage() {
               {showWorkspaceField && (
                 <Input
                   label="Workspace"
-                  placeholder="e.g. affa"
+                  placeholder="e.g. acme-logistics"
                   autoComplete="organization"
                   autoCapitalize="none"
                   spellCheck={false}

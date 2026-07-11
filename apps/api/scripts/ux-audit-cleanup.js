@@ -18,10 +18,17 @@ const { Client } = require("pg");
 const path = require("path");
 const fs = require("fs");
 const readline = require("readline");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error(
+    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/ux-audit-cleanup.js <manifest>",
+  );
+  process.exit(1);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -89,6 +96,9 @@ async function main() {
   }
 
   const m = JSON.parse(fs.readFileSync(absPath, "utf8"));
+
+  // Only approved test tenants may be cleaned up — never a live client.
+  assertTestTenant(m.tenantSlug, "ux-audit-cleanup manifest");
 
   console.log("\n╔══════════════════════════════════════════════════════════╗");
   console.log("║  RouteFlow UX Audit — Cleanup Script                    ║");

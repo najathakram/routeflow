@@ -1,6 +1,6 @@
 # 01 — Authentication & App Entry
 
-**Role(s):** Everyone — unauthenticated visitors, staff (Operator / Tenant-Admin / limited-Customer / Driver), B2B **Buyers** (separate token namespace), and **Super-Admins** (fully isolated platform login). • **Entered via:** cold visit to a login URL, a tenant subdomain (`affa.routeflow.info/login`), the marketing site's "Sign In" / "Get Started" links, an emailed link (email-verification, password-reset, merge-verification, buyer invite), a Google OAuth redirect back to a `/callback` route, or any 401 that drops a session and bounces the user to a login gate.
+**Role(s):** Everyone — unauthenticated visitors, staff (Operator / Tenant-Admin / limited-Customer / Driver), B2B **Buyers** (separate token namespace), and **Super-Admins** (fully isolated platform login). • **Entered via:** cold visit to a login URL, a tenant subdomain (`acme.routeflow.info/login`), the marketing site's "Sign In" / "Get Started" links, an emailed link (email-verification, password-reset, merge-verification, buyer invite), a Google OAuth redirect back to a `/callback` route, or any 401 that drops a session and bounces the user to a login gate.
 
 This ecosystem is the app's **front door and its token-routing brain**. Unlike mobile (one root layout state machine), web splits the job across three layers: (1) **`middleware.ts`** runs on every request — resolves the tenant slug from subdomain → cookie, redirects phones to the mobile-web build, and blocks buyers from operator paths; (2) **three isolated auth providers** (`AuthProvider`, `BuyerAuthProvider`, plus the platform's raw `localStorage` `superAdminToken`) rehydrate their own session from a **namespaced localStorage bucket** (`lib/auth-keys.ts`); (3) each login **page** owns its own form, validation, Google-OAuth kickoff, and post-login redirect. There is **no shared login template** — the three human-facing login screens are hardcoded independently in three different visual languages (catalogued below).
 
@@ -15,7 +15,7 @@ This ecosystem is the app's **front door and its token-routing brain**. Unlike m
 - **Purpose:** Username-or-email + password (or Google) sign-in for all staff roles (OPERATOR, TENANT_ADMIN, limited CUSTOMER, DRIVER) within a resolved workspace/tenant. This is the generic platform entry point; on a tenant subdomain it becomes that tenant's branded login.
 - **Shows:**
   - Split layout: left **teal gradient value-prop panel** (hidden `< lg`) with "Back to home" link, a dark-variant RouteFlow logo SVG, serif headline "Welcome back to *RouteFlow*." and a 3-item feature list (live driver tracking, auto-invoicing, real-time P&L). Right **form card**.
-  - Form fields: **Workspace** (placeholder `e.g. affa`, `autoComplete="organization"`) — **hidden when on a tenant subdomain** (implied by URL); **Username or email** (placeholder `you@company.com`); **Password** (`PasswordInput`, masked with reveal toggle).
+  - Form fields: **Workspace** (placeholder `e.g. acme`, `autoComplete="organization"`) — **hidden when on a tenant subdomain** (implied by URL); **Username or email** (placeholder `you@company.com`); **Password** (`PasswordInput`, masked with reveal toggle).
   - **Sign in** button (with `ArrowRight`), an "or" divider, **Continue with Google** button, helper "First sign-in? You'll be prompted to change your password."
   - Footer links: "Not a staff member? **Sign in to retailer portal**" (`/buyer/login`) and "New to RouteFlow? **Start your 14-day free trial**" (`/signup`).
   - **Tenant branding:** only applied on a real subdomain (`subdomainWorkspace && branding.logoKey`) — shows `{businessName}` + logo (`${apiUrl}/uploads/{logoKey}`). On platform hosts it is deliberately generic "RouteFlow" (a stale tenant cookie must not leak another tenant's name/logo onto the shared login).
@@ -155,7 +155,7 @@ This ecosystem is the app's **front door and its token-routing brain**. Unlike m
 ## Key flows
 
 - **Operator normal login (platform host):** `/login` → type workspace + username + password → `setTenantCookie` → `POST /auth/login` → tokens in `OP_KEYS` → `/dashboard` (or `/change-password` if `forcePasswordChange`). Commit point: `login()` writing `OP_KEYS.accessToken` + correcting the tenant cookie to `user.tenantSlug`.
-- **Operator login on tenant subdomain:** `affa.routeflow.info/login` → `middleware.ts` sets `tenant-slug=affa` cookie; the workspace field is hidden (pre-filled+locked) and tenant branding (logo/name) is applied → same POST → `/dashboard`.
+- **Operator login on tenant subdomain:** `acme.routeflow.info/login` → `middleware.ts` sets `tenant-slug=acme` cookie; the workspace field is hidden (pre-filled+locked) and tenant branding (logo/name) is applied → same POST → `/dashboard`.
 - **Operator Google login:** `/login` (workspace required) → **Continue with Google** → `GET /auth/google?context=staff&tenant={slug}` → Google consent → `/auth/google/callback?code=…` → `POST /auth/google/exchange` → staff branch stores `OP_KEYS`, restores tenant cookie → hard load `/dashboard`.
 - **Tenant self-signup:** `/signup` (live slug/username availability) → `POST /public/tenants/register` → `/signup/check-email` → emailed link → `/verify-email?token=` → `POST /auth/verify-email` → auto-login → `/dashboard`.
 - **Forced password rotation:** any operator login with `forcePasswordChange` → `/change-password` → `POST /auth/change-password` → hard load `/dashboard` with the flag cleared.
@@ -169,7 +169,7 @@ This ecosystem is the app's **front door and its token-routing brain**. Unlike m
 ## Use cases
 
 - As an **operator on the shared platform host**, I type my workspace, username, and password and land on my dashboard. (`/login` → `/dashboard`)
-- As an **operator visiting my own subdomain**, the workspace is pre-filled and my company logo/name shows, so I only type username + password. (`affa.routeflow.info/login`)
+- As an **operator visiting my own subdomain**, the workspace is pre-filled and my company logo/name shows, so I only type username + password. (`acme.routeflow.info/login`)
 - As a **new business owner**, I self-register a workspace, verify my email, and get dropped straight into the dashboard. (`/signup` → `/verify-email`)
 - As a **staff member with a temporary password**, I'm forced to set a new one before I can use the app. (`/login` → `/change-password`)
 - As the **platform owner**, I sign in on a dedicated tenant-less admin screen that rejects any non-SUPER_ADMIN account. (`/admin-login`)

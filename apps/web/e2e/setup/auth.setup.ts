@@ -9,9 +9,10 @@
  * Storage state files are written to e2e/setup/.auth/ (gitignored).
  */
 import { test as setup } from "@playwright/test";
+import fs from "fs";
 import path from "path";
 import { setTenantCookie } from "../helpers/auth";
-import { CREDENTIALS, TENANT_SLUG } from "../helpers/constants";
+import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS, TENANT_SLUG } from "../helpers/constants";
 
 export const AUTH_DIR = path.join(__dirname, ".auth");
 export const SUPER_ADMIN_AUTH = path.join(AUTH_DIR, "super-admin.json");
@@ -24,6 +25,14 @@ const BASE_URL =
 // ── Super Admin ────────────────────────────────────────────────────────────────
 
 setup("authenticate as super admin", async ({ page }) => {
+  if (!HAS_SUPER_ADMIN_CREDS) {
+    // Write an empty storage state so dependent projects can still boot; their
+    // super-admin specs skip themselves via HAS_SUPER_ADMIN_CREDS.
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.writeFileSync(SUPER_ADMIN_AUTH, JSON.stringify({ cookies: [], origins: [] }));
+    setup.skip(true, "PLAYWRIGHT_SA_USERNAME / PLAYWRIGHT_SA_PASSWORD not set");
+    return;
+  }
   await page.goto("/admin-login");
   await page.getByPlaceholder("Platform admin username").fill(CREDENTIALS.superAdmin.username);
   await page.getByPlaceholder("Password").fill(CREDENTIALS.superAdmin.password);

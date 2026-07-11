@@ -3,7 +3,8 @@
  * single canonical row, reassigning all FK references before deleting dupes.
  *
  * Run from repo root:
- *   node apps/api/scripts/merge-duplicate-products.js
+ *   node apps/api/scripts/merge-duplicate-products.js            # dry run (lists groups)
+ *   node apps/api/scripts/merge-duplicate-products.js --execute  # actually merge
  *
  * Safe to run multiple times — each run is idempotent.
  */
@@ -11,6 +12,8 @@
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
 const { Pool } = require("pg");
+
+const EXECUTE = process.argv.includes("--execute");
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
@@ -46,6 +49,15 @@ async function main() {
 
   if (dupeGroups.length === 0) {
     console.log("✅  No duplicate products found — nothing to do.");
+    return;
+  }
+
+  if (!EXECUTE) {
+    console.log(`DRY RUN — found ${dupeGroups.length} duplicate group(s):`);
+    for (const g of dupeGroups) {
+      console.log(`  tenant ${g.tenantId}: "${g.lower_name}" ×${g.cnt}`);
+    }
+    console.log("\nRe-run with --execute to merge.");
     return;
   }
 

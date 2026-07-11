@@ -13,7 +13,7 @@ ENV (immutable)
 - Frontend: https://routeflowmobile-production.up.railway.app
 - API host the bundle calls: https://routeflowapi-production.up.railway.app
 - Tenant code (only one in scope): ux-audit-1777265477001
-- TEST PROFILES (NEVER use affa or any other tenant)
+- TEST PROFILES (NEVER use <live-tenant> or any other tenant)
   - Operator (TENANT_ADMIN): ux_admin / UxAdmin@123!
   - Driver A (assigned, has run): ux_driver_a / UxDriver@123!
   - Driver B (unassigned): ux_driver_b / UxDriver@123!

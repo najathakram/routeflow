@@ -21,6 +21,11 @@
 // Without --execute the script prints row counts only (dry run).
 // With --execute the script requires the operator to type the slug back to confirm,
 // then runs all deletes inside one Prisma $transaction.
+//
+// Test-tenant policy: only approved test tenants may be wiped. Wiping a live
+// tenant (e.g. a client requesting a fresh start before go-live) additionally
+// requires the explicit --live-tenant-override flag on top of the dry-run
+// default and the type-back confirmation.
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
@@ -28,6 +33,7 @@ const readline = require("readline");
 const { PrismaClient } = require("../../../node_modules/@prisma/client");
 const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
 const { Pool } = require("../../../node_modules/pg");
+const { isTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
 const dbUrl =
   process.env.DATABASE_PUBLIC_URL ||
@@ -40,9 +46,20 @@ const prisma = new PrismaClient({ adapter });
 
 const slug = process.argv[2];
 const execute = process.argv.includes("--execute");
+const liveTenantOverride = process.argv.includes("--live-tenant-override");
 
 if (!slug) {
   console.error("Missing tenant slug. Usage: node wipe-tenant-fresh-start.js <slug> [--execute]");
+  process.exit(1);
+}
+
+if (!isTestTenant(slug) && !liveTenantOverride) {
+  console.error(
+    `Test-tenant policy: "${slug}" is not an approved test tenant.\n` +
+      "Wiping a LIVE tenant requires the explicit --live-tenant-override flag\n" +
+      "(and still needs --execute plus the type-back confirmation).\n" +
+      'See CLAUDE.md "Test tenants & real-client data (policy)".',
+  );
   process.exit(1);
 }
 

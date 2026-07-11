@@ -41,7 +41,7 @@ guarantee that prevents that.
 
 - **Multi-tenancy.** Everything operator-side is tenant-scoped. Tenant context rides in a
   **non-httpOnly** cookie (JS-readable — required; httpOnly silently breaks login) →
-  `X-Tenant-Slug` header on the API client. Subdomain (e.g. `affa.routeflow.info`) or manual slug
+  `X-Tenant-Slug` header on the API client. Subdomain (e.g. `acme.routeflow.info`) or manual slug
   entry selects the workspace. `middleware.ts` redirects to `/login?slug=…` when missing.
 - **RBAC.** JWT payload carries `tenantId` + `role`. `(dashboard)/layout.tsx` gates paths by role
   (CUSTOMER and DRIVER see a reduced nav/path set). Super-admin is fully isolated in

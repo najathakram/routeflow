@@ -15,9 +15,16 @@
 
 "use strict";
 const { Client } = require("pg");
+const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 
-const DB_URL = "postgresql://routeflow:routeflow_prod_2026@gondola.proxy.rlwy.net:41006/routeflow";
-const TENANT_SLUG = "ux-audit-1777265477001";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) {
+  console.error(
+    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/qa-deep-audit-cleanup.js",
+  );
+  process.exit(1);
+}
+const TENANT_SLUG = assertTestTenant("ux-audit-1777265477001", "qa-deep-audit-cleanup");
 const QA_PATTERN = "QA-%";
 
 const EXECUTE = process.argv.includes("--execute");

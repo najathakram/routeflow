@@ -137,7 +137,7 @@ Response: 200 with same null-tenant JWT
 
 The null-tenant token can access:
 
-- GET /products: 200, 20 products from 2 FOREIGN tenant IDs (0e74ddf9, 584e28dc)
+- GET /products: 200, 20 products from 2 FOREIGN tenant IDs (<live-tenant-uuid>, 584e28dc)
 - GET /customers: 200, 20 customers
 - GET /orders: 200, 20 orders
 - GET /users: 200, 14 users

@@ -1,10 +1,15 @@
 /**
  * Reset database (keep operator user) and seed fresh demo data.
- * Run: cd apps/api && npx ts-node --project tsconfig.json scripts/reset-and-seed.ts
+ * LOCAL DEV ONLY — blocked against Railway/production by productionGuard.
+ * Run: cd apps/api && npx ts-node --project tsconfig.json scripts/reset-and-seed.ts -- --confirm
  */
 
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { productionGuard } = require("./lib/production-guard");
+productionGuard({ requireFlag: "--confirm" });
 
 const prisma = new PrismaClient();
 

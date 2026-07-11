@@ -9,6 +9,10 @@ description: >
 
 # Skill: RouteFlow Regression Pipeline
 
+> **Test-tenant policy**: any tenant a test/seed/QA run touches MUST satisfy
+> `scripts/lib/test-tenants.cjs` (`test`, `e2e-routeflow`, or `qa-*`/`e2e-*`/`ux-audit-*`).
+> Never target a live client tenant — see CLAUDE.md "Test tenants & real-client data".
+
 ## What runs at every build (autonomously)
 
 ```
