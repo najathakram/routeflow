@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { Merge, Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import { Merge, Loader2, CheckCircle, AlertCircle, KeyRound, ChevronRight } from "lucide-react";
 
 export default function BuyerSettingsPage() {
   const { buyer } = useBuyerAuth();
@@ -46,6 +47,25 @@ export default function BuyerSettingsPage() {
     <div className="mx-auto max-w-2xl p-6 md:p-8">
       <h1 className="mb-1 text-2xl font-bold text-navy">Account Settings</h1>
       <p className="mb-8 text-sm text-navy/70">Manage your buyer portal preferences</p>
+
+      {/* Password Section */}
+      <Link
+        href="/buyer/change-password"
+        className="mb-6 flex items-center justify-between rounded-xl border border-surface-border bg-white p-6 shadow-sm transition-colors hover:bg-surface-raised"
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50">
+            <KeyRound className="h-5 w-5 text-brand-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-navy">Password</h2>
+            <p className="text-xs text-navy/70">
+              Set or change your password. Google sign-in users can add one here too.
+            </p>
+          </div>
+        </div>
+        <ChevronRight className="h-5 w-5 text-navy/40" />
+      </Link>
 
       {/* Merge Accounts Section */}
       <div className="rounded-xl border border-surface-border bg-white p-6 shadow-sm">

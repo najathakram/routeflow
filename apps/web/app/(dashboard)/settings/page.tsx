@@ -40,7 +40,17 @@ import {
   FileText,
   Truck,
 } from "lucide-react";
-import { Input, Textarea, Select, Button, Badge, Modal, Card, cn } from "@routeflow/ui/web";
+import {
+  Input,
+  Textarea,
+  Select,
+  Button,
+  Badge,
+  Modal,
+  Card,
+  PasswordInput,
+  cn,
+} from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -61,6 +71,7 @@ import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices
 import { useTenant } from "@/components/tenant-provider";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
 import { useAuth } from "@/lib/auth-context";
+import { changePassword, setPassword } from "@/lib/auth";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2257,6 +2268,160 @@ function SessionsCard() {
   );
 }
 
+// ─── Password card (My Account) ───────────────────────────────────────────────
+
+const passwordCardSchema = z
+  .object({
+    currentPassword: z.string(),
+    // Mirrors the server policy: min 8, upper + lower + digit-or-special.
+    newPassword: z
+      .string()
+      .min(8, "At least 8 characters")
+      .regex(
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*[\d\W])/,
+        "Must include an uppercase letter, a lowercase letter, and a number or symbol",
+      ),
+    confirmPassword: z.string().min(1, "Please confirm your new password"),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+type PasswordCardValues = z.infer<typeof passwordCardSchema>;
+
+/**
+ * Set/change password. `hasPassword` comes fresh from GET /users/me (the JWT
+ * copy goes stale) — false means a Google-only account setting its FIRST
+ * password, so no current-password field is shown; the server independently
+ * verifies the account really has none before accepting.
+ */
+function PasswordCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = React.useState(false);
+  const [apiError, setApiError] = React.useState<string | null>(null);
+
+  const { data: me, isLoading } = useQuery({
+    queryKey: ["users", "me"],
+    queryFn: () => apiClient.get("/users/me").then((r) => r.data),
+  });
+  // Undefined while loading or on an older API — fall back to change mode.
+  const hasPassword: boolean = me?.hasPassword ?? true;
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<PasswordCardValues>({
+    resolver: zodResolver(passwordCardSchema),
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  });
+
+  const onSubmit = async (data: PasswordCardValues) => {
+    setApiError(null);
+    if (hasPassword && !data.currentPassword) {
+      setApiError("Current password is required.");
+      return;
+    }
+    try {
+      if (hasPassword) await changePassword(data.currentPassword, data.newPassword);
+      else await setPassword(data.newPassword);
+      toast({
+        title: hasPassword ? "Password changed" : "Password set",
+        description: "All other sessions have been signed out.",
+        variant: "success",
+      });
+      reset();
+      setOpen(false);
+      // Flip hasPassword + refresh the sessions list (all others were revoked).
+      void queryClient.invalidateQueries({ queryKey: ["users", "me"] });
+      void queryClient.invalidateQueries({ queryKey: ["auth", "sessions"] });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        "Failed to update password.";
+      setApiError(typeof msg === "string" ? msg : "Failed to update password.");
+    }
+  };
+
+  return (
+    <Card title="Password">
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-navy/70">
+            {isLoading
+              ? "Checking account…"
+              : hasPassword
+                ? "Change your account password. Other sessions are signed out afterwards."
+                : "You sign in with Google. Set a password to also sign in with your username."}
+          </p>
+          {!open && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setOpen(true)}
+              disabled={isLoading}
+            >
+              {hasPassword ? "Change password" : "Set password"}
+            </Button>
+          )}
+        </div>
+
+        {open && (
+          <form
+            onSubmit={handleSubmit(onSubmit)}
+            className="flex max-w-sm flex-col gap-4"
+            noValidate
+          >
+            {apiError && (
+              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+            )}
+            {hasPassword && (
+              <PasswordInput
+                label="Current password"
+                autoComplete="current-password"
+                register={register("currentPassword")}
+                error={errors.currentPassword?.message}
+              />
+            )}
+            <PasswordInput
+              label="New password"
+              autoComplete="new-password"
+              register={register("newPassword")}
+              error={errors.newPassword?.message}
+            />
+            <PasswordInput
+              label="Confirm new password"
+              autoComplete="new-password"
+              register={register("confirmPassword")}
+              error={errors.confirmPassword?.message}
+            />
+            <div className="flex gap-2">
+              <Button type="submit" loading={isSubmitting}>
+                {hasPassword ? "Change password" : "Set password"}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={isSubmitting}
+                onClick={() => {
+                  reset();
+                  setApiError(null);
+                  setOpen(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // ─── TAB: My Account ──────────────────────────────────────────────────────────
 
 function MyAccountTab() {
@@ -2420,6 +2585,8 @@ function MyAccountTab() {
           )}
         </div>
       </Card>
+
+      <PasswordCard />
 
       <SessionsCard />
     </div>

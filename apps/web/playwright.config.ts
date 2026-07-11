@@ -110,6 +110,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
 
+    // ── Auth & password flows ──────────────────────────────────────────────────
+    // No storageState — these tests exercise login, session expiry, and
+    // password reset states, so each manages its own auth.
+    {
+      name: "auth-password",
+      testMatch: /07-auth-password\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
     // ── Critical-path regression tests ────────────────────────────────────────
     // Money-math and core integrity checks — run after every deploy.
     // Uses operator auth state; no mutations (safe against production data).

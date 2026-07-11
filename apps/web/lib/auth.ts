@@ -158,6 +158,24 @@ export async function changePassword(currentPassword: string, newPassword: strin
   }
 }
 
+/**
+ * First-password setup for Google-only accounts (no current password). The
+ * server only accepts this while the account's password is NULL; it revokes
+ * every other session and returns a fresh pair for this one.
+ */
+export async function setPassword(newPassword: string): Promise<void> {
+  const { data } = await apiClient.post<{
+    message: string;
+    accessToken?: string;
+    refreshToken?: string;
+  }>("/auth/set-password", { newPassword });
+  if (data.accessToken && data.refreshToken) {
+    localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
+    localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
+    setOpPresenceCookie();
+  }
+}
+
 // ─── Cross-tab isolation listener (NEW-m2-1 / RF-077) ────────────────────────
 // If another tab removes the operator token (e.g. logs out), prompt re-auth
 // in this tab too.

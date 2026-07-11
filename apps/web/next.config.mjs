@@ -67,7 +67,9 @@ const nextConfig = {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob: https:",
-      "connect-src 'self' https: wss:",
+      // Dev: the local API/socket run on plain http/ws (localhost:3000), which
+      // `https: wss:` alone blocks — every API call fails CSP. Prod unchanged.
+      `connect-src 'self' https: wss:${isDev ? " http://localhost:* ws://localhost:*" : ""}`,
       "frame-ancestors 'none'",
       "object-src 'none'",
       "base-uri 'self'",
