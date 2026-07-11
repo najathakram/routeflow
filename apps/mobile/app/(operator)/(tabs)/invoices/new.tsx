@@ -19,6 +19,8 @@ import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
+// Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
+import { displayProductName as displayName } from "../../../../lib/product-display";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/pricing";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
@@ -89,11 +91,6 @@ type UnlistedLine = { id: string; name: string; unitPrice: number; qty: number }
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function displayName(p: Product): string {
-  if (p.parent?.name) return `${p.parent.name} - ${p.name}`;
-  return p.name;
 }
 
 /** The effective per-unit price for a line: the override, else the catalog price. */

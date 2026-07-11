@@ -23,6 +23,7 @@ import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
+import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -66,6 +67,13 @@ export class ProductsController {
   @Roles(UserRole.OPERATOR)
   importFromZoho(@Body() dto: ImportProductsDto) {
     return this.productsService.importFromZoho(dto);
+  }
+
+  // Must be declared before :id to avoid route collision
+  @Post("bulk-assign-parent")
+  @Roles(UserRole.OPERATOR)
+  bulkAssignParent(@Body() dto: BulkAssignParentDto) {
+    return this.productsService.bulkAssignParent(dto);
   }
 
   // Must be declared before :id to avoid route collision

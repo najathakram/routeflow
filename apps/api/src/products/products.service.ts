@@ -12,6 +12,7 @@ import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
+import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 
@@ -309,11 +310,28 @@ export class ProductsService {
         .product.findFirst({ where: { barcode: dto.barcode } });
       if (existing) throw new BadRequestException("Barcode already exists");
     }
-    if (dto.parentProductId) {
-      const parent = await this.prisma
-        .forTenant()
-        .product.findUnique({ where: { id: dto.parentProductId } });
-      if (!parent) throw new BadRequestException("Parent product not found");
+    // Variant creation inherits the parent family's defaults for every field the
+    // DTO left unset — price tiers, category, case size, costing method, standard
+    // cost, tobacco flag (mirrors the import module's variant resolution, so ALL
+    // clients get the same behavior). DTO-explicit values always win.
+    const parent = dto.parentProductId
+      ? await this.prisma.forTenant().product.findUnique({
+          where: { id: dto.parentProductId },
+          select: {
+            priceTier2: true,
+            priceTier3: true,
+            priceTier4: true,
+            priceTier5: true,
+            category: true,
+            unitsPerBox: true,
+            costingMethod: true,
+            standardCost: true,
+            isTobacco: true,
+          },
+        })
+      : null;
+    if (dto.parentProductId && !parent) {
+      throw new BadRequestException("Parent product not found");
     }
     return this.prisma.forTenant().product.create({
       data: {
@@ -322,19 +340,24 @@ export class ProductsService {
         barcode: dto.barcode,
         unit: dto.unit,
         pricePerUnit: dto.pricePerUnit,
-        priceTier2: dto.priceTier2 ?? dto.pricePerUnit,
-        priceTier3: dto.priceTier3 ?? dto.pricePerUnit,
-        priceTier4: dto.priceTier4 ?? dto.pricePerUnit,
-        priceTier5: dto.priceTier5 ?? dto.pricePerUnit,
-        category: dto.category,
+        priceTier2: dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
+        priceTier3: dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
+        priceTier4: dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
+        priceTier5: dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
+        category: dto.category ?? parent?.category ?? undefined,
         description: dto.description,
         isActive: dto.isActive,
-        isTobacco: dto.isTobacco ?? false,
+        // Inherited-from-parent tobacco skips the addon re-check (top of create):
+        // the parent already passed it when IT was flagged.
+        isTobacco: dto.isTobacco ?? parent?.isTobacco ?? false,
         // Default new products to the tenant's configured costing method when the
-        // operator didn't pick one (pos-cost-roles-spec §1).
-        costingMethod: await this.resolveCostingMethod(dto.costingMethod),
-        standardCost: dto.standardCost,
-        unitsPerBox: dto.unitsPerBox,
+        // operator didn't pick one (pos-cost-roles-spec §1). Variants inherit the
+        // parent's method instead so the family is costed consistently.
+        costingMethod: parent
+          ? (dto.costingMethod ?? parent.costingMethod)
+          : await this.resolveCostingMethod(dto.costingMethod),
+        standardCost: dto.standardCost ?? parent?.standardCost?.toString(),
+        unitsPerBox: dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined,
         parentProductId: dto.parentProductId ?? null,
         variantName: dto.variantName ?? null,
       },
@@ -388,6 +411,45 @@ export class ProductsService {
       where: { id },
       data: { ...dto },
     });
+  }
+
+  /**
+   * Promote existing standalone products to variants of one parent in a single
+   * request (the web's "Group as variants of…" bulk action). Runs SEQUENTIALLY
+   * through update() so each row gets the full validation (per-parent name
+   * uniqueness, tobacco addon, …) and one failure doesn't abort the rest —
+   * per-item success/failure is reported back to the caller.
+   */
+  async bulkAssignParent(
+    dto: BulkAssignParentDto,
+  ): Promise<{ succeeded: string[]; failed: { id: string; reason: string }[] }> {
+    const parent = await this.prisma.forTenant().product.findUnique({
+      where: { id: dto.parentProductId },
+      select: { id: true, parentProductId: true },
+    });
+    if (!parent) throw new BadRequestException("Parent product not found");
+    if (parent.parentProductId) {
+      throw new BadRequestException("Parent must be a standalone product, not a variant");
+    }
+    const succeeded: string[] = [];
+    const failed: { id: string; reason: string }[] = [];
+    for (const assignment of dto.assignments) {
+      try {
+        await this.update(assignment.id, {
+          parentProductId: dto.parentProductId,
+          variantName: assignment.variantName,
+          // Variants store JUST the variant name in `name` (PR #44).
+          name: assignment.variantName,
+        } as UpdateProductDto);
+        succeeded.push(assignment.id);
+      } catch (err) {
+        failed.push({
+          id: assignment.id,
+          reason: err instanceof Error ? err.message : "Update failed",
+        });
+      }
+    }
+    return { succeeded, failed };
   }
 
   async remove(id: string) {

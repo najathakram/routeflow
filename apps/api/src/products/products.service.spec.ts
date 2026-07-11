@@ -254,6 +254,190 @@ describe("ProductsService", () => {
     });
   });
 
+  // ─── create — variant inheritance ────────────────────────────────────────
+
+  describe("create — variant inheritance", () => {
+    // Numbers stand in for Prisma Decimals — the service only calls .toString().
+    const MOCK_PARENT = {
+      id: "parent-1",
+      priceTier2: 24,
+      priceTier3: 23,
+      priceTier4: 22,
+      priceTier5: 21,
+      category: "Vapes",
+      unitsPerBox: 10,
+      costingMethod: "AVCO",
+      standardCost: 12.5,
+      isTobacco: false,
+    };
+
+    const VARIANT_DTO = {
+      name: "Strawberry",
+      variantName: "Strawberry",
+      parentProductId: "parent-1",
+      unit: "each",
+      pricePerUnit: "30",
+      sku: "STR-0001",
+    };
+
+    beforeEach(() => {
+      prisma.product.findFirst.mockResolvedValue(null); // no name/SKU/barcode conflicts
+      prisma.product.findUnique.mockResolvedValue(MOCK_PARENT); // parent load
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+    });
+
+    it("inherits the PARENT's tiers (not dto.pricePerUnit) when tiers are omitted", async () => {
+      await service.create({ ...VARIANT_DTO } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            priceTier2: "24",
+            priceTier3: "23",
+            priceTier4: "22",
+            priceTier5: "21",
+          }),
+        }),
+      );
+    });
+
+    it("keeps an explicit dto tier over the parent's", async () => {
+      await service.create({ ...VARIANT_DTO, priceTier2: "9.99" } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ priceTier2: "9.99", priceTier3: "23" }),
+        }),
+      );
+    });
+
+    it("inherits category/unitsPerBox/standardCost/costingMethod when unset", async () => {
+      await service.create({ ...VARIANT_DTO } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            category: "Vapes",
+            unitsPerBox: 10,
+            standardCost: "12.5",
+            costingMethod: "AVCO",
+          }),
+        }),
+      );
+      // Variants bypass the tenant-default costing resolution entirely.
+      expect(systemConfig.get).not.toHaveBeenCalled();
+    });
+
+    it("keeps explicit dto values over the parent's", async () => {
+      await service.create({
+        ...VARIANT_DTO,
+        category: "Disposables",
+        unitsPerBox: 5,
+        standardCost: "9.9999",
+        costingMethod: "FIFO",
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            category: "Disposables",
+            unitsPerBox: 5,
+            standardCost: "9.9999",
+            costingMethod: "FIFO",
+          }),
+        }),
+      );
+    });
+
+    it("inherits isTobacco from the parent WITHOUT re-checking the addon", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PARENT, isTobacco: true });
+      addonService.hasAddon.mockResolvedValue(false); // would reject a DTO-flagged create
+
+      await service.create({ ...VARIANT_DTO } as any);
+
+      expect(addonService.hasAddon).not.toHaveBeenCalled();
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ isTobacco: true }) }),
+      );
+    });
+
+    it("leaves standalone creates unchanged (tiers default to pricePerUnit)", async () => {
+      await service.create({ name: "Solo", unit: "kg", pricePerUnit: "5", sku: "SOL-1" } as any);
+
+      expect(prisma.product.findUnique).not.toHaveBeenCalled(); // no parent load
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            priceTier2: "5",
+            priceTier3: "5",
+            priceTier4: "5",
+            priceTier5: "5",
+            category: undefined,
+            unitsPerBox: undefined,
+            standardCost: undefined,
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── bulkAssignParent ─────────────────────────────────────────────────────
+
+  describe("bulkAssignParent", () => {
+    it("rejects when the parent does not exist", async () => {
+      prisma.product.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.bulkAssignParent({
+          parentProductId: "missing",
+          assignments: [{ id: "prod-a", variantName: "Strawberry" }],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("rejects when the parent is itself a variant", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "child", parentProductId: "root" });
+
+      await expect(
+        service.bulkAssignParent({
+          parentProductId: "child",
+          assignments: [{ id: "prod-a", variantName: "Strawberry" }],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("isolates per-item failures — one bad row doesn't abort the rest", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "parent-1", parentProductId: null });
+      const update = jest
+        .spyOn(service, "update")
+        .mockResolvedValueOnce({} as any)
+        .mockRejectedValueOnce(
+          new Error('A variant named "Grape" already exists for this product'),
+        );
+
+      const result = await service.bulkAssignParent({
+        parentProductId: "parent-1",
+        assignments: [
+          { id: "prod-a", variantName: "Strawberry" },
+          { id: "prod-b", variantName: "Grape" },
+        ],
+      } as any);
+
+      expect(result).toEqual({
+        succeeded: ["prod-a"],
+        failed: [
+          { id: "prod-b", reason: 'A variant named "Grape" already exists for this product' },
+        ],
+      });
+      // Each row goes through the full update() path, variant name doubling as `name`.
+      expect(update).toHaveBeenNthCalledWith(1, "prod-a", {
+        parentProductId: "parent-1",
+        variantName: "Strawberry",
+        name: "Strawberry",
+      });
+    });
+  });
+
   // ─── update ───────────────────────────────────────────────────────────────
 
   describe("update", () => {

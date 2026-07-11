@@ -32,6 +32,7 @@ import {
   uploadProductImages,
 } from "@/lib/api/products";
 import { objectPositionForUrl } from "@/lib/image-focal";
+import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { apiClient } from "@/lib/api-client";
@@ -673,8 +674,8 @@ function CreateProductModal({
     setPriceError("");
     // For variants, store ONLY the variant name in the `name` field.
     // The parent product's name stays unchanged; UI composes the full
-    // display name (e.g. "Geek Next 50K · Strawberry") from the parent
-    // relationship when needed.
+    // display name (e.g. "Geek Next 50K - Strawberry") from the parent
+    // relationship when needed (displayProductName).
     let productName = form.name.trim();
     if (form.parentProductId && form.variantName.trim()) {
       productName = form.variantName.trim();
@@ -818,7 +819,7 @@ function CreateProductModal({
                         <span className="font-medium text-navy">
                           {allProducts.find((p) => p.id === form.parentProductId)!.name}
                         </span>
-                        <span className="text-navy/70"> · </span>
+                        <span className="text-navy/70">{PRODUCT_NAME_SEPARATOR}</span>
                         <span className="font-medium text-navy">{form.variantName.trim()}</span>
                       </p>
                     )}

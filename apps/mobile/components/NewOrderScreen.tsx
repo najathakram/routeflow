@@ -25,6 +25,8 @@ import {
 } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
+// Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
+import { displayProductName as displayName } from "../lib/product-display";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { sanitizeIntInput } from "../lib/qty";
@@ -109,12 +111,6 @@ type UnlistedLine = {
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-/** Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone. */
-function displayName(p: Product): string {
-  if (p.parent?.name) return `${p.parent.name} - ${p.name}`;
-  return p.name;
 }
 
 function toNumber(v: number | string | null | undefined): number {

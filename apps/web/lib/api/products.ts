@@ -165,8 +165,8 @@ export function useBulkDeleteProducts() {
  * operator can fix up a catalog where each flavor was entered as its own
  * standalone product, without re-creating anything.
  *
- * No dedicated bulk endpoint on the API — issues parallel PATCH /products/:id
- * calls and reports per-item success/failure to the caller.
+ * One POST /products/bulk-assign-parent call — the API loops the updates
+ * server-side and reports per-item success/failure back.
  */
 export interface BulkAssignParentResult {
   succeeded: string[];
@@ -183,32 +183,10 @@ export function useBulkAssignParent() {
       assignments: Array<{ id: string; variantName: string }>;
     }
   >({
-    mutationFn: async ({ parentProductId, assignments }) => {
-      const settled = await Promise.allSettled(
-        assignments.map((a) =>
-          apiClient
-            .patch(`/products/${a.id}`, {
-              parentProductId,
-              variantName: a.variantName,
-            })
-            .then(() => a.id),
-        ),
-      );
-      const succeeded: string[] = [];
-      const failed: Array<{ id: string; reason: string }> = [];
-      settled.forEach((r, idx) => {
-        if (r.status === "fulfilled") {
-          succeeded.push(r.value);
-        } else {
-          const e = r.reason as { response?: { data?: { message?: string } } };
-          failed.push({
-            id: assignments[idx].id,
-            reason: e?.response?.data?.message ?? "Update failed",
-          });
-        }
-      });
-      return { succeeded, failed };
-    },
+    mutationFn: ({ parentProductId, assignments }) =>
+      apiClient
+        .post("/products/bulk-assign-parent", { parentProductId, assignments })
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 }
