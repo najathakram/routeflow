@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { FilterChipRow, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useRecurringInvoices, type RecurringInvoice } from "../../../lib/api/recurring-invoices";
 import { freqLabel, recurringPillFor } from "../../../lib/recurring-invoices-logic";
 
@@ -43,7 +43,16 @@ export default function RecurringInvoicesListScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Recurring" />
+      <NavBar
+        largeTitle="Recurring"
+        trailing={
+          <NavAction
+            label="New"
+            bold
+            onPress={() => router.push("/(operator)/recurring-invoices/new")}
+          />
+        }
+      />
       <SearchBar placeholder="Search customer…" value={search} onChangeText={setSearch} />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}
