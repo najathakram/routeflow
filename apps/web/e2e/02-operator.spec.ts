@@ -150,6 +150,36 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test('OP-09c tier prices save on a standalone product (regression: parentProductId "" → 400)', async ({
+    page,
+  }) => {
+    await page.goto("/products");
+    // Open the first product's detail page
+    await page.locator("table tbody tr a, table tbody tr").first().click();
+    await page.waitForURL(/\/products\/.+/);
+    // Enter edit mode (icon button)
+    await page.locator('button[title="Edit product"]').first().click();
+    // Set Tier 2 to a valid price
+    const tier2 = page
+      .getByText("Tier 2", { exact: true })
+      .locator("xpath=..")
+      .locator('input[type="number"]');
+    await expect(tier2).toBeVisible({ timeout: 10_000 });
+    await tier2.fill("9.75");
+    // Save must produce a 2xx PATCH — the old spread payload sent
+    // parentProductId: "" and 400'd EVERY save from this form.
+    const patchResp = page.waitForResponse(
+      (r) => r.url().includes("/products/") && r.request().method() === "PATCH",
+    );
+    await page.getByRole("button", { name: /save/i }).first().click();
+    const resp = await patchResp;
+    expect(resp.status()).toBeLessThan(300);
+    // Edit mode closes back to the pencil button (no error toast path).
+    await expect(page.locator('button[title="Edit product"]').first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
   // ── Routes ────────────────────────────────────────────────────────────────
 
   test("OP-10 routes list loads", async ({ page }) => {

@@ -391,14 +391,52 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   };
 
   const saveEdit = () => {
-    const selectedParent = (editDraft.parentProductId as string)
-      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+    const draft = editDraft as Record<string, string>;
+    const selectedParent = draft.parentProductId
+      ? allProducts.find((p: any) => p.id === draft.parentProductId)
       : null;
     const composedName =
-      selectedParent && (editDraft.variantName as string)?.trim()
-        ? `${(selectedParent as any).name} - ${(editDraft.variantName as string).trim()}`
-        : (editDraft.name as string);
-    updateProduct.mutate({ id: params.id, ...editDraft, name: composedName });
+      selectedParent && draft.variantName?.trim()
+        ? `${(selectedParent as any).name} - ${draft.variantName.trim()}`
+        : (draft.name as string);
+
+    // Build the PATCH explicitly — spreading the raw draft used to send
+    // parentProductId: "" for every standalone product, which @IsUUID rejects,
+    // so saving from this form (tier prices included) silently 400'd.
+    // Invalid/blank price fields are omitted (leave unchanged), never "".
+    const asDecimal = (v: unknown): string | undefined => {
+      const n = parseFloat(String(v ?? ""));
+      return Number.isFinite(n) && n >= 0 ? String(n) : undefined;
+    };
+    updateProduct.mutate(
+      {
+        id: params.id,
+        name: composedName,
+        unit: draft.unit || undefined,
+        sku: draft.sku?.trim() || null,
+        category: draft.category?.trim() || null,
+        description: draft.description?.trim() || null,
+        pricePerUnit: asDecimal(draft.pricePerUnit),
+        priceTier2: asDecimal(draft.priceTier2),
+        priceTier3: asDecimal(draft.priceTier3),
+        priceTier4: asDecimal(draft.priceTier4),
+        priceTier5: asDecimal(draft.priceTier5),
+        ...(draft.parentProductId
+          ? {
+              parentProductId: draft.parentProductId,
+              variantName: draft.variantName?.trim() || undefined,
+            }
+          : {}),
+      },
+      {
+        onError: (e: any) =>
+          toast({
+            title: "Failed to save product",
+            description: String(e?.response?.data?.message ?? "Check the fields and try again."),
+            variant: "error",
+          }),
+      },
+    );
     setIsEditing(false);
   };
 
@@ -545,11 +583,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           id: editingVariant.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
-          pricePerUnit: variantForm.price,
-          priceTier2: variantForm.priceTier2,
-          priceTier3: variantForm.priceTier3,
-          priceTier4: variantForm.priceTier4,
-          priceTier5: variantForm.priceTier5,
+          // Cleared fields fall back like the create branch — never send ""
+          // (rejected by @IsDecimal).
+          pricePerUnit: variantForm.price || String(product.pricePerUnit),
+          priceTier2: variantForm.priceTier2 || variantForm.price || undefined,
+          priceTier3: variantForm.priceTier3 || variantForm.price || undefined,
+          priceTier4: variantForm.priceTier4 || variantForm.price || undefined,
+          priceTier5: variantForm.priceTier5 || variantForm.price || undefined,
         },
         {
           onSuccess: () => {
