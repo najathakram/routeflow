@@ -24,6 +24,7 @@ import {
   type ScannedItem,
 } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
+import { buildBillDtoFromScan, mappingsFromScan } from "../../../lib/vendor-bill-scan";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -53,7 +54,9 @@ export default function ScanInvoiceScreen() {
     setStep("scanning");
 
     const formData = new FormData();
-    formData.append("image", {
+    // The API reads FilesInterceptor("images", …) — the field MUST be "images"
+    // (the old "image" field silently delivered zero files to the scanner).
+    formData.append("images", {
       uri: asset.uri,
       name: "invoice.jpg",
       type: asset.mimeType ?? "image/jpeg",
@@ -80,34 +83,11 @@ export default function ScanInvoiceScreen() {
     if (!editedResult) return;
 
     // Save product mappings for AI to learn from
-    const supplierName = editedResult.supplierName ?? "";
-    for (const item of editedResult.items) {
-      if (item.productId && supplierName) {
-        saveMappingMut.mutate({
-          supplierName,
-          rawDescription: item.description,
-          productId: item.productId,
-        });
-      }
+    for (const mapping of mappingsFromScan(editedResult)) {
+      saveMappingMut.mutate(mapping);
     }
 
-    const matchedSupplier = suppliers?.find(
-      (s) => s.name.toLowerCase() === (editedResult.supplierName ?? "").toLowerCase(),
-    );
-
-    const dto: any = {
-      supplierId: editedResult.supplierId ?? matchedSupplier?.id,
-      billDate: editedResult.billDate,
-      notes: editedResult.supplierName ? `AI scanned from ${editedResult.supplierName}` : undefined,
-      items: editedResult.items
-        .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
-        .map((i) => ({
-          description: i.description,
-          productId: i.productId,
-          qty: i.qty ?? 1,
-          unitCost: i.unitCost ?? 0,
-        })),
-    };
+    const dto = buildBillDtoFromScan(editedResult, suppliers);
 
     createMut.mutate(dto, {
       onSuccess: (bill) => {
@@ -245,11 +225,11 @@ function ReviewStep({
       <View style={styles.reviewSection}>
         <Text style={styles.reviewSectionTitle}>Extracted details</Text>
         <View style={styles.detailCard}>
-          <DetailRow label="Supplier" value={result.supplierName ?? "—"} />
+          <DetailRow label="Supplier" value={result.supplier ?? "—"} />
           <DetailRow label="Invoice #" value={result.invoiceNumber ?? "—"} />
           <DetailRow
             label="Date"
-            value={result.billDate ? new Date(result.billDate).toLocaleDateString() : "—"}
+            value={result.invoiceDate ? new Date(result.invoiceDate).toLocaleDateString() : "—"}
           />
           <DetailRow
             label="Total"
@@ -276,7 +256,7 @@ function ReviewStep({
                 <ConfidenceDot confidence={item.confidence} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.reviewItemName} numberOfLines={1}>
-                    {item.productName ?? item.description}
+                    {item.matchedProductName ?? item.extractedName}
                   </Text>
                   <Text style={styles.reviewItemMeta}>
                     {item.qty != null ? `${item.qty} × ` : ""}
