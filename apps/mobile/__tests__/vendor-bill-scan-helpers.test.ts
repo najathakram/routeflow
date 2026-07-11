@@ -1,4 +1,10 @@
-import { buildBillDtoFromScan, mappingsFromScan, type SupplierRef } from "../lib/vendor-bill-scan";
+import {
+  buildBillDtoFromScan,
+  mappingsFromScan,
+  unmatchedCount,
+  linkScanItem,
+  type SupplierRef,
+} from "../lib/vendor-bill-scan";
 import type { ScanResult } from "../lib/api/vendor-bills";
 
 /**
@@ -130,5 +136,41 @@ describe("mappingsFromScan", () => {
     const result = scanResult();
     result.items[0].matchedProductId = null;
     expect(mappingsFromScan(result)).toEqual([]);
+  });
+});
+
+describe("unmatchedCount", () => {
+  it("counts lines with no product link (the ones that won't restock)", () => {
+    // Fixture: 1 matched (Cola) + 1 unmatched (Mystery Snack).
+    expect(unmatchedCount(scanResult())).toBe(1);
+  });
+
+  it("is zero once every line is linked", () => {
+    const result = scanResult();
+    result.items[1].matchedProductId = "prod-2";
+    expect(unmatchedCount(result)).toBe(0);
+  });
+
+  it("ignores blank AI rows (no qty and no cost)", () => {
+    const result = scanResult();
+    result.items[1] = { extractedName: "junk", qty: 0, unitCost: 0, confidence: "none" };
+    expect(unmatchedCount(result)).toBe(0);
+  });
+});
+
+describe("linkScanItem", () => {
+  it("links the chosen line, promotes its confidence, and leaves others untouched", () => {
+    const before = scanResult();
+    const after = linkScanItem(before, 1, "prod-new", "Snack Box 12ct");
+    expect(after.items[1].matchedProductId).toBe("prod-new");
+    expect(after.items[1].matchedProductName).toBe("Snack Box 12ct");
+    expect(after.items[1].confidence).toBe("high");
+    // Line 0 unchanged; original object not mutated.
+    expect(after.items[0]).toEqual(before.items[0]);
+    expect(before.items[1].matchedProductId).toBeNull();
+    // A linked line now flows into the bill DTO with its productId + drops the
+    // unmatched count to zero, so it will restock on receive.
+    expect(unmatchedCount(after)).toBe(0);
+    expect(buildBillDtoFromScan(after, suppliers).items[1].productId).toBe("prod-new");
   });
 });

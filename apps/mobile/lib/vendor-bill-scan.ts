@@ -60,6 +60,43 @@ export function buildBillDtoFromScan(
   };
 }
 
+/**
+ * How many extracted lines still have NO product link (and carry a real qty or
+ * cost). These are the lines that would silently fail to restock at receive —
+ * the review UI surfaces this count so the operator can link/create each one.
+ */
+export function unmatchedCount(result: ScanResult): number {
+  return (result.items ?? []).filter(
+    (i) => !i.matchedProductId && ((i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0),
+  ).length;
+}
+
+/**
+ * Link one extracted line to a product (from picking an existing product OR
+ * creating one on the spot). Returns a new ScanResult — the line's confidence is
+ * promoted to "high" since the operator explicitly chose it.
+ */
+export function linkScanItem(
+  result: ScanResult,
+  index: number,
+  productId: string,
+  productName: string,
+): ScanResult {
+  return {
+    ...result,
+    items: result.items.map((it, i) =>
+      i === index
+        ? {
+            ...it,
+            matchedProductId: productId,
+            matchedProductName: productName,
+            confidence: "high",
+          }
+        : it,
+    ),
+  };
+}
+
 /** Mappings to persist so the AI matcher learns — one per line that ended up
  * linked to a product. Requires a supplier name (the mapping key on the server). */
 export function mappingsFromScan(result: ScanResult): ScanProductMapping[] {
