@@ -533,6 +533,8 @@ function PriceEditRow({
   // "Sell anyway" acknowledges a below-floor price for this session; the override
   // is logged via overrideReason so reports can isolate below-floor sales.
   const [floorAcked, setFloorAcked] = React.useState(false);
+  // Cost eye — cost/margin hidden by default; per-row reveal, never persisted.
+  const [costRevealed, setCostRevealed] = React.useState(false);
 
   // Price ↔ $-off lens on MoneyInput: each field keeps its own draft while
   // focused (typing is never reformatted — the old toFixed(2) echo effect here
@@ -620,6 +622,8 @@ function PriceEditRow({
               setFloorAcked(true);
               if (!overrideReason) onReasonChange("Below margin floor - approved");
             }}
+            concealed={!costRevealed}
+            onToggleConcealed={() => setCostRevealed((v) => !v)}
           />
         </div>
       )}

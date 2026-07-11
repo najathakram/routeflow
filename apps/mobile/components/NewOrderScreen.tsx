@@ -27,7 +27,13 @@ import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
-import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
+import {
+  computeLineSubtotal,
+  computeMarginFraction,
+  costPerSellingUnit,
+  effectiveQty,
+  roundMoney,
+} from "../lib/pricing";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import type { CreatedProduct } from "../lib/api/products";
@@ -79,6 +85,10 @@ type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /** Per-piece costs (operator/driver endpoints return them; buyers never get
+   *  this screen and their endpoints strip cost fields). For the cost eye. */
+  averageCost?: number | string | null;
+  standardCost?: number | string | null;
 };
 
 /**
@@ -317,6 +327,10 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   const canCreateProducts = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
+  // endpoints already return cost to them). Buyers never reach this screen.
+  const canSeeCost =
+    userRole === "OPERATOR" || userRole === "TENANT_ADMIN" || userRole === "DRIVER";
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
@@ -1042,6 +1056,7 @@ function ProductPickView({
         onChangePrice={setLinePrice}
         onChangeNote={setLineNote}
         onToggleNote={toggleLineNote}
+        showCostEye={canSeeCost}
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
@@ -1094,6 +1109,7 @@ function CartModal({
   onChangePrice,
   onChangeNote,
   onToggleNote,
+  showCostEye,
   onIncrement,
   onDecrement,
   onRemove,
@@ -1120,6 +1136,8 @@ function CartModal({
   onChangePrice: (id: string, value: number | null) => void;
   onChangeNote: (id: string, text: string) => void;
   onToggleNote: (id: string) => void;
+  /** Whether this role may reveal cost/margin (seller roles only). */
+  showCostEye: boolean;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
@@ -1182,6 +1200,7 @@ function CartModal({
                     onChangePrice={(raw) => onChangePrice(id, raw)}
                     onChangeNote={(t) => onChangeNote(id, t)}
                     onToggleNote={() => onToggleNote(id)}
+                    showCostEye={showCostEye}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onRemove={() => onRemove(id)}
@@ -1248,6 +1267,7 @@ function CartRow({
   onChangePrice,
   onChangeNote,
   onToggleNote,
+  showCostEye,
   onIncrement,
   onDecrement,
   onRemove,
@@ -1261,6 +1281,7 @@ function CartRow({
   onChangePrice: (value: number | null) => void;
   onChangeNote: (text: string) => void;
   onToggleNote: () => void;
+  showCostEye: boolean;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
@@ -1278,6 +1299,21 @@ function CartRow({
     pieces: line.pieces ?? null,
     unitsPerBox: product.unitsPerBox ?? null,
   });
+
+  // Cost eye — hidden by default on every line, session-local only.
+  const [costVisible, setCostVisible] = useState(false);
+  const pieceCost =
+    product.averageCost != null
+      ? toNumber(product.averageCost)
+      : product.standardCost != null
+        ? toNumber(product.standardCost)
+        : null;
+  // 0 is a real cost; only null hides the eye entirely.
+  const hasCost = pieceCost != null && Number.isFinite(pieceCost);
+  const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
+  const marginFrac = hasCost
+    ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
+    : null;
 
   return (
     <View style={styles.cartRow}>
@@ -1342,6 +1378,26 @@ function CartRow({
           onDecrement={onDecrement}
         />
       )}
+
+      {/* Cost eye — OFF by default; reveals the selling-unit cost + margin. */}
+      {showCostEye && hasCost ? (
+        <Pressable onPress={() => setCostVisible((v) => !v)} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons
+            name={costVisible ? "eye-off-outline" : "eye-outline"}
+            size={14}
+            color={costVisible ? ios.label2 : ios.brand}
+          />
+          {costVisible ? (
+            <Text style={styles.cartCostText}>
+              Cost ${sellingUnitCost!.toFixed(2)}
+              {isBoxed ? " / box" : ""}
+              {marginFrac != null ? ` · ${(marginFrac * 100).toFixed(1)}%` : ""}
+            </Text>
+          ) : (
+            <Text style={styles.cartNoteAddText}>Cost</Text>
+          )}
+        </Pressable>
+      ) : null}
 
       {/* Per-line note — carried onto the invoice line (buyer-visible). */}
       {line.noteOpen || line.note?.trim() ? (
@@ -1993,6 +2049,12 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
+  cartCostText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    fontVariant: ["tabular-nums"],
+  },
   cartNoteInput: {
     backgroundColor: ios.fill3,
     borderRadius: 8,

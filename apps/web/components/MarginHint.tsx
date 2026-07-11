@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { Eye, EyeOff } from "lucide-react";
 import {
   computeMarginFraction,
   priceForMarginFloor,
@@ -125,6 +126,8 @@ export function MarginHint({
   productId,
   onSetToFloor,
   onSellAnyway,
+  concealed,
+  onToggleConcealed,
 }: {
   unitPrice: number;
   unitCost: number | null | undefined;
@@ -135,6 +138,14 @@ export function MarginHint({
   productId?: string | null;
   onSetToFloor?: (floorPrice: number) => void;
   onSellAnyway?: () => void;
+  /**
+   * Cost-eye mode: when true, the cost/margin text is hidden behind an Eye
+   * toggle (privacy at the counter). Below-floor warnings + actions STILL
+   * render — the floor is a selling price, not raw cost. Callers that don't
+   * pass this keep the always-visible behavior.
+   */
+  concealed?: boolean;
+  onToggleConcealed?: () => void;
 }) {
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const costRef = React.useRef<HTMLButtonElement>(null);
@@ -151,20 +162,45 @@ export function MarginHint({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {productId ? (
+      {concealed ? (
         <button
-          ref={costRef}
           type="button"
-          onClick={() => setHistoryOpen((o) => !o)}
-          title="View cost history"
-          className={`font-mono text-[10px] underline decoration-dotted underline-offset-2 ${color}`}
+          onClick={onToggleConcealed}
+          title="Show cost & margin"
+          className="rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+          data-testid="cost-eye"
         >
-          {costText}
+          <Eye className="h-3.5 w-3.5" />
         </button>
       ) : (
-        <span className={`font-mono text-[10px] ${color}`}>{costText}</span>
+        <>
+          {productId ? (
+            <button
+              ref={costRef}
+              type="button"
+              onClick={() => setHistoryOpen((o) => !o)}
+              title="View cost history"
+              className={`font-mono text-[10px] underline decoration-dotted underline-offset-2 ${color}`}
+            >
+              {costText}
+            </button>
+          ) : (
+            <span className={`font-mono text-[10px] ${color}`}>{costText}</span>
+          )}
+          {onToggleConcealed && (
+            <button
+              type="button"
+              onClick={onToggleConcealed}
+              title="Hide cost"
+              className="rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
+              data-testid="cost-eye-off"
+            >
+              <EyeOff className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </>
       )}
-      {historyOpen && productId && costRef.current && (
+      {historyOpen && !concealed && productId && costRef.current && (
         <CostHistoryPopover
           productId={productId}
           anchor={costRef.current}
