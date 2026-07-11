@@ -36,6 +36,8 @@ import { useAuthStore } from "../lib/auth-store";
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { BarcodeFab } from "./BarcodeFab";
+import { LicenseGuardModal } from "./LicenseGuardModal";
+import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
 import { withCartRows } from "../lib/visible-cart";
 
@@ -81,6 +83,8 @@ type Product = {
   priceTier4?: number | string | null;
   priceTier5?: number | string | null;
   category?: string | null;
+  /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
+  trackedCategoryId?: string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
@@ -348,6 +352,10 @@ function ProductPickView({
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  // Regulated-license guard: the blocked categories from a 409, and which
+  // submitOrder(mergeChoice) to replay once the license/override is captured.
+  const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
+  const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
   const scrollRef = useRef<ScrollView>(null);
@@ -740,6 +748,14 @@ function ProductPickView({
             promptMergeChoice(body.activeOrder);
             return;
           }
+          // Regulated-sale block: open the license guard and replay this exact
+          // submit (same mergeChoice) once the license/override is captured.
+          const blocked = parseRegulatedAuthError(err);
+          if (blocked && blocked.length > 0) {
+            licenseRetryRef.current = mergeChoice;
+            setLicenseBlock(blocked);
+            return;
+          }
           const msg = body?.message ?? err?.message ?? "Unable to save order.";
           alertInfo("Couldn't save order", String(msg));
         },
@@ -1060,6 +1076,32 @@ function ProductPickView({
           while the cart sheet or the in-list scanner is up so it doesn't
           stack on top of either. */}
       <BarcodeFab continuous onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+
+      <LicenseGuardModal
+        open={!!licenseBlock}
+        customerId={customerId}
+        blocked={licenseBlock ?? []}
+        readOnly={!canCreateProducts}
+        onResolved={() => {
+          const mc = licenseRetryRef.current;
+          setLicenseBlock(null);
+          submitOrder(mc);
+        }}
+        onRemoveLines={(categoryIds) => {
+          setItems((prev) => {
+            const next = { ...prev };
+            for (const pid of Object.keys(next)) {
+              const p = productById.get(pid);
+              if (p?.trackedCategoryId && categoryIds.includes(p.trackedCategoryId))
+                delete next[pid];
+            }
+            return next;
+          });
+          setLicenseBlock(null);
+          showToast("Removed regulated line(s)");
+        }}
+        onClose={() => setLicenseBlock(null)}
+      />
 
       <CartModal
         open={cartOpen}

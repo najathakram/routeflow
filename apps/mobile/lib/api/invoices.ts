@@ -3,7 +3,15 @@ import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus = "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "OVERDUE" | "VOID";
+export type InvoiceStatus =
+  | "DRAFT"
+  | "SENT"
+  | "VIEWED"
+  | "PARTIAL"
+  | "PAID"
+  | "OVERDUE"
+  | "VOID"
+  | "WRITTEN_OFF";
 
 export interface InvoiceItem {
   id: string;
@@ -54,6 +62,9 @@ export interface Invoice {
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
   shippedAt?: string | null;
+  /** Set when the invoice was written off as bad debt (status WRITTEN_OFF). */
+  writeOffReason?: string | null;
+  writtenOffAt?: string | null;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
   createdAt: string;
@@ -186,6 +197,25 @@ export function useVoidInvoice() {
  * Permanently delete an invoice. Server rejects if any payments are recorded
  * (operator must remove payments first or void). Typically used after voiding.
  */
+/**
+ * Write off an unpaid invoice as bad debt (`POST /invoices/:id/write-off`, body
+ * `{ reason }`). Server allows only SENT | VIEWED | PARTIAL | OVERDUE → sets
+ * status WRITTEN_OFF + writeOffReason/writtenOffAt. Not reversible.
+ */
+export function useWriteOffInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+    },
+  });
+}
+
 export function useDeleteInvoice() {
   const qc = useQueryClient();
   return useMutation<{ id: string; message: string }, Error, string>({

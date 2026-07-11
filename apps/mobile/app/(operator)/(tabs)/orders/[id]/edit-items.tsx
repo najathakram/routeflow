@@ -34,6 +34,11 @@ import {
 } from "../../../../../lib/order-item-diff";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
+import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
+import {
+  parseRegulatedAuthError,
+  type BlockedCategory,
+} from "../../../../../lib/api/authorizations";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
 /**
@@ -125,6 +130,7 @@ export default function EditOrderItemsScreen() {
   const [showPicker, setShowPicker] = useState(false);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
+  const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const updateMut = useUpdateOrderItems();
 
   const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
@@ -347,7 +353,15 @@ export default function EditOrderItemsScreen() {
           // reached via deep link or a fresh tab switch.
           router.replace("/(operator)/(tabs)/orders" as any);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          // Regulated-sale block: open the guard, then replay the save on resolve.
+          const blocked = parseRegulatedAuthError(e);
+          if (blocked && blocked.length > 0) {
+            setLicenseBlock(blocked);
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
       },
     );
   };
@@ -399,6 +413,20 @@ export default function EditOrderItemsScreen() {
           setUnlistedModalOpen(false);
           showToast(`Added ${name}`);
         }}
+      />
+
+      {/* Regulated-license guard — order exists here, so overrides are ORDER-scoped.
+          No remove-lines exit (lines are removed via the qty steppers above). */}
+      <LicenseGuardModal
+        open={!!licenseBlock}
+        customerId={customerId ?? ""}
+        blocked={licenseBlock ?? []}
+        orderId={id}
+        onResolved={() => {
+          setLicenseBlock(null);
+          save();
+        }}
+        onClose={() => setLicenseBlock(null)}
       />
 
       {showPicker ? (
