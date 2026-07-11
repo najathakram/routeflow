@@ -9,6 +9,7 @@ import {
   refreshTokens,
 } from "./auth";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY } from "./auth-keys";
+import { registerStaffSessionExpiredHandler } from "./api-client";
 
 export type ActiveRole = "driver" | "operator" | null;
 
@@ -93,6 +94,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       // root layout redirects to /login. Without this listener, tab B
       // stays authenticated indefinitely after tab A signs out.
       installCrossTabLogoutListener();
+
+      // When a staff token refresh fails mid-session (idle past the refresh
+      // TTL, session revoked), api-client wipes the stored tokens and calls
+      // this handler — clearing the in-memory user makes the root layout
+      // redirect to the login screen instead of stranding the user on a
+      // screen whose every request 401s (mirrors the buyer-side handler).
+      registerStaffSessionExpiredHandler(() =>
+        useAuthStore.setState({ user: null, isAuthenticated: false, activeRole: null }),
+      );
     } catch {
       set({ user: null, isAuthenticated: false, activeRole: null });
     } finally {

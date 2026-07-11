@@ -80,6 +80,21 @@ apiClient.interceptors.request.use(async (config) => {
   return config;
 });
 
+// ─── Staff session-expired callback (set by auth-store on init) ───────────────
+//
+// Mirrors buyer-auth.ts registerBuyerSessionExpiredHandler: when a staff 401
+// refresh fails, clearing the storage tokens is not enough — useAuthStore still
+// holds {user, activeRole} in memory, so the root layout's redirect-to-login
+// never fires and the user is stranded on a screen whose every API call 401s.
+// The auth store registers a handler at boot; we invoke it on refresh failure
+// to clear in-memory state and let the layout redirect. The persisted tenant
+// slug survives the wipe, so the login screen renders with Google available.
+
+let staffSessionExpiredHandler: (() => void) | null = null;
+export function registerStaffSessionExpiredHandler(fn: () => void): void {
+  staffSessionExpiredHandler = fn;
+}
+
 // ─── Response interceptor: offline queue + 401 refresh ───────────────────────
 
 let isRefreshing = false;
@@ -192,7 +207,11 @@ apiClient.interceptors.response.use(
       await storageDel(DRIVER_KEYS.accessToken);
       await storageDel(DRIVER_KEYS.refreshToken);
       await storageDel(CURRENT_ROLE_KEY);
-      // Navigation is handled by the auth store watching user state
+      try {
+        staffSessionExpiredHandler?.();
+      } catch {
+        // A handler error must never mask the original 401.
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

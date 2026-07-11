@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -11,6 +11,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { BrandGlyph, GoogleButton } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
+import { getLastUsername } from "../../lib/last-username";
 
 const schema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -45,11 +46,27 @@ export default function LoginScreen() {
   const {
     control,
     handleSubmit,
+    getValues,
+    reset,
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>({
     resolver: zodResolver(schema),
     defaultValues: { username: "", password: "" },
   });
+
+  // Prefill the last signed-in username (RHF defaultValues are sync-only) —
+  // after a session expiry the user only has to retype their password.
+  useEffect(() => {
+    let cancelled = false;
+    void getLastUsername().then((username) => {
+      if (cancelled || !username) return;
+      if (getValues("username")) return; // never clobber what the user typed
+      reset({ username, password: "" });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [getValues, reset]);
 
   const onSubmit = async (data: LoginForm) => {
     setApiError(null);
