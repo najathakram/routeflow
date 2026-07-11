@@ -191,6 +191,36 @@ export function useBuyerProductsInfinite(params?: {
   });
 }
 
+// ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
+
+/** An active, in-window promotion (GET /buyer/promotions). Mirrors web's shape. */
+export interface BuyerPromotion {
+  id: string;
+  name: string;
+  bannerText: string | null;
+  type: "PERCENT" | "FIXED" | "QTY_BREAK";
+  value: number;
+  minQty: number | null;
+  scope: "ALL" | "CATEGORY" | "PRODUCTS";
+  category: string | null;
+  startsAt: string;
+  endsAt: string;
+  productIds: string[];
+}
+
+/**
+ * Active promotions for the current seller — feeds the mobile cart's per-line
+ * best-promo evaluation (`applyBestPromotion`) so buyers see the same net price
+ * the server bills. Display-only; the order create path sends no unitPrice.
+ */
+export function useBuyerPromotions() {
+  return useQuery<BuyerPromotion[]>({
+    queryKey: ["buyer-promotions"],
+    queryFn: () => buyerApiClient.get("/buyer/promotions").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
 export interface ExpiringAuthorization {
   id: string;

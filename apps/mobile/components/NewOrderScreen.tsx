@@ -16,6 +16,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
+import { useCustomer, useCustomerPrices } from "../lib/api/customers";
 import {
   useCreateOrderAsDriver,
   useActiveOrderForCustomer,
@@ -25,7 +26,7 @@ import {
 } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, roundMoney } from "../lib/pricing";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
@@ -73,6 +74,12 @@ type Product = {
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
+  // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
+  // /products payload already carries these — getTierPrice coerces + guards.
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
   category?: string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
@@ -128,9 +135,10 @@ function toNumber(v: number | string | null | undefined): number {
   return 0;
 }
 
-/** The effective per-unit price for a line: the override, else the catalog price. */
-function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
-  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
+/** The effective per-unit price for a line: the override, else the resolved base
+ *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
+function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
+  return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
 export function NewOrderScreen({
@@ -323,6 +331,21 @@ function ProductPickView({
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Fetched once when customer is confirmed — price pre-fill is instant during scanning.
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
+  // Customer tier pricing (mirrors web CreateOrderModal): the effective tier is
+  // the per-product CustomerPrice override, else the customer's default tier.
+  // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
+  // the raw list price — so a tier-N customer sees the price the server bills.
+  const { data: customerDetail } = useCustomer(customerId);
+  const { data: customerPrices } = useCustomerPrices(customerId);
+  const customerTier = customerDetail?.pricingTier ?? 1;
+  const cpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
+    return m;
+  }, [customerPrices]);
+  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  /** The customer's effective per-selling-unit (box) price for a product. */
+  const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   // Scroll the just-scanned product row into view. We track the product list's
@@ -391,8 +414,20 @@ function ProductPickView({
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
-    // Snapshot history at call time (closed over — loaded before scanning starts).
+    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
+    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
+    // pre-fills — never over a SPECIAL tier price, which is already the customer's
+    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
     const histEntry = priceHistory?.[id];
+    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
+    const tierPrice = p ? tierPriceFor(p) : 0;
+    const isSpecial = effectiveTierFor(id) !== 1;
+    const prefill =
+      !isSpecial &&
+      histEntry != null &&
+      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
+        ? histEntry.lastPrice
+        : undefined;
     setItems((m) => {
       const isNew = !m[id];
       const prev = m[id] ?? { qty: 0 };
@@ -400,11 +435,11 @@ function ProductPickView({
         const boxes = (prev.boxes ?? 0) + 1;
         const pieces = prev.pieces ?? 0;
         const line: LineState = { qty: boxes * upb + pieces, boxes, pieces };
-        if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+        if (isNew && prefill != null) line.unitPrice = prefill;
         return { ...m, [id]: line };
       }
       const line: LineState = { qty: (prev.qty ?? 0) + 1 };
-      if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+      if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
     // Always retain a scanned product's snapshot — even one currently in the
@@ -614,7 +649,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: effectiveUnitPrice(line, p),
+        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -628,7 +663,8 @@ function ProductPickView({
       total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
     }
     return { total: roundMoney(total), totalItems };
-  }, [items, productById, unlisted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, productById, unlisted, cpMap, customerTier]);
 
   const inc = (id: string) => addOne(id);
   const dec = (id: string) => removeOne(id);
@@ -645,10 +681,11 @@ function ProductPickView({
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
-        // Send a unitPrice override whenever the operator set a price that differs
-        // from catalog — below list (discount) OR above list (upsell). The server
-        // treats it as a one-time MANUAL/DISCOUNTED override.
-        const catalog = p ? toNumber(p.pricePerUnit) : 0;
+        // Send a unitPrice override only when the operator set a price that
+        // differs from the customer's TIER price — a one-time discount (below)
+        // or upsell (above). A line sitting at the tier price sends nothing so
+        // the server applies the SPECIAL/tier price authoritatively.
+        const catalog = p ? tierPriceFor(p) : 0;
         const override =
           line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
         const base = { productId, qty, ...override };
@@ -834,7 +871,9 @@ function ProductPickView({
             {filtered.map((p) => {
               const line = items[p.id];
               const q = line ? effectiveQty(line, p.unitsPerBox) : 0;
-              const price = toNumber(p.pricePerUnit);
+              const price = tierPriceFor(p);
+              const listPrice = toNumber(p.pricePerUnit);
+              const isSpecial = price < listPrice - 0.0001;
               const upb = Number(p.unitsPerBox ?? 0);
               const isBoxed = upb > 1;
               return (
@@ -870,7 +909,13 @@ function ProductPickView({
                         {displayName(p)}
                       </Text>
                       <Text style={styles.productMeta}>
-                        {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
+                        {p.sku ? `SKU ${p.sku} · ` : ""}
+                        {isSpecial ? (
+                          <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text>
+                        ) : null}
+                        <Text style={isSpecial ? styles.metaSpecial : undefined}>
+                          ${price.toFixed(2)}
+                        </Text>
                         {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
                       </Text>
                     </View>
@@ -1021,6 +1066,7 @@ function ProductPickView({
         items={items}
         productById={productById}
         priceHistory={priceHistory}
+        tierPriceFor={tierPriceFor}
         unlisted={unlisted}
         total={total}
         totalItems={totalItems}
@@ -1069,6 +1115,7 @@ function CartModal({
   items,
   productById,
   priceHistory,
+  tierPriceFor,
   unlisted,
   total,
   totalItems,
@@ -1091,6 +1138,7 @@ function CartModal({
   items: Record<string, LineState>;
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
+  tierPriceFor: (p: Product) => number;
   unlisted: UnlistedLine[];
   total: number;
   totalItems: number;
@@ -1153,6 +1201,7 @@ function CartModal({
                     key={id}
                     product={product}
                     line={line}
+                    catalogPrice={tierPriceFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
@@ -1215,6 +1264,7 @@ function CartModal({
 function CartRow({
   product,
   line,
+  catalogPrice,
   historyPrice,
   onChangeBoxes,
   onChangePieces,
@@ -1226,6 +1276,9 @@ function CartRow({
 }: {
   product: Product;
   line: LineState;
+  /** The customer's effective tier price for this product (the base to compare
+   *  an override against and to fall back to when no override is set). */
+  catalogPrice: number;
   historyPrice?: number;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
@@ -1237,8 +1290,7 @@ function CartRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
-  const catalogPrice = toNumber(product.pricePerUnit);
-  const effUnit = effectiveUnitPrice(line, product);
+  const effUnit = effectiveUnitPrice(line, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
@@ -1660,6 +1712,8 @@ const styles = StyleSheet.create({
     marginTop: 1,
     fontVariant: ["tabular-nums"],
   },
+  metaWas: { color: ios.label3, textDecorationLine: "line-through" },
+  metaSpecial: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
   stepper: {
     flexDirection: "row",
     alignItems: "center",

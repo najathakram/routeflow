@@ -7,6 +7,8 @@ export interface CartItem {
   unitPrice: number;
   qty: number;
   unit?: string;
+  /** Product category — needed so CATEGORY-scoped promotions can match this line. */
+  category?: string | null;
   /** Box packaging. When unitsPerBox > 1 the line is boxed: `unitPrice` is the
    *  BOX price and `qty` is the total PIECE count (a whole number of boxes from
    *  the cart, so `pieces` is always 0). Mirrors the web buyer cart so customer

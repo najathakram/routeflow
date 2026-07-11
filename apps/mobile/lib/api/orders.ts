@@ -181,22 +181,25 @@ export function useCancelOrder() {
  * existing mobile edit-items flow sends the full id-less list (legacy
  * replace-all); unlisted lines slot in as `{ name, qty, unitPrice }`.
  */
-export type UpdateOrderItemInput =
-  | {
-      productId: string;
-      qty: number;
-      /** Optional box/piece split for boxed products (server recomputes qty) */
-      boxes?: number;
-      pieces?: number;
-      unitPrice: number;
-      overrideReason?: string;
-    }
-  | {
-      /** Free-text label for an unlisted (non-catalog) line. */
-      name: string;
-      qty: number;
-      unitPrice: number;
-    };
+/**
+ * One entry in an incremental order-item edit (mirrors web's `ItemUpdate`).
+ * All fields optional so a diff can express: an existing-line UPDATE (`id`+
+ * `qty`…), a hard DELETE / soft CANCEL (`id`+`action`), a substitution
+ * (`id`+`substituteProductId`), a new catalog line (`productId`…), or a new
+ * unlisted line (`name`…). Only DTO-whitelisted keys — never spread a draft.
+ */
+export interface UpdateOrderItemInput {
+  id?: string;
+  productId?: string;
+  name?: string;
+  action?: "CANCEL" | "DELETE" | "UPDATE";
+  qty?: number;
+  boxes?: number;
+  pieces?: number;
+  substituteProductId?: string;
+  unitPrice?: number;
+  overrideReason?: string;
+}
 
 export function useUpdateOrderItems() {
   const qc = useQueryClient();
@@ -206,10 +209,17 @@ export function useUpdateOrderItems() {
     {
       orderId: string;
       items: UpdateOrderItemInput[];
+      /**
+       * `false` = incremental merge: untouched lines (absent from `items`) are
+       * left as-is, protecting invoiced qty + override history. Always pass
+       * `false` from the edit UI — omitting it lets the server's legacy heuristic
+       * flip to full-replace when every entry is id-less (e.g. only new adds).
+       */
+      replaceAll?: boolean;
     }
   >({
-    mutationFn: ({ orderId, items }) =>
-      apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
+    mutationFn: ({ orderId, items, replaceAll }) =>
+      apiClient.patch(`/orders/${orderId}/items`, { items, replaceAll }).then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });

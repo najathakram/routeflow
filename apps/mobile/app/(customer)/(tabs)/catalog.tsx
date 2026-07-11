@@ -22,10 +22,12 @@ import {
   useBuyerFavorites,
   useToggleFavorite,
   useBuyerExpiringAuthorizations,
+  useBuyerPromotions,
   type BuyerProduct,
   type LockedCategory,
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
+import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 
 function formatCurrency(n: number | string | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
@@ -64,7 +66,13 @@ export default function CustomerCatalogScreen() {
     (s, i) => s + (Number(i.unitsPerBox ?? 0) > 1 ? (i.boxes ?? 0) : i.qty),
     0,
   );
-  const cartTotal = useCartStore((s) => s.total());
+  const { data: promotions } = useBuyerPromotions();
+  // Promo-aware total so the floating bar matches the cart screen (and what the
+  // server bills) — not the base-price cartStore.total().
+  const cartTotal = useMemo(
+    () => priceCart(cart, promoRulesFrom(promotions)).subtotal,
+    [cart, promotions],
+  );
 
   const { data: favoritesData } = useBuyerFavorites();
   const favoriteIds = useMemo(
@@ -261,6 +269,7 @@ function ProductCard({
               unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
               unit: product.unit,
               unitsPerBox: product.unitsPerBox ?? null,
+              category: product.category ?? null,
             })
           }
         >
