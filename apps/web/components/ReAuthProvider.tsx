@@ -4,6 +4,9 @@ import * as React from "react";
 import { Check, Eye, EyeOff, Lock } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { login as apiLogin } from "@/lib/auth";
+import { OP_KEYS } from "@/lib/auth-keys";
+import { getTenantCookie } from "@/lib/tenant-cookie";
+import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { registerReauthHandler, type ReauthRequest } from "@/lib/session-expiry";
 import { useI18n } from "@/lib/i18n";
 
@@ -14,8 +17,29 @@ import { useI18n } from "@/lib/i18n";
  * and forms stay exactly where they were. "Switch account" resolves the request
  * as declined, so `api-client` falls back to the normal /login redirect.
  *
+ * Google-only accounts have no password, so the sheet also offers "Continue
+ * with Google" and "Forgot password?" — both are full-page navigations that
+ * abandon the paused request queue (the document unloads), which is strictly
+ * better than the dead end they replace.
+ *
  * Copy mirrors unified/ux-standards.html.
  */
+
+/** Read the tenant slug from the (possibly expired) operator access token.
+ *  getStoredUser() rejects expired tokens, so parse the payload directly. */
+function tenantSlugFromOpToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const token = localStorage.getItem(OP_KEYS.accessToken);
+  if (!token) return null;
+  try {
+    const part = token.split(".")[1]!;
+    const payload = JSON.parse(atob(part.replace(/-/g, "+").replace(/_/g, "/")));
+    return (payload?.tenantSlug as string) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function ReAuthProvider({ children }: { children: React.ReactNode }) {
   const { t } = useI18n();
   const [req, setReq] = React.useState<ReauthRequest | null>(null);
@@ -25,7 +49,28 @@ export function ReAuthProvider({ children }: { children: React.ReactNode }) {
   const [show, setShow] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  const [googleLoading, setGoogleLoading] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // Resolved once per sheet-opening; the tenant context outlives the session.
+  const tenantSlug = React.useMemo(
+    () => (req ? (getTenantCookie() ?? tenantSlugFromOpToken()) : null),
+    [req],
+  );
+
+  const onGoogle = async () => {
+    if (!tenantSlug || googleLoading) return;
+    setGoogleLoading(true);
+    setError(null);
+    // IMPORTANT: do NOT resolve the pending re-auth promise (finish(false))
+    // before navigating — that makes api-client race us to /login. On success
+    // the document unloads mid-redirect and the queue dies with it.
+    const result = await startGoogleSignIn({ context: "staff", tenantSlug });
+    if (!result.ok) {
+      setError(t("reauth.googleUnavailable"));
+      setGoogleLoading(false);
+    }
+  };
 
   React.useEffect(() => {
     const unregister = registerReauthHandler(
@@ -126,7 +171,45 @@ export function ReAuthProvider({ children }: { children: React.ReactNode }) {
                     </button>
                   </div>
                   {error && <p className="text-xs text-danger">{error}</p>}
+                  <div className="text-right">
+                    {/* Full navigation on purpose — leaves the paused queue behind. */}
+                    <a
+                      href="/forgot-password"
+                      className="text-xs font-medium text-accent-deep hover:underline"
+                    >
+                      {t("reauth.forgot")}
+                    </a>
+                  </div>
                 </div>
+
+                {/* Google escape hatch — Google-only accounts have no password
+                    to type here. Shown whenever the tenant context is known;
+                    for password accounts the server auto-links by email match,
+                    so offering it universally is safe. */}
+                {tenantSlug && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <div className="h-px flex-1 bg-line" />
+                      <span className="text-[11px] uppercase tracking-wider text-ink-500">
+                        {t("reauth.or")}
+                      </span>
+                      <div className="h-px flex-1 bg-line" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onGoogle}
+                      disabled={googleLoading || submitting}
+                      className="flex w-full items-center justify-center gap-2.5 rounded-ctl border border-line-strong bg-paper px-3 py-2 text-[13px] font-medium text-ink-900 transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {googleLoading ? (
+                        <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-ink-400/40 border-t-ink-700" />
+                      ) : (
+                        <GoogleIcon className="h-3.5 w-3.5" />
+                      )}
+                      <span>{t("reauth.continueGoogle")}</span>
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="flex justify-end gap-2.5 border-t border-line bg-surface-raised px-5 py-3.5">
