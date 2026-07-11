@@ -80,7 +80,7 @@ real-time sync; offline queue for driver route completions.
 - **Tobacco (addon-gated, mirrors web):** `tobacco/index.tsx` — KPIs, report list (PDF share via `sharePdf`), generate last month, flagged inventory; conditional More-menu row + product detail mark/unmark action, all gated on `useHasAddon("tobacco_dealer")` (`lib/api/tobacco.ts`).
 - `(tabs)/orders/` → index (status filter), `[id].tsx` (assign driver, split-invoice; **"Edit items" entry shown for DRAFT/PENDING/CONFIRMED** — mirrors API guard), `[id]/edit-items.tsx` (integer-qty stepper; `PriceOverrideModal` new-price **+ "Amount off / unit"** lens, **price edit on DRAFT/PENDING/CONFIRMED** (gated by `canEditPrice`; was DRAFT-only) — read-only on terminal statuses; fresh adds pre-fill remembered price via `useCustomerPriceHistory`), `[id]/split-invoice.tsx`.
 - `(tabs)/invoices/` → index (status), `[id].tsx` (payments, write-off, **Share PDF → `sharePdf()` direct share**), `[id]/record-payment.tsx`, `create.tsx`, `new.tsx`.
-- `customers/` → index, `[id].tsx`, `[id]/edit.tsx`, `[id]/addresses.tsx`, `[id]/catalog.tsx` (per-customer tier pricing), `new.tsx`/`create.tsx`.
+- `customers/` → index, `[id].tsx`, `[id]/edit.tsx`, `[id]/addresses.tsx`, `[id]/catalog.tsx` (per-customer tier pricing; module-level `tierUnset()` appends a subdued "(list)" suffix on the override-row price + modal tier-hint when the tier column is 0/unset — `getTierPrice` already falls back to list), `new.tsx`/`create.tsx`.
 - `drivers/` → index, `[id].tsx`, `[id]/edit.tsx`, `new.tsx`/`add.tsx`.
 - `products/` → index (barcode lookup), `[id].tsx`, `[id]/adjust-stock.tsx`, `new.tsx`/`create.tsx`, `adjust-picker.tsx`.
 - `returns/`, `routes/`, `purchase-orders/` (Stack layouts); `new-order.tsx`, `pick.tsx` (pick-list),

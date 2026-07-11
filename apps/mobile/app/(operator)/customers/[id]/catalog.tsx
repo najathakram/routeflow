@@ -30,6 +30,11 @@ function fmt(n: number | string | undefined | null): string {
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
+/** True when the product's tier column is unset (0/null) — that tier inherits the list price. */
+function tierUnset(product: any, tier: number): boolean {
+  return !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+}
+
 // ─── Add / Edit modal ─────────────────────────────────────────────────────────
 
 interface EditModalProps {
@@ -171,6 +176,7 @@ function EditTierOverrideModal({
               <Text style={styles.tierHint}>
                 Price at Tier {tier}:{" "}
                 <Text style={styles.tierHintPrice}>{fmt(getTierPrice(selectedProduct, tier))}</Text>
+                {tierUnset(selectedProduct, tier) ? " (list)" : ""}
               </Text>
             ) : null}
           </View>
@@ -297,7 +303,12 @@ export default function CustomerCatalogScreen() {
                       <View style={styles.tierBadge}>
                         <Text style={styles.tierBadgeText}>Tier {cp.pricingTier}</Text>
                       </View>
-                      <Text style={styles.tierPriceText}>{fmt(tierPrice)}</Text>
+                      <Text style={styles.tierPriceText}>
+                        {fmt(tierPrice)}
+                        {tierUnset(cp.product, cp.pricingTier) ? (
+                          <Text style={styles.tierPriceListSuffix}> (list)</Text>
+                        ) : null}
+                      </Text>
                     </View>
                     <Pressable
                       hitSlop={10}
@@ -405,6 +416,7 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  tierPriceListSuffix: { fontSize: 10, fontFamily: "Inter_400Regular", color: ios.label2 },
   trashBtn: {
     padding: 6,
     marginLeft: 2,
