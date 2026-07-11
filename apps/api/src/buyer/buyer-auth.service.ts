@@ -86,8 +86,24 @@ export class BuyerAuthService {
       throw new UnauthorizedException("Invalid credentials");
     }
 
+    // Account lockout — same policy as staff (auth.service.ts): locked
+    // accounts fail without running bcrypt and with the identical message
+    // (enumeration-safe); time-based auto-unlock only.
+    if (account.lockedUntil && account.lockedUntil > new Date()) {
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
     const valid = await bcrypt.compare(dto.password, account.passwordHash);
-    if (!valid) throw new UnauthorizedException("Invalid credentials");
+    if (!valid) {
+      await this.recordFailedLogin(account.id, account.failedLoginAttempts, account.lockedUntil);
+      throw new UnauthorizedException("Invalid credentials");
+    }
+    if (account.failedLoginAttempts > 0 || account.lockedUntil) {
+      await this.prisma.buyerAccount.update({
+        where: { id: account.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+    }
 
     const tokens = await this.issueBuyerTokenPair(
       account.id,
@@ -277,6 +293,30 @@ export class BuyerAuthService {
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+  /** Mirrors AuthService: 10 consecutive failures → 15-minute lock. */
+  static readonly LOCKOUT_THRESHOLD = 10;
+  static readonly LOCKOUT_WINDOW_MS = 15 * 60_000;
+
+  private async recordFailedLogin(
+    buyerAccountId: string,
+    priorFailures: number,
+    lockedUntil: Date | null,
+  ) {
+    // An expired lock starts a fresh streak (otherwise one failure re-locks).
+    const lockExpired = lockedUntil != null && lockedUntil <= new Date();
+    const attempts = lockExpired ? 1 : (priorFailures || 0) + 1;
+    const lockNow = attempts >= BuyerAuthService.LOCKOUT_THRESHOLD;
+    await this.prisma.buyerAccount.update({
+      where: { id: buyerAccountId },
+      data: lockNow
+        ? {
+            failedLoginAttempts: 0,
+            lockedUntil: new Date(Date.now() + BuyerAuthService.LOCKOUT_WINDOW_MS),
+          }
+        : { failedLoginAttempts: attempts, ...(lockExpired ? { lockedUntil: null } : {}) },
+    });
+  }
 
   private hashToken(token: string): string {
     return crypto.createHash("sha256").update(token).digest("hex");
