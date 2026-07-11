@@ -6,7 +6,10 @@
  * It must be kept in sync with the actual tenant context at all times.
  */
 
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+// 30 days — must not expire before the session does (refresh-token TTL is
+// 30d): a live session with a dead tenant-slug cookie silently drops the
+// X-Tenant-Slug header while auth still works.
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
 export function setTenantCookie(slug: string): void {
   document.cookie = `tenant-slug=${encodeURIComponent(slug)}; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`;

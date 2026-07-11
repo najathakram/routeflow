@@ -183,6 +183,52 @@ export async function buyerChangePassword(
   );
 }
 
+/**
+ * First-password setup for Google-auto-created buyer accounts. Only accepted
+ * while the account's passwordSet flag is false (server-verified). Stores the
+ * reissued token pair so the caller stays signed in.
+ */
+export async function buyerSetPassword(newPassword: string, accessToken: string): Promise<void> {
+  const { data } = await axios.post<{ accessToken?: string; refreshToken?: string }>(
+    `${BASE_URL}/buyer/auth/set-password`,
+    { newPassword },
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (data.accessToken && data.refreshToken) {
+    localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+    localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
+    setBuyerPresenceCookie();
+  }
+}
+
+export interface BuyerProfile {
+  id: string;
+  email: string;
+  name: string;
+  phone: string | null;
+  mobile: string | null;
+  emailVerified: boolean;
+  createdAt: string;
+  googleLinked: boolean;
+  /** Authoritative — false means Google-created with no usable password yet. */
+  hasPassword: boolean;
+}
+
+export async function getBuyerProfile(accessToken: string): Promise<BuyerProfile> {
+  const { data } = await axios.get<BuyerProfile>(`${BASE_URL}/buyer/auth/profile`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return data;
+}
+
+export async function buyerRequestPasswordReset(email: string): Promise<void> {
+  await axios.post(`${BASE_URL}/buyer/auth/request-password-reset`, { email });
+}
+
+export async function buyerResetPassword(token: string, newPassword: string): Promise<void> {
+  await axios.post(`${BASE_URL}/buyer/auth/reset-password`, { token, newPassword });
+}
+
 export async function requestSellerConnection(
   sellerSlug: string,
   emailAtSeller: string,
