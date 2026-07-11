@@ -154,6 +154,8 @@ export interface AdminOrder {
     subtotal: number;
     status: string;
     overrideReason?: string | null;
+    /** Per-line note — carried onto the invoice line (buyer-visible). */
+    notes?: string | null;
     product?: {
       id?: string;
       name: string;
@@ -295,6 +297,8 @@ export interface AdminInvoice {
     /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
     priceType?: string;
     subtotal: number;
+    /** Per-line note carried from the order line (buyer-visible). */
+    notes?: string | null;
   }>;
 }
 

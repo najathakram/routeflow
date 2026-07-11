@@ -54,6 +54,8 @@ export interface InvoicePdfData {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** Per-line note (buyer-visible) — italic line under the description. */
+    notes?: string | null;
     product?: { name: string } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
@@ -478,6 +480,13 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
               <View style={styles.colDescription}>
                 <Text style={styles.cellText}>{item.description}</Text>
+                {item.notes ? (
+                  <Text
+                    style={{ fontSize: 7, color: "#64748b", fontStyle: "italic", marginTop: 2 }}
+                  >
+                    {item.notes}
+                  </Text>
+                ) : null}
                 {item.barcodeDataUri ? (
                   <View style={{ marginTop: 3 }}>
                     <Image

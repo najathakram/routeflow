@@ -175,6 +175,7 @@ export class InvoicesService {
         // Snapshot the box size when this line was priced as a box split, so a later
         // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
         unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+        notes: item.notes ?? null,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
@@ -425,6 +426,8 @@ export class InvoicesService {
       boxes: split.boxes,
       pieces: split.pieces,
       unitsPerBox: unitsPerBox > 0 ? unitsPerBox : null,
+      // Per-line note travels verbatim from the order line (buyer-visible).
+      notes: li.notes ?? null,
       unitPrice,
       // `unitPrice` is ALREADY the net (post-override) price — the order stores the
       // override as a reduced unitPrice plus `originalPrice` for the strikethrough.
@@ -1421,6 +1424,9 @@ export class InvoicesService {
           pieces,
           // Snapshot the box size for a box-split line so later recompute is stable.
           unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // Preserve per-line notes across the delete-and-recreate edit — dropping
+          // this silently wipes notes the order carried onto the invoice.
+          notes: item.notes ?? null,
           tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
         };
       });

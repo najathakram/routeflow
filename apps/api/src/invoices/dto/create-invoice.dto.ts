@@ -16,6 +16,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { PaymentMethod } from "@prisma/client";
+import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 export class CreateInvoiceItemDto {
   @IsString() description: string;
@@ -26,6 +27,8 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
   @IsOptional() @IsInt() @Min(0) boxes?: number;
   @IsOptional() @IsInt() @Min(0) pieces?: number;
+  /** Per-line note (buyer-visible; prints under the description on the PDF). */
+  @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
 }
 
 export class CreateInvoiceDto {

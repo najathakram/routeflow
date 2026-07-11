@@ -1629,7 +1629,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 <tbody className="divide-y divide-surface-border">
                   {(invoice.items ?? []).map((item) => (
                     <tr key={item.id} className="hover:bg-surface-raised">
-                      <td className="px-8 py-3 font-medium text-navy">{item.description}</td>
+                      <td className="px-8 py-3 font-medium text-navy">
+                        {item.description}
+                        {item.notes && (
+                          <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                            {item.notes}
+                          </p>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <span
                           className="mono text-navy/70"

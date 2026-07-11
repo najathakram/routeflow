@@ -976,6 +976,20 @@ function EditableLineItems({
             />
           )}
 
+          {/* Per-line note — carried onto the invoice line (buyer-visible). */}
+          {!item.cancelled && (
+            <div className="ml-11 mt-1">
+              <input
+                type="text"
+                maxLength={500}
+                value={item.notes ?? ""}
+                onChange={(e) => update(item.id, { notes: e.target.value })}
+                placeholder="Note for this line (prints on invoice)"
+                className="w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              />
+            </div>
+          )}
+
           {/* Substitute picker */}
           {substituteOpenId === item.id && (
             <SubstitutePicker
@@ -1369,6 +1383,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     for (const edited of editItems) {
       // A line is "discounted" when its net unit price sits below the list/base price.
       const overridden = edited.unitPrice < edited.basePrice - 0.0001;
+      const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
       if (edited.isNew) {
         if (edited.isUnlisted) {
           // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
@@ -1376,6 +1391,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             name: edited.productName.trim(),
             qty: edited.qty,
             unitPrice: edited.unitPrice,
+            ...newNote,
           });
         } else {
           // New catalog item: no id — API will create it. Carry the override when present.
@@ -1386,6 +1402,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             ...(overridden
               ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
               : {}),
+            ...newNote,
           });
         }
         continue;
@@ -1397,6 +1414,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
       const nameChanged =
         edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
+      // "" clears an existing note (the API only applies notes when defined).
+      const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
+      const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
 
       if (edited.cancelled) {
         updates.push({ id: edited.id, action: "CANCEL" });
@@ -1406,15 +1426,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           substituteProductId: edited.substituteProductId,
           qty: edited.qty,
         });
-      } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged)) {
+      } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
         // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
         updates.push({
           id: edited.id,
           qty: edited.qty,
           ...(nameChanged ? { name: edited.productName.trim() } : {}),
           ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
+          ...notePatch,
         });
-      } else if (qtyChanged || priceChanged) {
+      } else if (qtyChanged || priceChanged || noteChanged) {
         updates.push({
           id: edited.id,
           action: "UPDATE",
@@ -1423,6 +1444,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           ...(priceChanged
             ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
             : {}),
+          ...notePatch,
         });
       }
     }
@@ -1969,11 +1991,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           const original = order!.lineItems;
                           const updates: any[] = [];
                           for (const edited of editItems) {
+                            const noteChanged =
+                              (edited.notes ?? "").trim() !==
+                              (
+                                (original.find((li) => li.id === edited.id)?.notes as string) ?? ""
+                              ).trim();
                             if (edited.isNew) {
                               updates.push({
                                 productId: edited.productId,
                                 qty: edited.qty,
                                 ...boxedDtoFields(edited),
+                                ...(edited.notes?.trim() ? { notes: edited.notes.trim() } : {}),
                               });
                               continue;
                             }
@@ -1990,12 +2018,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                 substituteProductId: edited.substituteProductId,
                                 qty: edited.qty,
                               });
-                            } else if (Math.abs(edited.qty - Number(orig.qty)) > 0.0001) {
+                            } else if (
+                              Math.abs(edited.qty - Number(orig.qty)) > 0.0001 ||
+                              noteChanged
+                            ) {
                               updates.push({
                                 id: edited.id,
                                 action: "UPDATE",
                                 qty: edited.qty,
                                 ...boxedDtoFields(edited),
+                                ...(noteChanged ? { notes: (edited.notes ?? "").trim() } : {}),
                               });
                             }
                           }
@@ -2082,14 +2114,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
                               <Package className="h-4 w-4 text-navy/30" />
                             </div>
-                            <span
-                              className={cn(
-                                "font-medium text-navy",
-                                li.status === "CANCELLED" && "line-through",
+                            <div className="min-w-0">
+                              <span
+                                className={cn(
+                                  "font-medium text-navy",
+                                  li.status === "CANCELLED" && "line-through",
+                                )}
+                              >
+                                {li.product?.name ?? li.name ?? "Custom item"}
+                              </span>
+                              {li.notes && (
+                                <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>
                               )}
-                            >
-                              {li.product?.name ?? li.name ?? "Custom item"}
-                            </span>
+                            </div>
                             {!li.productId && (
                               <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
                                 Custom

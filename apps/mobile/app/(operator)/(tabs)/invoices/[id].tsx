@@ -321,6 +321,11 @@ export default function InvoiceDetailScreen() {
                           `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
                         : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                     </Text>
+                    {it.notes?.trim() ? (
+                      <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                        {it.notes}
+                      </Text>
+                    ) : null}
                     {it.priceType === "MANUAL" &&
                     it.originalPrice != null &&
                     Number(it.unitPrice) > Number(it.originalPrice) ? (

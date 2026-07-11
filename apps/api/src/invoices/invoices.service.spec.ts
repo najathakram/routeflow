@@ -270,6 +270,30 @@ describe("InvoicesService", () => {
       expect(created.boxes).toBeNull();
       expect(created.pieces).toBeNull();
     });
+
+    it("round-trips per-line notes through the delete-and-recreate edit (no silent wipe)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-plain",
+            description: "Loose",
+            qty: 5,
+            unitPrice: 3.5,
+            notes: "No ice, deliver chilled",
+          },
+          { productId: "prod-2", description: "Other", qty: 1, unitPrice: 1 },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create;
+      expect(created[0].notes).toBe("No ice, deliver chilled");
+      expect(created[1].notes).toBeNull();
+    });
   });
 
   // ─── RF-079: tax-exempt customer → invoice tax = 0 ────────────────────────
@@ -379,6 +403,23 @@ describe("InvoicesService", () => {
         where: { id: "li1" },
         data: { invoicedQty: 8 },
       });
+    });
+
+    it("carries the order line's per-line note onto the invoice line verbatim", async () => {
+      armReconcile();
+      prisma.order.findUnique.mockResolvedValue({
+        ...order,
+        lineItems: [
+          { ...order.lineItems[0], notes: "No ice, deliver chilled" },
+          { ...order.lineItems[0], id: "li-plain", notes: null },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }, { id: "li-plain" }]);
+
+      await service.reconcileOrderDraftInvoice("o1", { basis: "order" });
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create;
+      expect(created[0].notes).toBe("No ice, deliver chilled");
+      expect(created[1].notes).toBeNull();
     });
 
     // Regression: a one-time price override (list 100 → net 90) is stored on the

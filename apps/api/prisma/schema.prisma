@@ -1616,6 +1616,10 @@ model InvoiceItem {
   // Any recompute of this invoice line (edit form, PDF) must use THIS value, not
   // the live product. Null for lines created before the snapshot shipped.
   unitsPerBox       Int?
+  // Per-line note carried verbatim from OrderItem.notes (or entered on a manual
+  // invoice line). Buyer-visible: renders under the description on the invoice
+  // detail and the PDF.
+  notes             String?
   // Provenance: the OrderItem this invoice line was billed from (null for manual
   // / freeform lines). Enables exact partial-billing bookkeeping and precise
   // invoicedQty release on void. SetNull so an order-line hard-delete (order edit
