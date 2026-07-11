@@ -244,6 +244,53 @@ export function useBuyerExpiringAuthorizations() {
   });
 }
 
+// ─── License self-serve (submit / renew) ───────────────────────────────────────
+
+/** One regulated-category authorization row for the buyer's licenses screen. */
+export interface BuyerAuthorizationRow {
+  trackedCategoryId: string;
+  categoryName: string;
+  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
+  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
+  licenseNumber: string | null;
+  expiresAt: string | null;
+  documentKey: string | null;
+  submittedAt: string | null;
+  verifiedAt: string | null;
+}
+
+export interface SubmitBuyerAuthorizationInput {
+  trackedCategoryId: string;
+  licenseNumber: string;
+  /** ISO 8601 (@IsISO8601 server-side). */
+  expiresAt: string;
+  documentKey?: string;
+  /** Must be true (@Equals(true) server-side). */
+  shareConsent: boolean;
+}
+
+/** Per-category license status for the buyer's self-serve screen (GET /buyer/authorizations). */
+export function useBuyerAuthorizations() {
+  return useQuery<BuyerAuthorizationRow[]>({
+    queryKey: ["buyer-authorizations"],
+    queryFn: () => buyerApiClient.get("/buyer/authorizations").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+/** Submit/renew a license for a category (POST /buyer/authorizations). */
+export function useSubmitBuyerAuthorization() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, SubmitBuyerAuthorizationInput>({
+    mutationFn: (dto) => buyerApiClient.post("/buyer/authorizations", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-authorizations"] });
+      qc.invalidateQueries({ queryKey: ["buyer-authorizations-expiring"] });
+      qc.invalidateQueries({ queryKey: ["buyer-products"] });
+    },
+  });
+}
+
 export function useBuyerCategories() {
   return useQuery<string[]>({
     queryKey: ["buyer-categories"],

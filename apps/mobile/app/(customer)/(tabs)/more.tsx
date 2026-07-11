@@ -98,6 +98,18 @@ export default function CustomerMoreScreen() {
               iconBg={ios.system.orangeWash}
               title="Standing Orders"
               onPress={() => router.push("/(customer)/standing-orders")}
+            />
+            <MenuRow
+              icon={<Ionicons name="heart-outline" size={16} color="#ef4444" />}
+              iconBg={ios.system.redWash}
+              title="Favorites"
+              onPress={() => router.push("/(customer)/favorites")}
+            />
+            <MenuRow
+              icon={<Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Licenses"
+              onPress={() => router.push("/(customer)/licenses")}
               last
             />
           </View>

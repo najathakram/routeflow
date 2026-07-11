@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -81,34 +80,33 @@ export default function CustomerCatalogScreen() {
   );
   const toggleFavorite = useToggleFavorite();
 
+  // Expiry badge on the licenses icon; tap opens the licenses screen.
   const { data: expiring = [] } = useBuyerExpiringAuthorizations();
-  const showExpiryAlert = () => {
-    if (expiring.length === 0) {
-      Alert.alert("Licenses", "No licenses expiring soon.");
-      return;
-    }
-    const lines = expiring
-      .map((a) => {
-        const when = a.expired
-          ? "expired"
-          : a.bucket === 1
-            ? "expires in ~1 day"
-            : `expires in ~${a.bucket} days`;
-        return `• ${a.categoryName} — ${when}`;
-      })
-      .join("\n");
-    Alert.alert("License expiry", lines);
-  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Catalog"
         trailing={
-          <Pressable onPress={showExpiryAlert} hitSlop={8} style={styles.bellBtn}>
-            <Ionicons name="notifications-outline" size={22} color={ios.label} />
-            {expiring.length > 0 ? <View style={styles.bellDot} /> : null}
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <Pressable
+              onPress={() => router.push("/(customer)/favorites")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Favorites"
+            >
+              <Ionicons name="heart-outline" size={22} color={ios.label} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/(customer)/licenses")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Licenses"
+            >
+              <Ionicons name="shield-checkmark-outline" size={22} color={ios.label} />
+              {expiring.length > 0 ? <View style={styles.bellDot} /> : null}
+            </Pressable>
+          </View>
         }
       />
 
