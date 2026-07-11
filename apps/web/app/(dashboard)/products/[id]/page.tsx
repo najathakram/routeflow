@@ -46,6 +46,7 @@ import {
 import { useCostHistory } from "@/lib/api/cost-history";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -326,11 +327,8 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     accumulated: Array<{ blob: Blob; focal: FocalPoint }>;
   } | null>(null);
 
-  // Derived: all known categories and units from the catalog
+  // Derived: all known units from the catalog (categories come from CategoryCombobox's own fetch)
   const allProducts: any[] = allProductsResult?.data ?? [];
-  const catalogCategories = Array.from(
-    new Set(allProducts.map((p: any) => p.category).filter(Boolean)),
-  ) as string[];
   const catalogUnits = Array.from(
     new Set([...COMMON_UNITS, ...allProducts.map((p: any) => p.unit).filter(Boolean)]),
   ).sort() as string[];
@@ -1441,22 +1439,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     label="Category"
                     value={
                       isEditing ? (
-                        <>
-                          <input
-                            list="edit-category-options"
-                            value={(editDraft.category as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...d, category: e.target.value }))
-                            }
-                            placeholder="Select or type a category"
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                          <datalist id="edit-category-options">
-                            {catalogCategories.map((c) => (
-                              <option key={c} value={c} />
-                            ))}
-                          </datalist>
-                        </>
+                        <CategoryCombobox
+                          value={(editDraft.category as string) ?? ""}
+                          onChange={(v) => setEditDraft((d) => ({ ...d, category: v }))}
+                          placeholder="Select or type a category"
+                          className="px-2 py-1"
+                        />
                       ) : (
                         product.category
                       )

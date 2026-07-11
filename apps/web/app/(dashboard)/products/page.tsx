@@ -38,6 +38,7 @@ import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { UnitCombobox } from "@/components/UnitCombobox";
+import { CategoryCombobox } from "@/components/CategoryCombobox";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -581,7 +582,6 @@ function CreateProductModal({
   onClose,
   onCreate,
   isLoading,
-  categories,
   units,
   defaultParentId,
   allProducts,
@@ -590,7 +590,6 @@ function CreateProductModal({
   /** Returns the created product (with .id) so we can upload images. */
   onCreate: (data: Record<string, unknown>) => Promise<{ id: string }>;
   isLoading: boolean;
-  categories: string[];
   units: string[];
   defaultParentId?: string;
   allProducts?: ApiProduct[];
@@ -889,21 +888,14 @@ function CreateProductModal({
                 {priceError && <p className="mt-1 text-xs text-danger">{priceError}</p>}
               </div>
 
-              {/* Category — datalist (pick from list OR type a new one) */}
+              {/* Category — pick from the tenant's existing categories OR type a new one */}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">Category</label>
-                <input
-                  list="create-category-options"
-                  placeholder="Select or type a new category"
+                <CategoryCombobox
                   value={form.category}
-                  onChange={(e) => set("category", e.target.value)}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  onChange={(v) => set("category", v)}
+                  placeholder="Select or type a new category"
                 />
-                <datalist id="create-category-options">
-                  {categories.map((c) => (
-                    <option key={c} value={c} />
-                  ))}
-                </datalist>
               </div>
 
               <div className="col-span-2">
@@ -1380,7 +1372,6 @@ export default function ProductsPage() {
             }
           }}
           isLoading={createProduct.isPending}
-          categories={categories}
           units={existingUnits}
           defaultParentId={newVariantParentId}
           // Pass the full unfiltered catalog (already loaded for the

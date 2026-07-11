@@ -36,6 +36,13 @@ export class ProductsController {
   }
 
   // Must be declared before :id to avoid route collision
+  @Get("categories")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  listCategories() {
+    return this.productsService.listCategories();
+  }
+
+  // Must be declared before :id to avoid route collision
   @Get("barcode/:barcode")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   findByBarcode(@Param("barcode") barcode: string) {

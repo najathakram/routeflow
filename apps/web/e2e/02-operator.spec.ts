@@ -150,6 +150,43 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-09b category autocomplete — endpoint serves suggestions; typing a new one is kept", async ({
+    page,
+  }) => {
+    // Locks the GET /products/categories route ordering (declared before /:id —
+    // a regression turns this into a silent 404/400 from findOne("categories")).
+    const categoriesResp = page.waitForResponse(
+      (r) => r.url().includes("/products/categories") && r.request().method() === "GET",
+    );
+    await page.goto("/products");
+    await page
+      .getByRole("button", { name: /new product/i })
+      .first()
+      .click();
+    const categoryInput = page.getByPlaceholder("Select or type a new category");
+    await expect(categoryInput).toBeVisible({ timeout: 15_000 });
+    await categoryInput.click();
+    const resp = await categoriesResp;
+    expect(resp.status()).toBe(200);
+    const categories: string[] = await resp.json();
+    expect(Array.isArray(categories)).toBe(true);
+
+    if (categories.length > 0) {
+      // Suggestions listed; clicking one fills the input.
+      const first = categories[0];
+      const option = page.getByRole("button", { name: first, exact: true }).first();
+      await expect(option).toBeVisible();
+      await option.click();
+      await expect(categoryInput).toHaveValue(first);
+    }
+
+    // A brand-new category is kept as typed (created implicitly on save).
+    await categoryInput.fill("E2E Novel Category");
+    await expect(page.getByText(/new category/i).first()).toBeVisible();
+    await expect(categoryInput).toHaveValue("E2E Novel Category");
+    await page.keyboard.press("Escape");
+  });
+
   // ── Routes ────────────────────────────────────────────────────────────────
 
   test("OP-10 routes list loads", async ({ page }) => {
