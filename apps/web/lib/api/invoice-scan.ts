@@ -24,11 +24,13 @@ export interface ScanResult {
 }
 
 /**
- * Scan one or more invoice files (image pages or a PDF) in a single AI call.
+ * Scan the files of ONE invoice (image pages or a PDF) in a single AI call.
  * Multi-page invoices: pass each page as its own File — the API combines them.
+ * Batch scans call this once per invoice; pass `signal` so an abandoned batch
+ * actually aborts its in-flight requests.
  * HEIC files (iPhone photos) are accepted and converted server-side to JPEG.
  */
-export async function scanInvoice(files: File | File[]): Promise<ScanResult> {
+export async function scanInvoice(files: File | File[], signal?: AbortSignal): Promise<ScanResult> {
   const formData = new FormData();
   const arr = Array.isArray(files) ? files : [files];
   for (const f of arr) formData.append("images", f, f.name);
@@ -36,6 +38,7 @@ export async function scanInvoice(files: File | File[]): Promise<ScanResult> {
     headers: { "Content-Type": "multipart/form-data" },
     // Multi-page scans + HEIC conversion can take longer; allow up to 120s.
     timeout: 120_000,
+    signal,
   });
   return response.data as ScanResult;
 }

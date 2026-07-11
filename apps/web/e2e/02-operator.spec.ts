@@ -375,6 +375,7 @@ test.describe("Operator — Tenant Dashboard", () => {
       }),
     );
 
+    await mockSuppliers(page);
     await page.goto("/inventory");
     await page.getByRole("button", { name: /scan invoice/i }).click();
     await page
@@ -427,6 +428,305 @@ test.describe("Operator — Tenant Dashboard", () => {
     await page.getByRole("button", { name: /create vendor bill/i }).click();
     await page.waitForTimeout(800);
     expect(billPosted).toBe(false);
+  });
+
+  /**
+   * The scan tests are fully self-contained: the e2e tenant has no seeded
+   * suppliers, so the supplier dropdown is mocked alongside the write routes.
+   */
+  const mockSuppliers = (page: import("@playwright/test").Page) =>
+    page.route("**/inventory/suppliers", (route) => {
+      if (route.request().method() !== "GET") return void route.continue();
+      void route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: "e2e-sup-1", name: "E2E Supplier One" },
+          { id: "e2e-sup-2", name: "E2E Supplier Two" },
+        ]),
+      });
+    });
+
+  /** Canned per-invoice scan payload for the batch-scan tests. */
+  const batchScanPayload = (key: "A" | "B") =>
+    JSON.stringify({
+      supplier: `E2E Batch Supplier ${key}`,
+      invoiceNumber: `INV-${key}-1`,
+      invoiceDate: "2026-07-01",
+      expenseDescription: null,
+      expenseCategory: null,
+      subtotal: key === "A" ? 70 : 55,
+      tax: 0,
+      total: key === "A" ? 70 : 55,
+      notes: null,
+      items: [
+        {
+          extractedName: key === "A" ? "ITEM ALPHA" : "ITEM BRAVO",
+          qty: key === "A" ? 2 : 5,
+          unitCost: key === "A" ? 20 : 11,
+          lineTotal: key === "A" ? 40 : 55,
+          matchedProductId: null,
+          matchedProductName: null,
+          confidence: "none",
+        },
+        ...(key === "A"
+          ? [
+              {
+                extractedName: "ITEM ALPHA TWO",
+                qty: 3,
+                unitCost: 10,
+                lineTotal: 30,
+                matchedProductId: null,
+                matchedProductName: null,
+                confidence: "none",
+              },
+            ]
+          : []),
+      ],
+    });
+
+  const pdfFile = (name: string) => ({
+    name,
+    mimeType: "application/pdf",
+    buffer: Buffer.from(`fake pdf ${name}`),
+  });
+
+  test("OP-17c batch scan: two PDFs → two scans, navigator switches form, two distinct bills", async ({
+    page,
+  }) => {
+    // Each PDF gets its OWN scan call; payload keyed off the uploaded filename.
+    let scanCalls = 0;
+    await page.route("**/vendor-bills/scan-invoice", (route) => {
+      scanCalls++;
+      const body = route.request().postData() ?? "";
+      const key = body.includes("invoice-b.pdf") ? "B" : "A";
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: batchScanPayload(key as "A" | "B"),
+      });
+    });
+    // Fulfill bill create + receive so the test never writes to the DB.
+    const billBodies: any[] = [];
+    await page.route("**/vendor-bills", (route) => {
+      if (route.request().method() !== "POST") return void route.continue();
+      billBodies.push(route.request().postDataJSON());
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: `fake-bill-${billBodies.length}` }),
+      });
+    });
+    await page.route("**/vendor-bills/fake-bill-*/receive", (route) =>
+      route.fulfill({ status: 201, contentType: "application/json", body: "{}" }),
+    );
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([pdfFile("invoice-a.pdf"), pdfFile("invoice-b.pdf")]);
+
+    // Navigator shows the batch; each PDF was scanned separately.
+    await expect(page.getByText("Invoice 1 of 2")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/detected: e2e batch supplier a/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    // Unmatched lines render as editable custom-description inputs.
+    const descInputs = page.locator('input[placeholder*="Custom description"]');
+    await expect(descInputs.first()).toHaveValue("ITEM ALPHA");
+    await expect(descInputs).toHaveCount(2);
+    await expect.poll(() => scanCalls).toBe(2);
+
+    // ▶ switches BOTH the form and the data — supplier B's invoice, not a merge.
+    await page.getByTestId("invoice-nav-next").click();
+    await expect(page.getByText("Invoice 2 of 2")).toBeVisible();
+    await expect(page.getByText(/detected: e2e batch supplier b/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(descInputs).toHaveCount(1);
+    await expect(descInputs.first()).toHaveValue("ITEM BRAVO");
+
+    // Pick a supplier for invoice 2, then ◀ back and for invoice 1.
+    const supplierSelect = () =>
+      page.locator('select:has(option:text("— Select supplier —"))').first();
+    await supplierSelect().selectOption({ index: 1 });
+    await page.getByTestId("invoice-nav-prev").click();
+    await expect(page.getByText("Invoice 1 of 2")).toBeVisible();
+    await supplierSelect().selectOption({ index: 1 });
+
+    // Unlinked lines across the batch → ONE aggregated confirm naming both invoices.
+    page.on("dialog", (dialog) => {
+      expect(dialog.message()).toMatch(/aren't linked to a product/i);
+      void dialog.accept();
+    });
+    await page.getByRole("button", { name: /create 2 bills/i }).click();
+
+    await expect.poll(() => billBodies.length, { timeout: 15_000 }).toBe(2);
+    // Two DISTINCT bills — one per PDF, each carrying its own supplier invoice #.
+    const notes = billBodies.map((b) => b.notes).sort();
+    expect(notes).toEqual(["Supplier invoice #INV-A-1", "Supplier invoice #INV-B-1"]);
+    const lineCounts = billBodies.map((b) => b.items.length).sort();
+    expect(lineCounts).toEqual([1, 2]);
+  });
+
+  test("OP-17d batch scan: one failed PDF is retryable while the other posts", async ({ page }) => {
+    // First scan of invoice-b.pdf fails; the retry succeeds.
+    let bAttempts = 0;
+    let scanCalls = 0;
+    await page.route("**/vendor-bills/scan-invoice", (route) => {
+      scanCalls++;
+      const body = route.request().postData() ?? "";
+      if (body.includes("invoice-b.pdf")) {
+        bAttempts++;
+        if (bAttempts === 1) {
+          return void route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ message: "AI scan blew up (e2e)" }),
+          });
+        }
+        return void route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: batchScanPayload("B"),
+        });
+      }
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: batchScanPayload("A"),
+      });
+    });
+    let billPosts = 0;
+    await page.route("**/vendor-bills", (route) => {
+      if (route.request().method() !== "POST") return void route.continue();
+      billPosts++;
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "fake-bill-1" }),
+      });
+    });
+    await page.route("**/vendor-bills/fake-bill-*/receive", (route) =>
+      route.fulfill({ status: 201, contentType: "application/json", body: "{}" }),
+    );
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([pdfFile("invoice-a.pdf"), pdfFile("invoice-b.pdf")]);
+
+    // Invoice 1 scanned fine; invoice 2 failed but is retryable — not lost, not fatal.
+    await expect(page.getByText(/detected: e2e batch supplier a/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.getByTestId("invoice-nav-next").click();
+    await expect(page.getByText(/couldn't scan this invoice/i)).toBeVisible({ timeout: 15_000 });
+
+    // Creating now posts ONLY the ready invoice and keeps the modal open for the failed one.
+    await page.getByTestId("invoice-nav-prev").click();
+    await page
+      .locator('select:has(option:text("— Select supplier —"))')
+      .first()
+      .selectOption({ index: 1 });
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: /create 1 bill/i }).click();
+    await expect.poll(() => billPosts, { timeout: 15_000 }).toBe(1);
+    // .first(): the copy shows in both the toast body and its aria-live mirror.
+    await expect(page.getByText(/still needs? a successful scan/i).first()).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Retry re-scans ONLY the failed invoice.
+    const callsBeforeRetry = scanCalls;
+    await page.getByTestId("invoice-nav-next").click();
+    await page.getByRole("button", { name: /retry scan/i }).click();
+    await expect(page.getByText(/detected: e2e batch supplier b/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    expect(scanCalls).toBe(callsBeforeRetry + 1);
+  });
+
+  test("OP-17e both-mode partial failure: created bill is never re-posted on retry", async ({
+    page,
+  }) => {
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({ status: 201, contentType: "application/json", body: batchScanPayload("A") }),
+    );
+    await page.route("**/bookkeeping/expense-categories", (route) => {
+      if (route.request().method() !== "GET") return void route.continue();
+      void route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{ id: "e2e-cat-1", name: "E2E Supplies", code: "E2E" }]),
+      });
+    });
+    let billPosts = 0;
+    await page.route("**/vendor-bills", (route) => {
+      if (route.request().method() !== "POST") return void route.continue();
+      billPosts++;
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "fake-bill-1" }),
+      });
+    });
+    await page.route("**/vendor-bills/fake-bill-*/receive", (route) =>
+      route.fulfill({ status: 201, contentType: "application/json", body: "{}" }),
+    );
+    // First expense POST fails; the retry succeeds.
+    const expenseBodies: any[] = [];
+    await page.route("**/bookkeeping/expenses", (route) => {
+      if (route.request().method() !== "POST") return void route.continue();
+      expenseBodies.push(route.request().postDataJSON());
+      void route.fulfill(
+        expenseBodies.length === 1
+          ? {
+              status: 500,
+              contentType: "application/json",
+              body: JSON.stringify({ message: "expense blew up (e2e)" }),
+            }
+          : { status: 201, contentType: "application/json", body: JSON.stringify({ id: "e1" }) },
+      );
+    });
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page.locator('input[type="file"]').setInputFiles([pdfFile("invoice-a.pdf")]);
+    await expect(page.getByText(/detected: e2e batch supplier a/i)).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Both mode: bill + expense in one go (accessible name includes the subtitle).
+    await page.getByRole("button", { name: /inventory \+ bookkeeping/i }).click();
+    await page
+      .locator('select:has(option:text("— Select supplier —"))')
+      .first()
+      .selectOption({ index: 1 });
+    await page
+      .locator('select:has(option:text("— Select category —"))')
+      .first()
+      .selectOption({ label: "E2E Supplies" });
+
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: /create bill & expense/i }).click();
+
+    // Bill created, expense failed → modal stays open, nothing closed over.
+    await expect.poll(() => billPosts, { timeout: 15_000 }).toBe(1);
+    await expect.poll(() => expenseBodies.length, { timeout: 15_000 }).toBe(1);
+    await expect(page.getByRole("heading", { name: /ai invoice scanner/i })).toBeVisible();
+
+    // Second attempt: the already-created bill is SKIPPED, only the expense retries.
+    await page.getByRole("button", { name: /create bill & expense/i }).click();
+    await expect.poll(() => expenseBodies.length, { timeout: 15_000 }).toBe(2);
+    expect(billPosts).toBe(1);
+    expect(expenseBodies[1].referenceNumber).toBe("INV-A-1");
+    expect(expenseBodies[1].amount).toBe(70);
   });
 
   // ── Suppliers ─────────────────────────────────────────────────────────────

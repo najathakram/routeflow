@@ -29,11 +29,25 @@ export async function loginAsSuperAdmin(page: Page) {
 }
 
 /**
+ * The login form requires a Workspace (tenant slug) on hosts without a real
+ * tenant subdomain. On the Railway prod URL the page derives one from the
+ * hostname so the field is hidden; on localhost it is visible and REQUIRED —
+ * without filling it, zod blocks the submit and login never navigates.
+ */
+export async function fillWorkspaceIfShown(page: Page, slug: string = TENANT_SLUG) {
+  const workspace = page.getByLabel("Workspace");
+  if (await workspace.isVisible().catch(() => false)) {
+    await workspace.fill(slug);
+  }
+}
+
+/**
  * Log in as the tenant Operator.
  * Requires the tenant-slug cookie to already be set (via setTenantCookie).
  */
 export async function loginAsOperator(page: Page) {
   await page.goto("/login");
+  await fillWorkspaceIfShown(page);
   // The reskinned login form labels the username field "Username or email"
   // (placeholder "you@company.com"); match by label, like auth.setup does.
   await page.getByLabel("Username or email").fill("admin");
@@ -48,6 +62,7 @@ export async function loginAsOperator(page: Page) {
  */
 export async function loginAsCustomer(page: Page) {
   await page.goto("/login");
+  await fillWorkspaceIfShown(page);
   await page.getByLabel("Username or email").fill("harbor_cafe");
   await page.getByPlaceholder("Enter your password").fill("Customer1!");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
