@@ -5,24 +5,27 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 
 ## Where to find (this area)
 
-| Need                  | File → symbol                                                                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Auth & tenant context | `middleware.ts` — tenant slug, mobile redirect, buyer-vs-operator guard, signed-in landing 307 (`/` → /dashboard or /buyer/portal)                                  |
-| Presence cookies      | `lib/presence-cookies.ts` — `rf-op-auth`/`rf-buyer-auth`, 3-day TTL = refresh-token TTL; re-set on refresh, cleared on dead session (feeds the middleware redirect) |
-| Operator auth model   | `lib/auth.ts` — `migrateLegacyOpToken()`, `AuthUser`, refresh-on-401                                                                                                |
-| Auth hook             | `lib/auth-context.tsx` — `useAuth()`, sign-in/out, user/role state                                                                                                  |
-| Token namespaces      | `lib/auth-keys.ts` — `OP_KEYS`, `BUYER_KEYS`, `DRIVER_KEYS` (localStorage)                                                                                          |
-| Tenant slug cookie    | `lib/tenant-cookie.ts` — `setTenantCookie()`, `clearTenantCookie()` (non-httpOnly)                                                                                  |
-| HTTP client & headers | `lib/api-client.ts` — axios, base URL, Bearer + X-Tenant-Slug, 401 refresh queue                                                                                    |
-| Buyer HTTP client     | `lib/buyer-api-client.ts` — isolated, reads BUYER_KEYS only                                                                                                         |
-| Super-admin client    | `lib/admin-api.ts` — `superAdminClient`, impersonation                                                                                                              |
-| Operator login        | `app/(auth)/login/page.tsx` — workspace picker, legacy token migration                                                                                              |
-| OAuth callback        | `app/(auth)/platform/auth/callback/page.tsx`                                                                                                                        |
-| Buyer login & portal  | `app/buyer/login/page.tsx`, `app/buyer/layout.tsx`                                                                                                                  |
-| Buyer auth hook       | `lib/buyer-auth-context.tsx` — `useBuyerAuth()`, active seller, multi-seller switch                                                                                 |
-| Tenant branding       | `components/tenant-provider.tsx` — fetch branding, inject CSS vars                                                                                                  |
-| Security & headers    | `next.config.mjs` — CSP, X-Frame-Options DENY, hardening                                                                                                            |
-| Socket.io realtime    | `lib/socket.ts` — `connectSocket()`, `getSocket()`, reconnect                                                                                                       |
+| Need                  | File → symbol                                                                                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth & tenant context | `middleware.ts` — tenant slug, mobile redirect, buyer-vs-operator guard, signed-in landing 307 (`/` → /dashboard or /buyer/portal)                                   |
+| Presence cookies      | `lib/presence-cookies.ts` — `rf-op-auth`/`rf-buyer-auth`, 30-day TTL = refresh-token TTL; re-set on refresh, cleared on dead session (feeds the middleware redirect) |
+| Operator auth model   | `lib/auth.ts` — `migrateLegacyOpToken()`, `AuthUser`, refresh-on-401, `changePassword`/`setPassword` (Google-only first password; both store the rotated pair)       |
+| Auth hook             | `lib/auth-context.tsx` — `useAuth()`, sign-in/out, user/role state                                                                                                   |
+| Token namespaces      | `lib/auth-keys.ts` — `OP_KEYS`, `BUYER_KEYS`, `DRIVER_KEYS` (localStorage)                                                                                           |
+| Tenant slug cookie    | `lib/tenant-cookie.ts` — `setTenantCookie()`, `getTenantCookie()`, `clearTenantCookie()` (non-httpOnly, 30d)                                                         |
+| Google sign-in start  | `lib/google-oauth.tsx` — `startGoogleSignIn({context,tenantSlug})` + `GoogleIcon` (shared by login, buyer login, re-auth sheet)                                      |
+| Forgot/reset pages    | `app/(auth)/forgot-password` + `reset-password` (staff, `surface:"web"`), `app/buyer/forgot-password` + `buyer/reset-password` (buyer endpoints); enumeration-safe   |
+| Password set/change   | settings `MyAccountTab` `PasswordCard` (set mode when `GET /users/me hasPassword=false`); buyer `app/buyer/change-password` (set mode via `GET /buyer/auth/profile`) |
+| HTTP client & headers | `lib/api-client.ts` — axios, base URL, Bearer + X-Tenant-Slug, 401 refresh queue                                                                                     |
+| Buyer HTTP client     | `lib/buyer-api-client.ts` — isolated, reads BUYER_KEYS only                                                                                                          |
+| Super-admin client    | `lib/admin-api.ts` — `superAdminClient`, impersonation                                                                                                               |
+| Operator login        | `app/(auth)/login/page.tsx` — workspace picker, legacy token migration                                                                                               |
+| OAuth callback        | `app/(auth)/platform/auth/callback/page.tsx`                                                                                                                         |
+| Buyer login & portal  | `app/buyer/login/page.tsx`, `app/buyer/layout.tsx`                                                                                                                   |
+| Buyer auth hook       | `lib/buyer-auth-context.tsx` — `useBuyerAuth()`, active seller, multi-seller switch                                                                                  |
+| Tenant branding       | `components/tenant-provider.tsx` — fetch branding, inject CSS vars                                                                                                   |
+| Security & headers    | `next.config.mjs` — CSP, X-Frame-Options DENY, hardening                                                                                                             |
+| Socket.io realtime    | `lib/socket.ts` — `connectSocket()`, `getSocket()`, reconnect                                                                                                        |
 
 ## App shell & lib
 
@@ -38,8 +41,12 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `/QUESTIONS.md`.
 - **Phase 1d behavioral UX standards.** `lib/undo.ts` — `useUndo()` (reversible act + 8s Undo toast;
   Toast now returns an id + `dismiss()` and has an `action` slot). `lib/session-expiry.ts` +
-  `components/ReAuthProvider.tsx` — in-place re-auth sheet; `lib/api-client.ts` 401 handler pauses the
-  failed request and calls `requestReauth()` before falling back to the /login redirect. `lib/i18n/`
+  `components/ReAuthProvider.tsx` — in-place re-auth sheet (password unlock + **Continue with Google**
+  [tenant slug from cookie or expired-token payload; full-page redirect, never resolves the pending
+  promise first] + **Forgot password?** link — the Google-only escape hatch); `lib/api-client.ts` 401
+  handler pauses the failed request and calls `requestReauth()` before falling back to the /login
+  redirect. Playwright `e2e/07-auth-password.spec.ts` (AP-01..08) covers the sheet + reset pages.
+  Dev-only CSP relax in `next.config.mjs` (`connect-src http://localhost:*` in dev). `lib/i18n/`
   (`messages.ts` en/es catalog, `index.tsx` `I18nProvider`/`useI18n()`/`t()`) — per-user locale via
   `UserPreference` + localStorage; avatar-menu Language toggle. `CommandPalette.tsx` — Jump-to/Actions/
   Results sections, `? shortcuts`, localized. All mounted in `app/providers.tsx`
