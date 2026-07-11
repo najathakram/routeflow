@@ -8,6 +8,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
+  formatQtySplit,
   type PromotionRule,
 } from "../lib/pricing";
 
@@ -89,5 +90,30 @@ describe("applyBestPromotion (mobile mirror — must match the server to the cen
     });
     expect(subtotal).toBe(70);
     expect(subtotal).not.toBe(420);
+  });
+});
+
+describe("formatQtySplit (mobile mirror)", () => {
+  it("renders the stored split", () => {
+    expect(formatQtySplit({ qty: 13, boxes: 2, pieces: 3 })).toBe("2 boxes + 3 pcs");
+    expect(formatQtySplit({ qty: 5, boxes: 1, pieces: 0 })).toBe("1 box");
+    expect(formatQtySplit({ qty: 4, boxes: 0, pieces: 4 })).toBe("4 pcs");
+    expect(formatQtySplit({ qty: 0, boxes: 0, pieces: 0 })).toBe("0");
+  });
+
+  it("supports a custom loose-piece label", () => {
+    expect(formatQtySplit({ qty: 4, boxes: 0, pieces: 4, unitLabel: "cans" })).toBe("4 cans");
+  });
+
+  it("renders plain qty for non-boxed lines (no split stored)", () => {
+    expect(formatQtySplit({ qty: 5 })).toBe("5");
+    expect(formatQtySplit({ qty: 2.5 })).toBe("2.5");
+    expect(formatQtySplit({ qty: "3.000" })).toBe("3");
+    expect(formatQtySplit({ qty: 1.2345 })).toBe("1.234"); // Decimal(10,3) storage
+  });
+
+  it("coerces junk defensively", () => {
+    expect(formatQtySplit({ qty: 7, boxes: 2.9, pieces: -1 })).toBe("2 boxes");
+    expect(formatQtySplit({ qty: "abc" })).toBe("abc");
   });
 });
