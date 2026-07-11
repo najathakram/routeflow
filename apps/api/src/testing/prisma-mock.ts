@@ -122,6 +122,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     importQueueItem: modelProxy(),
     buyerFavorite: modelProxy(),
     orderTemplate: modelProxy(),
+    orderTemplateItem: modelProxy(),
     creditNoteItem: modelProxy(),
     promotion: modelProxy(),
     promotionProduct: modelProxy(),
