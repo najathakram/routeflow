@@ -9,6 +9,7 @@ import { useAdminOrder } from "../../../../lib/api/admin";
 import {
   useChangeOrderStatus,
   useDeleteOrder,
+  useReopenOrder,
   useToggleOrderUrgent,
   useUpdateOrderShipment,
   type OrderStatus,
@@ -53,6 +54,10 @@ interface StatusAction {
   style: "primary" | "secondary" | "warning" | "danger";
   icon: string;
   confirmMessage?: string;
+  /** Passed to PATCH /status (e.g. the demote-to-CONFIRMED reason). */
+  reason?: string;
+  /** Route through POST /orders/:id/reopen (CANCELLED → PENDING) instead of /status. */
+  reopenCancelled?: boolean;
 }
 
 function statusActions(current: string): StatusAction[] {
@@ -164,6 +169,22 @@ function statusActions(current: string): StatusAction[] {
           confirmMessage: "Cancel this order?",
         },
       ];
+    // Note: DELIVERED has NO reopen — the API deliberately blocks
+    // DELIVERED→CONFIRMED (removed as BUG-ORD-01); it would always 400. Only a
+    // CANCELLED order can be reopened, via the dedicated /reopen endpoint below.
+    case "CANCELLED":
+      // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
+      // paid/partial/written-off invoice exists).
+      return [
+        {
+          label: "Reopen order",
+          toStatus: "PENDING",
+          style: "primary",
+          icon: "refresh-outline",
+          confirmMessage: "Reopen this cancelled order back to Pending?",
+          reopenCancelled: true,
+        },
+      ];
     default:
       return [];
   }
@@ -174,6 +195,7 @@ export default function OrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
   const changeMut = useChangeOrderStatus();
+  const reopenMut = useReopenOrder();
   const deleteMut = useDeleteOrder();
   const urgentMut = useToggleOrderUrgent();
   const shipmentMut = useUpdateOrderShipment();
@@ -213,19 +235,24 @@ export default function OrderDetailScreen() {
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const handleStatusChange = (action: StatusAction) => {
+    const onDone = (msg: string) => ({
+      onSuccess: () => {
+        showToast(msg);
+        refetch();
+      },
+      onError: (e: unknown) => {
+        const err = e as { response?: { data?: { message?: string } }; message?: string };
+        showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
+      },
+    });
     const doChange = () => {
+      if (action.reopenCancelled) {
+        reopenMut.mutate(order.id, onDone("Order reopened"));
+        return;
+      }
       changeMut.mutate(
-        { id: order.id, status: action.toStatus },
-        {
-          onSuccess: () => {
-            showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
-            refetch();
-          },
-          onError: (e: unknown) => {
-            const err = e as { response?: { data?: { message?: string } }; message?: string };
-            showToast(err?.response?.data?.message ?? err?.message ?? "Try again.");
-          },
-        },
+        { id: order.id, status: action.toStatus, reason: action.reason },
+        onDone(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`),
       );
     };
 
@@ -460,10 +487,10 @@ export default function OrderDetailScreen() {
                       action.style === "secondary" && styles.secondaryAction,
                       action.style === "warning" && styles.warningAction,
                       action.style === "danger" && styles.dangerAction,
-                      changeMut.isPending && styles.actionDisabled,
+                      (changeMut.isPending || reopenMut.isPending) && styles.actionDisabled,
                     ]}
                     onPress={() => handleStatusChange(action)}
-                    disabled={changeMut.isPending}
+                    disabled={changeMut.isPending || reopenMut.isPending}
                   >
                     <Ionicons
                       name={action.icon as "checkmark-circle-outline"}

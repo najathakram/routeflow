@@ -94,6 +94,12 @@ export interface CreateOrderAsDriverDto {
    */
   items: CreateOrderItemInput[];
   notes?: string;
+  /** Mark the order urgent at creation (same flag the detail-screen toggle sets). */
+  urgent?: boolean;
+  /** Requested delivery date as "YYYY-MM-DD" (server @IsDateString). */
+  requestedDeliveryDate?: string;
+  /** Order-level discount in currency (NOT `discount`). Only send when > 0. */
+  discountAmount?: number;
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -261,12 +267,29 @@ export function useToggleOrderUrgent() {
 
 export function useChangeOrderStatus() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: OrderStatus }>({
-    mutationFn: ({ id, status }) =>
-      apiClient.patch(`/orders/${id}/status`, { status }).then((r) => r.data),
+  return useMutation<Order, Error, { id: string; status: OrderStatus; reason?: string }>({
+    mutationFn: ({ id, status, reason }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["route-runs"] });
+    },
+  });
+}
+
+/**
+ * Reopen a CANCELLED order back to PENDING (`POST /orders/:id/reopen`,
+ * OPERATOR-only). The server 400s if a PAID/PARTIAL/WRITTEN_OFF invoice exists
+ * on the order — surface that message. (A DELIVERED order is instead "reopened"
+ * by demoting its status to CONFIRMED via useChangeOrderStatus + a reason.)
+ */
+export function useReopenOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, string>({
+    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
     },
   });
 }

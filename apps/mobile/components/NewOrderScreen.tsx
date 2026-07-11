@@ -26,7 +26,15 @@ import {
 } from "../lib/api/orders";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { computeLineSubtotal, effectiveQty, getTierPrice, roundMoney } from "../lib/pricing";
+import {
+  classifyMargin,
+  computeLineSubtotal,
+  computeMarginFraction,
+  effectiveQty,
+  getTierPrice,
+  roundMoney,
+} from "../lib/pricing";
+import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
@@ -85,6 +93,8 @@ type Product = {
   category?: string | null;
   /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
   trackedCategoryId?: string | null;
+  /** Per-piece average cost — drives the live margin hint (web uses averageCost, not standardCost). */
+  averageCost?: number | string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
@@ -341,6 +351,8 @@ function ProductPickView({
   // the raw list price — so a tier-N customer sees the price the server bills.
   const { data: customerDetail } = useCustomer(customerId);
   const { data: customerPrices } = useCustomerPrices(customerId);
+  // Tenant margin config for the live cost/margin hint in the cart rows.
+  const { data: marginConfig } = useMarginConfig();
   const customerTier = customerDetail?.pricingTier ?? 1;
   const cpMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -356,6 +368,13 @@ function ProductPickView({
   // submitOrder(mergeChoice) to replay once the license/override is captured.
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
+  // Order-level options (mirror web CreateOrderModal): notes, urgent flag,
+  // requested delivery date (YYYY-MM-DD), and an order-level discount.
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [orderNotes, setOrderNotes] = useState("");
+  const [orderUrgent, setOrderUrgent] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [discountRaw, setDiscountRaw] = useState("");
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
   const scrollRef = useRef<ScrollView>(null);
@@ -715,12 +734,18 @@ function ProductPickView({
       .map((u) => ({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice }));
     const itemPayload = [...catalogPayload, ...unlistedPayload];
 
+    const discountAmount = Math.max(0, parseFloat(discountRaw) || 0);
+    const deliveryTrim = deliveryDate.trim();
     createOrder.mutate(
       {
         customerId,
         items: itemPayload,
         routeRunId: runId,
         routeRunStopId: stopId,
+        ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
+        ...(orderUrgent ? { urgent: true } : {}),
+        ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
+        ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
       },
       {
@@ -824,6 +849,79 @@ function ProductPickView({
       </View>
 
       <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+        {/* Order options — notes, urgent, delivery date, order-level discount. */}
+        <View style={styles.optionsWrap}>
+          <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
+            <Ionicons name="options-outline" size={16} color={ios.brand} />
+            <Text style={styles.optionsTitle}>Order options</Text>
+            {!optionsOpen && (orderUrgent || deliveryDate || discountRaw || orderNotes) ? (
+              <Text style={styles.optionsSummary} numberOfLines={1}>
+                {[
+                  orderUrgent ? "Urgent" : null,
+                  deliveryDate ? `Deliver ${deliveryDate}` : null,
+                  parseFloat(discountRaw) > 0 ? `-$${parseFloat(discountRaw).toFixed(2)}` : null,
+                  orderNotes.trim() ? "Notes" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            ) : null}
+            <Ionicons
+              name={optionsOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={ios.label3}
+            />
+          </Pressable>
+          {optionsOpen ? (
+            <View style={styles.optionsBody}>
+              <Pressable style={styles.optionRow} onPress={() => setOrderUrgent((u) => !u)}>
+                <Ionicons
+                  name={orderUrgent ? "flame" : "flame-outline"}
+                  size={18}
+                  color={orderUrgent ? ios.system.orange : ios.label2}
+                />
+                <Text style={styles.optionLabel}>Urgent</Text>
+                <View style={[styles.toggle, orderUrgent && styles.toggleOn]}>
+                  <View style={[styles.toggleDot, orderUrgent && styles.toggleDotOn]} />
+                </View>
+              </Pressable>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Delivery date</Text>
+                <TextInput
+                  value={deliveryDate}
+                  onChangeText={setDeliveryDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.optionInput}
+                />
+              </View>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Order discount ($)</Text>
+                <TextInput
+                  value={discountRaw}
+                  onChangeText={setDiscountRaw}
+                  placeholder="0.00"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="decimal-pad"
+                  style={styles.optionInput}
+                />
+              </View>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Notes</Text>
+                <TextInput
+                  value={orderNotes}
+                  onChangeText={setOrderNotes}
+                  placeholder="Delivery / handling notes…"
+                  placeholderTextColor={ios.label3}
+                  multiline
+                  style={[styles.optionInput, { minHeight: 60, textAlignVertical: "top" }]}
+                />
+              </View>
+            </View>
+          ) : null}
+        </View>
+
         <SearchBar
           placeholder="Search items…"
           value={search}
@@ -1109,6 +1207,7 @@ function ProductPickView({
         productById={productById}
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
+        marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
         totalItems={totalItems}
@@ -1158,6 +1257,7 @@ function CartModal({
   productById,
   priceHistory,
   tierPriceFor,
+  marginFloorFor,
   unlisted,
   total,
   totalItems,
@@ -1181,6 +1281,8 @@ function CartModal({
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
   tierPriceFor: (p: Product) => number;
+  /** The customer's effective margin floor (fraction) for a product's category. */
+  marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
   total: number;
   totalItems: number;
@@ -1244,6 +1346,7 @@ function CartModal({
                     product={product}
                     line={line}
                     catalogPrice={tierPriceFor(product)}
+                    marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
@@ -1307,6 +1410,7 @@ function CartRow({
   product,
   line,
   catalogPrice,
+  marginFloor,
   historyPrice,
   onChangeBoxes,
   onChangePieces,
@@ -1321,6 +1425,8 @@ function CartRow({
   /** The customer's effective tier price for this product (the base to compare
    *  an override against and to fall back to when no override is set). */
   catalogPrice: number;
+  /** Category margin floor (fraction) for the live cost/margin hint. */
+  marginFloor: number;
   historyPrice?: number;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
@@ -1334,6 +1440,14 @@ function CartRow({
   const isBoxed = upb > 1;
   const effUnit = effectiveUnitPrice(line, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  // Live margin hint (mirrors web MarginHint): margin on the effective price
+  // against the product's per-piece averageCost. Hidden when no cost is known.
+  const unitCost = product.averageCost != null ? Number(product.averageCost) : null;
+  const marginFrac =
+    unitCost != null && Number.isFinite(unitCost)
+      ? computeMarginFraction(effUnit, unitCost, product.unitsPerBox)
+      : null;
+  const marginClass = classifyMargin(marginFrac, marginFloor);
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: effUnit,
@@ -1385,6 +1499,26 @@ function CartRow({
           ) : null}
         </View>
       </View>
+
+      {/* Live margin hint — margin on the effective price vs the product's cost. */}
+      {marginFrac != null ? (
+        <Text
+          style={[
+            styles.marginHint,
+            marginClass === "belowCost" || marginClass === "belowFloor"
+              ? { color: ios.system.red }
+              : marginClass === "warn"
+                ? { color: ios.system.orange }
+                : { color: ios.label2 },
+          ]}
+        >
+          {marginClass === "belowCost"
+            ? `Below cost (${Math.round(marginFrac * 100)}%)`
+            : marginClass === "belowFloor"
+              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
+              : `${Math.round(marginFrac * 100)}% margin`}
+        </Text>
+      ) : null}
 
       {isBoxed ? (
         <>
@@ -1684,6 +1818,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
+  optionsWrap: { marginHorizontal: 16, marginTop: 10 },
+  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  optionsBody: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+    marginBottom: 4,
+  },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  optionField: { gap: 6 },
+  optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  optionInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  toggle: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: ios.fill3,
+    padding: 3,
+    justifyContent: "center",
+  },
+  toggleOn: { backgroundColor: ios.brand },
+  toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff" },
+  toggleDotOn: { alignSelf: "flex-end" },
   customerChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1980,6 +2148,13 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  marginHint: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    marginTop: -4,
+    marginBottom: 2,
+    textAlign: "right",
+  },
   cartPriceWas: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
