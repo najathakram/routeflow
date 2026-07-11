@@ -73,9 +73,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 ### `auth/`
 
-- **controller** `auth` — `@Post login|refresh|logout|change-password|verify-email|request-password-reset|reset-password`, `@Get/@Delete sessions`. Google OAuth: `@Get google`, `@Post google/exchange` (single-use code handoff), `@Get google/:tenantSlug/callback`.
-- **service** — `login`, `refresh`, `logout`, `changePassword`, `listSessions`, `requestPasswordReset`, `resetPassword`, `verifyEmail`; Google `getGoogleAuthUrl`, `exchangeGoogleCode`, `linkGoogleAccount`.
-- side effects: User/PasswordResetToken/RefreshToken writes; reset email; JWT signing.
+- **controller** `auth` — `@Post login|refresh|logout|change-password|set-password|verify-email|request-password-reset|reset-password`, `@Get/@Delete sessions`. Google OAuth: `@Get google`, `@Post google/exchange` (single-use code handoff), `@Get google/:tenantSlug/callback`.
+- **service** — `login`, `refresh`, `logout`, `changePassword`, `setPassword` (first password for Google-only accounts; only when `password IS NULL` read fresh from DB — never a JWT claim; revokes all sessions + reissues via shared `mintSessionForUser`), `listSessions`, `requestPasswordReset(email, surface)` (surface `web|mobile` → config `urls.web|mobileWeb` base, default mobile), `resetPassword`, `verifyEmail`; Google `getGoogleAuthUrl`, `exchangeGoogleCode`, `linkGoogleAccount`.
+- `hasPassword` (= `!!user.password`) rides the JWT payload + login/refresh `user` responses (rendering hint); authoritative read = `GET /users/me` (`users.service.findById`). Refresh-token default TTL **30d** (`configuration.ts jwt.refreshExpiresIn`, idle cutoff — rotation slides it).
+- Buyer mirror (`buyer/buyer-auth.*`): `BuyerAccount.passwordSet` flag (false on Google auto-create) gates `POST /buyer/auth/set-password`; buyer forgot/reset flow (`request-password-reset`/`reset-password`, `BuyerPasswordResetToken` model, links to `${urls.web}/buyer/reset-password`); `GET /buyer/auth/profile` = authoritative `hasPassword`/`googleLinked`. Specs: `auth/set-password.spec`, `buyer/buyer-set-password.spec`, `buyer/buyer-password-reset.spec`, `auth/google-oauth.buyer-autocreate.spec`.
+- side effects: User/PasswordResetToken/RefreshToken (+Buyer mirrors) writes; reset + password-set notification emails; JWT signing.
 
 ### `platform-google-auth/`
 
