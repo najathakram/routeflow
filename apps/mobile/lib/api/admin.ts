@@ -361,6 +361,7 @@ export interface AdminProduct {
   barcode?: string;
   sku?: string;
   unit: string;
+  unitsPerBox?: number | null;
   pricePerUnit: number | string;
   priceTier2?: number | string;
   priceTier3?: number | string;
@@ -371,6 +372,9 @@ export interface AdminProduct {
   reorderPoint?: number | null;
   reorderQty?: number | null;
   isActive: boolean;
+  /** Set when this product is a variant of another (self-referential). */
+  parentProductId?: string | null;
+  parent?: { id: string; name: string } | null;
   supplier?: { id: string; name: string };
 }
 

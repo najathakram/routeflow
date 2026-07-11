@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { ChevronDown, Search, X, Check } from "lucide-react";
-import { cn } from "@routeflow/ui/web";
+import { cn, mergeRefs } from "@routeflow/ui/web";
 
 interface PickerProduct {
   id: string;
@@ -22,6 +22,11 @@ interface SearchableProductPickerProps {
   disabled?: boolean;
   /** Optional empty-state hint (e.g., "No standalone products yet — create one first") */
   emptyHint?: string;
+  /**
+   * Exposes the search <input> so a keyboard-wedge BarcodeScannerButton can
+   * listen on it (its wedge mode attaches a keydown listener to this ref).
+   */
+  inputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 /**
@@ -42,6 +47,7 @@ export function SearchableProductPicker({
   className,
   disabled,
   emptyHint,
+  inputRef: externalInputRef,
 }: SearchableProductPickerProps) {
   const [open, setOpen] = React.useState(false);
   const [search, setSearch] = React.useState("");
@@ -121,7 +127,7 @@ export function SearchableProductPicker({
       >
         <Search className="h-3.5 w-3.5 shrink-0 text-navy/70" />
         <input
-          ref={inputRef}
+          ref={mergeRefs(inputRef, externalInputRef)}
           type="text"
           value={open ? search : (selected?.name ?? "")}
           placeholder={selected ? "" : placeholder}
