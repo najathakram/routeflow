@@ -7,6 +7,7 @@ import { useCreateProduct, useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
+import { CategoryCombobox } from "./CategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 
 interface CreatedProduct {
@@ -311,11 +312,9 @@ export function InlineCreateProductModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-navy">Category</label>
-              <input
-                type="text"
+              <CategoryCombobox
                 value={form.category}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                onChange={(v) => setForm((f) => ({ ...f, category: v }))}
                 placeholder="e.g. Bakery"
               />
             </div>

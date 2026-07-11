@@ -32,6 +32,15 @@ export function useProductByBarcode(barcode: string | null) {
   });
 }
 
+/** Distinct tenant categories for autocomplete (mirrors web useProductCategories). */
+export function useProductCategories() {
+  return useQuery<string[]>({
+    queryKey: ["products", "categories"],
+    queryFn: () => apiClient.get("/products/categories").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export interface CreateProductDto {
   name: string;
   sku?: string;
