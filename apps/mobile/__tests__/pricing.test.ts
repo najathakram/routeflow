@@ -5,6 +5,7 @@
  */
 import {
   computeLineSubtotal,
+  getTierPrice,
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
@@ -16,6 +17,37 @@ describe("roundMoney (mobile mirror)", () => {
   it("rounds to cents", () => {
     expect(roundMoney(0.1 + 0.2)).toBe(0.3);
     expect(roundMoney(14.97 * 1.1)).toBe(16.47);
+  });
+});
+
+describe("getTierPrice (mobile mirror — must match apps/api/src/utils/pricing.ts)", () => {
+  const product = {
+    pricePerUnit: "10.00",
+    priceTier2: "9.00",
+    priceTier3: "8.50",
+    priceTier4: "0", // DB default — tier never configured
+    priceTier5: null as string | null,
+  };
+
+  it("returns the configured tier price; tier 1 = list", () => {
+    expect(getTierPrice(product, 2)).toBe(9);
+    expect(getTierPrice(product, 3)).toBe(8.5);
+    expect(getTierPrice(product, 1)).toBe(10);
+  });
+
+  it("an unset tier (DB default 0) inherits the list price — the $0.00 regression", () => {
+    expect(getTierPrice(product, 4)).toBe(10);
+    expect(getTierPrice(product, 5)).toBe(10);
+  });
+
+  it("out-of-range tiers fall back to list", () => {
+    expect(getTierPrice(product, 0)).toBe(10);
+    expect(getTierPrice(product, 6)).toBe(10);
+  });
+
+  it("coerces numbers and strings; genuinely free products stay 0", () => {
+    expect(getTierPrice({ pricePerUnit: 12.5, priceTier2: 11.25 }, 2)).toBe(11.25);
+    expect(getTierPrice({ pricePerUnit: "0", priceTier2: "0" }, 2)).toBe(0);
   });
 });
 
