@@ -65,7 +65,7 @@ export type GoogleAuthResult =
     } & TokenPair)
   | ({
       kind: "buyer";
-      buyer: { id: string; email: string; name: string };
+      buyer: { id: string; email: string; name: string; hasPassword: boolean };
       sellerCount: number;
     } & TokenPair);
 
@@ -507,13 +507,16 @@ export class GoogleOAuthService {
           .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
       }
     } else {
-      // Auto-create portal account with an unguessable password hash (Google-only)
+      // Auto-create portal account with an unguessable password hash (Google-only).
+      // passwordSet:false marks the hash as a placeholder so the buyer can later
+      // claim a real password via /buyer/auth/set-password without knowing it.
       const randomBytes = crypto.randomBytes(32).toString("hex");
       const passwordHash = await bcrypt.hash(randomBytes, 10);
       buyer = await this.prisma.buyerAccount.create({
         data: {
           email: profile.email,
           passwordHash,
+          passwordSet: false,
           name: profile.name,
           googleId: profile.googleId,
           status: "ACTIVE",
@@ -533,12 +536,22 @@ export class GoogleOAuthService {
     const sellerCount = await this.prisma.customerLink.count({
       where: { buyerAccountId: buyer.id, status: "ACTIVE" },
     });
-    const tokens = await this.issueBuyerTokenPair(buyer.id, buyer.email, buyer.name);
+    const tokens = await this.issueBuyerTokenPair(
+      buyer.id,
+      buyer.email,
+      buyer.name,
+      buyer.passwordSet,
+    );
 
     return {
       kind: "buyer",
       ...tokens,
-      buyer: { id: buyer.id, email: buyer.email, name: buyer.name },
+      buyer: {
+        id: buyer.id,
+        email: buyer.email,
+        name: buyer.name,
+        hasPassword: buyer.passwordSet,
+      },
       sellerCount,
     };
   }
@@ -582,6 +595,7 @@ export class GoogleOAuthService {
       forcePasswordChange: user.forcePasswordChange ?? false,
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
+      hasPassword: !!user.password,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);
@@ -602,6 +616,7 @@ export class GoogleOAuthService {
     buyerAccountId: string,
     email: string,
     name: string,
+    hasPassword: boolean,
   ): Promise<TokenPair> {
     const jwtConfig = this.configService.get<{
       secret: string;
@@ -609,7 +624,13 @@ export class GoogleOAuthService {
       expiresIn: string;
       refreshExpiresIn: string;
     }>("jwt")!;
-    const payload: BuyerJwtPayload = { sub: buyerAccountId, email, name, type: "BUYER" };
+    const payload: BuyerJwtPayload = {
+      sub: buyerAccountId,
+      email,
+      name,
+      type: "BUYER",
+      hasPassword,
+    };
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
       expiresIn: jwtConfig.expiresIn as any,

@@ -254,6 +254,53 @@ describe("AuthService", () => {
         }),
       );
     });
+
+    it("marks hasPassword=true in payload and user for password logins (stripped user)", async () => {
+      // validateUser strips `password` — its absence implies a password login
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+      const result = await service.login(validUser as any);
+
+      expect(jwtService.sign.mock.calls[0]![0]).toMatchObject({ hasPassword: true });
+      expect(result.user).toMatchObject({ hasPassword: true });
+    });
+
+    it("marks hasPassword=false when a raw null-password user row is passed (legacy Google path)", async () => {
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+      const result = await service.login({ ...validUser, password: null } as any);
+
+      expect(jwtService.sign.mock.calls[0]![0]).toMatchObject({ hasPassword: false });
+      expect(result.user).toMatchObject({ hasPassword: false });
+    });
+  });
+
+  // ─── refresh ──────────────────────────────────────────────────────────────
+
+  describe("refresh", () => {
+    it("carries hasPassword=false into the rotated token for Google-only users", async () => {
+      jwtService.verify.mockReturnValue({ sub: "user-1" });
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        userId: "user-1",
+        tokenHash: "h",
+        expiresAt: new Date(Date.now() + 60_000),
+        userAgent: null,
+        ipAddress: null,
+        deviceName: null,
+      } as any);
+      prisma.user.findUnique.mockResolvedValue({
+        ...MOCK_USER,
+        password: null,
+        tenantId: "tenant-1",
+      } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "test-tenant" } as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+      const result = await service.refresh("incoming-token");
+
+      expect(jwtService.sign.mock.calls[0]![0]).toMatchObject({ hasPassword: false });
+      expect(result.user).toMatchObject({ hasPassword: false });
+    });
   });
 
   // ─── logout ───────────────────────────────────────────────────────────────

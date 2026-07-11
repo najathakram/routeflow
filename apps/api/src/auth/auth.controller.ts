@@ -26,6 +26,7 @@ import { GoogleOAuthService } from "./google-oauth.service";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
+import { SetPasswordDto } from "./dto/set-password.dto";
 import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
@@ -98,6 +99,16 @@ export class AuthController {
     return this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
   }
 
+  @Post("set-password")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches reset endpoints
+  @ApiOperation({ summary: "Set a first password on a Google-only account (no current password)" })
+  setPassword(@CurrentUser() user: { id: string }, @Body() dto: SetPasswordDto, @Req() req: any) {
+    return this.authService.setPassword(user.id, dto.newPassword, this.extractDeviceInfo(req));
+  }
+
   // ─── Password reset (RF-018) ───────────────────────────────────────────────
 
   @Post("request-password-reset")
@@ -105,7 +116,7 @@ export class AuthController {
   @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
   @ApiOperation({ summary: "Request a password reset link (RF-018)" })
   requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
-    return this.authService.requestPasswordReset(dto.email);
+    return this.authService.requestPasswordReset(dto.email, dto.surface);
   }
 
   @Post("reset-password")

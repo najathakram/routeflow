@@ -5,6 +5,7 @@ import { UnauthorizedException } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
 import { BuyerAuthService } from "./buyer-auth.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("bcrypt", () => ({
@@ -16,14 +17,16 @@ const JWT_CONFIG = {
   secret: "test-secret",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
-  refreshExpiresIn: "3d",
+  refreshExpiresIn: "30d",
 };
 
 const MOCK_ACCOUNT = {
   id: "buyer-1",
   email: "buyer@example.com",
   passwordHash: "$2b$10$hash",
+  passwordSet: true,
   name: "Buyer One",
+  googleId: null as string | null,
   status: "ACTIVE" as const,
   emailVerified: true,
   failedLoginAttempts: 0,
@@ -52,6 +55,7 @@ describe("BuyerAuthService — account lockout", () => {
           },
         },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = module.get(BuyerAuthService);

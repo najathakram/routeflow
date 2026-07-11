@@ -2,6 +2,9 @@ import { validate } from "class-validator";
 import { plainToInstance } from "class-transformer";
 import { BuyerRegisterDto } from "./buyer-register.dto";
 import { BuyerChangePasswordDto } from "./buyer-change-password.dto";
+import { BuyerSetPasswordDto } from "./buyer-set-password.dto";
+import { BuyerRequestPasswordResetDto } from "./buyer-request-password-reset.dto";
+import { BuyerResetPasswordDto } from "./buyer-reset-password.dto";
 import { BuyerUpdateAccountDto } from "./buyer-update-account.dto";
 import { UpdateBuyerProfileDto } from "./update-buyer-profile.dto";
 import { BuyerAuthController } from "../buyer-auth.controller";
@@ -68,6 +71,53 @@ describe("buyer auth DTO validation", () => {
     });
   });
 
+  describe("BuyerSetPasswordDto", () => {
+    it.each(["short1A", "alllowercase1", "ALLUPPERCASE1", "NoDigitsOrSpecials"])(
+      "rejects weak password %p",
+      async (newPassword) => {
+        const dto = plainToInstance(BuyerSetPasswordDto, { newPassword });
+        const errors = await validate(dto);
+        expect(errors.map((e) => e.property)).toContain("newPassword");
+      },
+    );
+
+    it("accepts a compliant password", async () => {
+      const dto = plainToInstance(BuyerSetPasswordDto, { newPassword: "SecurePass1!" });
+      expect(await validate(dto)).toHaveLength(0);
+    });
+  });
+
+  describe("BuyerRequestPasswordResetDto", () => {
+    it("rejects a non-email value", async () => {
+      const dto = plainToInstance(BuyerRequestPasswordResetDto, { email: "not-an-email" });
+      const errors = await validate(dto);
+      expect(errors.map((e) => e.property)).toContain("email");
+    });
+
+    it("accepts a valid email", async () => {
+      const dto = plainToInstance(BuyerRequestPasswordResetDto, { email: "a@b.co" });
+      expect(await validate(dto)).toHaveLength(0);
+    });
+  });
+
+  describe("BuyerResetPasswordDto", () => {
+    it("requires a token and a strong newPassword", async () => {
+      const dto = plainToInstance(BuyerResetPasswordDto, { token: "", newPassword: "weak" });
+      const errors = await validate(dto);
+      const props = errors.map((e) => e.property);
+      expect(props).toContain("token");
+      expect(props).toContain("newPassword");
+    });
+
+    it("accepts a compliant reset", async () => {
+      const dto = plainToInstance(BuyerResetPasswordDto, {
+        token: "raw-token",
+        newPassword: "SecurePass1!",
+      });
+      expect(await validate(dto)).toHaveLength(0);
+    });
+  });
+
   describe("profile DTOs whitelist contact fields only (F4-001)", () => {
     it("BuyerUpdateAccountDto rejects BuyerAccount columns outside the whitelist", async () => {
       const dto = plainToInstance(BuyerUpdateAccountDto, {
@@ -106,6 +156,18 @@ describe("buyer auth DTO validation", () => {
 
     it("updateProfile body is BuyerUpdateAccountDto", () => {
       expect(paramTypes("updateProfile")).toContain(BuyerUpdateAccountDto);
+    });
+
+    it("setPassword body is BuyerSetPasswordDto", () => {
+      expect(paramTypes("setPassword")).toContain(BuyerSetPasswordDto);
+    });
+
+    it("requestPasswordReset body is BuyerRequestPasswordResetDto", () => {
+      expect(paramTypes("requestPasswordReset")).toContain(BuyerRequestPasswordResetDto);
+    });
+
+    it("resetPassword body is BuyerResetPasswordDto", () => {
+      expect(paramTypes("resetPassword")).toContain(BuyerResetPasswordDto);
     });
   });
 });

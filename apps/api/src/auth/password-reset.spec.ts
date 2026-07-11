@@ -17,8 +17,10 @@ const JWT_CONFIG = {
   secret: "test-secret",
   refreshSecret: "test-refresh-secret",
   expiresIn: "15m",
-  refreshExpiresIn: "7d",
+  refreshExpiresIn: "30d",
 };
+
+const URLS_CONFIG = { web: "https://web.test", mobileWeb: "https://mobile.test" };
 
 const ACTIVE_USER = {
   id: "user-1",
@@ -62,7 +64,12 @@ describe("AuthService — password reset (RF-018)", () => {
             decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
           },
         },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => (key === "urls" ? URLS_CONFIG : JWT_CONFIG)),
+          },
+        },
         { provide: EmailService, useValue: emailService },
         {
           provide: EntitlementsService,
@@ -124,6 +131,28 @@ describe("AuthService — password reset (RF-018)", () => {
 
       expect(result.message).toContain("If that address is registered");
       expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+    });
+
+    it("links to the mobile-web base URL by default (surface omitted)", async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+
+      await service.requestPasswordReset("alice@example.com");
+      await Promise.resolve();
+
+      const html = emailService.send.mock.calls[0]![0].html as string;
+      expect(html).toContain("https://mobile.test/reset-password?token=");
+      // The URL comes from config, never a hardcoded domain
+      expect(html).not.toContain("routeflowmobile-production");
+    });
+
+    it('links to the web base URL when surface="web"', async () => {
+      (prisma.user.findFirst as jest.Mock).mockResolvedValue(ACTIVE_USER);
+
+      await service.requestPasswordReset("alice@example.com", "web");
+      await Promise.resolve();
+
+      const html = emailService.send.mock.calls[0]![0].html as string;
+      expect(html).toContain("https://web.test/reset-password?token=");
     });
   });
 
