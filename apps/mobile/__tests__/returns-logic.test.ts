@@ -2,7 +2,7 @@
  * Returns action-flag gating must mirror the server's transition guards exactly,
  * so the mobile UI never offers a transition the server would 400.
  */
-import { returnActionFlags, returnPillFor } from "../lib/returns-logic";
+import { buildReturnItems, returnActionFlags, returnPillFor } from "../lib/returns-logic";
 
 describe("returnActionFlags", () => {
   it("PENDING → approve + reject only", () => {
@@ -44,6 +44,36 @@ describe("returnActionFlags", () => {
         false,
       );
     }
+  });
+});
+
+describe("buildReturnItems", () => {
+  const lines = [
+    { productId: "a", orderedQty: 10 },
+    { productId: "b", orderedQty: 4 },
+    { productId: null, orderedQty: 3 }, // unlisted — always skipped
+  ];
+
+  it("skips blank/zero/unlisted lines and keeps entered ones", () => {
+    const out = buildReturnItems(lines, { a: "3" }, {});
+    expect(out).toEqual([{ productId: "a", qty: 3, restock: true }]);
+  });
+
+  it("caps the return qty at the ordered qty", () => {
+    const out = buildReturnItems(lines, { b: "99" }, {});
+    expect(out).toEqual([{ productId: "b", qty: 4, restock: true }]);
+  });
+
+  it("carries the per-line restock choice (default true)", () => {
+    const out = buildReturnItems(lines, { a: "1", b: "2" }, { a: false });
+    expect(out).toEqual([
+      { productId: "a", qty: 1, restock: false },
+      { productId: "b", qty: 2, restock: true },
+    ]);
+  });
+
+  it("ignores non-numeric / negative qty", () => {
+    expect(buildReturnItems(lines, { a: "abc", b: "-2" }, {})).toEqual([]);
   });
 });
 

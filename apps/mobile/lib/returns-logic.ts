@@ -40,6 +40,34 @@ export interface ReturnActionFlags {
   terminal: boolean;
 }
 
+export interface ReturnLineInput {
+  productId: string | null;
+  orderedQty: number;
+}
+
+/**
+ * Build the create-return items payload from the operator's per-line qty inputs:
+ * skip unlisted/zero/blank lines, and cap each return qty at the ordered qty.
+ */
+export function buildReturnItems(
+  lines: ReturnLineInput[],
+  qtyByProduct: Record<string, string>,
+  restockByProduct: Record<string, boolean>,
+): { productId: string; qty: number; restock: boolean }[] {
+  const out: { productId: string; qty: number; restock: boolean }[] = [];
+  for (const li of lines) {
+    if (!li.productId) continue;
+    const qty = Math.floor(Number(qtyByProduct[li.productId] ?? ""));
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    out.push({
+      productId: li.productId,
+      qty: Math.min(qty, Math.max(0, Math.floor(li.orderedQty))),
+      restock: restockByProduct[li.productId] ?? true,
+    });
+  }
+  return out;
+}
+
 export function returnActionFlags(status: string): ReturnActionFlags {
   const canApprove = status === "PENDING";
   const canReject = status === "PENDING";

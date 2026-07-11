@@ -12,7 +12,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { FilterChipRow, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminReturns, type AdminReturn } from "../../../lib/api/admin";
 import {
   useApproveReturn,
@@ -80,6 +80,9 @@ export default function ReturnsListScreen() {
       <NavBar
         largeTitle="Returns"
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
+        trailing={
+          <NavAction label="New" bold onPress={() => router.push("/(operator)/returns/new")} />
+        }
       />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}

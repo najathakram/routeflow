@@ -79,7 +79,9 @@ export const useReturn = useMyReturn;
 export interface CreateReturnItemDto {
   productId: string;
   qty: number;
-  reason: ReturnReason;
+  /** Optional per-item reason (defaults to the return's top-level reason server-side). */
+  reason?: ReturnReason;
+  /** Whether to add the returned qty back to stock on receive (default true). */
   restock?: boolean;
 }
 
