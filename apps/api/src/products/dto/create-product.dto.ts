@@ -17,6 +17,10 @@ export class CreateProductDto {
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   @IsString() unit: string;
+  // Coerce a numeric price (mobile sends a number) to the decimal string Prisma
+  // wants — the tier fields below already do this; the base price was missed,
+  // which 400'd every mobile product create/edit.
+  @Transform(toOptionalDecimalString)
   @IsDecimal()
   @Matches(/^\d+(\.\d+)?$/, { message: "pricePerUnit must be non-negative" })
   pricePerUnit: string; // Decimal as string for Prisma
@@ -26,7 +30,7 @@ export class CreateProductDto {
   /** Requires the tenant's "tobacco_dealer" addon to set true. */
   @IsOptional() @IsBoolean() isTobacco?: boolean;
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
-  @IsOptional() @IsDecimal() standardCost?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() standardCost?: string;
   @IsOptional() @IsInt() unitsPerBox?: number;
   // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
   // whole save — see fix/tier-pricing-save).

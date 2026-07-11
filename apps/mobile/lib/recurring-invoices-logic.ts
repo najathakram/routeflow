@@ -32,6 +32,22 @@ export function recurringActionFlags(isActive: boolean): RecurringActionFlags {
   return { canRunNow: true, canPause: isActive, canActivate: !isActive };
 }
 
+/**
+ * The day fields to send on create: exactly ONE of dayOfWeek/dayOfMonth by
+ * frequency (the DTO has no cross-field validator, so the client picks). MONTHLY
+ * uses dayOfMonth (clamped 1–28 to dodge month-end); WEEKLY/BIWEEKLY use dayOfWeek.
+ */
+export function recurringScheduleFields(
+  frequency: RecurringFrequency,
+  dayOfWeek: number,
+  dayOfMonth: number,
+): { dayOfWeek?: number; dayOfMonth?: number } {
+  if (frequency === "MONTHLY") {
+    return { dayOfMonth: Math.min(28, Math.max(1, Math.floor(dayOfMonth))) };
+  }
+  return { dayOfWeek: Math.min(6, Math.max(0, Math.floor(dayOfWeek))) };
+}
+
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Human schedule label, e.g. "Weekly — Mon" / "Every 2 weeks — Wed" / "Monthly — day 15". */

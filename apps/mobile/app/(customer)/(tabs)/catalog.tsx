@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,15 +16,17 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import {
-  useBuyerProducts,
+  useBuyerProductsInfinite,
   useBuyerCategories,
   useBuyerFavorites,
   useToggleFavorite,
   useBuyerExpiringAuthorizations,
+  useBuyerPromotions,
   type BuyerProduct,
   type LockedCategory,
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
+import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 
 function formatCurrency(n: number | string | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
@@ -35,19 +38,40 @@ export default function CustomerCatalogScreen() {
   const [category, setCategory] = useState("");
   const { data: categoriesData } = useBuyerCategories();
   const categories = categoriesData ?? [];
-  const { data, isLoading } = useBuyerProducts({
-    search: search.trim() || undefined,
-    category: category || undefined,
-    limit: 100,
-  });
-  const products = data?.data ?? [];
+  // Infinite pages through the seller's whole catalog — the previous single
+  // `limit:100` request cut the list off at 100 rows.
+  const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
+    useBuyerProductsInfinite({
+      search: search.trim() || undefined,
+      category: category || undefined,
+    });
+  // De-dupe by id: offset pagination can re-emit a page-boundary row if the
+  // catalog is mutated between page fetches — duplicate keys crash FlatList.
+  const products = useMemo(() => {
+    const seen = new Set<string>();
+    const out: BuyerProduct[] = [];
+    for (const pg of data?.pages ?? [])
+      for (const p of pg.data)
+        if (!seen.has(p.id)) {
+          seen.add(p.id);
+          out.push(p);
+        }
+    return out;
+  }, [data]);
+  const hiddenCategories = data?.pages[0]?.hiddenCategories;
   const cart = useCartStore((s) => s.items);
   // Count selling units: boxes for a boxed line (qty is pieces), else pieces.
   const cartCount = cart.reduce(
     (s, i) => s + (Number(i.unitsPerBox ?? 0) > 1 ? (i.boxes ?? 0) : i.qty),
     0,
   );
-  const cartTotal = useCartStore((s) => s.total());
+  const { data: promotions } = useBuyerPromotions();
+  // Promo-aware total so the floating bar matches the cart screen (and what the
+  // server bills) — not the base-price cartStore.total().
+  const cartTotal = useMemo(
+    () => priceCart(cart, promoRulesFrom(promotions)).subtotal,
+    [cart, promotions],
+  );
 
   const { data: favoritesData } = useBuyerFavorites();
   const favoriteIds = useMemo(
@@ -56,34 +80,33 @@ export default function CustomerCatalogScreen() {
   );
   const toggleFavorite = useToggleFavorite();
 
+  // Expiry badge on the licenses icon; tap opens the licenses screen.
   const { data: expiring = [] } = useBuyerExpiringAuthorizations();
-  const showExpiryAlert = () => {
-    if (expiring.length === 0) {
-      Alert.alert("Licenses", "No licenses expiring soon.");
-      return;
-    }
-    const lines = expiring
-      .map((a) => {
-        const when = a.expired
-          ? "expired"
-          : a.bucket === 1
-            ? "expires in ~1 day"
-            : `expires in ~${a.bucket} days`;
-        return `• ${a.categoryName} — ${when}`;
-      })
-      .join("\n");
-    Alert.alert("License expiry", lines);
-  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
         inlineTitle="Catalog"
         trailing={
-          <Pressable onPress={showExpiryAlert} hitSlop={8} style={styles.bellBtn}>
-            <Ionicons name="notifications-outline" size={22} color={ios.label} />
-            {expiring.length > 0 ? <View style={styles.bellDot} /> : null}
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <Pressable
+              onPress={() => router.push("/(customer)/favorites")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Favorites"
+            >
+              <Ionicons name="heart-outline" size={22} color={ios.label} />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/(customer)/licenses")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Licenses"
+            >
+              <Ionicons name="shield-checkmark-outline" size={22} color={ios.label} />
+              {expiring.length > 0 ? <View style={styles.bellDot} /> : null}
+            </Pressable>
+          </View>
         }
       />
 
@@ -129,39 +152,57 @@ export default function CustomerCatalogScreen() {
         </ScrollView>
       )}
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: cartCount > 0 ? 100 : 32 }}
-      >
-        {data?.hiddenCategories && data.hiddenCategories.length > 0 ? (
-          <LockedCategoriesTile categories={data.hiddenCategories} />
-        ) : null}
-        {isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : products.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.empty}>No products found.</Text>
-          </View>
-        ) : (
-          <View style={styles.grid}>
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                isFavorite={favoriteIds.has(product.id)}
-                onToggleFavorite={() =>
-                  toggleFavorite.mutate({
-                    productId: product.id,
-                    isFavorite: favoriteIds.has(product.id),
-                  })
-                }
-              />
-            ))}
-          </View>
+      <FlatList
+        data={products}
+        keyExtractor={(p) => p.id}
+        renderItem={({ item }) => (
+          <ProductCard
+            product={item}
+            isFavorite={favoriteIds.has(item.id)}
+            onToggleFavorite={() =>
+              toggleFavorite.mutate({
+                productId: item.id,
+                isFavorite: favoriteIds.has(item.id),
+              })
+            }
+          />
         )}
-      </ScrollView>
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.grid, { paddingBottom: cartCount > 0 ? 100 : 32 }]}
+        refreshControl={
+          <RefreshControl
+            refreshing={isFetching && !isLoading && !isFetchingNextPage}
+            onRefresh={refetch}
+          />
+        }
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) fetchNextPage();
+        }}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={
+          hiddenCategories && hiddenCategories.length > 0 ? (
+            <LockedCategoriesTile categories={hiddenCategories} />
+          ) : null
+        }
+        ListEmptyComponent={
+          isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <Text style={styles.empty}>No products found.</Text>
+            </View>
+          )
+        }
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <View style={{ paddingVertical: 16 }}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : null
+        }
+      />
 
       {/* Floating cart bar */}
       {cartCount > 0 ? (
@@ -226,6 +267,7 @@ function ProductCard({
               unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
               unit: product.unit,
               unitsPerBox: product.unitsPerBox ?? null,
+              category: product.category ?? null,
             })
           }
         >
@@ -305,7 +347,7 @@ const styles = StyleSheet.create({
   lockedTile: {
     flexDirection: "row",
     gap: 10,
-    marginHorizontal: 16,
+    // Horizontal inset comes from the FlatList contentContainer padding.
     marginBottom: 8,
     padding: 12,
     borderRadius: 14,

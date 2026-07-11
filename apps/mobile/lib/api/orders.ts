@@ -97,7 +97,19 @@ export interface CreateOrderAsDriverDto {
    * An unlisted line is `{ name, qty, unitPrice }` (no productId/boxes/pieces).
    */
   items: CreateOrderItemInput[];
+  /**
+   * Save as a DRAFT (parked, resumable) instead of the default PENDING. A DRAFT
+   * may have zero items server-side; it re-runs the license guard on the
+   * DRAFT→PENDING "Submit for review" transition. Omit for a normal submit.
+   */
+  status?: "DRAFT" | "PENDING";
   notes?: string;
+  /** Mark the order urgent at creation (same flag the detail-screen toggle sets). */
+  urgent?: boolean;
+  /** Requested delivery date as "YYYY-MM-DD" (server @IsDateString). */
+  requestedDeliveryDate?: string;
+  /** Order-level discount in currency (NOT `discount`). Only send when > 0. */
+  discountAmount?: number;
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -185,26 +197,27 @@ export function useCancelOrder() {
  * existing mobile edit-items flow sends the full id-less list (legacy
  * replace-all); unlisted lines slot in as `{ name, qty, unitPrice }`.
  */
-export type UpdateOrderItemInput =
-  | {
-      productId: string;
-      qty: number;
-      /** Optional box/piece split for boxed products (server recomputes qty) */
-      boxes?: number;
-      pieces?: number;
-      unitPrice: number;
-      overrideReason?: string;
-      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
-      notes?: string;
-    }
-  | {
-      /** Free-text label for an unlisted (non-catalog) line. */
-      name: string;
-      qty: number;
-      unitPrice: number;
-      /** Optional per-line note — carried onto the invoice line (buyer-visible). */
-      notes?: string;
-    };
+/**
+ * One entry in an incremental order-item edit (mirrors web's `ItemUpdate`).
+ * All fields optional so a diff can express: an existing-line UPDATE (`id`+
+ * `qty`…), a hard DELETE / soft CANCEL (`id`+`action`), a substitution
+ * (`id`+`substituteProductId`), a new catalog line (`productId`…), or a new
+ * unlisted line (`name`…). Only DTO-whitelisted keys — never spread a draft.
+ * `notes` = per-line note carried onto the invoice line (buyer-visible).
+ */
+export interface UpdateOrderItemInput {
+  id?: string;
+  productId?: string;
+  name?: string;
+  action?: "CANCEL" | "DELETE" | "UPDATE";
+  qty?: number;
+  boxes?: number;
+  pieces?: number;
+  substituteProductId?: string;
+  unitPrice?: number;
+  overrideReason?: string;
+  notes?: string;
+}
 
 export function useUpdateOrderItems() {
   const qc = useQueryClient();
@@ -214,10 +227,17 @@ export function useUpdateOrderItems() {
     {
       orderId: string;
       items: UpdateOrderItemInput[];
+      /**
+       * `false` = incremental merge: untouched lines (absent from `items`) are
+       * left as-is, protecting invoiced qty + override history. Always pass
+       * `false` from the edit UI — omitting it lets the server's legacy heuristic
+       * flip to full-replace when every entry is id-less (e.g. only new adds).
+       */
+      replaceAll?: boolean;
     }
   >({
-    mutationFn: ({ orderId, items }) =>
-      apiClient.patch(`/orders/${orderId}/items`, { items }).then((r) => r.data),
+    mutationFn: ({ orderId, items, replaceAll }) =>
+      apiClient.patch(`/orders/${orderId}/items`, { items, replaceAll }).then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });
@@ -259,12 +279,29 @@ export function useToggleOrderUrgent() {
 
 export function useChangeOrderStatus() {
   const qc = useQueryClient();
-  return useMutation<Order, Error, { id: string; status: OrderStatus }>({
-    mutationFn: ({ id, status }) =>
-      apiClient.patch(`/orders/${id}/status`, { status }).then((r) => r.data),
+  return useMutation<Order, Error, { id: string; status: OrderStatus; reason?: string }>({
+    mutationFn: ({ id, status, reason }) =>
+      apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["route-runs"] });
+    },
+  });
+}
+
+/**
+ * Reopen a CANCELLED order back to PENDING (`POST /orders/:id/reopen`,
+ * OPERATOR-only). The server 400s if a PAID/PARTIAL/WRITTEN_OFF invoice exists
+ * on the order — surface that message. (A DELIVERED order is instead "reopened"
+ * by demoting its status to CONFIRMED via useChangeOrderStatus + a reason.)
+ */
+export function useReopenOrder() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, string>({
+    mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
     },
   });
 }

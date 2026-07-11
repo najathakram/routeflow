@@ -12,13 +12,14 @@ import { useAdminInvoice } from "../../../../../lib/api/admin";
 import { useRecordInvoicePayment, type PaymentMethod } from "../../../../../lib/api/invoices";
 import { showToast } from "../../../../../lib/toast";
 
+// Advance / Credit-Note are intentionally excluded: the server rejects them here
+// ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
+// them as chips only ever produced an error toast.
 const METHODS: { id: PaymentMethod; label: string }[] = [
   { id: "CASH", label: "Cash" },
   { id: "CHECK", label: "Check" },
   { id: "ACH", label: "ACH" },
   { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "ADVANCE", label: "Advance" },
-  { id: "CREDIT_NOTE", label: "Credit note" },
   { id: "OTHER", label: "Other" },
 ];
 

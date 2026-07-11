@@ -7,6 +7,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { KpiCard, NavAction, NavBar, ProgressTrack, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminProducts, type AdminProduct } from "../../../lib/api/admin";
 import { useInventoryValuation } from "../../../lib/api/inventory";
+import { chooseAction } from "../../../lib/confirm";
 
 type StockFilter = "ALL" | "LOW" | "LOW_ACTIVE" | "OUT_OF_STOCK" | "OOS_ACTIVE";
 
@@ -182,16 +183,37 @@ export default function WarehouseScreen() {
               </Pressable>
             </View>
             <View style={[styles.kpiRow, { marginTop: 12 }]}>
-              <KpiCard
-                icon={<Ionicons name="cash-outline" size={18} color={ios.system.greenInk} />}
-                iconBg={ios.system.greenWash}
-                value={`$${(valuation?.totalValue ?? 0).toFixed(0)}`}
-                label={
-                  valuation && valuation.missingCostCount > 0
-                    ? `Value · ${valuation.missingCostCount} no cost`
-                    : "Inventory value"
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() =>
+                  chooseAction("Costing", "Manage inventory cost basis.", [
+                    { label: "Cancel", style: "cancel" },
+                    ...(valuation && valuation.missingCostCount > 0
+                      ? [
+                          {
+                            label: `Set ${valuation.missingCostCount} missing cost${valuation.missingCostCount === 1 ? "" : "s"}`,
+                            onPress: () => router.push("/(operator)/products/bulk-set-cost" as any),
+                          },
+                        ]
+                      : []),
+                    {
+                      label: "Recompute costs",
+                      onPress: () => router.push("/(operator)/products/recompute-costs" as any),
+                    },
+                  ])
                 }
-              />
+              >
+                <KpiCard
+                  icon={<Ionicons name="cash-outline" size={18} color={ios.system.greenInk} />}
+                  iconBg={ios.system.greenWash}
+                  value={`$${(valuation?.totalValue ?? 0).toFixed(0)}`}
+                  label={
+                    valuation && valuation.missingCostCount > 0
+                      ? `Value · ${valuation.missingCostCount} no cost`
+                      : "Inventory value"
+                  }
+                />
+              </Pressable>
               <KpiCard
                 icon={<Ionicons name="checkmark" size={18} color={ios.brand} />}
                 iconBg={ios.brandWash}
@@ -284,6 +306,13 @@ export default function WarehouseScreen() {
                 color={ios.system.greenInk}
                 bg={ios.system.greenWash}
                 onPress={() => router.push("/(operator)/products/adjust-picker" as any)}
+              />
+              <QuickBtn
+                icon="clipboard-outline"
+                label="Count"
+                color={ios.brand}
+                bg={ios.brandWash}
+                onPress={() => router.push("/(operator)/products/stock-count" as any)}
               />
             </View>
 

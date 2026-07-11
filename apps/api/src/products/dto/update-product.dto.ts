@@ -17,7 +17,7 @@ export class UpdateProductDto {
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   @IsOptional() @IsString() unit?: string;
-  @IsOptional() @IsDecimal() pricePerUnit?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() pricePerUnit?: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
@@ -30,7 +30,7 @@ export class UpdateProductDto {
   /** Full replacement of the imageKeys array — used to reorder or set the default image. */
   @IsOptional() @IsArray() @IsString({ each: true }) imageKeys?: string[];
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
-  @IsOptional() @IsDecimal() standardCost?: string;
+  @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() standardCost?: string;
   @IsOptional() @IsInt() unitsPerBox?: number;
   // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
   // whole save — see fix/tier-pricing-save).

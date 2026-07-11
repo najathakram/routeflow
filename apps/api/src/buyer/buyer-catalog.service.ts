@@ -284,6 +284,9 @@ export class BuyerCatalogService {
         ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
         imageKeys: f.product.imageKeys ?? [],
+        // Needed so add-to-cart from the mobile favorites screen orders a boxed
+        // product as boxes (not loose pieces) — matches getCatalog.
+        unitsPerBox: f.product.unitsPerBox ?? null,
         createdAt: f.createdAt,
       };
     });

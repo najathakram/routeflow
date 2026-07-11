@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -158,6 +158,69 @@ export function useBuyerProducts(params?: {
   });
 }
 
+/**
+ * Paged catalog for the browse screen. Pages through the seller's WHOLE
+ * catalog (the old single-shot `limit:100` call cut off everything past row
+ * 100). Key stays under "buyer-products" so socket invalidation covers it.
+ * Buyer meta only carries `total`, so the next page is derived from the
+ * accumulated row count.
+ */
+export function useBuyerProductsInfinite(params?: {
+  search?: string;
+  category?: string;
+  limit?: number;
+}) {
+  const limit = params?.limit ?? 50;
+  return useInfiniteQuery({
+    queryKey: ["buyer-products", "infinite", params],
+    queryFn: ({ pageParam }) =>
+      buyerApiClient.get("/buyer/products", { params: { ...params, limit, page: pageParam } }).then(
+        (r) =>
+          r.data as {
+            data: BuyerProduct[];
+            meta: { total: number };
+            hiddenCategories?: LockedCategory[];
+          },
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (last, all) => {
+      const loaded = all.reduce((sum, p) => sum + p.data.length, 0);
+      return loaded < (last.meta?.total ?? 0) && last.data.length > 0 ? all.length + 1 : undefined;
+    },
+    staleTime: 15_000,
+  });
+}
+
+// ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
+
+/** An active, in-window promotion (GET /buyer/promotions). Mirrors web's shape. */
+export interface BuyerPromotion {
+  id: string;
+  name: string;
+  bannerText: string | null;
+  type: "PERCENT" | "FIXED" | "QTY_BREAK";
+  value: number;
+  minQty: number | null;
+  scope: "ALL" | "CATEGORY" | "PRODUCTS";
+  category: string | null;
+  startsAt: string;
+  endsAt: string;
+  productIds: string[];
+}
+
+/**
+ * Active promotions for the current seller — feeds the mobile cart's per-line
+ * best-promo evaluation (`applyBestPromotion`) so buyers see the same net price
+ * the server bills. Display-only; the order create path sends no unitPrice.
+ */
+export function useBuyerPromotions() {
+  return useQuery<BuyerPromotion[]>({
+    queryKey: ["buyer-promotions"],
+    queryFn: () => buyerApiClient.get("/buyer/promotions").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
 export interface ExpiringAuthorization {
   id: string;
@@ -178,6 +241,53 @@ export function useBuyerExpiringAuthorizations() {
     queryFn: () => buyerApiClient.get("/buyer/authorizations/expiring").then((r) => r.data),
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
+  });
+}
+
+// ─── License self-serve (submit / renew) ───────────────────────────────────────
+
+/** One regulated-category authorization row for the buyer's licenses screen. */
+export interface BuyerAuthorizationRow {
+  trackedCategoryId: string;
+  categoryName: string;
+  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
+  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
+  licenseNumber: string | null;
+  expiresAt: string | null;
+  documentKey: string | null;
+  submittedAt: string | null;
+  verifiedAt: string | null;
+}
+
+export interface SubmitBuyerAuthorizationInput {
+  trackedCategoryId: string;
+  licenseNumber: string;
+  /** ISO 8601 (@IsISO8601 server-side). */
+  expiresAt: string;
+  documentKey?: string;
+  /** Must be true (@Equals(true) server-side). */
+  shareConsent: boolean;
+}
+
+/** Per-category license status for the buyer's self-serve screen (GET /buyer/authorizations). */
+export function useBuyerAuthorizations() {
+  return useQuery<BuyerAuthorizationRow[]>({
+    queryKey: ["buyer-authorizations"],
+    queryFn: () => buyerApiClient.get("/buyer/authorizations").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+/** Submit/renew a license for a category (POST /buyer/authorizations). */
+export function useSubmitBuyerAuthorization() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, SubmitBuyerAuthorizationInput>({
+    mutationFn: (dto) => buyerApiClient.post("/buyer/authorizations", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-authorizations"] });
+      qc.invalidateQueries({ queryKey: ["buyer-authorizations-expiring"] });
+      qc.invalidateQueries({ queryKey: ["buyer-products"] });
+    },
   });
 }
 
@@ -295,6 +405,30 @@ export function useBuyerDashboard() {
   return useQuery<BuyerDashboard>({
     queryKey: ["buyer-dashboard"],
     queryFn: () => buyerApiClient.get("/buyer/dashboard").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+// ─── Finances / analytics (mirrors web useBuyerAnalytics) ─────────────────────
+
+export interface BuyerAnalytics {
+  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
+  summary: {
+    totalOrders: number;
+    totalSpend: number;
+    avgOrderValue: number;
+    unpaidInvoiceCount: number;
+    /** Server-truth outstanding total — render VERBATIM, never re-derive. */
+    unpaidInvoiceTotal: number;
+  };
+  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
+  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
+}
+
+export function useBuyerAnalytics() {
+  return useQuery<BuyerAnalytics>({
+    queryKey: ["buyer", "analytics"],
+    queryFn: () => buyerApiClient.get("/buyer/analytics").then((r) => r.data),
     staleTime: 60_000,
   });
 }

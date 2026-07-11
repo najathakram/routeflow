@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -6,10 +6,10 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useCartStore } from "../../../store/cartStore";
-import { useBuyerCreateOrder } from "../../../lib/api/buyer";
+import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
-import { computeLineSubtotal } from "../../../lib/pricing";
+import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -40,10 +40,20 @@ function addDays(n: number): string {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { items, step, clear, total } = useCartStore();
+  const { items, step, clear } = useCartStore();
   const createMut = useBuyerCreateOrder();
+  const { data: promotions } = useBuyerPromotions();
   const [notes, setNotes] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
+
+  // Apply each line's best promotion so the buyer sees the SAME net the server
+  // bills (server re-prices on submit; this is display-only). Keyed per line by
+  // productId for O(1) lookup in the row map.
+  const priced = useMemo(() => priceCart(items, promoRulesFrom(promotions)), [items, promotions]);
+  const pricedByProduct = useMemo(
+    () => new Map(priced.lines.map((l) => [l.productId, l])),
+    [priced],
+  );
 
   const onPlaceOrder = () => {
     if (items.length === 0) {
@@ -118,13 +128,11 @@ export default function CartScreen() {
                   const boxed = Number(item.unitsPerBox ?? 0) > 1;
                   // Selling units: boxes for a boxed product, else pieces.
                   const units = boxed ? (item.boxes ?? 0) : item.qty;
-                  const lineTotal = computeLineSubtotal({
-                    unitPrice: item.unitPrice,
-                    qty: item.qty,
-                    boxes: item.boxes ?? null,
-                    pieces: item.pieces ?? null,
-                    unitsPerBox: item.unitsPerBox ?? null,
-                  });
+                  const line = pricedByProduct.get(item.productId);
+                  const net = line?.net ?? item.unitPrice;
+                  const original = line?.original ?? null;
+                  const lineTotal = line?.lineSubtotal ?? 0;
+                  const promoted = original != null && original > net;
                   return (
                     <View
                       key={item.productId}
@@ -141,7 +149,12 @@ export default function CartScreen() {
                           {item.name}
                         </Text>
                         <Text style={styles.itemPrice}>
-                          ${item.unitPrice.toFixed(2)}
+                          {promoted ? (
+                            <Text style={styles.itemPriceWas}>${original!.toFixed(2)} </Text>
+                          ) : null}
+                          <Text style={promoted ? styles.itemPriceNet : undefined}>
+                            ${net.toFixed(2)}
+                          </Text>
                           {boxed ? " / box" : item.unit ? ` / ${item.unit}` : ""}
                         </Text>
                       </View>
@@ -242,11 +255,27 @@ export default function CartScreen() {
 
             {/* Summary */}
             <View style={styles.section}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {items.length} item{items.length !== 1 ? "s" : ""}
-                </Text>
-                <Text style={styles.summaryTotal}>${total().toFixed(2)}</Text>
+              <View style={styles.summaryCard}>
+                {priced.savings > 0 ? (
+                  <>
+                    <View style={styles.summaryLine}>
+                      <Text style={styles.summaryMuted}>Items</Text>
+                      <Text style={styles.summaryStrike}>
+                        ${(priced.subtotal + priced.savings).toFixed(2)}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryLine}>
+                      <Text style={styles.summarySavings}>Promotion savings</Text>
+                      <Text style={styles.summarySavings}>−${priced.savings.toFixed(2)}</Text>
+                    </View>
+                  </>
+                ) : null}
+                <View style={[styles.summaryRow, priced.savings > 0 && styles.summaryRowInline]}>
+                  <Text style={styles.summaryLabel}>
+                    {items.length} item{items.length !== 1 ? "s" : ""}
+                  </Text>
+                  <Text style={styles.summaryTotal}>${priced.subtotal.toFixed(2)}</Text>
+                </View>
               </View>
             </View>
           </>
@@ -261,7 +290,9 @@ export default function CartScreen() {
             disabled={createMut.isPending}
           >
             <Text style={styles.placeBtnText}>
-              {createMut.isPending ? "Placing order…" : `Place order · $${total().toFixed(2)}`}
+              {createMut.isPending
+                ? "Placing order…"
+                : `Place order · $${priced.subtotal.toFixed(2)}`}
             </Text>
           </Pressable>
         </View>
@@ -303,6 +334,8 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemPrice: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemPriceWas: { color: ios.label3, textDecorationLine: "line-through" },
+  itemPriceNet: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
   qtyRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -365,6 +398,23 @@ const styles = StyleSheet.create({
   dateChipText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label2 },
   dateChipTextActive: { color: "#fff" },
   datePreview: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.brand, marginTop: 2 },
+  summaryCard: { backgroundColor: ios.bgElev, borderRadius: 12, overflow: "hidden" },
+  summaryLine: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  summaryMuted: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  summaryStrike: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    textDecorationLine: "line-through",
+    fontVariant: ["tabular-nums"],
+  },
+  summarySavings: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -374,6 +424,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
+  summaryRowInline: { backgroundColor: "transparent", borderRadius: 0 },
   summaryLabel: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
   summaryTotal: {
     fontSize: 18,

@@ -27,6 +27,8 @@ import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import type { CreatedProduct } from "../../../../lib/api/products";
+import { ScanOutcome } from "../../../../lib/scan-loop";
+import { withCartRows } from "../../../../lib/visible-cart";
 
 /**
  * Standalone invoice composer for the mobile operator UI.
@@ -250,12 +252,22 @@ function InvoiceComposer({
   const [scrollToId, setScrollToId] = useState<string | null>(null);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
+  // See NewOrderScreen: pending target survives so a freshly-pinned scanned row
+  // can finish the scroll from its own onLayout (which fires after this effect).
+  const scrollToIdRef = useRef<string | null>(null);
+  const scrollToRow = (id: string) => {
+    const y = rowYRef.current.get(id);
+    if (y == null) return false;
+    scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
+    return true;
+  };
   useEffect(() => {
     if (!scrollToId) return;
-    const y = rowYRef.current.get(scrollToId);
-    if (y != null)
-      scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
-    setScrollToId(null);
+    scrollToIdRef.current = scrollToId;
+    if (scrollToRow(scrollToId)) {
+      scrollToIdRef.current = null;
+      setScrollToId(null);
+    }
   }, [scrollToId, items]);
   const [terms, setTerms] = useState(DEFAULT_TERMS);
   const [dueDate, setDueDate] = useState(() => todayPlusDays(TERM_DAYS[DEFAULT_TERMS] ?? 30));
@@ -290,8 +302,11 @@ function InvoiceComposer({
       }
       return { ...m, [id]: { qty: (prev.qty ?? 0) + 1 } };
     });
-    if (snapshot && !productById.has(id)) {
-      setScannedById((m) => ({ ...m, [id]: snapshot }));
+    // Always retain the snapshot (see NewOrderScreen): the empty-search query
+    // can be GC'd while a search is held, so setSearch("") after a local scan
+    // may briefly refetch cold — the snapshot keeps this row resolvable.
+    if (snapshot) {
+      setScannedById((m) => (id in m ? m : { ...m, [id]: snapshot }));
     }
   };
 
@@ -350,7 +365,10 @@ function InvoiceComposer({
     });
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
-  const handleScanned = async (code: string) => {
+  // Continuous-scan handler: the scanner overlay stays open between items and
+  // renders the returned feedback; only the create-product hand-off (and the
+  // Done button) closes it.
+  const handleScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
     const lower = trimmed.toLowerCase();
@@ -362,22 +380,21 @@ function InvoiceComposer({
     );
     if (local) {
       addOne(local.id, local);
+      setSearch(""); // an active search would hide the added row (web clears too)
       setScrollToId(local.id);
-      showToast(`Added ${displayName(local)}`);
-      return;
+      return { feedback: { kind: "added", text: `Added ${displayName(local)}` } };
     }
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
         addOne(result.product.id, result.product);
+        setSearch("");
         setScrollToId(result.product.id);
-        showToast(`Added ${displayName(result.product)}`);
-        return;
+        return { feedback: { kind: "added", text: `Added ${displayName(result.product)}` } };
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      showToast(msg);
-      return;
+      return { feedback: { kind: "error", text: msg } };
     }
     chooseAction(
       `No product for "${trimmed}"`,
@@ -387,6 +404,7 @@ function InvoiceComposer({
         { label: "Create", onPress: () => setCreateCode(trimmed) },
       ],
     );
+    return { close: true };
   };
 
   // Create-on-miss: overlays the invoice builder (never navigates away) so the
@@ -409,7 +427,12 @@ function InvoiceComposer({
     showToast(`Added ${displayName(snapshot as any, products as any)}`);
   };
 
-  const filtered = useMemo(() => products, [products]);
+  const filtered = useMemo(() => {
+    // While browsing (no active search), pin cart lines the catalog page would
+    // hide so every scanned item keeps a visible row.
+    if (search.trim()) return products;
+    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+  }, [products, search, items, productById]);
 
   const { total, totalItems } = useMemo(() => {
     let total = 0;
@@ -544,7 +567,13 @@ function InvoiceComposer({
               return (
                 <View
                   key={p.id}
-                  onLayout={(e) => rowYRef.current.set(p.id, e.nativeEvent.layout.y)}
+                  onLayout={(e) => {
+                    rowYRef.current.set(p.id, e.nativeEvent.layout.y);
+                    if (scrollToIdRef.current === p.id && scrollToRow(p.id)) {
+                      scrollToIdRef.current = null;
+                      setScrollToId(null);
+                    }
+                  }}
                   style={styles.productRow}
                 >
                   <View style={styles.productImg} />
@@ -692,7 +721,7 @@ function InvoiceComposer({
         }}
       />
 
-      <BarcodeFab onScanned={handleScanned} hidden={reviewOpen || unlistedModalOpen} />
+      <BarcodeFab continuous onScanned={handleScanned} hidden={reviewOpen || unlistedModalOpen} />
 
       <InlineCreateProductSheet
         visible={createCode != null}

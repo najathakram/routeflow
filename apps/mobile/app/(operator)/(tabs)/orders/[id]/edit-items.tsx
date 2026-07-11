@@ -15,17 +15,30 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
-import {
-  useCustomerPriceHistory,
-  useUpdateOrderItems,
-  type UpdateOrderItemInput,
-} from "../../../../../lib/api/orders";
+import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
+import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
-import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../../lib/pricing";
+import {
+  computeLineSubtotal,
+  effectiveQty,
+  getTierPrice,
+  roundMoney,
+} from "../../../../../lib/pricing";
+import {
+  buildOrderItemDiff,
+  type DiffCatalogLine,
+  type DiffUnlistedLine,
+  type OriginalLine,
+} from "../../../../../lib/order-item-diff";
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
+import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
+import {
+  parseRegulatedAuthError,
+  type BlockedCategory,
+} from "../../../../../lib/api/authorizations";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
 /**
@@ -41,12 +54,19 @@ type DraftItem = {
   pieces?: number;
   unitsPerBox?: number | null;
   unitPrice: number;
+  /** The customer's tier/base price — new lines send an override only if unitPrice diverges. */
   catalogPrice: number;
   name: string;
   unit?: string;
   overrideReason?: string;
-  /** Per-line note (buyer-visible) — must round-trip through the replace-all save. */
+  /** Per-line note (buyer-visible) — must round-trip through the save. */
   notes?: string;
+  /** Original DB line id; undefined = added this session. */
+  lineId?: string;
+  /** The line was stored with a box split — send boxes/pieces on save only then. */
+  boxSplit?: boolean;
+  /** Set when this row substitutes a different product onto its original line. */
+  substituteProductId?: string;
 };
 
 /**
@@ -60,8 +80,10 @@ type UnlistedDraft = {
   name: string;
   unitPrice: number;
   qty: number;
-  /** Per-line note (buyer-visible) — must round-trip through the replace-all save. */
+  /** Per-line note (buyer-visible) — must round-trip through the save. */
   notes?: string;
+  /** Original DB line id for an existing unlisted line; undefined = new. */
+  lineId?: string;
 };
 
 function newLocalId(): string {
@@ -81,9 +103,20 @@ export default function EditOrderItemsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading } = useAdminOrder(id ?? "");
+  const customerId = (order as any)?.customerId as string | undefined;
   // Remembered per-customer prices — pre-fill a newly added line's price so a
   // prior discount carries forward (operator can still change it).
-  const { data: priceHistory } = useCustomerPriceHistory((order as any)?.customerId);
+  const { data: priceHistory } = useCustomerPriceHistory(customerId);
+  // Customer tier pricing (mirrors NewOrderScreen): a newly added line prices
+  // off the customer's effective tier, not the raw list price.
+  const { data: customerDetail } = useCustomer(customerId ?? "");
+  const { data: customerPrices } = useCustomerPrices(customerId ?? "");
+  const customerTier = customerDetail?.pricingTier ?? 1;
+  const cpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
+    return m;
+  }, [customerPrices]);
   const userRole = useAuthStore((s) => s.user?.role);
   // Customer accounts shouldn't reach this screen, but defend anyway —
   // box-splitting is operator/driver-only by product policy.
@@ -91,13 +124,21 @@ export default function EditOrderItemsScreen() {
 
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
-  // (which is keyed by productId) and re-sent on save so they aren't dropped.
+  // (which is keyed by productId) and diffed on save so they aren't dropped.
   const [unlisted, setUnlisted] = useState<UnlistedDraft[]>([]);
+  // Existing line ids removed with the trash button → emitted as DELETE actions
+  // in the incremental diff (the server hard-deletes only uninvoiced/undelivered
+  // lines, else falls back to CANCEL — protecting invoiced money).
+  const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
+  const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
   const updateMut = useUpdateOrderItems();
+
+  const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
+    getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
 
   useEffect(() => {
     if (!order) return;
@@ -106,9 +147,12 @@ export default function EditOrderItemsScreen() {
     for (const li of order.lineItems) {
       // Unlisted line (no productId): carry it through the replace-all save so
       // it isn't lost. `name` holds the free-text label.
+      // Skip already-cancelled lines (they aren't editable and shouldn't diff).
+      if ((li as any).status === "CANCELLED") continue;
       if (!li.productId) {
         nextUnlisted.push({
           id: li.id ?? newLocalId(),
+          lineId: li.id ?? undefined,
           name: li.name ?? "Unlisted item",
           unitPrice: toNumber(li.unitPrice),
           qty: toNumber(li.qty),
@@ -132,6 +176,9 @@ export default function EditOrderItemsScreen() {
         unit: product.unit,
         overrideReason: li.overrideReason ?? undefined,
         notes: (li as any).notes ?? undefined,
+        lineId: li.id ?? undefined,
+        // Preserve the stored denomination so a qty-only edit doesn't invent a split.
+        boxSplit: li.boxes != null || li.pieces != null,
       };
     }
     setDraft(next);
@@ -189,7 +236,7 @@ export default function EditOrderItemsScreen() {
       const next = { ...d };
       if (q === 0) delete next[id];
       // Plain qty path — clear boxes/pieces so the server treats it as flat.
-      else next[id] = { ...cur, qty: q, boxes: undefined, pieces: undefined };
+      else next[id] = { ...cur, qty: q, boxes: undefined, pieces: undefined, boxSplit: false };
       return next;
     });
 
@@ -203,7 +250,7 @@ export default function EditOrderItemsScreen() {
       const qty = b * upb + pcs;
       const next = { ...d };
       if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty };
+      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
       return next;
     });
 
@@ -217,7 +264,7 @@ export default function EditOrderItemsScreen() {
       const qty = b * upb + pcs;
       const next = { ...d };
       if (qty === 0) delete next[id];
-      else next[id] = { ...cur, boxes: b, pieces: pcs, qty };
+      else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
       return next;
     });
 
@@ -239,6 +286,11 @@ export default function EditOrderItemsScreen() {
 
   const removeLine = (id: string) =>
     setDraft((d) => {
+      const cur = d[id];
+      // An existing (already-saved) line must be explicitly DELETE'd in the diff
+      // — otherwise the incremental merge would leave it untouched on the order.
+      if (cur?.lineId)
+        setPendingDeletes((prev) => (prev.includes(cur.lineId!) ? prev : [...prev, cur.lineId!]));
       const next = { ...d };
       delete next[id];
       return next;
@@ -248,48 +300,60 @@ export default function EditOrderItemsScreen() {
 
   const save = () => {
     if (!id) return;
-    const catalogItems: UpdateOrderItemInput[] = Object.values(draft)
-      .map((i): UpdateOrderItemInput => {
-        const qty = effectiveQty(i, i.unitsPerBox);
-        const base: {
-          productId: string;
-          qty: number;
-          unitPrice: number;
-          boxes?: number;
-          pieces?: number;
-          overrideReason?: string;
-          notes?: string;
-        } = {
-          productId: i.productId,
-          qty,
-          unitPrice: i.unitPrice,
-        };
-        if (i.boxes != null || i.pieces != null) {
-          base.boxes = i.boxes ?? 0;
-          base.pieces = i.pieces ?? 0;
-        }
-        if (i.overrideReason) base.overrideReason = i.overrideReason;
-        // This save is a replace-all — re-send the note or it is silently wiped.
-        if (i.notes?.trim()) base.notes = i.notes.trim();
-        return base;
-      })
-      .filter((i) => "productId" in i && i.qty > 0);
-    // Unlisted lines → `{ name, qty, unitPrice }` (no productId; never boxed).
-    const unlistedItems: UpdateOrderItemInput[] = unlisted
-      .filter((u) => u.qty > 0 && u.name.trim() !== "" && u.unitPrice > 0)
-      .map((u) => ({
-        name: u.name.trim(),
-        qty: u.qty,
-        unitPrice: u.unitPrice,
-        ...(u.notes?.trim() ? { notes: u.notes.trim() } : {}),
+    // Build an incremental diff (replaceAll:false) so untouched lines keep their
+    // ids, invoiced qty, and override history — the old full-replace clobbered them.
+    // `notes` (per-line, buyer-visible) is threaded through the diff so editing a
+    // note is picked up as a change and never silently wiped.
+    const catalog: DiffCatalogLine[] = Object.values(draft).map((i) => ({
+      lineId: i.lineId,
+      productId: i.productId,
+      qty: effectiveQty(i, i.unitsPerBox),
+      boxes: i.boxes ?? null,
+      pieces: i.pieces ?? null,
+      boxSplit: !!i.boxSplit,
+      unitPrice: i.unitPrice,
+      basePrice: i.catalogPrice,
+      overrideReason: i.overrideReason,
+      substituteProductId: i.substituteProductId,
+      notes: i.notes,
+    }));
+    const unlistedLines: DiffUnlistedLine[] = unlisted.map((u) => ({
+      lineId: u.lineId,
+      name: u.name,
+      qty: u.qty,
+      unitPrice: u.unitPrice,
+      notes: u.notes,
+    }));
+    const originals: OriginalLine[] = (order?.lineItems ?? [])
+      .filter((li: any) => li.status !== "CANCELLED")
+      .map((li: any) => ({
+        id: li.id,
+        productId: li.productId ?? null,
+        qty: toNumber(li.qty),
+        unitPrice: toNumber(li.unitPrice),
+        name: li.name ?? null,
+        notes: (li as any).notes ?? null,
       }));
-    const items = [...catalogItems, ...unlistedItems];
+
+    // buildOrderItemDiff auto-DELETEs any original line absent from the surviving
+    // catalog/unlisted lines — covering removals via the qty stepper (zeroing),
+    // not just the trash button — so `pendingDeletes` here is just the explicit
+    // trash-button set.
+    const items = buildOrderItemDiff({
+      catalog,
+      unlisted: unlistedLines,
+      originals,
+      pendingDeletes,
+      pendingCancels: [],
+    });
+
     if (items.length === 0) {
-      showToast("Orders can't be saved empty.");
+      // Nothing changed — mirror web: just leave the editor, don't error.
+      router.replace("/(operator)/(tabs)/orders" as any);
       return;
     }
     updateMut.mutate(
-      { orderId: id, items },
+      { orderId: id, items, replaceAll: false },
       {
         onSuccess: () => {
           showToast("Items updated");
@@ -300,7 +364,15 @@ export default function EditOrderItemsScreen() {
           // reached via deep link or a fresh tab switch.
           router.replace("/(operator)/(tabs)/orders" as any);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          // Regulated-sale block: open the guard, then replay the save on resolve.
+          const blocked = parseRegulatedAuthError(e);
+          if (blocked && blocked.length > 0) {
+            setLicenseBlock(blocked);
+            return;
+          }
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
       },
     );
   };
@@ -354,11 +426,28 @@ export default function EditOrderItemsScreen() {
         }}
       />
 
+      {/* Regulated-license guard — order exists here, so overrides are ORDER-scoped.
+          No remove-lines exit (lines are removed via the qty steppers above). */}
+      <LicenseGuardModal
+        open={!!licenseBlock}
+        customerId={customerId ?? ""}
+        blocked={licenseBlock ?? []}
+        orderId={id}
+        onResolved={() => {
+          setLicenseBlock(null);
+          save();
+        }}
+        onClose={() => setLicenseBlock(null)}
+      />
+
       {showPicker ? (
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
           onPick={(p) => {
-            const catalogPrice = toNumber(p.pricePerUnit);
+            // The customer's tier price is the base for a newly added product.
+            const catalogPrice = tierPriceFor(p);
+            const listPrice = toNumber(p.pricePerUnit);
+            const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
             const upbRaw = p.unitsPerBox;
             const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
             if (substituteFor) {
@@ -375,6 +464,11 @@ export default function EditOrderItemsScreen() {
                   catalogPrice,
                   name: p.name,
                   unit: p.unit,
+                  // Preserve the original line id so the diff emits a substitution
+                  // (swap product on the same line) rather than delete + create.
+                  lineId: old?.lineId,
+                  substituteProductId: old?.lineId ? p.id : undefined,
+                  boxSplit: old?.boxSplit,
                 };
                 return next;
               });
@@ -396,10 +490,16 @@ export default function EditOrderItemsScreen() {
                   }
                   return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
                 }
-                // Fresh add: pre-fill the remembered price for this customer +
-                // product (discount OR upsell), else catalog.
+                // Fresh add: conditionally pre-fill the remembered price — only a
+                // genuine discount (below tier) or upsell (above list), never over
+                // a SPECIAL tier price. Else start at the tier price.
                 const hist = priceHistory?.[p.id];
-                const startPrice = hist ? hist.lastPrice : catalogPrice;
+                const startPrice =
+                  !isSpecial &&
+                  hist != null &&
+                  (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+                    ? hist.lastPrice
+                    : catalogPrice;
                 // 1 box for boxed, 1 piece for non-boxed.
                 if (Number(unitsPerBox ?? 0) > 1) {
                   const upb = Number(unitsPerBox ?? 0);
@@ -1038,6 +1138,10 @@ function ProductPicker({
     id: string;
     name: string;
     pricePerUnit: number | string;
+    priceTier2?: number | string | null;
+    priceTier3?: number | string | null;
+    priceTier4?: number | string | null;
+    priceTier5?: number | string | null;
     unit?: string;
     unitsPerBox?: number | null;
   }) => void;
@@ -1058,6 +1162,10 @@ function ProductPicker({
     unit?: string;
     unitsPerBox?: number | null;
     pricePerUnit: number | string;
+    priceTier2?: number | string | null;
+    priceTier3?: number | string | null;
+    priceTier4?: number | string | null;
+    priceTier5?: number | string | null;
   }>;
 
   return (

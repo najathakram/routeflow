@@ -10,21 +10,35 @@ export type ReturnReason =
   | "QUALITY_ISSUE"
   | "EXCESS_ORDER";
 
-export type ReturnStatus = "PENDING" | "PROCESSED" | "CANCELLED";
+export type ReturnStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "IN_TRANSIT"
+  | "RECEIVED"
+  | "REFUNDED"
+  | "PROCESSED"
+  | "CANCELLED";
 
 export interface ReturnItem {
   id: string;
   productId: string;
-  product?: { id: string; name: string; unit: string };
+  product?: { id: string; name: string; unit?: string };
+  /** Enriched at read time from the source order line (not a column). */
+  orderedQty?: number;
+  unitPrice?: number | null;
   qty: number;
-  reason: ReturnReason;
-  restock: boolean;
+  reason?: ReturnReason;
+  restock?: boolean;
 }
 
 export interface Return {
   id: string;
+  returnNumber?: string;
   orderId: string;
   order?: { id: string; orderNumber: string };
+  customerId?: string;
+  customer?: { id: string; businessName: string; contactName?: string };
   reason: ReturnReason;
   status: ReturnStatus;
   notes?: string;
@@ -57,12 +71,17 @@ export function useMyReturn(id: string) {
   });
 }
 
+/** Alias for the detail screen — GET /returns/:id is role-agnostic server-side. */
+export const useReturn = useMyReturn;
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateReturnItemDto {
   productId: string;
   qty: number;
-  reason: ReturnReason;
+  /** Optional per-item reason (defaults to the return's top-level reason server-side). */
+  reason?: ReturnReason;
+  /** Whether to add the returned qty back to stock on receive (default true). */
   restock?: boolean;
 }
 
@@ -85,45 +104,28 @@ export function useCreateReturn() {
 function returnTransition(
   action: "approve" | "reject" | "in-transit" | "receive" | "refund" | "cancel",
 ) {
+  // These endpoints take no body — the server ignores any payload. The restock
+  // decision is fixed per-item at CREATE time (ReturnItem.restock), so there is
+  // no restock flag to send here.
   return (id: string) => apiClient.post(`/returns/${id}/${action}`).then((r) => r.data as Return);
 }
 
-export function useApproveReturn() {
+/** Build a transition hook that invalidates both the list and the per-id detail. */
+function useReturnTransition(action: Parameters<typeof returnTransition>[0]) {
   const qc = useQueryClient();
   return useMutation<Return, Error, string>({
-    mutationFn: returnTransition("approve"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
+    mutationFn: returnTransition(action),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["returns"] });
+      qc.invalidateQueries({ queryKey: ["returns", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+    },
   });
 }
 
-export function useRejectReturn() {
-  const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
-    mutationFn: returnTransition("reject"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
-  });
-}
-
-export function useReceiveReturn() {
-  const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
-    mutationFn: returnTransition("receive"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
-  });
-}
-
-export function useRefundReturn() {
-  const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
-    mutationFn: returnTransition("refund"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
-  });
-}
-
-export function useCancelReturn() {
-  const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
-    mutationFn: returnTransition("cancel"),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
-  });
-}
+export const useApproveReturn = () => useReturnTransition("approve");
+export const useRejectReturn = () => useReturnTransition("reject");
+export const useMarkReturnInTransit = () => useReturnTransition("in-transit");
+export const useReceiveReturn = () => useReturnTransition("receive");
+export const useRefundReturn = () => useReturnTransition("refund");
+export const useCancelReturn = () => useReturnTransition("cancel");

@@ -94,10 +94,32 @@ export default function CustomerMoreScreen() {
               onPress={() => router.push("/(customer)/(tabs)/invoices")}
             />
             <MenuRow
+              icon={<Ionicons name="stats-chart-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Finances"
+              // Real unpaid count lives on /buyer/analytics (fetched inside the
+              // Finances screen); the dashboard stats don't carry it, so keep the
+              // subtitle static rather than show a hardcoded "0 unpaid".
+              subtitle="Spend & statements"
+              onPress={() => router.push("/(customer)/finances")}
+            />
+            <MenuRow
               icon={<Ionicons name="refresh-outline" size={16} color={ios.system.orangeInk} />}
               iconBg={ios.system.orangeWash}
               title="Standing Orders"
               onPress={() => router.push("/(customer)/standing-orders")}
+            />
+            <MenuRow
+              icon={<Ionicons name="heart-outline" size={16} color="#ef4444" />}
+              iconBg={ios.system.redWash}
+              title="Favorites"
+              onPress={() => router.push("/(customer)/favorites")}
+            />
+            <MenuRow
+              icon={<Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Licenses"
+              onPress={() => router.push("/(customer)/licenses")}
               last
             />
           </View>

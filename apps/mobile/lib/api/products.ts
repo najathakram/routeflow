@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ImageUploadFile } from "../product-image";
 
 export function useProducts(params?: {
   search?: string;
@@ -55,6 +56,11 @@ export interface CreateProductDto {
    */
   unitsPerBox?: number;
   pricePerUnit: number;
+  /** Customer tier prices (tier 1 = pricePerUnit); blank/omitted inherits tier 1. */
+  priceTier2?: number;
+  priceTier3?: number;
+  priceTier4?: number;
+  priceTier5?: number;
   standardCost?: number;
   currentStock?: number;
   isActive?: boolean;
@@ -130,6 +136,47 @@ export function useDeleteProduct() {
   return useMutation<void, Error, string>({
     mutationFn: (id) => apiClient.delete(`/products/${id}`).then(() => undefined),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] });
+    },
+  });
+}
+
+/**
+ * Upload one or more product photos — `POST /products/:id/images`, multipart,
+ * field name `files` (the API's FilesInterceptor). Focal point is omitted
+ * (centered) — the server treats "no focalX/Y" as centre, no suffix. Mirrors
+ * the vendor-bill scan multipart pattern (RN file object, explicit content-type).
+ */
+export function useUploadProductImages() {
+  const qc = useQueryClient();
+  return useMutation<{ uploaded: unknown[] }, Error, { id: string; files: ImageUploadFile[] }>({
+    mutationFn: ({ id, files }) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f as unknown as Blob));
+      return apiClient
+        .post(`/products/${id}/images`, fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 60_000,
+        })
+        .then((r) => r.data);
+    },
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["products", id] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] });
+    },
+  });
+}
+
+/** Remove one product image by its storage key — `DELETE /products/:id/images` body `{key}`. */
+export function useDeleteProductImage() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, { id: string; key: string }>({
+    mutationFn: ({ id, key }) =>
+      apiClient.delete(`/products/${id}/images`, { data: { key } }).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["products", id] });
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["admin", "products"] });
     },
