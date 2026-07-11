@@ -25,6 +25,8 @@ import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/p
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { BarcodeFab } from "../../../../components/BarcodeFab";
+import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
+import type { CreatedProduct } from "../../../../lib/api/products";
 
 /**
  * Standalone invoice composer for the mobile operator UI.
@@ -74,6 +76,7 @@ type Product = {
   unit?: string;
   pricePerUnit: number | string;
   unitsPerBox?: number | null;
+  parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
 };
 
@@ -245,6 +248,8 @@ function InvoiceComposer({
   const listTopRef = useRef(0);
   const rowYRef = useRef<Map<string, number>>(new Map());
   const [scrollToId, setScrollToId] = useState<string | null>(null);
+  // Scanned/typed code with no product match → prefills the inline create sheet.
+  const [createCode, setCreateCode] = useState<string | null>(null);
   useEffect(() => {
     if (!scrollToId) return;
     const y = rowYRef.current.get(scrollToId);
@@ -376,19 +381,32 @@ function InvoiceComposer({
     }
     chooseAction(
       `No product for "${trimmed}"`,
-      "Add it as a new product? (Your in-progress invoice won't be saved if you continue.)",
+      "Add it as a new product or a variant of an existing one? Your invoice stays as it is.",
       [
         { label: "Cancel", style: "cancel" },
-        {
-          label: "Create",
-          onPress: () =>
-            router.push({
-              pathname: "/(operator)/products/new",
-              params: { barcode: trimmed },
-            }),
-        },
+        { label: "Create", onPress: () => setCreateCode(trimmed) },
       ],
     );
+  };
+
+  // Create-on-miss: overlays the invoice builder (never navigates away) so the
+  // in-progress invoice is preserved; the new product lands in the cart.
+  const handleInlineCreated = (product: CreatedProduct) => {
+    const snapshot: Product = {
+      id: product.id,
+      name: product.name,
+      sku: product.sku ?? null,
+      barcode: product.barcode ?? null,
+      unit: product.unit,
+      pricePerUnit: product.pricePerUnit,
+      unitsPerBox: product.unitsPerBox ?? null,
+      parentProductId: product.parentProductId ?? null,
+      parent: null,
+    };
+    addOne(product.id, snapshot);
+    setScrollToId(product.id);
+    setCreateCode(null);
+    showToast(`Added ${displayName(snapshot as any, products as any)}`);
   };
 
   const filtered = useMemo(() => products, [products]);
@@ -675,6 +693,13 @@ function InvoiceComposer({
       />
 
       <BarcodeFab onScanned={handleScanned} hidden={reviewOpen || unlistedModalOpen} />
+
+      <InlineCreateProductSheet
+        visible={createCode != null}
+        initialCode={createCode ?? undefined}
+        onClose={() => setCreateCode(null)}
+        onCreated={handleInlineCreated}
+      />
     </>
   );
 }

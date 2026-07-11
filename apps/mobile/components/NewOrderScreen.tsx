@@ -29,6 +29,8 @@ import { resolveProductByCode } from "../lib/barcode-resolve";
 import { displayProductName as displayName } from "../lib/product-display";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
 import { MoneyTextInput } from "./MoneyTextInput";
+import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
+import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
@@ -325,6 +327,8 @@ function ProductPickView({
   const listTopRef = useRef(0);
   const rowYRef = useRef<Map<string, number>>(new Map());
   const [scrollToId, setScrollToId] = useState<string | null>(null);
+  // Scanned/typed code with no product match → prefills the inline create sheet.
+  const [createCode, setCreateCode] = useState<string | null>(null);
   useEffect(() => {
     if (!scrollToId) return;
     const y = rowYRef.current.get(scrollToId);
@@ -538,26 +542,41 @@ function ProductPickView({
     }
 
     // 3) Nothing matched. Mirror web's behaviour: offer to create the product
-    //    with the scanned code prefilled, so the operator isn't dead-ended.
+    //    inline (as a new product OR a variant of an existing one) WITHOUT
+    //    leaving the screen, so the in-progress order is preserved.
     if (canCreateProducts) {
       chooseAction(
         `No product for "${trimmed}"`,
-        "Add it as a new product? (Your in-progress order won't be saved if you continue.)",
+        "Add it as a new product or a variant of an existing one? Your order stays as it is.",
         [
           { label: "Cancel", style: "cancel" },
-          {
-            label: "Create",
-            onPress: () =>
-              router.push({
-                pathname: "/(operator)/products/new",
-                params: { barcode: trimmed },
-              }),
-          },
+          { label: "Create", onPress: () => setCreateCode(trimmed) },
         ],
       );
     } else {
       showToast(`No product for "${trimmed}"`);
     }
+  };
+
+  // Non-null while the inline create sheet is open; holds the scanned/typed code
+  // to prefill. On success the new product is dropped straight into the cart.
+  const handleInlineCreated = (product: CreatedProduct) => {
+    const snapshot: Product = {
+      id: product.id,
+      name: product.name,
+      sku: product.sku ?? null,
+      barcode: product.barcode ?? null,
+      unit: product.unit,
+      pricePerUnit: product.pricePerUnit,
+      category: product.category ?? null,
+      unitsPerBox: product.unitsPerBox ?? null,
+      parentProductId: product.parentProductId ?? null,
+      parent: null,
+    };
+    addOne(product.id, snapshot);
+    setScrollToId(product.id);
+    setCreateCode(null);
+    showToast(`Added ${displayName(snapshot, products)}`);
   };
 
   const categories = useMemo(() => {
@@ -975,6 +994,15 @@ function ProductPickView({
           while the cart sheet or the in-list scanner is up so it doesn't
           stack on top of either. */}
       <BarcodeFab onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+
+      {/* Create-on-miss: overlays the cart (never navigates away) so the
+          in-progress order survives. Supports new-product OR variant-of. */}
+      <InlineCreateProductSheet
+        visible={createCode != null}
+        initialCode={createCode ?? undefined}
+        onClose={() => setCreateCode(null)}
+        onCreated={handleInlineCreated}
+      />
 
       <CartModal
         open={cartOpen}
