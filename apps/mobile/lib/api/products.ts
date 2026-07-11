@@ -66,6 +66,15 @@ export interface CreateProductDto {
   isActive?: boolean;
   /** Requires the tenant's "tobacco_dealer" addon to set true. */
   isTobacco?: boolean;
+  /**
+   * Link this product as a VARIANT (child) of another standalone product. A
+   * variant is a full Product row with its own absolute price/tiers — there is
+   * no delta pricing. When set, `name` carries the flavor/variety (mirrors web,
+   * where the "Flavor / Variety" field replaces "Name") and `variantName` is the
+   * same label. Uniqueness of `name` is scoped to siblings of the same parent.
+   */
+  parentProductId?: string;
+  variantName?: string;
 }
 
 export function useUpdateReorderSettings() {

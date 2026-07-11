@@ -5,149 +5,32 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { CategoryInput } from "./CategoryInput";
+import { ProductPickerSheet } from "./ProductPickerSheet";
+import type { AdminProduct } from "../lib/api/admin";
+import {
+  buildProductPayload,
+  emptyProductForm,
+  productFormFromValues,
+  type ProductFormValues,
+  type SubmitPayload,
+} from "../lib/product-form-logic";
 
-export interface ProductFormValues {
-  name: string;
-  sku: string;
-  barcode: string;
-  category: string;
-  unit: string;
-  /**
-   * Loose pieces per box. Leave blank for products sold individually.
-   * When set (>1), `pricePerUnit` is treated as the BOX price; loose pieces
-   * are prorated as `pricePerUnit / unitsPerBox` (apps/api/src/common/pricing.ts).
-   * The new-order + edit-order screens then offer the operator a Boxes +
-   * Loose pieces editor instead of a single qty stepper.
-   */
-  unitsPerBox: string;
-  description: string;
-  pricePerUnit: string;
-  /** Customer tier prices (tier 1 = pricePerUnit). Blank = inherit tier 1. */
-  priceTier2: string;
-  priceTier3: string;
-  priceTier4: string;
-  priceTier5: string;
-  standardCost: string;
-  currentStock: string;
-  reorderPoint: string;
-  reorderQty: string;
-  isActive: boolean;
-}
-
-export function emptyProductForm(): ProductFormValues {
-  return {
-    name: "",
-    sku: "",
-    barcode: "",
-    category: "",
-    unit: "ea",
-    unitsPerBox: "",
-    description: "",
-    pricePerUnit: "",
-    priceTier2: "",
-    priceTier3: "",
-    priceTier4: "",
-    priceTier5: "",
-    standardCost: "",
-    currentStock: "",
-    reorderPoint: "",
-    reorderQty: "",
-    isActive: true,
-  };
-}
-
-export function productFormFromValues(
-  p: Partial<Record<keyof ProductFormValues | "pricePerUnit" | "currentStock", any>> &
-    Record<string, any>,
-): ProductFormValues {
-  return {
-    name: p.name ?? "",
-    sku: p.sku ?? "",
-    barcode: p.barcode ?? "",
-    category: p.category ?? "",
-    unit: p.unit ?? "ea",
-    unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
-    description: p.description ?? "",
-    pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
-    // Tier columns default to 0 in the DB (= "inherit tier 1"); show those as blank.
-    priceTier2: Number(p.priceTier2) > 0 ? String(p.priceTier2) : "",
-    priceTier3: Number(p.priceTier3) > 0 ? String(p.priceTier3) : "",
-    priceTier4: Number(p.priceTier4) > 0 ? String(p.priceTier4) : "",
-    priceTier5: Number(p.priceTier5) > 0 ? String(p.priceTier5) : "",
-    standardCost:
-      (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
-    currentStock: p.currentStock != null ? String(p.currentStock) : "",
-    reorderPoint: p.reorderPoint != null ? String(p.reorderPoint) : "",
-    reorderQty: p.reorderQty != null ? String(p.reorderQty) : "",
-    isActive: p.isActive ?? true,
-  };
-}
-
-function parseOptionalNumber(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-export interface SubmitPayload {
-  name: string;
-  sku?: string;
-  barcode?: string;
-  category?: string;
-  unit?: string;
-  unitsPerBox?: number;
-  description?: string;
-  pricePerUnit: number;
-  priceTier2?: number;
-  priceTier3?: number;
-  priceTier4?: number;
-  priceTier5?: number;
-  standardCost?: number;
-  currentStock?: number;
-  reorderPoint?: number;
-  reorderQty?: number;
-  isActive: boolean;
-}
-
-export function buildProductPayload(form: ProductFormValues): SubmitPayload | { error: string } {
-  const name = form.name.trim();
-  if (!name) return { error: "Name is required." };
-  const price = parseOptionalNumber(form.pricePerUnit);
-  if (price == null || price < 0) return { error: "Enter a valid price." };
-  // unitsPerBox: any positive integer is allowed, but values <= 1 (or empty)
-  // mean "no box packaging" — we omit the field so the API treats the product
-  // as sold by piece.
-  const upbRaw = parseOptionalNumber(form.unitsPerBox);
-  const unitsPerBox =
-    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1 ? Math.floor(upbRaw) : undefined;
-  return {
-    name,
-    sku: form.sku.trim() || undefined,
-    barcode: form.barcode.trim() || undefined,
-    category: form.category.trim() || undefined,
-    unit: form.unit.trim() || undefined,
-    unitsPerBox,
-    description: form.description.trim() || undefined,
-    pricePerUnit: price,
-    // Blank tier → undefined (never 0), so a blank never overwrites tier 1.
-    priceTier2: parseOptionalNumber(form.priceTier2),
-    priceTier3: parseOptionalNumber(form.priceTier3),
-    priceTier4: parseOptionalNumber(form.priceTier4),
-    priceTier5: parseOptionalNumber(form.priceTier5),
-    standardCost: parseOptionalNumber(form.standardCost),
-    currentStock: parseOptionalNumber(form.currentStock),
-    reorderPoint: parseOptionalNumber(form.reorderPoint),
-    reorderQty: parseOptionalNumber(form.reorderQty),
-    isActive: form.isActive,
-  };
-}
+// Re-export the pure form model so existing consumers keep importing from here.
+export {
+  buildProductPayload,
+  emptyProductForm,
+  productFormFromValues,
+  type ProductFormValues,
+  type SubmitPayload,
+};
 
 interface ProductFormProps {
   title: string;
   submitLabel: string;
   initial: ProductFormValues;
   submitting?: boolean;
+  /** Show the "Variant of" linker (create flow only — editing re-parents elsewhere). */
+  allowVariantLink?: boolean;
   onSubmit: (payload: SubmitPayload) => void | Promise<void>;
 }
 
@@ -156,11 +39,15 @@ export function ProductForm({
   submitLabel,
   initial,
   submitting,
+  allowVariantLink = false,
   onSubmit,
 }: ProductFormProps) {
   const router = useRouter();
   const [form, setForm] = React.useState<ProductFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
+  const [parentPickerOpen, setParentPickerOpen] = React.useState(false);
+  const [parentName, setParentName] = React.useState("");
+  const isVariant = !!form.parentProductId;
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -184,15 +71,58 @@ export function ProductForm({
         </View>
       ) : null}
 
+      {allowVariantLink ? (
+        <FormSection title="Variant of (optional)">
+          {isVariant ? (
+            <>
+              <View style={styles.variantParentRow}>
+                <Ionicons name="git-branch-outline" size={16} color={ios.brand} />
+                <Text style={styles.variantParentName} numberOfLines={1}>
+                  {parentName || "Parent product"}
+                </Text>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => {
+                    set("parentProductId", "");
+                    set("variantName", "");
+                    setParentName("");
+                  }}
+                >
+                  <Text style={styles.variantUnlink}>Unlink</Text>
+                </Pressable>
+              </View>
+              <FormField
+                label="Flavor / variety"
+                hint="Names this variant, e.g. Strawberry or 500ml."
+              >
+                <FormTextInput
+                  value={form.variantName}
+                  onChangeText={(v) => set("variantName", v)}
+                  placeholder="e.g. Strawberry"
+                  autoCapitalize="sentences"
+                />
+              </FormField>
+            </>
+          ) : (
+            <Pressable style={styles.variantLinkBtn} onPress={() => setParentPickerOpen(true)}>
+              <Ionicons name="git-branch-outline" size={16} color={ios.brand} />
+              <Text style={styles.variantLinkText}>Make this a variant of another product</Text>
+            </Pressable>
+          )}
+        </FormSection>
+      ) : null}
+
       <FormSection title="Basics">
-        <FormField label="Name">
-          <FormTextInput
-            value={form.name}
-            onChangeText={(v) => set("name", v)}
-            placeholder="e.g. Sourdough loaf"
-            autoCapitalize="sentences"
-          />
-        </FormField>
+        {isVariant ? null : (
+          <FormField label="Name">
+            <FormTextInput
+              value={form.name}
+              onChangeText={(v) => set("name", v)}
+              placeholder="e.g. Sourdough loaf"
+              autoCapitalize="sentences"
+            />
+          </FormField>
+        )}
         <FormField label="Category">
           <CategoryInput
             value={form.category}
@@ -274,7 +204,7 @@ export function ProductForm({
         <FormField
           label="Price per unit"
           hint={
-            parseOptionalNumber(form.unitsPerBox) && parseOptionalNumber(form.unitsPerBox)! > 1
+            Number(form.unitsPerBox) > 1
               ? "This is the BOX price. A loose piece costs price ÷ pieces-per-box."
               : undefined
           }
@@ -368,6 +298,20 @@ export function ProductForm({
         onPress={() => router.back()}
         style={{ position: "absolute", width: 0, height: 0, opacity: 0 }}
       />
+
+      {allowVariantLink ? (
+        <ProductPickerSheet
+          visible={parentPickerOpen}
+          standaloneOnly
+          title="Variant of"
+          onClose={() => setParentPickerOpen(false)}
+          onSelect={(p: AdminProduct) => {
+            set("parentProductId", p.id);
+            setParentName(p.name);
+            setParentPickerOpen(false);
+          }}
+        />
+      ) : null}
     </FormSheet>
   );
 }
@@ -393,4 +337,14 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   switchLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   switchHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  variantLinkBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 },
+  variantLinkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  variantParentRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingBottom: 4 },
+  variantParentName: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+  },
+  variantUnlink: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.system.red },
 });

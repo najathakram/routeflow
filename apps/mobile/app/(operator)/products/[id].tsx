@@ -285,6 +285,40 @@ export default function ProductDetailScreen() {
             })()}
           </View>
 
+          {product.parent || (product.variants?.length ?? 0) > 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>{product.parent ? "Variant" : "Variants"}</Text>
+              {product.parent ? (
+                <Pressable
+                  style={styles.variantRow}
+                  onPress={() => router.push(`/(operator)/products/${product.parent.id}`)}
+                >
+                  <Ionicons name="git-branch-outline" size={16} color={ios.brand} />
+                  <Text style={styles.variantRowText} numberOfLines={1}>
+                    {product.variantName ? `${product.variantName} · ` : ""}Variant of{" "}
+                    {product.parent.name}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={15} color={ios.gray[3]} />
+                </Pressable>
+              ) : (
+                (product.variants ?? []).map((v: any) => (
+                  <Pressable
+                    key={v.id}
+                    style={styles.variantRow}
+                    onPress={() => router.push(`/(operator)/products/${v.id}`)}
+                  >
+                    <Text style={styles.variantRowText} numberOfLines={1}>
+                      {v.variantName || v.name}
+                    </Text>
+                    {!v.isActive ? <Pill variant="gray">Inactive</Pill> : null}
+                    <Text style={styles.variantPrice}>${toNumber(v.pricePerUnit).toFixed(2)}</Text>
+                    <Ionicons name="chevron-forward" size={15} color={ios.gray[3]} />
+                  </Pressable>
+                ))
+              )}
+            </View>
+          ) : null}
+
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Stock</Text>
@@ -400,6 +434,21 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   photoEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  variantRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  variantRowText: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  variantPrice: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    fontVariant: ["tabular-nums"],
+  },
   photoThumbWrap: { position: "relative" },
   photoThumb: { width: 96, height: 120, borderRadius: 10, backgroundColor: ios.fill3 },
   photoDelete: {

@@ -394,9 +394,17 @@ export class ProductsService {
       });
       if (existing) throw new BadRequestException("Barcode already exists");
     }
+    // Keep a variant's name and variantName in sync — create() enforces
+    // name === variantName, so a rename (via the generic name field, e.g. the
+    // mobile edit form which has no dedicated flavor input) must carry variantName
+    // too, or the variants list keeps rendering the stale flavor.
+    const effectiveParentId =
+      dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+    const data =
+      dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
     return this.prisma.forTenant().product.update({
       where: { id },
-      data: { ...dto },
+      data,
     });
   }
 

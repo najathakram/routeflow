@@ -19,6 +19,7 @@ export default function NewProductScreen() {
       title="New product"
       submitLabel={mut.isPending ? "Saving…" : "Save"}
       submitting={mut.isPending}
+      allowVariantLink
       initial={initial}
       onSubmit={(payload) => {
         const { reorderPoint, reorderQty, ...productDto } = payload;

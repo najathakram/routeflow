@@ -311,6 +311,37 @@ describe("ProductsService", () => {
         BadRequestException,
       );
     });
+
+    it("syncs variantName with name when renaming a variant (name===variantName invariant)", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        parentProductId: "parent-1",
+        variantName: "Strawberry",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { name: "Strawberry Banana" } as any);
+
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Strawberry Banana",
+            variantName: "Strawberry Banana",
+          }),
+        }),
+      );
+    });
+
+    it("does NOT set variantName when renaming a standalone product", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { name: "Renamed" } as any);
+
+      expect(prisma.product.update.mock.calls[0][0].data.variantName).toBeUndefined();
+    });
   });
 
   // ─── isTobacco flag (tobacco_dealer addon) ──────────────────────────────────
