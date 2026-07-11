@@ -5,12 +5,14 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
+import { OrdersService } from "../orders/orders.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let products: { findAll: jest.Mock; findOne: jest.Mock };
+  let ordersService: { getCustomerPriceHistory: jest.Mock };
 
   const future = new Date(Date.now() + 365 * 864e5);
   const past = new Date(Date.now() - 864e5);
@@ -21,6 +23,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
       findOne: jest.fn(),
     };
+    ordersService = { getCustomerPriceHistory: jest.fn().mockResolvedValue({}) };
     const mod = await Test.createTestingModule({
       providers: [
         BuyerCatalogService,
@@ -28,6 +31,7 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ProductsService, useValue: products },
         { provide: StorageService, useValue: { presignedUrl: jest.fn() } },
+        { provide: OrdersService, useValue: ordersService },
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);
@@ -109,5 +113,36 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     await service.getCatalog({}, "c1");
     expect(prisma.trackedCategory.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.customerAuthorization.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // Sticky upsell in the catalog (the "hide the base in the catalog" requirement).
+  describe("sticky upsell pricing", () => {
+    const oneProduct = () =>
+      products.findAll.mockResolvedValue({
+        data: [{ id: "p1", name: "Widget", unit: "ea", pricePerUnit: 10, currentStock: 5 }],
+        meta: { total: 1 },
+      });
+
+    it("makes a remembered UPSELL the effective catalog price (hides the lower base)", async () => {
+      gated([]);
+      oneProduct();
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      ordersService.getCustomerPriceHistory.mockResolvedValue({
+        p1: { lastPrice: 12, listPriceAtTime: 10 }, // upsold to 12 above list 10
+      });
+      const res = (await service.getCatalog({}, "c1")) as any;
+      expect(res.data[0].buyerPrice).toBe(12); // sticky upsell, never the list 10
+    });
+
+    it("does NOT stick a remembered discount below list (keeps the tier price)", async () => {
+      gated([]);
+      oneProduct();
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      ordersService.getCustomerPriceHistory.mockResolvedValue({
+        p1: { lastPrice: 8, listPriceAtTime: 10 }, // a one-time discount
+      });
+      const res = (await service.getCatalog({}, "c1")) as any;
+      expect(res.data[0].buyerPrice).toBe(10); // tier-1 list; a discount never sticks
+    });
   });
 });

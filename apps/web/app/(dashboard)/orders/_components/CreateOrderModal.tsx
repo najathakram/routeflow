@@ -52,9 +52,9 @@ interface LineItem {
   unit: string;
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
-  discountedPrice?: number; // one-time ad-hoc price entered by operator
+  discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
   unitPrice: number; // effective price used for display totals
-  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number; // total pieces (authoritative)
   unitsPerBox?: number; // set when product has box packaging
   boxes?: number; // whole boxes (only when unitsPerBox is set)
@@ -347,6 +347,11 @@ export function CreateOrderModal({
     const histEntry = priceHistory?.[product.id as string];
     const hasHistDiscount =
       priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice < tierPrice;
+    // Carry forward a remembered UPSELL too (a saved price ABOVE list). It pre-fills
+    // as a MANUAL override, mirroring the operator's last agreed above-list price.
+    const hasHistUpsell =
+      priceType !== "SPECIAL" && histEntry != null && histEntry.lastPrice > listPrice;
+    const hasHistOverride = hasHistDiscount || hasHistUpsell;
 
     setLineItems((prev) => [
       ...prev,
@@ -360,9 +365,13 @@ export function CreateOrderModal({
         unit: product.unit ?? "each",
         listPrice,
         specialPrice: effectiveTier !== 1 ? tierPrice : undefined,
-        discountedPrice: hasHistDiscount ? histEntry.lastPrice : undefined,
-        unitPrice: hasHistDiscount ? histEntry.lastPrice : tierPrice,
-        priceType: hasHistDiscount ? ("DISCOUNTED" as const) : priceType,
+        discountedPrice: hasHistOverride ? histEntry!.lastPrice : undefined,
+        unitPrice: hasHistOverride ? histEntry!.lastPrice : tierPrice,
+        priceType: hasHistUpsell
+          ? ("MANUAL" as const)
+          : hasHistDiscount
+            ? ("DISCOUNTED" as const)
+            : priceType,
         qty: upb ? upb : 1,
         unitsPerBox: upb,
         boxes: upb ? 1 : undefined,
@@ -491,11 +500,26 @@ export function CreateOrderModal({
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
           };
         }
-        const discountedPrice = Math.max(0, parsed);
-        if (discountedPrice < li.listPrice) {
-          return { ...li, discountedPrice, unitPrice: discountedPrice, priceType: "DISCOUNTED" };
+        const enteredPrice = Math.max(0, parsed);
+        if (enteredPrice < li.listPrice) {
+          return {
+            ...li,
+            discountedPrice: enteredPrice,
+            unitPrice: enteredPrice,
+            priceType: "DISCOUNTED",
+          };
         }
-        // If entered price >= list price, treat as no discount
+        if (enteredPrice > li.listPrice) {
+          // Upsell: sold ABOVE list. Stored as MANUAL; the base is hidden from the
+          // customer server-side and shown green ("Upsell") to the operator.
+          return {
+            ...li,
+            discountedPrice: enteredPrice,
+            unitPrice: enteredPrice,
+            priceType: "MANUAL",
+          };
+        }
+        // Entered price == list price → no override
         const revertPrice = li.specialPrice ?? li.listPrice;
         return {
           ...li,
@@ -662,8 +686,11 @@ export function CreateOrderModal({
             productId: li.productId,
             qty: li.qty,
             ...(li.unitsPerBox ? { boxes: li.boxes ?? 0, pieces: li.pieces ?? 0 } : {}),
-            // Only send unitPrice for one-time discounts (not permanent special prices — backend handles those via CustomerPrice)
-            ...(li.priceType === "DISCOUNTED" && li.discountedPrice != null
+            // Send unitPrice for one-time overrides — discounts (below list) and
+            // upsells (MANUAL, above list). Not for permanent SPECIAL tier prices
+            // (backend handles those via CustomerPrice).
+            ...((li.priceType === "DISCOUNTED" || li.priceType === "MANUAL") &&
+            li.discountedPrice != null
               ? { unitPrice: li.discountedPrice }
               : {}),
           },
@@ -1237,6 +1264,17 @@ export function CreateOrderModal({
                                 Discounted
                               </span>
                             </>
+                          ) : li.priceType === "MANUAL" ? (
+                            <>
+                              {/* Upsell (sold above list). Operator-only green badge;
+                                  no strikethrough — the base is never shown to the buyer. */}
+                              <span className="text-xs font-medium text-emerald-600">
+                                ${li.unitPrice.toFixed(2)} / {li.unit}
+                              </span>
+                              <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                                Upsell
+                              </span>
+                            </>
                           ) : (
                             <span className="text-xs text-navy/70">
                               ${li.unitPrice.toFixed(2)} / {li.unit}
@@ -1263,7 +1301,7 @@ export function CreateOrderModal({
                               className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
                             />
                             {priceHistory?.[li.productId] &&
-                              priceHistory[li.productId].lastPrice < li.listPrice && (
+                              priceHistory[li.productId].lastPrice !== li.listPrice && (
                                 <span className="text-[10px] text-navy/50">
                                   Last: ${priceHistory[li.productId].lastPrice.toFixed(2)}
                                 </span>

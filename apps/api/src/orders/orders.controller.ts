@@ -161,7 +161,7 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     if (!user.tenantId || !customerId) return {};
-    return this.ordersService.getCustomerPriceHistory(user.tenantId, customerId);
+    return this.ordersService.getCustomerPriceHistory(customerId);
   }
 
   @Get(":id/tracking")

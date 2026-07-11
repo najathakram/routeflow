@@ -9,6 +9,7 @@ import {
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
+import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -1333,6 +1334,8 @@ export class InvoicesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || inv.customerId !== customer.id) throw new ForbiddenException();
+      // A customer must never see an upsell's base price on their invoice.
+      redactUpsellForCustomer(inv);
     }
     const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
     const isSettled =

@@ -40,6 +40,7 @@ import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
+import { redactUpsellForCustomer } from "../common/upsell-redaction";
 
 /**
  * Builds a JwtPayload that looks like a tenant user.
@@ -140,13 +141,17 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's orders at the selected seller" })
-  getOrders(@CurrentBuyerCustomer() ctx: any, @Query() query: ListOrdersDto) {
+  async getOrders(@CurrentBuyerCustomer() ctx: any, @Query() query: ListOrdersDto) {
     // Inject customerId directly so ordersService.findAll() doesn't need to look
     // up the customer by userId (which is null for buyer-portal-only accounts).
-    return this.ordersService.findAll(
+    const result = await this.ordersService.findAll(
       { ...query, customerId: ctx.customerId },
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
     );
+    // findAll runs as an OPERATOR pseudo-user, so the service-layer customer
+    // redaction never fires — strip upsell bases here at the buyer boundary.
+    result.data.forEach((order) => redactUpsellForCustomer(order));
+    return result;
   }
 
   @Get("invoices")
@@ -197,6 +202,9 @@ export class BuyerController {
     if ((invoice as any).pdfUrl) {
       (invoice as any).pdfUrl = await this.invoicePdfService.getOrGenerate(id);
     }
+    // findOne was called without a user, so its customer redaction didn't fire —
+    // strip upsell bases here at the buyer boundary.
+    redactUpsellForCustomer(invoice as any);
     return invoice;
   }
 
@@ -274,8 +282,9 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get the buyer's active DRAFT/PENDING order (or null)" })
-  getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
-    return this.ordersService.findActiveOrder(ctx.customerId);
+  async getActiveOrder(@CurrentBuyerCustomer() ctx: any) {
+    const order = await this.ordersService.findActiveOrder(ctx.customerId);
+    return redactUpsellForCustomer(order);
   }
 
   @Get("orders/:id")

@@ -704,6 +704,67 @@ describe("OrdersService", () => {
       );
     });
 
+    it("flags a RAISED unit price as a MANUAL upsell anchored to the catalog price", async () => {
+      prisma.order.findUnique.mockResolvedValue(draftOrder);
+      // The anchor reads the live catalog price for originalPrice.
+      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 4.99 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 8, overrideReason: "market" }],
+        },
+        operatorPayload,
+      );
+
+      // Upsell: net unitPrice ABOVE catalog, originalPrice = catalog base (< unitPrice),
+      // priceType MANUAL. Subtotal via computeLineSubtotal → 8 × 3 = 24 (no double-count).
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-1" },
+          data: expect.objectContaining({
+            unitPrice: 8,
+            subtotal: 24,
+            priceType: "MANUAL",
+            originalPrice: 4.99,
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+
+    it("re-editing an upsell down but still above catalog stays an upsell (anchors originalPrice to catalog, not the prior net)", async () => {
+      // Line already carries a prior upsell net of 8; catalog is 5.
+      const upsoldOrder = {
+        ...draftOrder,
+        lineItems: [
+          { ...draftOrder.lineItems[0], unitPrice: 8, originalPrice: 5, priceType: "MANUAL" },
+        ],
+      };
+      prisma.order.findUnique.mockResolvedValue(upsoldOrder);
+      prisma.product.findUnique.mockResolvedValue({ pricePerUnit: 5 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 18, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 6 }] },
+        operatorPayload,
+      );
+
+      // originalPrice must be the CATALOG (5), never the prior net (8) — otherwise the
+      // line would flip to a fake discount (5 < 6, but 8 > 6) and leak a bogus "was" price.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 6,
+            priceType: "MANUAL",
+            originalPrice: 5,
+          }),
+        }),
+      );
+    });
+
     it("does not flag an override when the price is unchanged", async () => {
       prisma.order.findUnique.mockResolvedValue(draftOrder);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);

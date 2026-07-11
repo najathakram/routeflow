@@ -564,7 +564,8 @@ function PriceEditRow({
     setPriceText(net.toFixed(2));
   };
 
-  const overridden = unitPrice < basePrice - 0.0001;
+  const overridden = Math.abs(unitPrice - basePrice) > 0.0001;
+  const isUpsell = unitPrice > basePrice + 0.0001;
 
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
@@ -599,9 +600,17 @@ function PriceEditRow({
       </label>
       {overridden && (
         <>
-          <span className="text-navy/50">
-            was <span className="line-through">${basePrice.toFixed(2)}</span>
-          </span>
+          {isUpsell ? (
+            // Upsell: green "+$X" instead of a struck-through "was" (which would
+            // read as a discount). The base is hidden from the customer server-side.
+            <span className="font-medium text-emerald-600">
+              Upsell +${(unitPrice - basePrice).toFixed(2)}
+            </span>
+          ) : (
+            <span className="text-navy/50">
+              was <span className="line-through">${basePrice.toFixed(2)}</span>
+            </span>
+          )}
           <input
             type="text"
             value={overrideReason ?? ""}
@@ -704,11 +713,10 @@ function EditableLineItems({
       setScrollToId(existing.id);
     } else {
       // Pre-fill the remembered price for this customer + product (carry a prior
-      // discount forward); fall back to catalog. Only applies a remembered price
-      // below catalog so increases never auto-apply.
+      // discount OR upsell forward); fall back to catalog.
       const catalog = Number(p.pricePerUnit ?? 0);
       const hist = priceHistory?.[p.id];
-      const startPrice = hist && hist.lastPrice < catalog ? hist.lastPrice : catalog;
+      const startPrice = hist ? hist.lastPrice : catalog;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd({
         id: newId,
@@ -2125,6 +2133,20 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                 </span>
                                 <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
                                   Special
+                                </span>
+                              </>
+                            ) : li.priceType === "MANUAL" &&
+                              li.originalPrice != null &&
+                              Number(li.unitPrice) > Number(li.originalPrice) ? (
+                              <>
+                                {/* Upsell: sold above list. Operator-only green badge;
+                                    no strikethrough — the base is redacted before the
+                                    customer ever sees this line. */}
+                                <span className="money text-emerald-600">
+                                  ${Number(li.unitPrice).toFixed(2)}
+                                </span>
+                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+                                  Upsell
                                 </span>
                               </>
                             ) : (li.priceType === "DISCOUNTED" ||

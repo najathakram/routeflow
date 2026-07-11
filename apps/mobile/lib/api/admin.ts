@@ -147,6 +147,10 @@ export interface AdminOrder {
     boxes?: number | null;
     pieces?: number | null;
     unitPrice: number;
+    /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
+    originalPrice?: number | null;
+    /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
+    priceType?: string;
     subtotal: number;
     status: string;
     overrideReason?: string | null;
@@ -282,6 +286,10 @@ export interface AdminInvoice {
     description: string;
     qty: number;
     unitPrice: number;
+    /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
+    originalPrice?: number | null;
+    /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
+    priceType?: string;
     subtotal: number;
   }>;
 }

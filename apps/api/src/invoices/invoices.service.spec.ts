@@ -420,6 +420,46 @@ describe("InvoicesService", () => {
       expect(line.originalPrice).toBe(100);
       expect(line.subtotal).toBeCloseTo(450, 2); // 90 × 5, NOT (90 − 10) × 5 = 400
     });
+
+    // Symmetric guard for the UPSELL direction (list 100 → net 110). The invoice
+    // must bill the higher net verbatim with discount 0 — an upsell is not a
+    // "negative discount", and the base rides only as display metadata.
+    it("does NOT double-count an UPSELL: net unitPrice above list, discount 0, subtotal = net×qty", async () => {
+      const upsold = {
+        id: "o3",
+        customerId: "c1",
+        subtotal: 550,
+        tax: 0,
+        lineItems: [
+          {
+            id: "li3",
+            productId: "p3",
+            qty: 5,
+            deliveredQty: 5,
+            unitPrice: 110, // net (post-upsell) price, ABOVE list
+            originalPrice: 100, // list base — hidden from the customer downstream
+            priceType: "MANUAL",
+            product: { name: "P3", unitsPerBox: 0 },
+            status: "PENDING",
+          },
+        ],
+      };
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d3", discount: 0, shippingFee: 0 });
+      prisma.order.findUnique.mockResolvedValue(upsold);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d3", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li3" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+
+      await service.reconcileOrderDraftInvoice("o3", { basis: "order" });
+
+      const line = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(line.unitPrice).toBe(110);
+      expect(line.discount).toBe(0); // an upsell is NOT a negative discount
+      expect(line.originalPrice).toBe(100);
+      expect(line.subtotal).toBeCloseTo(550, 2); // 110 × 5
+    });
   });
 
   // ─── send(): invoice-after-delivery gating ─────────────────────────────────

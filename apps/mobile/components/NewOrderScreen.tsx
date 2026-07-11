@@ -621,11 +621,12 @@ function ProductPickView({
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
-        // Only send a unitPrice override when the operator actually discounted
-        // below the catalog price — the server treats it as a one-time override.
+        // Send a unitPrice override whenever the operator set a price that differs
+        // from catalog — below list (discount) OR above list (upsell). The server
+        // treats it as a one-time MANUAL/DISCOUNTED override.
         const catalog = p ? toNumber(p.pricePerUnit) : 0;
         const override =
-          line.unitPrice != null && line.unitPrice < catalog ? { unitPrice: line.unitPrice } : {};
+          line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
         const base = { productId, qty, ...override };
         // Include boxes/pieces when set so the server uses the BOX-price math
         // for proration and stores the split alongside the order line.
@@ -1246,9 +1247,13 @@ function CartRow({
             returnKeyType="done"
             selectTextOnFocus
           />
-          {isOverridden ? (
+          {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
+            <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
+              Upsell
+            </Text>
+          ) : isOverridden ? (
             <Text style={styles.cartPriceWas}>Current: ${catalogPrice.toFixed(2)}</Text>
-          ) : historyPrice != null && historyPrice < catalogPrice ? (
+          ) : historyPrice != null && historyPrice !== catalogPrice ? (
             <Text style={styles.cartPriceWas}>Last: ${historyPrice.toFixed(2)}</Text>
           ) : null}
         </View>

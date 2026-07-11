@@ -316,6 +316,13 @@ export default function InvoiceDetailScreen() {
                     <Text style={styles.itemSub}>
                       {it.qty} × {fmtCurrency(it.unitPrice)}
                     </Text>
+                    {it.priceType === "MANUAL" &&
+                    it.originalPrice != null &&
+                    Number(it.unitPrice) > Number(it.originalPrice) ? (
+                      <Text style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}>
+                        Upsell
+                      </Text>
+                    ) : null}
                   </View>
                   <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
                 </View>
