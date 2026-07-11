@@ -9,6 +9,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useCreateRecurringInvoice, type RecurringInvoiceItem } from "@/lib/api/invoices";
 import { useCustomers, type Customer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -427,22 +428,17 @@ export default function NewRecurringInvoicePage() {
                       });
                     }}
                   />
-                  <input
-                    type="number"
-                    min={0.01}
-                    step={0.01}
+                  <DecimalInput
+                    decimals={3}
+                    min={0}
                     value={item.qty}
-                    onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
+                    onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
-                  <input
-                    type="number"
+                  <MoneyInput
                     min={0}
-                    step={0.01}
                     value={item.unitPrice}
-                    onChange={(e) =>
-                      updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
-                    }
+                    onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <button

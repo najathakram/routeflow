@@ -26,6 +26,7 @@ import {
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../lib/pricing";
+import { MoneyTextInput } from "./MoneyTextInput";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
@@ -476,16 +477,15 @@ function ProductPickView({
 
   // Set (or clear) a one-time price override for a line. Empty/invalid clears it
   // so the line falls back to the catalog price.
-  const setLinePrice = (id: string, raw: string) =>
+  const setLinePrice = (id: string, value: number | null) =>
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      const parsed = parseFloat(raw);
-      if (raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0) {
+      if (value == null || value < 0) {
         const { unitPrice: _drop, ...rest } = prev;
         return { ...m, [id]: rest };
       }
-      return { ...m, [id]: { ...prev, unitPrice: parsed } };
+      return { ...m, [id]: { ...prev, unitPrice: value } };
     });
 
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
@@ -495,10 +495,9 @@ function ProductPickView({
     setUnlisted((u) =>
       qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
     );
-  const updateUnlistedPrice = (id: string, raw: string) =>
+  const updateUnlistedPrice = (id: string, value: number | null) =>
     setUnlisted((u) => {
-      const parsed = parseFloat(raw);
-      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      const price = value == null || value < 0 ? 0 : value;
       return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
     });
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
@@ -1064,12 +1063,12 @@ function CartModal({
   onChangeBoxes: (id: string, n: number) => void;
   onChangePieces: (id: string, n: number) => void;
   onChangeQty: (id: string, n: number) => void;
-  onChangePrice: (id: string, raw: string) => void;
+  onChangePrice: (id: string, value: number | null) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
-  onChangeUnlistedPrice: (id: string, raw: string) => void;
+  onChangeUnlistedPrice: (id: string, value: number | null) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
   onSave: () => void;
@@ -1195,7 +1194,7 @@ function CartRow({
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
   onChangeQty: (n: number) => void;
-  onChangePrice: (raw: string) => void;
+  onChangePrice: (value: number | null) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
@@ -1238,14 +1237,12 @@ function CartRow({
         <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / box" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
-          <TextInput
+          <MoneyTextInput
             style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
-            value={line.unitPrice != null ? String(line.unitPrice) : ""}
-            onChangeText={onChangePrice}
+            value={line.unitPrice ?? null}
+            onChangeValue={onChangePrice}
             placeholder={catalogPrice.toFixed(2)}
-            keyboardType="decimal-pad"
             returnKeyType="done"
-            selectTextOnFocus
           />
           {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
             <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
@@ -1377,7 +1374,7 @@ function UnlistedCartRow({
 }: {
   line: UnlistedLine;
   onChangeQty: (n: number) => void;
-  onChangePrice: (raw: string) => void;
+  onChangePrice: (value: number | null) => void;
   onRemove: () => void;
 }) {
   const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
@@ -1403,14 +1400,12 @@ function UnlistedCartRow({
         <Text style={styles.cartPriceLabel}>Price</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
-          <TextInput
+          <MoneyTextInput
             style={[styles.cartPriceInput, styles.cartPriceInputActive]}
-            value={line.unitPrice ? String(line.unitPrice) : ""}
-            onChangeText={onChangePrice}
+            value={line.unitPrice || null}
+            onChangeValue={onChangePrice}
             placeholder="0.00"
-            keyboardType="decimal-pad"
             returnKeyType="done"
-            selectTextOnFocus
           />
         </View>
       </View>

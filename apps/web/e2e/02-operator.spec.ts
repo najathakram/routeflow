@@ -241,6 +241,33 @@ test.describe("Operator — Tenant Dashboard", () => {
     }
   });
 
+  test("OP-11b money inputs never reformat while typing (2.50 stays 2.50, not 2.05)", async ({
+    page,
+  }) => {
+    // The product tier editor uses the shared DecimalInput — the same component
+    // behind every price/discount field. Typing must be sanitize-only; the old
+    // numeric-bound input echoed toFixed(2) mid-keystroke ("2." → "2.00" → "2.05").
+    await page.goto("/products");
+    await page.locator("table tbody tr a, table tbody tr").first().click();
+    await page.waitForURL(/\/products\/.+/);
+    await page.locator('button[title="Edit product"]').first().click();
+    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    await expect(tier2).toBeVisible({ timeout: 10_000 });
+
+    await tier2.fill("");
+    await tier2.pressSequentially("2.50", { delay: 40 });
+    await expect(tier2).toHaveValue("2.50"); // literal keystrokes preserved
+
+    await tier2.fill("");
+    await tier2.pressSequentially("2.5", { delay: 40 });
+    await expect(tier2).toHaveValue("2.5"); // intermediate state intact while focused
+    await tier2.blur();
+    await expect(tier2).toHaveValue("2.50"); // formatted exactly once, on blur
+
+    // Leave edit mode without saving (save behavior is covered elsewhere).
+    await page.locator('button[title="Cancel"]').first().click();
+  });
+
   // ── Returns ───────────────────────────────────────────────────────────────
 
   test("OP-12 returns list loads", async ({ page }) => {

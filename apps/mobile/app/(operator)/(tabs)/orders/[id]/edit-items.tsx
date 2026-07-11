@@ -25,6 +25,7 @@ import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
 import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../../lib/pricing";
 import { sanitizeIntInput } from "../../../../../lib/qty";
+import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
 /**
@@ -163,10 +164,9 @@ export default function EditOrderItemsScreen() {
     setUnlisted((u) =>
       qty <= 0 ? u.filter((x) => x.id !== id) : u.map((x) => (x.id === id ? { ...x, qty } : x)),
     );
-  const setUnlistedPrice = (id: string, raw: string) =>
+  const setUnlistedPrice = (id: string, value: number | null) =>
     setUnlisted((u) => {
-      const parsed = parseFloat(raw);
-      const price = raw.trim() === "" || !Number.isFinite(parsed) || parsed < 0 ? 0 : parsed;
+      const price = value == null || value < 0 ? 0 : value;
       return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
     });
   const setUnlistedName = (id: string, name: string) =>
@@ -866,7 +866,7 @@ function UnlistedDraftCard({
 }: {
   line: UnlistedDraft;
   onSetName: (name: string) => void;
-  onSetPrice: (raw: string) => void;
+  onSetPrice: (value: number | null) => void;
   onSetQty: (n: number) => void;
   onRemove: () => void;
 }) {
@@ -889,14 +889,12 @@ function UnlistedDraftCard({
           />
           <View style={styles.unlistedPriceRow}>
             <Text style={styles.cardMeta}>$</Text>
-            <TextInput
+            <MoneyTextInput
               style={styles.unlistedPriceInput}
-              value={line.unitPrice ? String(line.unitPrice) : ""}
-              onChangeText={onSetPrice}
+              value={line.unitPrice || null}
+              onChangeValue={onSetPrice}
               placeholder="0.00"
               placeholderTextColor={ios.label3}
-              keyboardType="decimal-pad"
-              selectTextOnFocus
             />
             <Text style={styles.cardMeta}>/ unit</Text>
           </View>

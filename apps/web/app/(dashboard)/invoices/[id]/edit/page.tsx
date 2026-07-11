@@ -12,6 +12,7 @@ import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { computeLineSubtotal, normalizeBoxesPieces, roundMoney } from "@/lib/pricing";
 
@@ -489,44 +490,35 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                       });
                     }}
                   />
-                  <input
-                    type="number"
-                    min={0.01}
-                    step={0.01}
+                  {/* Editable while typing — commit numbers live, format on blur only
+                      (the old parseFloat(...) || 0 bindings collapsed "2." and turned
+                      a cleared field into 0). */}
+                  <DecimalInput
+                    decimals={3}
+                    min={0}
                     value={item.qty}
-                    onChange={(e) => updateItem(item.key, { qty: parseFloat(e.target.value) || 0 })}
+                    onChange={(v) => updateItem(item.key, { qty: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
-                  <input
-                    type="number"
+                  <MoneyInput
                     min={0}
-                    step={0.01}
                     value={item.unitPrice}
-                    onChange={(e) =>
-                      updateItem(item.key, { unitPrice: parseFloat(e.target.value) || 0 })
-                    }
+                    onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
-                  <input
-                    type="number"
+                  <MoneyInput
                     min={0}
-                    step={0.01}
                     value={item.discount}
-                    onChange={(e) =>
-                      updateItem(item.key, { discount: parseFloat(e.target.value) || 0 })
-                    }
+                    onChange={(v) => updateItem(item.key, { discount: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
-                  <input
-                    type="number"
+                  <DecimalInput
+                    decimals={4}
                     min={0}
                     max={1}
-                    step={0.01}
                     value={item.taxRate}
                     placeholder="0.10"
-                    onChange={(e) =>
-                      updateItem(item.key, { taxRate: parseFloat(e.target.value) || 0 })
-                    }
+                    onChange={(v) => updateItem(item.key, { taxRate: v ?? 0 })}
                     className="h-9 rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                   />
                   <button
