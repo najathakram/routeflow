@@ -227,6 +227,103 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-17b vendor-bill scan surfaces unmatched lines: banner + create-product prefill + explicit acknowledge", async ({
+    page,
+  }) => {
+    // Canned AI extraction: two lines, neither matches a product. Unmatched
+    // lines must be SURFACED (banner + per-line create), never silently dropped.
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          supplier: "E2E Wholesale Co",
+          invoiceNumber: "INV-E2E-1",
+          invoiceDate: "2026-07-01",
+          expenseDescription: null,
+          expenseCategory: null,
+          subtotal: 70,
+          tax: 0,
+          total: 70,
+          notes: null,
+          items: [
+            {
+              extractedName: "ACME COLA 24PK",
+              qty: 2,
+              unitCost: 20,
+              lineTotal: 40,
+              matchedProductId: null,
+              matchedProductName: null,
+              confidence: "none",
+            },
+            {
+              extractedName: "MYSTERY SNACK BOX",
+              qty: 3,
+              unitCost: 10,
+              lineTotal: 30,
+              matchedProductId: null,
+              matchedProductName: null,
+              confidence: "none",
+            },
+          ],
+        }),
+      }),
+    );
+
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "invoice.png", mimeType: "image/png", buffer: Buffer.from("fake") });
+
+    // Review step: the unmatched banner names the count.
+    const banner = page.getByTestId("unmatched-banner");
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    await expect(banner).toContainText(/2 items didn't match/i);
+
+    // Per-line quick-create opens pre-filled from the extracted line:
+    // name verbatim, sell price suggested at cost 20 × 1.3 = 26.00.
+    await page
+      .getByRole("button", { name: /create product from this line/i })
+      .first()
+      .click();
+    const createModal = page.getByRole("heading", { name: "New Product" }).locator("xpath=../..");
+    await expect(
+      createModal.getByText("Name *", { exact: true }).locator("xpath=..").locator("input"),
+    ).toHaveValue("ACME COLA 24PK");
+    await expect(
+      createModal.getByText("Price ($)", { exact: true }).locator("xpath=..").locator("input"),
+    ).toHaveValue("26.00");
+    await expect(page.getByText(/suggested from invoice cost/i)).toBeVisible();
+    // Close without creating (don't pollute the seeded catalog).
+    await page
+      .getByRole("heading", { name: "New Product" })
+      .locator("xpath=..")
+      .locator("button")
+      .click();
+
+    // Creating the bill with unmatched lines requires an EXPLICIT confirm —
+    // dismissing it must abort before any bill is created.
+    const supplierSelect = page.locator('select:has(option:text("— Select supplier —"))').first();
+    await supplierSelect.selectOption({ index: 1 });
+    let billPosted = false;
+    await page.route(
+      "**/vendor-bills",
+      (route) => {
+        if (route.request().method() === "POST") billPosted = true;
+        void route.continue();
+      },
+      { times: 1 },
+    );
+    page.once("dialog", (dialog) => {
+      expect(dialog.message()).toMatch(/aren't linked to a product/i);
+      void dialog.dismiss();
+    });
+    await page.getByRole("button", { name: /create vendor bill/i }).click();
+    await page.waitForTimeout(800);
+    expect(billPosted).toBe(false);
+  });
+
   // ── Suppliers ─────────────────────────────────────────────────────────────
 
   test("OP-18 suppliers list loads", async ({ page }) => {

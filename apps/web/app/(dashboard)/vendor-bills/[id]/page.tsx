@@ -26,6 +26,7 @@ import {
   useRecordVendorBillPayment,
   useRevertVendorBillToDraft,
   useUpdateVendorBill,
+  useSaveProductMapping,
   getUnlinkedItemsError,
   type UnlinkedItemsError,
   type VendorBill,
@@ -36,6 +37,8 @@ import {
 import { useSuppliers } from "@/lib/api/inventory";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useProducts } from "@/lib/api/products";
+import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { roundMoney } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 
@@ -336,12 +339,17 @@ const emptyRow = (): EditLineItemRow => ({
 function EditLineItems({
   items,
   onChange,
+  supplierName,
 }: {
   items: EditLineItemRow[];
   onChange: (items: EditLineItemRow[]) => void;
+  /** Bill supplier — used to teach the scan matcher when a product is created/linked here. */
+  supplierName?: string;
 }) {
   const { data: productsData } = useProducts({ limit: 500, isActive: true });
   const products = (productsData as any)?.data ?? [];
+  const saveMapping = useSaveProductMapping();
+  const [createFromRow, setCreateFromRow] = React.useState<number | null>(null);
 
   const update = (i: number, patch: Partial<EditLineItemRow>) => {
     onChange(items.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
@@ -382,13 +390,23 @@ function EditLineItems({
               ))}
             </select>
             {!row.productId && (
-              <input
-                type="text"
-                value={row.description}
-                onChange={(e) => update(i, { description: e.target.value })}
-                placeholder="Description"
-                className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              />
+              <>
+                <input
+                  type="text"
+                  value={row.description}
+                  onChange={(e) => update(i, { description: e.target.value })}
+                  placeholder="Description"
+                  className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCreateFromRow(i)}
+                  className="mt-1 flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline"
+                >
+                  <Plus className="h-3 w-3" />
+                  Create product from this line
+                </button>
+              </>
             )}
           </div>
           <div>
@@ -430,6 +448,30 @@ function EditLineItems({
       >
         <Plus className="h-3.5 w-3.5" /> Add item
       </button>
+
+      {/* Quick-create a product from an unlinked line (finish setup later). */}
+      {createFromRow != null && items[createFromRow] && (
+        <InlineCreateProductModal
+          isOpen
+          onClose={() => setCreateFromRow(null)}
+          initialName={items[createFromRow].description}
+          initialPrice={
+            parseFloat(items[createFromRow].unitCost) > 0
+              ? roundMoney(parseFloat(items[createFromRow].unitCost) * 1.3)
+              : undefined
+          }
+          initialCost={parseFloat(items[createFromRow].unitCost) || undefined}
+          onCreated={(product) => {
+            const i = createFromRow;
+            const rawDescription = items[i].description;
+            update(i, { productId: product.id, description: product.name });
+            if (supplierName && rawDescription) {
+              saveMapping.mutate({ supplierName, rawDescription, productId: product.id });
+            }
+            setCreateFromRow(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -905,7 +947,11 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Line Items
                 </p>
-                <EditLineItems items={editItems} onChange={setEditItems} />
+                <EditLineItems
+                  items={editItems}
+                  onChange={setEditItems}
+                  supplierName={bill.supplier?.name}
+                />
                 <div className="mt-3 flex justify-end">
                   <span className="text-sm font-bold text-navy">Total: {fmt(editTotal)}</span>
                 </div>
