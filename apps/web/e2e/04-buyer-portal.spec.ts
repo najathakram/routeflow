@@ -26,7 +26,9 @@ test.describe("Buyer Portal", () => {
     await page.getByPlaceholder("Enter your full name").fill("E2E Buyer");
     await page.getByPlaceholder("Enter your email").fill(BUYER_EMAIL);
     // Password field — find by placeholder pattern
-    await page.getByPlaceholder("At least 8 characters").fill(BUYER_PASS);
+    // Placeholder matches apps/web/app/buyer/register/page.tsx (updated by the
+    // buyer password-policy work, #189) — the field enforces upper/lower/digit-or-symbol.
+    await page.getByPlaceholder("8+ chars, upper & lower case, number or symbol").fill(BUYER_PASS);
     await page.getByPlaceholder("Re-enter your password").fill(BUYER_PASS);
     await page.getByRole("button", { name: /create|register|sign up/i }).click();
     await page.waitForURL("**/buyer/portal", { timeout: 20_000 });
@@ -37,7 +39,9 @@ test.describe("Buyer Portal", () => {
     await page.goto("/buyer/register");
     await page.getByPlaceholder("Enter your full name").fill("Dup Buyer");
     await page.getByPlaceholder("Enter your email").fill(BUYER_EMAIL);
-    await page.getByPlaceholder("At least 8 characters").fill(BUYER_PASS);
+    // Placeholder matches apps/web/app/buyer/register/page.tsx (updated by the
+    // buyer password-policy work, #189) — the field enforces upper/lower/digit-or-symbol.
+    await page.getByPlaceholder("8+ chars, upper & lower case, number or symbol").fill(BUYER_PASS);
     await page.getByPlaceholder("Re-enter your password").fill(BUYER_PASS);
     await page.getByRole("button", { name: /create|register|sign up/i }).click();
     // Should stay on register page with an error
