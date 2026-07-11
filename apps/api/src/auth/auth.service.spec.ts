@@ -31,6 +31,8 @@ const MOCK_USER = {
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  failedLoginAttempts: 0,
+  lockedUntil: null as Date | null,
   deletedAt: null,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -121,6 +123,93 @@ describe("AuthService", () => {
       usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, status: "SUSPENDED" });
       const result = await service.validateUser("admin", "correct-password");
       expect(result).toBeNull();
+    });
+  });
+
+  // ─── account lockout ──────────────────────────────────────────────────────
+
+  describe("account lockout", () => {
+    beforeEach(() => {
+      (bcrypt.compare as jest.Mock).mockClear();
+    });
+
+    it("locked account returns null WITHOUT running bcrypt (no timing oracle)", async () => {
+      usersService.findByUsername.mockResolvedValue({
+        ...MOCK_USER,
+        lockedUntil: new Date(Date.now() + 60_000),
+      });
+
+      const result = await service.validateUser("admin", "correct-password");
+
+      expect(result).toBeNull();
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it("a failed attempt increments the counter", async () => {
+      usersService.findByUsername.mockResolvedValue({ ...MOCK_USER, failedLoginAttempts: 3 });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await service.validateUser("admin", "wrong-password");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { failedLoginAttempts: 4 },
+      });
+    });
+
+    it("the Nth failure locks for 15 minutes and resets the counter", async () => {
+      usersService.findByUsername.mockResolvedValue({
+        ...MOCK_USER,
+        failedLoginAttempts: AuthService.LOCKOUT_THRESHOLD - 1,
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      const before = Date.now();
+      await service.validateUser("admin", "wrong-password");
+
+      const update = prisma.user.update.mock.calls[0][0];
+      expect(update.data.failedLoginAttempts).toBe(0);
+      const lockedUntil = update.data.lockedUntil as Date;
+      expect(lockedUntil.getTime()).toBeGreaterThanOrEqual(
+        before + AuthService.LOCKOUT_WINDOW_MS - 1000,
+      );
+      expect(lockedUntil.getTime()).toBeLessThanOrEqual(
+        Date.now() + AuthService.LOCKOUT_WINDOW_MS + 1000,
+      );
+    });
+
+    it("a successful login clears the counter and any expired lock", async () => {
+      usersService.findByUsername.mockResolvedValue({
+        ...MOCK_USER,
+        failedLoginAttempts: 5,
+        lockedUntil: new Date(Date.now() - 60_000), // expired
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+
+      const result = await service.validateUser("admin", "correct-password");
+
+      expect(result).not.toBeNull();
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+    });
+
+    it("a failure after an expired lock restarts the streak at 1", async () => {
+      usersService.findByUsername.mockResolvedValue({
+        ...MOCK_USER,
+        failedLoginAttempts: 0,
+        lockedUntil: new Date(Date.now() - 60_000), // expired
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await service.validateUser("admin", "wrong-password");
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { failedLoginAttempts: 1, lockedUntil: null },
+      });
     });
   });
 

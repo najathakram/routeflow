@@ -58,12 +58,48 @@ export class AuthService {
 
     if (!user || user.deletedAt !== null) return null;
     if (user.status !== "ACTIVE") return null;
+    // Account lockout: a locked account fails WITHOUT running bcrypt (no
+    // timing oracle, no counter churn) and with the same null as any bad
+    // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
+    // clear it early via POST /users/:id/unlock.
+    if (user.lockedUntil && user.lockedUntil > new Date()) return null;
     // Google-only accounts have no password
     if (!user.password) return null;
     const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return null;
+    if (!valid) {
+      await this.recordFailedLogin(user.id, user.failedLoginAttempts, user.lockedUntil);
+      return null;
+    }
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null },
+      });
+    }
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
+   *  (10/5min) bites first for single-IP attackers; this is layered defense
+   *  against distributed guessing, tuned to avoid locking out real staff. */
+  static readonly LOCKOUT_THRESHOLD = 10;
+  static readonly LOCKOUT_WINDOW_MS = 15 * 60_000;
+
+  private async recordFailedLogin(userId: string, priorFailures: number, lockedUntil: Date | null) {
+    // An expired lock starts a fresh streak (otherwise one failure re-locks).
+    const lockExpired = lockedUntil != null && lockedUntil <= new Date();
+    const attempts = lockExpired ? 1 : (priorFailures || 0) + 1;
+    const lockNow = attempts >= AuthService.LOCKOUT_THRESHOLD;
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: lockNow
+        ? {
+            failedLoginAttempts: 0,
+            lockedUntil: new Date(Date.now() + AuthService.LOCKOUT_WINDOW_MS),
+          }
+        : { failedLoginAttempts: attempts, ...(lockExpired ? { lockedUntil: null } : {}) },
+    });
   }
 
   async login(

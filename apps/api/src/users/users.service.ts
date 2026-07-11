@@ -178,6 +178,16 @@ export class UsersService {
     });
   }
 
+  async unlockUser(userId: string) {
+    const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException("User not found");
+    await this.prisma.forTenant().user.update({
+      where: { id: userId },
+      data: { failedLoginAttempts: 0, lockedUntil: null },
+    });
+    return { id: userId, unlocked: true };
+  }
+
   async resetPassword(userId: string) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
