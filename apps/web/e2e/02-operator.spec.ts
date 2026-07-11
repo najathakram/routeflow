@@ -191,6 +191,9 @@ test.describe("Operator — Tenant Dashboard", () => {
     page,
   }) => {
     await page.goto("/products");
+    // Products defaults to Grid view (cards, no <table>) — switch to Table view
+    // so the row-click locator below has a table to match.
+    await page.getByRole("button", { name: /table view/i }).click();
     // Open the first product's detail page
     await page.locator("table tbody tr a, table tbody tr").first().click();
     await page.waitForURL(/\/products\/.+/);
@@ -248,6 +251,9 @@ test.describe("Operator — Tenant Dashboard", () => {
     // behind every price/discount field. Typing must be sanitize-only; the old
     // numeric-bound input echoed toFixed(2) mid-keystroke ("2." → "2.00" → "2.05").
     await page.goto("/products");
+    // Products defaults to Grid view (cards, no <table>) — switch to Table view
+    // so the row-click locator below has a table to match.
+    await page.getByRole("button", { name: /table view/i }).click();
     await page.locator("table tbody tr a, table tbody tr").first().click();
     await page.waitForURL(/\/products\/.+/);
     await page.locator('button[title="Edit product"]').first().click();
@@ -436,7 +442,11 @@ test.describe("Operator — Tenant Dashboard", () => {
     const picker = page.getByPlaceholder("Type a name or SKU, or scan…");
     await expect(picker).toBeVisible({ timeout: 10_000 });
     await picker.fill("a");
-    const firstOption = page.getByRole("option").first();
+    // Scoped to the type-ahead's own listbox — an unscoped getByRole("option")
+    // also matches native <select><option> elements elsewhere on the page (e.g.
+    // the supplier filter's hidden "No supplier" option), which can resolve
+    // first and never becomes visible.
+    const firstOption = page.locator('ul[role="listbox"] [role="option"]').first();
     await expect(firstOption).toBeVisible({ timeout: 10_000 });
     await firstOption.click();
 
