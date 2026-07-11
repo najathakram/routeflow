@@ -237,6 +237,37 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(content).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-18b quick restock — type-ahead picks a product and records the purchase", async ({
+    page,
+  }) => {
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /quick restock/i }).click();
+
+    // Type-ahead by name: type a letter, pick the first suggestion.
+    const picker = page.getByPlaceholder("Type a name or SKU, or scan…");
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+    await picker.fill("a");
+    const firstOption = page.getByRole("option").first();
+    await expect(firstOption).toBeVisible({ timeout: 10_000 });
+    await firstOption.click();
+
+    // Current-stock hint proves the selection registered.
+    await expect(page.getByText(/current stock:/i)).toBeVisible();
+
+    // The modal's labels aren't htmlFor-associated — target by position:
+    // the qty/cost grid renders them as the first two number inputs.
+    const numberInputs = page.locator('form input[type="number"]');
+    await numberInputs.nth(0).fill("1");
+    await numberInputs.nth(1).fill("1.00");
+
+    const purchaseResp = page.waitForResponse(
+      (r) => r.url().includes("/inventory/movements/purchase") && r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Record Restock" }).click();
+    const resp = await purchaseResp;
+    expect(resp.status()).toBeLessThan(300);
+  });
+
   // ── Settings ──────────────────────────────────────────────────────────────
 
   test("OP-19 settings — business profile tab loads with form", async ({ page }) => {

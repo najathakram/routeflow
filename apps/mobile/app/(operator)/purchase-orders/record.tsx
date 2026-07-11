@@ -5,16 +5,15 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
+import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { useRecordPurchase } from "../../../lib/api/inventory";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
-import { useAdminProducts } from "../../../lib/api/admin";
 import { showToast } from "../../../lib/toast";
 
 export default function QuickReceiveScreen() {
   const router = useRouter();
   const mut = useRecordPurchase();
   const { data: suppliers } = useSuppliers();
-  const { data: productsData } = useAdminProducts({ isActive: true, limit: 200 });
 
   const [productId, setProductId] = useState("");
   const [productName, setProductName] = useState("");
@@ -26,8 +25,6 @@ export default function QuickReceiveScreen() {
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
-
-  const products = productsData?.data ?? [];
 
   const pickProduct = () => setProductPickerOpen(true);
   const pickSupplier = () => setSupplierPickerOpen(true);
@@ -131,15 +128,18 @@ export default function QuickReceiveScreen() {
         </FormField>
       </FormSection>
 
-      <OptionPickerSheet
+      <ProductPickerSheet
         visible={productPickerOpen}
         title="Product"
-        options={products.map((p: any) => ({ id: p.id, label: p.name }))}
         selectedId={productId}
         onClose={() => setProductPickerOpen(false)}
-        onSelect={(opt) => {
-          setProductId(opt.id);
-          setProductName(opt.label);
+        onSelect={(p) => {
+          setProductId(p.id);
+          setProductName(p.parent?.name ? `${p.parent.name} - ${p.name}` : p.name);
+          // Prefill the cost from the product's standard cost when empty
+          // (same behavior as the PO receive screen).
+          const std = p.standardCost != null ? Number(p.standardCost) : NaN;
+          setUnitCost((cur) => (cur.trim() === "" && Number.isFinite(std) ? String(std) : cur));
           setProductPickerOpen(false);
         }}
       />
