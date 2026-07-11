@@ -14,7 +14,13 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import { useAdminReturns, type AdminReturn } from "../../../lib/api/admin";
-import { useApproveReturn, useReceiveReturn, useRejectReturn } from "../../../lib/api/returns";
+import {
+  useApproveReturn,
+  useMarkReturnInTransit,
+  useReceiveReturn,
+  useRejectReturn,
+} from "../../../lib/api/returns";
+import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -25,27 +31,12 @@ const FILTERS = [
   { id: "ALL", label: "All" },
   { id: "PENDING", label: "Pending" },
   { id: "APPROVED", label: "Approved" },
+  { id: "IN_TRANSIT", label: "In transit" },
+  { id: "RECEIVED", label: "Received" },
   { id: "CANCELLED", label: "Cancelled" },
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]["id"];
-
-function statusPill(status: string) {
-  switch (status) {
-    case "PENDING":
-      return { variant: "orange" as const, label: "Pending" };
-    case "APPROVED":
-      return { variant: "brand" as const, label: "Approved" };
-    case "IN_TRANSIT":
-      return { variant: "brand" as const, label: "In transit" };
-    case "PROCESSED":
-      return { variant: "green" as const, label: "Processed" };
-    case "CANCELLED":
-      return { variant: "gray" as const, label: "Cancelled" };
-    default:
-      return { variant: "gray" as const, label: status };
-  }
-}
 
 export default function ReturnsListScreen() {
   const router = useRouter();
@@ -59,38 +50,30 @@ export default function ReturnsListScreen() {
 
   const approveMut = useApproveReturn();
   const rejectMut = useRejectReturn();
+  const inTransitMut = useMarkReturnInTransit();
   const receiveMut = useReceiveReturn();
 
-  const approve = (id: string) =>
-    approveMut.mutate(id, {
+  const runMut = (mut: { mutate: (id: string, o: any) => void }, id: string, ok: string) =>
+    mut.mutate(id, {
       onSuccess: () => {
-        showToast("Return approved");
+        showToast(ok);
         refetch();
       },
       onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
+  const approve = (id: string) => runMut(approveMut, id, "Return approved");
   const reject = (id: string) =>
     confirm(
       "Reject return?",
-      "The return will be cancelled.",
-      () =>
-        rejectMut.mutate(id, {
-          onSuccess: () => {
-            showToast("Return rejected");
-            refetch();
-          },
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-        }),
-      { confirmText: "Reject", destructive: true },
-    );
-  const receive = (id: string) =>
-    receiveMut.mutate(id, {
-      onSuccess: () => {
-        showToast("Marked received");
-        refetch();
+      "The return will be rejected.",
+      () => runMut(rejectMut, id, "Return rejected"),
+      {
+        confirmText: "Reject",
+        destructive: true,
       },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-    });
+    );
+  const markInTransit = (id: string) => runMut(inTransitMut, id, "Marked in transit");
+  const receive = (id: string) => runMut(receiveMut, id, "Marked received");
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -125,8 +108,10 @@ export default function ReturnsListScreen() {
               <ReturnRow
                 key={r.id}
                 r={r}
+                onOpen={() => router.push(`/(operator)/returns/${r.id}`)}
                 onApprove={() => approve(r.id)}
                 onReject={() => reject(r.id)}
+                onMarkInTransit={() => markInTransit(r.id)}
                 onReceive={() => receive(r.id)}
               />
             ))}
@@ -139,21 +124,24 @@ export default function ReturnsListScreen() {
 
 function ReturnRow({
   r,
+  onOpen,
   onApprove,
   onReject,
+  onMarkInTransit,
   onReceive,
 }: {
   r: AdminReturn;
+  onOpen: () => void;
   onApprove: () => void;
   onReject: () => void;
+  onMarkInTransit: () => void;
   onReceive: () => void;
 }) {
-  const s = statusPill(r.status);
-  const isPending = r.status === "PENDING";
-  const isApproved = r.status === "APPROVED" || r.status === "IN_TRANSIT";
+  const s = returnPillFor(r.status);
+  const flags = returnActionFlags(r.status);
 
   return (
-    <View style={styles.row}>
+    <Pressable style={styles.row} onPress={onOpen}>
       <View style={styles.head}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.title} numberOfLines={1}>
@@ -176,28 +164,60 @@ function ReturnRow({
       {r.reason ? (
         <Text style={styles.reason}>{r.reason.replace(/_/g, " ").toLowerCase()}</Text>
       ) : null}
-      {isPending || isApproved ? (
+      {flags.canApprove || flags.canMarkInTransit || flags.canReceive ? (
+        // stopPropagation so a quick-action tap doesn't ALSO bubble to the row's
+        // onOpen navigation (Pressable-in-Pressable bubbles on the RN-web build).
         <View style={styles.actions}>
-          {isPending ? (
+          {flags.canApprove ? (
             <>
-              <Pressable style={[styles.btn, styles.btnPrimary]} onPress={onApprove}>
+              <Pressable
+                style={[styles.btn, styles.btnPrimary]}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  onApprove();
+                }}
+              >
                 <Ionicons name="checkmark" size={14} color="#fff" />
                 <Text style={styles.btnPrimaryText}>Approve</Text>
               </Pressable>
-              <Pressable style={[styles.btn, styles.btnGhost]} onPress={onReject}>
+              <Pressable
+                style={[styles.btn, styles.btnGhost]}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  onReject();
+                }}
+              >
                 <Text style={styles.btnGhostText}>Reject</Text>
               </Pressable>
             </>
           ) : null}
-          {isApproved ? (
-            <Pressable style={[styles.btn, styles.btnPrimary]} onPress={onReceive}>
+          {flags.canMarkInTransit ? (
+            <Pressable
+              style={[styles.btn, styles.btnPrimary]}
+              onPress={(e) => {
+                e.stopPropagation();
+                onMarkInTransit();
+              }}
+            >
+              <Ionicons name="car-outline" size={14} color="#fff" />
+              <Text style={styles.btnPrimaryText}>Mark in transit</Text>
+            </Pressable>
+          ) : null}
+          {flags.canReceive ? (
+            <Pressable
+              style={[styles.btn, styles.btnPrimary]}
+              onPress={(e) => {
+                e.stopPropagation();
+                onReceive();
+              }}
+            >
               <Ionicons name="archive-outline" size={14} color="#fff" />
               <Text style={styles.btnPrimaryText}>Mark received</Text>
             </Pressable>
           ) : null}
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 
