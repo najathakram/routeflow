@@ -48,6 +48,7 @@ import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
 import { withCartRows } from "../lib/visible-cart";
+import { orderSubmitGate } from "../lib/order-draft-logic";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -701,9 +702,11 @@ function ProductPickView({
   const { data: activeOrder } = useActiveOrderForCustomer(customerId);
 
   const canSave = totalItems > 0 && !createOrder.isPending;
+  // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
+  const canSaveDraft = !!customerId && !createOrder.isPending;
 
-  /** Submit with a specific (or no) merge choice. */
-  const submitOrder = (mergeChoice?: "merge" | "separate") => {
+  /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
+  const submitOrder = (mergeChoice?: "merge" | "separate", asDraft = false) => {
     const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
@@ -742,6 +745,7 @@ function ProductPickView({
         items: itemPayload,
         routeRunId: runId,
         routeRunStopId: stopId,
+        ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
         ...(orderUrgent ? { urgent: true } : {}),
         ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
@@ -752,6 +756,8 @@ function ProductPickView({
         onSuccess: (order) => {
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
+          } else if (asDraft) {
+            showToast("Saved as draft");
           }
           onSaved(order.orderNumber);
         },
@@ -770,7 +776,9 @@ function ProductPickView({
             body?.code === "MERGE_CHOICE_REQUIRED" &&
             body?.activeOrder
           ) {
-            promptMergeChoice(body.activeOrder);
+            // Forward asDraft so a draft that races a 409 stays a draft after
+            // the operator picks Merge / Create separate.
+            promptMergeChoice(body.activeOrder, asDraft);
             return;
           }
           // Regulated-sale block: open the license guard and replay this exact
@@ -788,35 +796,39 @@ function ProductPickView({
     );
   };
 
-  const promptMergeChoice = (existing: {
-    orderNumber: string | null;
-    itemCount: number;
-    total: number;
-  }) => {
+  const promptMergeChoice = (
+    existing: {
+      orderNumber: string | null;
+      itemCount: number;
+      total: number;
+    },
+    asDraft = false,
+  ) => {
     chooseAction(
       "Open order exists",
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
       [
         { label: "Cancel", style: "cancel" },
-        { label: "Merge", onPress: () => submitOrder("merge") },
-        { label: "Create separate", onPress: () => submitOrder("separate") },
+        { label: "Merge", onPress: () => submitOrder("merge", asDraft) },
+        { label: "Create separate", onPress: () => submitOrder("separate", asDraft) },
       ],
     );
   };
 
-  const onSave = () => {
-    if (totalItems === 0) {
-      alertInfo("Add at least one item", "Tap + on any product to start the order.");
+  const onSave = (asDraft = false) => {
+    const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
+    if (!gate.ok) {
+      alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
       return;
     }
 
     // If the customer already has an active draft/pending order, ask the operator
     // explicitly — never silently merge or silently duplicate.
     if (activeOrder) {
-      promptMergeChoice(activeOrder);
+      promptMergeChoice(activeOrder, asDraft);
       return;
     }
-    submitOrder();
+    submitOrder(undefined, asDraft);
   };
 
   return (
@@ -828,7 +840,7 @@ function ProductPickView({
           <NavAction
             label={createOrder.isPending ? "Saving…" : "Save"}
             bold
-            onPress={canSave ? onSave : undefined}
+            onPress={canSave ? () => onSave() : undefined}
           />
         }
       />
@@ -1146,7 +1158,7 @@ function ProductPickView({
                 (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
               ]}
               disabled={!canSave}
-              onPress={onSave}
+              onPress={() => onSave()}
               accessibilityState={{ disabled: !canSave }}
             >
               <Text style={styles.confirmBtnText}>
@@ -1156,9 +1168,20 @@ function ProductPickView({
             </Pressable>
           </View>
         </View>
-        {totalItems === 0 && !createOrder.isPending ? (
-          <Text style={styles.footerHint}>Add at least one item to confirm.</Text>
-        ) : null}
+        <View style={styles.footerSubRow}>
+          {totalItems === 0 && !createOrder.isPending ? (
+            <Text style={styles.footerHint}>Add an item to confirm, or save a draft.</Text>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          {canSaveDraft || createOrder.isPending ? (
+            <Pressable onPress={() => onSave(true)} disabled={!canSaveDraft} hitSlop={6}>
+              <Text style={[styles.footerDraftText, !canSaveDraft && { opacity: 0.4 }]}>
+                Save as draft
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {scanOpen ? (
@@ -2051,8 +2074,19 @@ const styles = StyleSheet.create({
     color: ios.label3,
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+    flex: 1,
+  },
+  footerSubRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
     marginTop: 6,
-    textAlign: "right",
+  },
+  footerDraftText: {
+    color: ios.brand,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 
   // ── Cart review modal ─────────────────────────────────────────────────────

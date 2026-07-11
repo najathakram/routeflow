@@ -93,6 +93,12 @@ export interface CreateOrderAsDriverDto {
    * An unlisted line is `{ name, qty, unitPrice }` (no productId/boxes/pieces).
    */
   items: CreateOrderItemInput[];
+  /**
+   * Save as a DRAFT (parked, resumable) instead of the default PENDING. A DRAFT
+   * may have zero items server-side; it re-runs the license guard on the
+   * DRAFT→PENDING "Submit for review" transition. Omit for a normal submit.
+   */
+  status?: "DRAFT" | "PENDING";
   notes?: string;
   /** Mark the order urgent at creation (same flag the detail-screen toggle sets). */
   urgent?: boolean;
