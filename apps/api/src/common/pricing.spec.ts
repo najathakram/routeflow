@@ -9,6 +9,8 @@ import {
   computeCategoryTax,
   applyBestPromotion,
   promotionMatchesProduct,
+  isUpsellLine,
+  effectiveBuyerPrice,
   type PromotionRule,
 } from "./pricing";
 
@@ -528,5 +530,52 @@ describe("applyBestPromotion", () => {
     expect(subtotal).toBe(70); // 2 boxes × $35.00
     // Guard the classic over-charge: net-per-piece × 12 pieces.
     expect(subtotal).not.toBe(420); // $35 × 12
+  });
+});
+
+describe("pricing — upsell direction & sticky effective price", () => {
+  describe("isUpsellLine", () => {
+    it("true only for a MANUAL line priced ABOVE its catalog base", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: 10 })).toBe(true);
+    });
+
+    it("false for a MANUAL discount (net below base)", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 8, originalPrice: 10 })).toBe(false);
+    });
+
+    it("false for non-MANUAL types even when net > original (e.g. a premium SPECIAL tier)", () => {
+      expect(isUpsellLine({ priceType: "SPECIAL", unitPrice: 12, originalPrice: 10 })).toBe(false);
+      expect(isUpsellLine({ priceType: "PROMO", unitPrice: 12, originalPrice: 10 })).toBe(false);
+    });
+
+    it("false when originalPrice is null or equal to unitPrice", () => {
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 12, originalPrice: null })).toBe(false);
+      expect(isUpsellLine({ priceType: "MANUAL", unitPrice: 10, originalPrice: 10 })).toBe(false);
+    });
+
+    it("coerces Decimal-like string fields", () => {
+      expect(
+        isUpsellLine({ priceType: "MANUAL", unitPrice: "12.50", originalPrice: "10.00" }),
+      ).toBe(true);
+    });
+  });
+
+  describe("effectiveBuyerPrice", () => {
+    it("a remembered UPSELL (above list) sticks and overrides the tier", () => {
+      // tier 8, list 10, remembered upsell 12 → charge 12
+      expect(effectiveBuyerPrice(8, 10, 12)).toBe(12);
+    });
+
+    it("a remembered price at/below LIST never sticks (keeps tier) — a discount can't RAISE a low tier", () => {
+      // tier 8, list 10, remembered 9 (a discount off list, but above tier) → keep tier 8
+      expect(effectiveBuyerPrice(8, 10, 9)).toBe(8);
+      // remembered exactly at list → keep tier
+      expect(effectiveBuyerPrice(8, 10, 10)).toBe(8);
+    });
+
+    it("returns the tier price when there is no remembered price", () => {
+      expect(effectiveBuyerPrice(8, 10, null)).toBe(8);
+      expect(effectiveBuyerPrice(8, 10, undefined)).toBe(8);
+    });
   });
 });

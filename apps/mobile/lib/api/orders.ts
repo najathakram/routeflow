@@ -12,6 +12,10 @@ export interface OrderItem {
   product?: { id: string; name: string; unit: string };
   qty: number;
   unitPrice: number;
+  /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
+  originalPrice?: number | null;
+  /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
+  priceType?: string;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /** Boxed split persisted server-side; boxes==null means qty is in selling units. */

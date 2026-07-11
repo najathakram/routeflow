@@ -394,6 +394,20 @@ export default function OrderDetailScreen() {
                         {qtyLine} · {formatCurrency(li.unitPrice)}
                         {isBoxed ? ` / box of ${upb}` : ""}
                       </Text>
+                      {li.priceType === "MANUAL" &&
+                      li.originalPrice != null &&
+                      Number(li.unitPrice) > Number(li.originalPrice) ? (
+                        <Text
+                          style={{
+                            color: ios.system.greenInk,
+                            fontSize: 12,
+                            fontWeight: "600",
+                            marginTop: 2,
+                          }}
+                        >
+                          Upsell
+                        </Text>
+                      ) : null}
                     </View>
                     <View style={{ alignItems: "flex-end", gap: 4 }}>
                       <Text style={styles.itemTotal}>{formatCurrency(li.subtotal)}</Text>

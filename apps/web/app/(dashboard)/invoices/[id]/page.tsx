@@ -1669,6 +1669,31 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               Promo price
                             </span>
                           </div>
+                        ) : item.priceType === "MANUAL" &&
+                          item.originalPrice != null &&
+                          Number(item.unitPrice) > Number(item.originalPrice) ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            {/* Upsell (above list): green, no strikethrough — the base
+                                is never shown to the buyer. */}
+                            <span className="money text-success">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
+                              Upsell
+                            </span>
+                          </div>
+                        ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="strike text-xs">
+                              {fmt(Number(item.originalPrice))}
+                            </span>
+                            <span className="money text-warning">
+                              {fmt(Number(item.unitPrice))}
+                            </span>
+                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
+                              Adjusted
+                            </span>
+                          </div>
                         ) : (
                           <span className="money text-navy/70">{fmt(Number(item.unitPrice))}</span>
                         )}
