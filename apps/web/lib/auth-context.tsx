@@ -8,6 +8,7 @@ import {
   logout as apiLogout,
   refreshTokens,
   onCrossTabTokenChange,
+  clearOpPresenceCookie,
 } from "./auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -40,6 +41,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshTokens()
         .then((data) => {
           if (data) setUser(data.user);
+          // No restorable session → any lingering presence cookie is stale;
+          // drop it so the landing page stops auto-redirecting.
+          else clearOpPresenceCookie();
         })
         .finally(() => setIsLoading(false));
     }

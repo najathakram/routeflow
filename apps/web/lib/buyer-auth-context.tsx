@@ -13,6 +13,7 @@ import {
   buyerLogout,
   buyerRefreshTokens,
   getBuyerSellers,
+  clearBuyerPresenceCookie,
 } from "./buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -68,6 +69,10 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
                 .then(setSellers)
                 .catch((err) => console.warn("[BuyerAuth] Failed to load sellers:", err?.message));
             }
+          } else {
+            // No restorable buyer session → drop the stale presence cookie so
+            // the landing page stops auto-redirecting to the portal.
+            clearBuyerPresenceCookie();
           }
         })
         .finally(() => setIsLoading(false));

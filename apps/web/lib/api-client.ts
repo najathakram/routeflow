@@ -7,6 +7,7 @@
 
 import axios from "axios";
 import { OP_KEYS, BUYER_KEYS } from "./auth-keys";
+import { setOpPresenceCookie, clearOpPresenceCookie } from "./presence-cookies";
 import { hasReauthHandler, requestReauth } from "./session-expiry";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
@@ -147,6 +148,9 @@ apiClient.interceptors.response.use(
       });
       localStorage.setItem(OP_KEYS.accessToken, data.accessToken);
       localStorage.setItem(OP_KEYS.refreshToken, data.refreshToken);
+      // Sliding presence window — the middleware's landing-page redirect keys
+      // on this cookie, so it must track the live session (presence-cookies.ts).
+      setOpPresenceCookie();
 
       original.headers.Authorization = `Bearer ${data.accessToken}`;
       processQueue(null, data.accessToken);
@@ -177,6 +181,10 @@ apiClient.interceptors.response.use(
       const opToken = localStorage.getItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.accessToken);
       localStorage.removeItem(OP_KEYS.refreshToken);
+      // Dead session → drop the presence signal so the landing page stops
+      // auto-redirecting (the stale-cookie bounce that killed the old
+      // client-side redirect).
+      clearOpPresenceCookie();
       // Don't punt the user off a marketing route just because a background
       // API call 401'd against a stale token — let them keep browsing the
       // marketing site. Tokens are now cleared, so the next dashboard click
