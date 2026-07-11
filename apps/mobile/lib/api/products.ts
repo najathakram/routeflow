@@ -55,6 +55,11 @@ export interface CreateProductDto {
    */
   unitsPerBox?: number;
   pricePerUnit: number;
+  /** Customer tier prices (tier 1 = pricePerUnit); blank/omitted inherits tier 1. */
+  priceTier2?: number;
+  priceTier3?: number;
+  priceTier4?: number;
+  priceTier5?: number;
   standardCost?: number;
   currentStock?: number;
   isActive?: boolean;

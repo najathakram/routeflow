@@ -22,6 +22,11 @@ export interface ProductFormValues {
   unitsPerBox: string;
   description: string;
   pricePerUnit: string;
+  /** Customer tier prices (tier 1 = pricePerUnit). Blank = inherit tier 1. */
+  priceTier2: string;
+  priceTier3: string;
+  priceTier4: string;
+  priceTier5: string;
   standardCost: string;
   currentStock: string;
   reorderPoint: string;
@@ -39,6 +44,10 @@ export function emptyProductForm(): ProductFormValues {
     unitsPerBox: "",
     description: "",
     pricePerUnit: "",
+    priceTier2: "",
+    priceTier3: "",
+    priceTier4: "",
+    priceTier5: "",
     standardCost: "",
     currentStock: "",
     reorderPoint: "",
@@ -60,6 +69,11 @@ export function productFormFromValues(
     unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
     description: p.description ?? "",
     pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
+    // Tier columns default to 0 in the DB (= "inherit tier 1"); show those as blank.
+    priceTier2: Number(p.priceTier2) > 0 ? String(p.priceTier2) : "",
+    priceTier3: Number(p.priceTier3) > 0 ? String(p.priceTier3) : "",
+    priceTier4: Number(p.priceTier4) > 0 ? String(p.priceTier4) : "",
+    priceTier5: Number(p.priceTier5) > 0 ? String(p.priceTier5) : "",
     standardCost:
       (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
     currentStock: p.currentStock != null ? String(p.currentStock) : "",
@@ -85,6 +99,10 @@ export interface SubmitPayload {
   unitsPerBox?: number;
   description?: string;
   pricePerUnit: number;
+  priceTier2?: number;
+  priceTier3?: number;
+  priceTier4?: number;
+  priceTier5?: number;
   standardCost?: number;
   currentStock?: number;
   reorderPoint?: number;
@@ -112,6 +130,11 @@ export function buildProductPayload(form: ProductFormValues): SubmitPayload | { 
     unitsPerBox,
     description: form.description.trim() || undefined,
     pricePerUnit: price,
+    // Blank tier → undefined (never 0), so a blank never overwrites tier 1.
+    priceTier2: parseOptionalNumber(form.priceTier2),
+    priceTier3: parseOptionalNumber(form.priceTier3),
+    priceTier4: parseOptionalNumber(form.priceTier4),
+    priceTier5: parseOptionalNumber(form.priceTier5),
     standardCost: parseOptionalNumber(form.standardCost),
     currentStock: parseOptionalNumber(form.currentStock),
     reorderPoint: parseOptionalNumber(form.reorderPoint),
@@ -271,6 +294,32 @@ export function ProductForm({
             keyboardType="decimal-pad"
           />
         </FormField>
+      </FormSection>
+
+      <FormSection title="Tier pricing (optional)">
+        {([2, 3, 4, 5] as const).map((tier) => {
+          const key = `priceTier${tier}` as
+            | "priceTier2"
+            | "priceTier3"
+            | "priceTier4"
+            | "priceTier5";
+          return (
+            <FormField
+              key={tier}
+              label={`Tier ${tier} price`}
+              hint={
+                tier === 2 ? "Per-tier customer price. Blank inherits the base price." : undefined
+              }
+            >
+              <FormTextInput
+                value={form[key]}
+                onChangeText={(v) => set(key, v)}
+                placeholder="Inherit base"
+                keyboardType="decimal-pad"
+              />
+            </FormField>
+          );
+        })}
       </FormSection>
 
       <FormSection title="Stock">

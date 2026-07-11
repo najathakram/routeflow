@@ -103,6 +103,39 @@ export function useBulkSetCostBasis() {
   });
 }
 
+/** Result of a recompute-costs dry-run or apply (mirror of web). */
+export interface RecomputeCostsResult {
+  dryRun: boolean;
+  processed: number;
+  updated: number;
+  noHistory: { productId: string; name: string }[];
+  results: {
+    productId: string;
+    name: string;
+    oldAvgCost: number | null;
+    newAvgCost: number | null;
+    stockDrift: number;
+    movementsBackfilled: number;
+  }[];
+}
+
+/**
+ * Replay stock movements to recompute average costs (`POST /inventory/recompute-costs`).
+ * `dryRun:true` previews the changes without writing; only a real apply invalidates.
+ */
+export function useRecomputeCosts() {
+  const qc = useQueryClient();
+  return useMutation<RecomputeCostsResult, unknown, { productIds?: string[]; dryRun?: boolean }>({
+    mutationFn: (data) => apiClient.post("/inventory/recompute-costs", data).then((r) => r.data),
+    onSuccess: (_result, variables) => {
+      if (!variables.dryRun) {
+        qc.invalidateQueries({ queryKey: ["inventory"] });
+        qc.invalidateQueries({ queryKey: ["products"] });
+      }
+    },
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export function useRecordAdjustment() {
