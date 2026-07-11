@@ -188,6 +188,7 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
   `SortableTh.tsx`, `ReportChart.tsx` (recharts), `ReportToolbar.tsx`,
   `TenantLogo.tsx`, `PwaInstallPrompt.tsx`/`InstallAppButton.tsx`, `ServiceWorkerRegistry.tsx`,
   `AutoRedirectIfAuthed.tsx`, `inventory/StockCount{Tab,Row,BulkBar,ReviewModal}.tsx`.
+- **order-entry / catalog batch (2026-07-11):** `MoneyInput.tsx` (`MoneyInput`/`DecimalInput` — raw draft string, parse live, `toFixed` on blur only; replaced every reformat-while-typing / numeric-bound money input incl. the `PriceEditRow` echo `useEffect` + product-tier `EditableNumber`), `CategoryCombobox.tsx` (pick-or-type-new, fork of `UnitCombobox`; `GET /products/categories`), `formatQtySplit` in `lib/pricing.ts` ("2 boxes + 3 pcs" on order/invoice detail + PDF). `ScanInvoiceModal.tsx` + `vendor-bills/[id]` gained the unmatched-line banner + per-line link/create (reuse `InlineCreateProductModal` w/ `initialPrice`/`initialCost`) and STOP auto-`acknowledgeUnlinked`. `QuickRestockModal` (inventory) = `SearchableProductPicker`(+`inputRef` wedge) + `BarcodeScannerButton`. Per-line item **note** input on `CreateOrderModal`/`orders/[id]`; per-line **cost eye** toggle (operator-only) on `CreateOrderModal`.
 
 ## API hooks (`lib/api/`)
 

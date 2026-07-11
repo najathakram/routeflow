@@ -42,6 +42,7 @@ real-time sync; offline queue for driver route completions.
 - **tenant branding** `lib/tenant-store.ts` — slug, businessName, primaryColor, logoKey (persistent Zustand).
 - **location tracker** `lib/location-tracker.ts` (+ `.web.ts`) — driver background location.
 - **stores** `store/{cartStore,mileageStore,podStore,routeStore,productPickerStore,offlineQueue}.ts`.
+- **order-entry / catalog batch (2026-07-11):** `components/ProductPickerSheet.tsx` (server search + camera scan + `standaloneOnly` variant-parent mode; used by Quick Receive, ProductForm variant picker, vendor-bill link), `components/InlineCreateProductSheet.tsx` (create-on-scan-miss overlay — new-product OR variant-of, preserves the cart; `initialCode/initialName/initialPrice/initialCost`), `lib/product-form.ts` (pure `buildProductPayload`/`emptyProductForm`/`productFormFromValues` — variant-aware, re-exported by `components/ProductForm.tsx`, tested in `operator-create-forms.test.ts`), `lib/product-display.ts` (`displayProductName`/`PRODUCT_NAME_SEPARATOR` mirror of web), `lib/money-input.ts` + `components/MoneyTextInput.tsx` (no-reformat money field), `lib/vendor-bill-scan.ts` `unmatchedCount`/`linkScanItem`, `formatQtySplit` in `lib/pricing.ts`. `lib/api/products.ts` `useCreateProduct` returns `CreatedProduct`; `CreateProductDto`+={parentProductId,variantName}.
 
 ## Screens by role (`app/`)
 
