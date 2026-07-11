@@ -409,6 +409,30 @@ export function useBuyerDashboard() {
   });
 }
 
+// ─── Finances / analytics (mirrors web useBuyerAnalytics) ─────────────────────
+
+export interface BuyerAnalytics {
+  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
+  summary: {
+    totalOrders: number;
+    totalSpend: number;
+    avgOrderValue: number;
+    unpaidInvoiceCount: number;
+    /** Server-truth outstanding total — render VERBATIM, never re-derive. */
+    unpaidInvoiceTotal: number;
+  };
+  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
+  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
+}
+
+export function useBuyerAnalytics() {
+  return useQuery<BuyerAnalytics>({
+    queryKey: ["buyer", "analytics"],
+    queryFn: () => buyerApiClient.get("/buyer/analytics").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
 // ─── Standing orders ──────────────────────────────────────────────────────────
 
 export function useBuyerTemplates() {
