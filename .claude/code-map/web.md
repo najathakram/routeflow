@@ -175,6 +175,8 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
 
 - `tenant-provider.tsx` (branding CSS vars), `CommandPalette.tsx` (Cmd+K nav/search),
   `BarcodeScannerButton.tsx`, `DocumentLetterhead.tsx` (PDF header), `ScanInvoiceModal.tsx` (OCR),
+  `BatchItemReviewModal.tsx` (`settings/batch-import` — per-line product remap + supplier link;
+  the review gate for `resolveItem`, see api.md's P5 batch-queue defect-fixes note),
   `SearchableProductPicker.tsx`, `SupplierSelect.tsx`, `InlineCreate{Product,Supplier}Modal.tsx`
   (Product modal's `CreatedProduct` carries `unitsPerBox`/`parentProductId`/`variantName`/`parent`
   so `onCreated` consumers — CreateOrderModal, invoices/new — get the Boxes+Pcs editor + the
