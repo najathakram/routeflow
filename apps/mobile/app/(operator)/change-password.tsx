@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
@@ -9,56 +8,66 @@ import { Ionicons } from "@expo/vector-icons";
 import { MobileButton, MobileInput } from "@routeflow/ui/mobile";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { ios } from "@routeflow/ui/tokens";
-import { changePassword } from "../../lib/auth";
-
-const schema = z
-  .object({
-    currentPassword: z.string().min(1, "Current password is required"),
-    newPassword: z
-      .string()
-      .min(8, "Must be at least 8 characters")
-      .regex(/[A-Z]/, "Must contain an uppercase letter")
-      .regex(/[0-9]/, "Must contain a number"),
-    confirmPassword: z.string().min(1, "Please confirm your new password"),
-  })
-  .refine((d) => d.newPassword === d.confirmPassword, {
-    message: "Passwords do not match",
-    path: ["confirmPassword"],
-  });
-
-type ChangePasswordForm = z.infer<typeof schema>;
+import { changePassword, setPassword } from "../../lib/auth";
+import { apiClient } from "../../lib/api-client";
+import { buildPasswordSchema, type PasswordFormValues } from "../../lib/password-form";
 
 export default function OperatorChangePasswordScreen() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // Authoritative hasPassword read — false means a Google-only account setting
+  // its FIRST password (no current-password field). Defaults to change mode
+  // until /users/me answers; the server independently re-verifies either way.
+  const [hasPassword, setHasPassword] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get<{ hasPassword?: boolean }>("/users/me")
+      .then(({ data }) => {
+        if (!cancelled && typeof data.hasPassword === "boolean") setHasPassword(data.hasPassword);
+      })
+      .catch(() => {
+        // Older API / transient failure → keep change mode (safe default).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const schema = useMemo(() => buildPasswordSchema(hasPassword ? "change" : "set"), [hasPassword]);
   const {
     control,
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<ChangePasswordForm>({
+  } = useForm<PasswordFormValues>({
     resolver: zodResolver(schema),
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
 
-  const onSubmit = async (data: ChangePasswordForm) => {
+  const onSubmit = async (data: PasswordFormValues) => {
     setApiError(null);
     setSuccess(false);
     try {
-      await changePassword(data.currentPassword, data.newPassword);
+      if (hasPassword) await changePassword(data.currentPassword, data.newPassword);
+      else await setPassword(data.newPassword);
       reset();
       setSuccess(true);
+      setHasPassword(true);
       setTimeout(() => router.back(), 1800);
     } catch (err: any) {
-      const msg = err?.response?.data?.message ?? "Failed to change password.";
-      setApiError(typeof msg === "string" ? msg : "Failed to change password.");
+      const msg =
+        err?.response?.data?.message ??
+        (hasPassword ? "Failed to change password." : "Failed to set password.");
+      setApiError(typeof msg === "string" ? msg : "Failed to update password.");
     }
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: ios.bgElev }} edges={["top", "left", "right"]}>
       <NavBar
-        inlineTitle="Change password"
+        inlineTitle={hasPassword ? "Change password" : "Set password"}
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
       />
       <ScrollView
@@ -67,6 +76,11 @@ export default function OperatorChangePasswordScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.form}>
+          {!hasPassword ? (
+            <Text style={styles.setModeHint}>
+              You sign in with Google. Set a password to also sign in with your username.
+            </Text>
+          ) : null}
           {success ? (
             <View style={styles.successBanner}>
               <Ionicons name="checkmark-circle" size={20} color={ios.system.greenInk} />
@@ -75,20 +89,22 @@ export default function OperatorChangePasswordScreen() {
           ) : null}
           {apiError ? <Text style={styles.apiError}>{apiError}</Text> : null}
 
-          <Controller
-            control={control}
-            name="currentPassword"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <MobileInput
-                label="Current Password"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                secureTextEntry
-                error={errors.currentPassword?.message}
-              />
-            )}
-          />
+          {hasPassword ? (
+            <Controller
+              control={control}
+              name="currentPassword"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <MobileInput
+                  label="Current Password"
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  secureTextEntry
+                  error={errors.currentPassword?.message}
+                />
+              )}
+            />
+          ) : null}
           <Controller
             control={control}
             name="newPassword"
@@ -118,7 +134,7 @@ export default function OperatorChangePasswordScreen() {
             )}
           />
           <MobileButton onPress={handleSubmit(onSubmit)} loading={isSubmitting} size="lg">
-            Update Password
+            {hasPassword ? "Update Password" : "Set Password"}
           </MobileButton>
         </View>
       </ScrollView>
@@ -134,6 +150,12 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   form: { gap: 16 },
+  setModeHint: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    lineHeight: 20,
+  },
   apiError: {
     color: ios.system.redInk,
     fontSize: 14,

@@ -11,14 +11,19 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import axios from "axios";
+import { audienceFromParam, forgotPasswordEndpoint } from "../../lib/password-form";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
+  // ?audience=buyer routes to the buyer endpoints (customer-login links here);
+  // staff otherwise. Same screen either way — only the endpoint differs.
+  const { audience: audienceParam } = useLocalSearchParams<{ audience?: string }>();
+  const audience = audienceFromParam(audienceParam);
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
@@ -33,7 +38,9 @@ export default function ForgotPasswordScreen() {
     setError(null);
     setLoading(true);
     try {
-      await axios.post(`${BASE_URL}/api/v1/auth/request-password-reset`, { email: trimmed });
+      await axios.post(`${BASE_URL}/api/v1${forgotPasswordEndpoint(audience)}`, {
+        email: trimmed,
+      });
       setDone(true);
     } catch {
       // Always show success to prevent enumeration

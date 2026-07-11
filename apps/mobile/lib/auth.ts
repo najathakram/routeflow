@@ -332,6 +332,35 @@ export async function refreshTokens(): Promise<AuthResponse | null> {
   return null;
 }
 
+/** The server revokes every refresh token on a password mutation and returns a
+ *  fresh pair — store it so THIS session survives instead of dying at the next
+ *  refresh. */
+async function storeRotatedPair(data: { accessToken?: string; refreshToken?: string }) {
+  if (!data.accessToken || !data.refreshToken) return;
+  const payload = parseJwtPayload(data.accessToken);
+  const role = (payload?.role as string) ?? "OPERATOR";
+  const keys = keysForRole(role);
+  await storage.set(keys.accessToken, data.accessToken);
+  await storage.set(keys.refreshToken, data.refreshToken);
+  await storage.set(CURRENT_ROLE_KEY, currentRoleFromJwtRole(role));
+}
+
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
-  await apiClient.post("/auth/change-password", { currentPassword, newPassword });
+  const { data } = await apiClient.post<{ accessToken?: string; refreshToken?: string }>(
+    "/auth/change-password",
+    { currentPassword, newPassword },
+  );
+  await storeRotatedPair(data);
+}
+
+/**
+ * First-password setup for Google-only accounts (no current password). The
+ * server only accepts this while the account's password is NULL.
+ */
+export async function setPassword(newPassword: string): Promise<void> {
+  const { data } = await apiClient.post<{ accessToken?: string; refreshToken?: string }>(
+    "/auth/set-password",
+    { newPassword },
+  );
+  await storeRotatedPair(data);
 }

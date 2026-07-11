@@ -14,12 +14,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import axios from "axios";
+import { audienceFromParam, resetPasswordEndpoint, signInRouteFor } from "../../lib/password-form";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
-  const { token } = useLocalSearchParams<{ token?: string }>();
+  // ?audience=buyer → buyer endpoints + buyer sign-in on success (the buyer
+  // reset email links here with the param); staff otherwise.
+  const { token, audience: audienceParam } = useLocalSearchParams<{
+    token?: string;
+    audience?: string;
+  }>();
+  const audience = audienceFromParam(audienceParam);
 
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -43,7 +50,7 @@ export default function ResetPasswordScreen() {
     setError(null);
     setLoading(true);
     try {
-      await axios.post(`${BASE_URL}/api/v1/auth/reset-password`, {
+      await axios.post(`${BASE_URL}/api/v1${resetPasswordEndpoint(audience)}`, {
         token,
         newPassword,
       });
@@ -69,7 +76,7 @@ export default function ResetPasswordScreen() {
           </Text>
           <TouchableOpacity
             style={styles.loginBtn}
-            onPress={() => router.replace("/(auth)/login")}
+            onPress={() => router.replace(signInRouteFor(audience) as never)}
             activeOpacity={0.85}
           >
             <Text style={styles.loginBtnText}>Go to sign in</Text>
