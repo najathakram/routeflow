@@ -48,8 +48,10 @@ if [ "$MODE" = "backup" ]; then
   : "${DATABASE_URL:?DATABASE_URL is required}"
 
   # pg_dump refuses servers NEWER than itself — fail with a clear message.
+  # (No `| head` in pipelines here: under pipefail, head's early exit SIGPIPEs
+  # the producer and trips the ERR trap.)
   SERVER_MAJ=$(psql "$DATABASE_URL" -Atc "SHOW server_version" | cut -d. -f1)
-  CLIENT_MAJ=$(pg_dump --version | grep -oE "[0-9]+" | head -1)
+  CLIENT_MAJ=$(pg_dump --version | awk '{print $NF}' | cut -d. -f1)
   if [ "$SERVER_MAJ" -gt "$CLIENT_MAJ" ]; then
     echo "[db-backup] server is PG ${SERVER_MAJ} but pg_dump is ${CLIENT_MAJ} — bump the Dockerfile base image" >&2
     exit 1
@@ -72,15 +74,16 @@ if [ "$MODE" = "backup" ]; then
   echo "[db-backup] uploaded ${S3_PREFIX}/$(basename "$FILE")"
 
   # Prune objects older than RETENTION_DAYS (by the YYYYMMDD in the filename).
+  # `|| true` because grep exits 1 when nothing matches (nothing to prune).
   CUTOFF=$(date -u -d "@$(( $(date -u +%s) - RETENTION_DAYS * 86400 ))" +%Y%m%d)
-  aws s3 ls "${S3_PREFIX}/" --endpoint-url "$ENDPOINT" | awk '{print $4}' | grep "^production_" |
-    while read -r key; do
-      FDATE=$(echo "$key" | grep -oE "[0-9]{8}" | head -1)
-      if [ -n "$FDATE" ] && [ "$FDATE" -lt "$CUTOFF" ]; then
-        echo "[db-backup] pruning ${key}"
-        aws s3 rm "${S3_PREFIX}/${key}" --endpoint-url "$ENDPOINT"
-      fi
-    done
+  KEYS=$(aws s3 ls "${S3_PREFIX}/" --endpoint-url "$ENDPOINT" | awk '{print $4}' | grep "^production_" || true)
+  for key in $KEYS; do
+    FDATE=$(echo "$key" | grep -oE -m1 "[0-9]{8}" || true)
+    if [ -n "$FDATE" ] && [ "$FDATE" -lt "$CUTOFF" ]; then
+      echo "[db-backup] pruning ${key}"
+      aws s3 rm "${S3_PREFIX}/${key}" --endpoint-url "$ENDPOINT"
+    fi
+  done
 
   ping_hc ""
   echo "[db-backup] OK"
@@ -88,7 +91,7 @@ if [ "$MODE" = "backup" ]; then
 elif [ "$MODE" = "verify" ]; then
   # Restore the latest dump into an ephemeral in-container Postgres.
   LATEST=$(aws s3 ls "${S3_PREFIX}/" --endpoint-url "$ENDPOINT" | awk '{print $4}' |
-    grep "^production_" | sort | tail -1)
+    { grep "^production_" || true; } | sort | tail -1)
   if [ -z "$LATEST" ]; then
     echo "[db-verify] no backups found in ${S3_PREFIX}/" >&2
     exit 1
