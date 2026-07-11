@@ -1,15 +1,33 @@
 import { useEffect } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useProduct, useDeleteProduct, useUpdateProduct } from "../../../lib/api/products";
+import {
+  useProduct,
+  useDeleteProduct,
+  useUpdateProduct,
+  useUploadProductImages,
+  useDeleteProductImage,
+} from "../../../lib/api/products";
+import { productImageFile } from "../../../lib/product-image";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
-import { confirm } from "../../../lib/confirm";
+import { confirm, chooseAction } from "../../../lib/confirm";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -39,6 +57,8 @@ export default function ProductDetailScreen() {
   });
   const deleteMut = useDeleteProduct();
   const updateMut = useUpdateProduct();
+  const uploadImagesMut = useUploadProductImages();
+  const deleteImageMut = useDeleteProductImage();
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
 
   if (isLoading || !product) {
@@ -56,6 +76,73 @@ export default function ProductDetailScreen() {
   const threshold = product.reorderPoint ?? 5;
   const low = stock > 0 && stock <= threshold;
   const out = stock <= 0;
+
+  // imageUrls[i] (presigned, display) lines up 1:1 with imageKeys[i] (delete target).
+  const imageUrls: string[] = product.imageUrls ?? [];
+  const imageKeys: string[] = product.imageKeys ?? [];
+
+  const pickAndUpload = async (useCamera: boolean) => {
+    if (!id) return;
+    const res =
+      useCamera && Platform.OS !== "web"
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 1 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1 });
+    if (res.canceled || !res.assets?.[0]) return;
+    try {
+      // Always re-encode to JPEG before upload: an iOS library HEIC pick returns
+      // raw HEIC bytes (PHPicker ignores `quality`), and the API stores bytes
+      // verbatim — uploading them mislabeled as JPEG yields an undecodable image
+      // on web/Android. Transcoding also compresses. (Matches web's canvas→JPEG.)
+      const jpeg = await manipulateAsync(res.assets[0].uri, [], {
+        compress: 0.8,
+        format: SaveFormat.JPEG,
+      });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      uploadImagesMut.mutate(
+        { id, files: [file] },
+        {
+          onSuccess: () => showToast("Photo added"),
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't upload the photo."),
+        },
+      );
+    } catch {
+      showToast("Couldn't process the photo.");
+    }
+  };
+
+  const onAddPhoto = () => {
+    const actions =
+      Platform.OS === "web"
+        ? [
+            { label: "Choose photo", onPress: () => pickAndUpload(false) },
+            { label: "Cancel", style: "cancel" as const },
+          ]
+        : [
+            { label: "Take photo", onPress: () => pickAndUpload(true) },
+            { label: "Choose from library", onPress: () => pickAndUpload(false) },
+            { label: "Cancel", style: "cancel" as const },
+          ];
+    chooseAction("Add product photo", "Add a photo for this product.", actions);
+  };
+
+  const onDeletePhoto = (key: string) => {
+    if (!id) return;
+    confirm(
+      "Remove photo?",
+      "This photo will be removed from the product.",
+      () =>
+        deleteImageMut.mutate(
+          { id, key },
+          {
+            onSuccess: () => showToast("Photo removed"),
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't remove the photo."),
+          },
+        ),
+      { confirmText: "Remove", destructive: true },
+    );
+  };
 
   const handleDelete = () => {
     if (!id) return;
@@ -102,6 +189,45 @@ export default function ProductDetailScreen() {
               {!product.isActive ? <Pill variant="gray">Inactive</Pill> : null}
               {product.category ? <Pill variant="brand">{product.category}</Pill> : null}
             </View>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Photos</Text>
+              <Pressable onPress={onAddPhoto} disabled={uploadImagesMut.isPending}>
+                <Text style={styles.linkText}>
+                  {uploadImagesMut.isPending ? "Uploading…" : "Add photo"}
+                </Text>
+              </Pressable>
+            </View>
+            {imageUrls.length === 0 ? (
+              <Pressable style={styles.photoEmpty} onPress={onAddPhoto}>
+                <Ionicons name="camera-outline" size={22} color={ios.label3} />
+                <Text style={styles.photoEmptyText}>No photos yet — tap to add.</Text>
+              </Pressable>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 10, paddingTop: 4 }}
+              >
+                {imageUrls.map((url, i) => (
+                  <View key={imageKeys[i] ?? url} style={styles.photoThumbWrap}>
+                    <Image source={{ uri: url }} style={styles.photoThumb} resizeMode="cover" />
+                    {imageKeys[i] ? (
+                      <Pressable
+                        style={styles.photoDelete}
+                        onPress={() => onDeletePhoto(imageKeys[i])}
+                        disabled={deleteImageMut.isPending}
+                        hitSlop={6}
+                      >
+                        <Ionicons name="close" size={14} color="#fff" />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           <View style={styles.card}>
@@ -262,6 +388,31 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginBottom: 8 },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  photoEmpty: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 20,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+    borderStyle: "dashed",
+  },
+  photoEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  photoThumbWrap: { position: "relative" },
+  photoThumb: { width: 96, height: 120, borderRadius: 10, backgroundColor: ios.fill3 },
+  photoDelete: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   tobaccoBtn: {
     flexDirection: "row",
     alignItems: "center",
