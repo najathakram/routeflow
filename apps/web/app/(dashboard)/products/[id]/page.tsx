@@ -44,6 +44,7 @@ import {
   type ApiProduct,
 } from "@/lib/api/products";
 import { useCostHistory } from "@/lib/api/cost-history";
+import { getTierPrice } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -1650,6 +1651,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             ),
                           );
                       const warn = isEditing && curVal > prevVal;
+                      const inheritsList = !(Number(productVal) > 0);
                       return (
                         <div key={field}>
                           <p
@@ -1668,7 +1670,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             />
                           ) : (
                             <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                              ${parseFloat(String(productVal ?? priceNumber)).toFixed(2)}
+                              ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
+                              {inheritsList && (
+                                <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
+                                  list
+                                </span>
+                              )}
                             </p>
                           )}
                         </div>
@@ -1698,6 +1705,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         </p>
                       ) : null;
                     })()}
+                  {isEditing && (
+                    <p className="mt-1.5 text-xs text-navy/50">
+                      Tiers left at 0 inherit the list price at checkout.
+                    </p>
+                  )}
                 </div>
 
                 <div className="mt-5 border-t border-surface-border pt-4">
@@ -1846,10 +1858,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             ${priceNumber.toFixed(2)}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                            $
-                            {parseFloat(String((product as any).priceTier2 ?? priceNumber)).toFixed(
-                              2,
-                            )}
+                            ${getTierPrice(product, 2).toFixed(2)}
                           </td>
                           <td className="px-3 py-2.5">
                             <Badge
@@ -1889,10 +1898,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                               ${parseFloat(String(variant.pricePerUnit)).toFixed(2)}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono tabular-nums text-navy">
-                              $
-                              {parseFloat(
-                                String((variant as any).priceTier2 ?? variant.pricePerUnit),
-                              ).toFixed(2)}
+                              ${getTierPrice(variant, 2).toFixed(2)}
                             </td>
                             <td className="px-3 py-2.5">
                               <Badge

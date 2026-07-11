@@ -767,6 +767,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   // Get selected product for price preview
   const selectedProduct = allProducts.find((p: any) => p.id === selectedProductId);
 
+  // An unset tier column (0/null) inherits the list price at checkout — label it.
+  const tierUnset = (product: any, tier: number) =>
+    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
@@ -886,6 +890,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}
+                        {tierUnset(cp.product, cp.pricingTier) && (
+                          <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
                         {(() => {
@@ -1008,6 +1015,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   Tier {t}
                   {t === 1 ? " (List Price)" : ""}
                   {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
+                  {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}
             </select>
@@ -1017,6 +1025,9 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                 <span className="font-semibold text-brand-600">
                   {fmt(getTierPrice(selectedProduct, selectedTier))}
                 </span>
+                {tierUnset(selectedProduct, selectedTier) && (
+                  <span className="ml-1 text-navy/50">(list)</span>
+                )}
               </p>
             )}
           </div>
