@@ -20,6 +20,7 @@ import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 // in delivery-flow order.
 const STATUS_FILTERS = [
   { id: "ALL", label: "All" },
+  { id: "DRAFT", label: "Draft" },
   { id: "PENDING", label: "Pending" },
   { id: "CONFIRMED", label: "Confirmed" },
   { id: "OUT_FOR_DELIVERY", label: "Out" },

@@ -46,6 +46,7 @@ export class BuyerDashboardService {
       spend30d,
       spend90d,
       spendAllTime,
+      unpaidAgg,
     ] = await Promise.all([
       // Recent orders (last 5)
       this.prisma.forTenant().order.findMany({
@@ -146,6 +147,15 @@ export class BuyerDashboardService {
           customerId,
           status: { not: "CANCELLED" },
         },
+        _sum: { total: true },
+      }),
+
+      // Unpaid invoices — count + total over the open statuses, matching
+      // getAnalytics' summary (unpaidCount + overdueCount / unpaidTotal) so the
+      // dashboard strip and the Finances screen never diverge.
+      this.prisma.forTenant().invoice.aggregate({
+        where: { customerId, status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] } },
+        _count: { _all: true },
         _sum: { total: true },
       }),
     ]);
@@ -338,6 +348,8 @@ export class BuyerDashboardService {
         spend30d: Number(spend30d._sum.total ?? 0),
         spend90d: Number(spend90d._sum.total ?? 0),
         spendAllTime: Number(spendAllTime._sum.total ?? 0),
+        unpaidInvoiceCount: unpaidAgg._count._all,
+        unpaidInvoiceTotal: Number(unpaidAgg._sum.total ?? 0),
       },
       frequentlyOrdered,
       newFromSeller,

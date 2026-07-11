@@ -16,6 +16,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
+import { useCustomer, useCustomerPrices } from "../lib/api/customers";
 import {
   useCreateOrderAsDriver,
   useActiveOrderForCustomer,
@@ -28,12 +29,15 @@ import { resolveProductByCode } from "../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
+  classifyMargin,
   computeLineSubtotal,
   computeMarginFraction,
   costPerSellingUnit,
   effectiveQty,
+  getTierPrice,
   roundMoney,
 } from "../lib/pricing";
+import { useMarginConfig, floorForCategory } from "../lib/api/margin";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import type { CreatedProduct } from "../lib/api/products";
@@ -45,6 +49,11 @@ import { useAuthStore } from "../lib/auth-store";
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { BarcodeFab } from "./BarcodeFab";
+import { LicenseGuardModal } from "./LicenseGuardModal";
+import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
+import { ScanOutcome } from "../lib/scan-loop";
+import { withCartRows } from "../lib/visible-cart";
+import { orderSubmitGate } from "../lib/order-draft-logic";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -81,14 +90,23 @@ type Product = {
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
+  // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
+  // /products payload already carries these — getTierPrice coerces + guards.
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
   category?: string | null;
+  /** Regulated category this product belongs to (drives the license-guard remove-line exit). */
+  trackedCategoryId?: string | null;
+  /** Per-piece average cost — drives the live margin hint + the cost eye (web uses
+   *  averageCost, not standardCost). Operator/driver endpoints return it; buyers
+   *  never get this screen and their endpoints strip cost fields. */
+  averageCost?: number | string | null;
+  standardCost?: number | string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
-  /** Per-piece costs (operator/driver endpoints return them; buyers never get
-   *  this screen and their endpoints strip cost fields). For the cost eye. */
-  averageCost?: number | string | null;
-  standardCost?: number | string | null;
 };
 
 /**
@@ -141,9 +159,10 @@ function toNumber(v: number | string | null | undefined): number {
   return 0;
 }
 
-/** The effective per-unit price for a line: the override, else the catalog price. */
-function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
-  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
+/** The effective per-unit price for a line: the override, else the resolved base
+ *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
+function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
+  return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
 export function NewOrderScreen({
@@ -340,8 +359,36 @@ function ProductPickView({
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Fetched once when customer is confirmed — price pre-fill is instant during scanning.
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
+  // Customer tier pricing (mirrors web CreateOrderModal): the effective tier is
+  // the per-product CustomerPrice override, else the customer's default tier.
+  // Prices shown/summed/submitted use getTierPrice(product, effectiveTier), not
+  // the raw list price — so a tier-N customer sees the price the server bills.
+  const { data: customerDetail } = useCustomer(customerId);
+  const { data: customerPrices } = useCustomerPrices(customerId);
+  // Tenant margin config for the live cost/margin hint in the cart rows.
+  const { data: marginConfig } = useMarginConfig();
+  const customerTier = customerDetail?.pricingTier ?? 1;
+  const cpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
+    return m;
+  }, [customerPrices]);
+  const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
+  /** The customer's effective per-selling-unit (box) price for a product. */
+  const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
+  // Regulated-license guard: the blocked categories from a 409, and which
+  // submitOrder(mergeChoice) to replay once the license/override is captured.
+  const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
+  const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
+  // Order-level options (mirror web CreateOrderModal): notes, urgent flag,
+  // requested delivery date (YYYY-MM-DD), and an order-level discount.
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [orderNotes, setOrderNotes] = useState("");
+  const [orderUrgent, setOrderUrgent] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState("");
+  const [discountRaw, setDiscountRaw] = useState("");
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
   const scrollRef = useRef<ScrollView>(null);
@@ -350,12 +397,25 @@ function ProductPickView({
   const [scrollToId, setScrollToId] = useState<string | null>(null);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
+  // The pending scroll target survives across renders so a freshly-pinned row
+  // (a just-scanned out-of-catalog item, mounted this commit) can complete the
+  // scroll from its own onLayout — which fires AFTER this effect. Without it,
+  // rowYRef has no entry yet at effect time and the scroll silently no-ops.
+  const scrollToIdRef = useRef<string | null>(null);
+  const scrollToRow = (id: string) => {
+    const y = rowYRef.current.get(id);
+    if (y == null) return false;
+    scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
+    return true;
+  };
   useEffect(() => {
     if (!scrollToId) return;
-    const y = rowYRef.current.get(scrollToId);
-    if (y != null)
-      scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
-    setScrollToId(null);
+    scrollToIdRef.current = scrollToId;
+    if (scrollToRow(scrollToId)) {
+      scrollToIdRef.current = null;
+      setScrollToId(null);
+    }
+    // else: leave it pending for the row's onLayout to finish once measured.
   }, [scrollToId, items]);
   /**
    * Products discovered via barcode scan that aren't in the locally-cached
@@ -397,8 +457,20 @@ function ProductPickView({
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
-    // Snapshot history at call time (closed over — loaded before scanning starts).
+    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
+    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
+    // pre-fills — never over a SPECIAL tier price, which is already the customer's
+    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
     const histEntry = priceHistory?.[id];
+    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
+    const tierPrice = p ? tierPriceFor(p) : 0;
+    const isSpecial = effectiveTierFor(id) !== 1;
+    const prefill =
+      !isSpecial &&
+      histEntry != null &&
+      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
+        ? histEntry.lastPrice
+        : undefined;
     setItems((m) => {
       const isNew = !m[id];
       const prev = m[id] ?? { qty: 0 };
@@ -406,15 +478,21 @@ function ProductPickView({
         const boxes = (prev.boxes ?? 0) + 1;
         const pieces = prev.pieces ?? 0;
         const line: LineState = { qty: boxes * upb + pieces, boxes, pieces };
-        if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+        if (isNew && prefill != null) line.unitPrice = prefill;
         return { ...m, [id]: line };
       }
       const line: LineState = { qty: (prev.qty ?? 0) + 1 };
-      if (isNew && histEntry) line.unitPrice = histEntry.lastPrice;
+      if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
-    if (productSnapshot && !productById.has(id)) {
-      setScannedById((m) => ({ ...m, [id]: productSnapshot }));
+    // Always retain a scanned product's snapshot — even one currently in the
+    // local list. The empty-search products query can be GC'd (~5min) while a
+    // non-empty search is held, so the setSearch("") after a local scan may hit
+    // a cold refetch where `products` is briefly []; the snapshot keeps this row
+    // resolvable for the totals and list. productById prefers the live entry, so
+    // the snapshot only ever acts as a fallback.
+    if (productSnapshot) {
+      setScannedById((m) => (id in m ? m : { ...m, [id]: productSnapshot }));
     }
   };
 
@@ -532,8 +610,10 @@ function ProductPickView({
     setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
-  const handleBarcodeScanned = async (code: string) => {
-    setScanOpen(false);
+  // Continuous-scan handler: the scanner overlay stays open between items and
+  // renders the returned feedback ("Added … — scan next"); only the
+  // create-product hand-off (and the Done button) closes it.
+  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
 
@@ -549,9 +629,9 @@ function ProductPickView({
     );
     if (local) {
       addOne(local.id, local);
+      setSearch(""); // an active search would hide the added row (web clears too)
       setScrollToId(local.id);
-      showToast(`Added ${displayName(local)}`);
-      return;
+      return { feedback: { kind: "added", text: `Added ${displayName(local)}` } };
     }
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
@@ -559,16 +639,15 @@ function ProductPickView({
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
         addOne(result.product.id, result.product);
+        setSearch("");
         setScrollToId(result.product.id);
-        showToast(`Added ${displayName(result.product)}`);
-        return;
+        return { feedback: { kind: "added", text: `Added ${displayName(result.product)}` } };
       }
     } catch (err: any) {
       // Network / 5xx — surface so the operator can retry instead of silently
       // showing "no product found" (which implies the item doesn't exist).
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      showToast(msg);
-      return;
+      return { feedback: { kind: "error", text: msg } };
     }
 
     // 3) Nothing matched. Mirror web's behaviour: offer to create the product
@@ -583,9 +662,9 @@ function ProductPickView({
           { label: "Create", onPress: () => setCreateCode(trimmed) },
         ],
       );
-    } else {
-      showToast(`No product for "${trimmed}"`);
+      return { close: true };
     }
+    return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
   };
 
   // Non-null while the inline create sheet is open; holds the scanned/typed code
@@ -616,9 +695,12 @@ function ProductPickView({
   }, [products]);
 
   const filtered = useMemo(() => {
-    if (category === "All") return products;
-    return products.filter((p) => p.category === category);
-  }, [products, category]);
+    const base = category === "All" ? products : products.filter((p) => p.category === category);
+    // While browsing (no active search), pin cart lines the filter would hide
+    // — scanned items outside the category/page must keep a visible row.
+    if (search.trim()) return base;
+    return withCartRows(base, Object.keys(items), (id) => productById.get(id));
+  }, [products, category, search, items, productById]);
 
   // Total + count, computed from items + the unified product map so scanned
   // items that aren't in the local list still contribute. Subtotal uses the
@@ -634,7 +716,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: effectiveUnitPrice(line, p),
+        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -648,7 +730,8 @@ function ProductPickView({
       total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
     }
     return { total: roundMoney(total), totalItems };
-  }, [items, productById, unlisted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, productById, unlisted, cpMap, customerTier]);
 
   const inc = (id: string) => addOne(id);
   const dec = (id: string) => removeOne(id);
@@ -658,17 +741,20 @@ function ProductPickView({
   const { data: activeOrder } = useActiveOrderForCustomer(customerId);
 
   const canSave = totalItems > 0 && !createOrder.isPending;
+  // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
+  const canSaveDraft = !!customerId && !createOrder.isPending;
 
-  /** Submit with a specific (or no) merge choice. */
-  const submitOrder = (mergeChoice?: "merge" | "separate") => {
+  /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
+  const submitOrder = (mergeChoice?: "merge" | "separate", asDraft = false) => {
     const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
-        // Send a unitPrice override whenever the operator set a price that differs
-        // from catalog — below list (discount) OR above list (upsell). The server
-        // treats it as a one-time MANUAL/DISCOUNTED override.
-        const catalog = p ? toNumber(p.pricePerUnit) : 0;
+        // Send a unitPrice override only when the operator set a price that
+        // differs from the customer's TIER price — a one-time discount (below)
+        // or upsell (above). A line sitting at the tier price sends nothing so
+        // the server applies the SPECIAL/tier price authoritatively.
+        const catalog = p ? tierPriceFor(p) : 0;
         const override =
           line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
@@ -696,18 +782,27 @@ function ProductPickView({
       }));
     const itemPayload = [...catalogPayload, ...unlistedPayload];
 
+    const discountAmount = Math.max(0, parseFloat(discountRaw) || 0);
+    const deliveryTrim = deliveryDate.trim();
     createOrder.mutate(
       {
         customerId,
         items: itemPayload,
         routeRunId: runId,
         routeRunStopId: stopId,
+        ...(asDraft ? { status: "DRAFT" as const } : {}),
+        ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
+        ...(orderUrgent ? { urgent: true } : {}),
+        ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
+        ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
       },
       {
         onSuccess: (order) => {
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
+          } else if (asDraft) {
+            showToast("Saved as draft");
           }
           onSaved(order.orderNumber);
         },
@@ -726,7 +821,17 @@ function ProductPickView({
             body?.code === "MERGE_CHOICE_REQUIRED" &&
             body?.activeOrder
           ) {
-            promptMergeChoice(body.activeOrder);
+            // Forward asDraft so a draft that races a 409 stays a draft after
+            // the operator picks Merge / Create separate.
+            promptMergeChoice(body.activeOrder, asDraft);
+            return;
+          }
+          // Regulated-sale block: open the license guard and replay this exact
+          // submit (same mergeChoice) once the license/override is captured.
+          const blocked = parseRegulatedAuthError(err);
+          if (blocked && blocked.length > 0) {
+            licenseRetryRef.current = mergeChoice;
+            setLicenseBlock(blocked);
             return;
           }
           const msg = body?.message ?? err?.message ?? "Unable to save order.";
@@ -736,35 +841,39 @@ function ProductPickView({
     );
   };
 
-  const promptMergeChoice = (existing: {
-    orderNumber: string | null;
-    itemCount: number;
-    total: number;
-  }) => {
+  const promptMergeChoice = (
+    existing: {
+      orderNumber: string | null;
+      itemCount: number;
+      total: number;
+    },
+    asDraft = false,
+  ) => {
     chooseAction(
       "Open order exists",
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
       [
         { label: "Cancel", style: "cancel" },
-        { label: "Merge", onPress: () => submitOrder("merge") },
-        { label: "Create separate", onPress: () => submitOrder("separate") },
+        { label: "Merge", onPress: () => submitOrder("merge", asDraft) },
+        { label: "Create separate", onPress: () => submitOrder("separate", asDraft) },
       ],
     );
   };
 
-  const onSave = () => {
-    if (totalItems === 0) {
-      alertInfo("Add at least one item", "Tap + on any product to start the order.");
+  const onSave = (asDraft = false) => {
+    const gate = orderSubmitGate({ hasCustomer: !!customerId, itemCount: totalItems, asDraft });
+    if (!gate.ok) {
+      alertInfo(gate.title ?? "Can't save yet", gate.message ?? "");
       return;
     }
 
     // If the customer already has an active draft/pending order, ask the operator
     // explicitly — never silently merge or silently duplicate.
     if (activeOrder) {
-      promptMergeChoice(activeOrder);
+      promptMergeChoice(activeOrder, asDraft);
       return;
     }
-    submitOrder();
+    submitOrder(undefined, asDraft);
   };
 
   return (
@@ -776,7 +885,7 @@ function ProductPickView({
           <NavAction
             label={createOrder.isPending ? "Saving…" : "Save"}
             bold
-            onPress={canSave ? onSave : undefined}
+            onPress={canSave ? () => onSave() : undefined}
           />
         }
       />
@@ -797,6 +906,79 @@ function ProductPickView({
       </View>
 
       <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+        {/* Order options — notes, urgent, delivery date, order-level discount. */}
+        <View style={styles.optionsWrap}>
+          <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
+            <Ionicons name="options-outline" size={16} color={ios.brand} />
+            <Text style={styles.optionsTitle}>Order options</Text>
+            {!optionsOpen && (orderUrgent || deliveryDate || discountRaw || orderNotes) ? (
+              <Text style={styles.optionsSummary} numberOfLines={1}>
+                {[
+                  orderUrgent ? "Urgent" : null,
+                  deliveryDate ? `Deliver ${deliveryDate}` : null,
+                  parseFloat(discountRaw) > 0 ? `-$${parseFloat(discountRaw).toFixed(2)}` : null,
+                  orderNotes.trim() ? "Notes" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            ) : null}
+            <Ionicons
+              name={optionsOpen ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={ios.label3}
+            />
+          </Pressable>
+          {optionsOpen ? (
+            <View style={styles.optionsBody}>
+              <Pressable style={styles.optionRow} onPress={() => setOrderUrgent((u) => !u)}>
+                <Ionicons
+                  name={orderUrgent ? "flame" : "flame-outline"}
+                  size={18}
+                  color={orderUrgent ? ios.system.orange : ios.label2}
+                />
+                <Text style={styles.optionLabel}>Urgent</Text>
+                <View style={[styles.toggle, orderUrgent && styles.toggleOn]}>
+                  <View style={[styles.toggleDot, orderUrgent && styles.toggleDotOn]} />
+                </View>
+              </Pressable>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Delivery date</Text>
+                <TextInput
+                  value={deliveryDate}
+                  onChangeText={setDeliveryDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.optionInput}
+                />
+              </View>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Order discount ($)</Text>
+                <TextInput
+                  value={discountRaw}
+                  onChangeText={setDiscountRaw}
+                  placeholder="0.00"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="decimal-pad"
+                  style={styles.optionInput}
+                />
+              </View>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Notes</Text>
+                <TextInput
+                  value={orderNotes}
+                  onChangeText={setOrderNotes}
+                  placeholder="Delivery / handling notes…"
+                  placeholderTextColor={ios.label3}
+                  multiline
+                  style={[styles.optionInput, { minHeight: 60, textAlignVertical: "top" }]}
+                />
+              </View>
+            </View>
+          ) : null}
+        </View>
+
         <SearchBar
           placeholder="Search items…"
           value={search}
@@ -860,13 +1042,22 @@ function ProductPickView({
             {filtered.map((p) => {
               const line = items[p.id];
               const q = line ? effectiveQty(line, p.unitsPerBox) : 0;
-              const price = toNumber(p.pricePerUnit);
+              const price = tierPriceFor(p);
+              const listPrice = toNumber(p.pricePerUnit);
+              const isSpecial = price < listPrice - 0.0001;
               const upb = Number(p.unitsPerBox ?? 0);
               const isBoxed = upb > 1;
               return (
                 <View
                   key={p.id}
-                  onLayout={(e) => rowYRef.current.set(p.id, e.nativeEvent.layout.y)}
+                  onLayout={(e) => {
+                    rowYRef.current.set(p.id, e.nativeEvent.layout.y);
+                    // Complete a scroll waiting on this row's first measurement.
+                    if (scrollToIdRef.current === p.id && scrollToRow(p.id)) {
+                      scrollToIdRef.current = null;
+                      setScrollToId(null);
+                    }
+                  }}
                   style={[
                     styles.productRow,
                     // Boxed + added: switch to a column layout so we can stack
@@ -889,7 +1080,13 @@ function ProductPickView({
                         {displayName(p)}
                       </Text>
                       <Text style={styles.productMeta}>
-                        {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
+                        {p.sku ? `SKU ${p.sku} · ` : ""}
+                        {isSpecial ? (
+                          <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text>
+                        ) : null}
+                        <Text style={isSpecial ? styles.metaSpecial : undefined}>
+                          ${price.toFixed(2)}
+                        </Text>
                         {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
                       </Text>
                     </View>
@@ -1006,7 +1203,7 @@ function ProductPickView({
                 (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
               ]}
               disabled={!canSave}
-              onPress={onSave}
+              onPress={() => onSave()}
               accessibilityState={{ disabled: !canSave }}
             >
               <Text style={styles.confirmBtnText}>
@@ -1016,20 +1213,61 @@ function ProductPickView({
             </Pressable>
           </View>
         </View>
-        {totalItems === 0 && !createOrder.isPending ? (
-          <Text style={styles.footerHint}>Add at least one item to confirm.</Text>
-        ) : null}
+        <View style={styles.footerSubRow}>
+          {totalItems === 0 && !createOrder.isPending ? (
+            <Text style={styles.footerHint}>Add an item to confirm, or save a draft.</Text>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          {canSaveDraft || createOrder.isPending ? (
+            <Pressable onPress={() => onSave(true)} disabled={!canSaveDraft} hitSlop={6}>
+              <Text style={[styles.footerDraftText, !canSaveDraft && { opacity: 0.4 }]}>
+                Save as draft
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
 
       {scanOpen ? (
-        <BarcodeScanner onScanned={handleBarcodeScanned} onClose={() => setScanOpen(false)} />
+        <BarcodeScanner
+          continuous
+          onScanned={handleBarcodeScanned}
+          onClose={() => setScanOpen(false)}
+        />
       ) : null}
 
       {/* Floating, draggable scan button — keeps the scanner one tap away even
           when the operator has scrolled deep into the product list. Hidden
           while the cart sheet or the in-list scanner is up so it doesn't
           stack on top of either. */}
-      <BarcodeFab onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+      <BarcodeFab continuous onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+
+      <LicenseGuardModal
+        open={!!licenseBlock}
+        customerId={customerId}
+        blocked={licenseBlock ?? []}
+        readOnly={!canCreateProducts}
+        onResolved={() => {
+          const mc = licenseRetryRef.current;
+          setLicenseBlock(null);
+          submitOrder(mc);
+        }}
+        onRemoveLines={(categoryIds) => {
+          setItems((prev) => {
+            const next = { ...prev };
+            for (const pid of Object.keys(next)) {
+              const p = productById.get(pid);
+              if (p?.trackedCategoryId && categoryIds.includes(p.trackedCategoryId))
+                delete next[pid];
+            }
+            return next;
+          });
+          setLicenseBlock(null);
+          showToast("Removed regulated line(s)");
+        }}
+        onClose={() => setLicenseBlock(null)}
+      />
 
       {/* Create-on-miss: overlays the cart (never navigates away) so the
           in-progress order survives. Supports new-product OR variant-of. */}
@@ -1045,6 +1283,8 @@ function ProductPickView({
         items={items}
         productById={productById}
         priceHistory={priceHistory}
+        tierPriceFor={tierPriceFor}
+        marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
         totalItems={totalItems}
@@ -1098,6 +1338,8 @@ function CartModal({
   items,
   productById,
   priceHistory,
+  tierPriceFor,
+  marginFloorFor,
   unlisted,
   total,
   totalItems,
@@ -1125,6 +1367,9 @@ function CartModal({
   items: Record<string, LineState>;
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
+  tierPriceFor: (p: Product) => number;
+  /** The customer's effective margin floor (fraction) for a product's category. */
+  marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
   total: number;
   totalItems: number;
@@ -1193,6 +1438,8 @@ function CartModal({
                     key={id}
                     product={product}
                     line={line}
+                    catalogPrice={tierPriceFor(product)}
+                    marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
@@ -1260,6 +1507,8 @@ function CartModal({
 function CartRow({
   product,
   line,
+  catalogPrice,
+  marginFloor,
   historyPrice,
   onChangeBoxes,
   onChangePieces,
@@ -1274,6 +1523,11 @@ function CartRow({
 }: {
   product: Product;
   line: LineState;
+  /** The customer's effective tier price for this product (the base to compare
+   *  an override against and to fall back to when no override is set). */
+  catalogPrice: number;
+  /** Category margin floor (fraction) for the live cost/margin hint. */
+  marginFloor: number;
   historyPrice?: number;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
@@ -1288,8 +1542,7 @@ function CartRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
-  const catalogPrice = toNumber(product.pricePerUnit);
-  const effUnit = effectiveUnitPrice(line, product);
+  const effUnit = effectiveUnitPrice(line, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
@@ -1300,7 +1553,9 @@ function CartRow({
     unitsPerBox: product.unitsPerBox ?? null,
   });
 
-  // Cost eye — hidden by default on every line, session-local only.
+  // Cost eye + live margin hint (mirror web): both read one per-piece cost —
+  // averageCost, else standardCost. Cost eye is hidden by default (session-local);
+  // the margin pill (classifyMargin vs the category floor) hides when no cost.
   const [costVisible, setCostVisible] = useState(false);
   const pieceCost =
     product.averageCost != null
@@ -1308,12 +1563,13 @@ function CartRow({
       : product.standardCost != null
         ? toNumber(product.standardCost)
         : null;
-  // 0 is a real cost; only null hides the eye entirely.
+  // 0 is a real cost; only null hides the eye/hint entirely.
   const hasCost = pieceCost != null && Number.isFinite(pieceCost);
   const sellingUnitCost = hasCost ? costPerSellingUnit(pieceCost!, product.unitsPerBox) : null;
   const marginFrac = hasCost
     ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
     : null;
+  const marginClass = classifyMargin(marginFrac, marginFloor);
 
   return (
     <View style={styles.cartRow}>
@@ -1357,6 +1613,26 @@ function CartRow({
           ) : null}
         </View>
       </View>
+
+      {/* Live margin hint — margin on the effective price vs the product's cost. */}
+      {marginFrac != null ? (
+        <Text
+          style={[
+            styles.marginHint,
+            marginClass === "belowCost" || marginClass === "belowFloor"
+              ? { color: ios.system.red }
+              : marginClass === "warn"
+                ? { color: ios.system.orange }
+                : { color: ios.label2 },
+          ]}
+        >
+          {marginClass === "belowCost"
+            ? `Below cost (${Math.round(marginFrac * 100)}%)`
+            : marginClass === "belowFloor"
+              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
+              : `${Math.round(marginFrac * 100)}% margin`}
+        </Text>
+      ) : null}
 
       {isBoxed ? (
         <>
@@ -1716,6 +1992,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
+  optionsWrap: { marginHorizontal: 16, marginTop: 10 },
+  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  optionsBody: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+    marginBottom: 4,
+  },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  optionField: { gap: 6 },
+  optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  optionInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  toggle: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: ios.fill3,
+    padding: 3,
+    justifyContent: "center",
+  },
+  toggleOn: { backgroundColor: ios.brand },
+  toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: "#fff" },
+  toggleDotOn: { alignSelf: "flex-end" },
   customerChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -1786,6 +2096,8 @@ const styles = StyleSheet.create({
     marginTop: 1,
     fontVariant: ["tabular-nums"],
   },
+  metaWas: { color: ios.label3, textDecorationLine: "line-through" },
+  metaSpecial: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
   stepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -1913,8 +2225,19 @@ const styles = StyleSheet.create({
     color: ios.label3,
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+    flex: 1,
+  },
+  footerSubRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
     marginTop: 6,
-    textAlign: "right",
+  },
+  footerDraftText: {
+    color: ios.brand,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 
   // ── Cart review modal ─────────────────────────────────────────────────────
@@ -2010,6 +2333,13 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  marginHint: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    marginTop: -4,
+    marginBottom: 2,
+    textAlign: "right",
+  },
   cartPriceWas: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",

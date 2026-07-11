@@ -91,5 +91,37 @@ export function useVoidPayment() {
   });
 }
 
+/** Payment methods that are directly editable (Advance/Credit-Note are debited
+ *  from a source balance and can't be hand-edited — server rejects them). */
+export type EditablePaymentMethod = "CASH" | "CHECK" | "ACH" | "CREDIT_CARD" | "OTHER";
+
+export interface UpdatePaymentDto {
+  invoiceId: string;
+  paymentId: string;
+  method: EditablePaymentMethod;
+  amount: number;
+  paidAt?: string;
+  bankCharges?: number;
+  reference?: string;
+  notes?: string;
+}
+
+/**
+ * Correct a recorded payment (`PATCH /invoices/:invoiceId/payments/:paymentId`).
+ * Server rejects CREDIT_NOTE/ADVANCE methods and VOID invoices, caps the amount
+ * at `total − other payments`, and recomputes the invoice status. Mirrors web's
+ * EditPaymentModal.
+ */
+export function useUpdatePayment() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, UpdatePaymentDto>({
+    mutationFn: ({ invoiceId, paymentId, ...body }) =>
+      apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}`, body).then((r) => r.data),
+    onSuccess: (_, { paymentId }) => invalidatePayments(qc, paymentId),
+  });
+}
+
+// isPaymentEditable moved to lib/invoices-logic.ts (pure, unit-testable).
+
 // Deferred (redundant with invoices/[id]/record-payment.tsx): standalone record
 // (POST /invoices/payments/record), CSV export (GET /invoices/payments/export).

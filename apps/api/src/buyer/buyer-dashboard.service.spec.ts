@@ -45,4 +45,33 @@ describe("BuyerDashboardService — W7 gate", () => {
       expect(args?.where?.trackedCategoryId).toBeUndefined();
     }
   });
+
+  it("surfaces unpaid-invoice count + total from the open-status aggregate", async () => {
+    visibility.computeGate.mockResolvedValue({ hiddenIds: new Set(), locked: [] });
+    prisma.invoice.aggregate.mockResolvedValue({ _count: { _all: 3 }, _sum: { total: 240.5 } });
+
+    const res = await service.getDashboard("c1");
+
+    expect(res.stats.unpaidInvoiceCount).toBe(3);
+    expect(res.stats.unpaidInvoiceTotal).toBe(240.5);
+    // Only the open statuses count — matches getAnalytics' summary.
+    expect(prisma.invoice.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          customerId: "c1",
+          status: { in: ["SENT", "VIEWED", "PARTIAL", "OVERDUE"] },
+        }),
+      }),
+    );
+  });
+
+  it("defaults unpaid stats to 0 when there are no open invoices", async () => {
+    visibility.computeGate.mockResolvedValue({ hiddenIds: new Set(), locked: [] });
+    prisma.invoice.aggregate.mockResolvedValue({ _count: { _all: 0 }, _sum: { total: null } });
+
+    const res = await service.getDashboard("c1");
+
+    expect(res.stats.unpaidInvoiceCount).toBe(0);
+    expect(res.stats.unpaidInvoiceTotal).toBe(0);
+  });
 });

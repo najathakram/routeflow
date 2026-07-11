@@ -99,6 +99,35 @@ describe("ProductsService", () => {
         }),
       );
     });
+
+    it("out-of-stock alone uses a top-level OR of the stock predicates", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ stockStatus: "OUT_OF_STOCK" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.OR).toEqual([{ isActive: false }, { currentStock: { lte: 0 } }]);
+      expect(where.AND).toBeUndefined();
+    });
+
+    it("AND-s search with out-of-stock instead of collapsing them into one OR", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ search: "tomato", stockStatus: "OUT_OF_STOCK" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      // The search disjunction must NOT be flattened into the stock disjunction —
+      // otherwise every out-of-stock product matches regardless of the search text.
+      expect(where.OR).toBeUndefined();
+      expect(where.AND).toEqual([
+        { OR: expect.arrayContaining([expect.objectContaining({ name: expect.any(Object) })]) },
+        { OR: [{ isActive: false }, { currentStock: { lte: 0 } }] },
+      ]);
+      // count must use the identical where so pagination stays consistent
+      expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
+    });
   });
 
   // ─── listCategories ───────────────────────────────────────────────────────
@@ -465,6 +494,37 @@ describe("ProductsService", () => {
       await expect(service.update("prod-1", { sku: "DUP-SKU" } as any)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it("syncs variantName with name when renaming a variant (name===variantName invariant)", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        parentProductId: "parent-1",
+        variantName: "Strawberry",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { name: "Strawberry Banana" } as any);
+
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            name: "Strawberry Banana",
+            variantName: "Strawberry Banana",
+          }),
+        }),
+      );
+    });
+
+    it("does NOT set variantName when renaming a standalone product", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, parentProductId: null });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { name: "Renamed" } as any);
+
+      expect(prisma.product.update.mock.calls[0][0].data.variantName).toBeUndefined();
     });
   });
 

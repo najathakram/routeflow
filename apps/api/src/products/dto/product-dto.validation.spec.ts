@@ -60,6 +60,30 @@ describe("product DTO validation (tolerant optionals)", () => {
     expect(abc.errors.map((e) => e.property)).toContain("priceTier3");
   });
 
+  it("accepts a NUMERIC pricePerUnit + standardCost (mobile sends numbers)", async () => {
+    // Before the @Transform hardening these @IsDecimal string fields had no
+    // coercion, so a numeric price 400'd EVERY mobile product create/edit.
+    const create = plainToInstance(CreateProductDto, {
+      name: "T",
+      unit: "ea",
+      pricePerUnit: 12.5,
+      standardCost: 4,
+    });
+    expect(await validate(create)).toHaveLength(0);
+    expect(create.pricePerUnit).toBe("12.5");
+    expect(create.standardCost).toBe("4");
+
+    const { dto, errors } = await validateUpdate({ pricePerUnit: 7, standardCost: 3 });
+    expect(errors).toHaveLength(0);
+    expect(dto.pricePerUnit).toBe("7");
+    expect(dto.standardCost).toBe("3");
+  });
+
+  it("still requires a non-empty pricePerUnit on create", async () => {
+    const dto = plainToInstance(CreateProductDto, { name: "T", unit: "ea", pricePerUnit: "" });
+    expect((await validate(dto)).map((e) => e.property)).toContain("pricePerUnit");
+  });
+
   it("applies the same tolerance on CreateProductDto", async () => {
     const dto = plainToInstance(CreateProductDto, {
       name: "New Product",

@@ -3,7 +3,15 @@ import { apiClient } from "../api-client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InvoiceStatus = "DRAFT" | "SENT" | "VIEWED" | "PARTIAL" | "PAID" | "OVERDUE" | "VOID";
+export type InvoiceStatus =
+  | "DRAFT"
+  | "SENT"
+  | "VIEWED"
+  | "PARTIAL"
+  | "PAID"
+  | "OVERDUE"
+  | "VOID"
+  | "WRITTEN_OFF";
 
 export interface InvoiceItem {
   id: string;
@@ -54,6 +62,9 @@ export interface Invoice {
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
   shippedAt?: string | null;
+  /** Set when the invoice was written off as bad debt (status WRITTEN_OFF). */
+  writeOffReason?: string | null;
+  writtenOffAt?: string | null;
   items?: InvoiceItem[];
   payments?: InvoicePayment[];
   createdAt: string;
@@ -186,6 +197,25 @@ export function useVoidInvoice() {
  * Permanently delete an invoice. Server rejects if any payments are recorded
  * (operator must remove payments first or void). Typically used after voiding.
  */
+/**
+ * Write off an unpaid invoice as bad debt (`POST /invoices/:id/write-off`, body
+ * `{ reason }`). Server allows only SENT | VIEWED | PARTIAL | OVERDUE → sets
+ * status WRITTEN_OFF + writeOffReason/writtenOffAt. Not reversible.
+ */
+export function useWriteOffInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) =>
+      apiClient.post(`/invoices/${id}/write-off`, { reason }).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+    },
+  });
+}
+
 export function useDeleteInvoice() {
   const qc = useQueryClient();
   return useMutation<{ id: string; message: string }, Error, string>({
@@ -272,6 +302,33 @@ export function useCreatePartialInvoiceFromOrder() {
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders", orderId] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/**
+ * Create (or fetch, idempotently) the full invoice for a delivered order —
+ * `POST /invoices/from-order/:orderId`. Returns `Invoice[]` because a regulated
+ * order can split into multiple invoices (one per license category). Safe to call
+ * after the DELIVERED transition even though the server also fire-and-forget
+ * auto-creates the draft: the endpoint returns the existing invoice(s) rather
+ * than duplicating, and calling it here is how the client gets the id(s)
+ * synchronously (the changeStatus auto-create doesn't block the response).
+ */
+export function useCreateInvoiceFromOrder() {
+  const qc = useQueryClient();
+  return useMutation<Invoice[], Error, string>({
+    mutationFn: (orderId) =>
+      apiClient.post(`/invoices/from-order/${orderId}`).then((r) => {
+        const d = r.data;
+        return Array.isArray(d) ? d : [d];
+      }),
+    onSuccess: (_, orderId) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders", orderId] });
     },
   });
 }

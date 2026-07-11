@@ -24,6 +24,7 @@ import {
   useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
+import { canWriteOff, isPaymentEditable } from "../../../../lib/invoices-logic";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
@@ -281,6 +282,14 @@ export default function InvoiceDetailScreen() {
               label={pdfMut.isPending ? "Loading…" : "Share final"}
               onPress={() => handlePdf("final")}
             />
+            {canWriteOff(invoice.status) ? (
+              <ActionTile
+                icon="remove-circle-outline"
+                label="Write off"
+                tone="danger"
+                onPress={() => router.push(`/(operator)/invoices/${id}/write-off`)}
+              />
+            ) : null}
             {!isVoid ? (
               <ActionTile icon="ban-outline" label="Void" tone="danger" onPress={handleVoid} />
             ) : (
@@ -389,6 +398,18 @@ export default function InvoiceDetailScreen() {
                     {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
                   </View>
                   <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
+                  {isPaymentEditable(p.method, p.status, invoice.status) ? (
+                    <Pressable
+                      hitSlop={8}
+                      style={styles.payEditBtn}
+                      onPress={() =>
+                        router.push(`/(operator)/invoices/${id}/payments/${p.id}/edit`)
+                      }
+                      accessibilityLabel="Edit payment"
+                    >
+                      <Ionicons name="pencil-outline" size={16} color={ios.brand} />
+                    </Pressable>
+                  ) : null}
                 </View>
               ))}
             </View>
@@ -596,5 +617,13 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.system.greenInk,
     fontVariant: ["tabular-nums"],
+  },
+  payEditBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: ios.fill3,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
