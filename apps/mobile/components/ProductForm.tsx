@@ -5,119 +5,31 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { CategoryInput } from "./CategoryInput";
+import { ProductPickerSheet } from "./ProductPickerSheet";
+import {
+  buildProductPayload,
+  emptyProductForm,
+  productFormFromValues,
+  type ProductFormValues,
+  type SubmitPayload,
+} from "../lib/product-form";
 
-export interface ProductFormValues {
-  name: string;
-  sku: string;
-  barcode: string;
-  category: string;
-  unit: string;
-  /**
-   * Loose pieces per box. Leave blank for products sold individually.
-   * When set (>1), `pricePerUnit` is treated as the BOX price; loose pieces
-   * are prorated as `pricePerUnit / unitsPerBox` (apps/api/src/common/pricing.ts).
-   * The new-order + edit-order screens then offer the operator a Boxes +
-   * Loose pieces editor instead of a single qty stepper.
-   */
-  unitsPerBox: string;
-  description: string;
-  pricePerUnit: string;
-  standardCost: string;
-  currentStock: string;
-  reorderPoint: string;
-  reorderQty: string;
-  isActive: boolean;
-}
-
-export function emptyProductForm(): ProductFormValues {
-  return {
-    name: "",
-    sku: "",
-    barcode: "",
-    category: "",
-    unit: "ea",
-    unitsPerBox: "",
-    description: "",
-    pricePerUnit: "",
-    standardCost: "",
-    currentStock: "",
-    reorderPoint: "",
-    reorderQty: "",
-    isActive: true,
-  };
-}
-
-export function productFormFromValues(
-  p: Partial<Record<keyof ProductFormValues | "pricePerUnit" | "currentStock", any>> &
-    Record<string, any>,
-): ProductFormValues {
-  return {
-    name: p.name ?? "",
-    sku: p.sku ?? "",
-    barcode: p.barcode ?? "",
-    category: p.category ?? "",
-    unit: p.unit ?? "ea",
-    unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
-    description: p.description ?? "",
-    pricePerUnit: p.pricePerUnit != null ? String(p.pricePerUnit) : "",
-    standardCost:
-      (p.standardCost ?? p.costPerUnit) != null ? String(p.standardCost ?? p.costPerUnit) : "",
-    currentStock: p.currentStock != null ? String(p.currentStock) : "",
-    reorderPoint: p.reorderPoint != null ? String(p.reorderPoint) : "",
-    reorderQty: p.reorderQty != null ? String(p.reorderQty) : "",
-    isActive: p.isActive ?? true,
-  };
-}
+// Re-export the pure form logic so existing importers keep their import site,
+// while the logic itself lives in a React-Native-free module that mobile Jest
+// can unit-test directly (see __tests__/operator-create-forms.test.ts).
+export {
+  buildProductPayload,
+  emptyProductForm,
+  productFormFromValues,
+  type ProductFormValues,
+  type SubmitPayload,
+};
 
 function parseOptionalNumber(v: string): number | undefined {
   const t = v.trim();
   if (!t) return undefined;
   const n = Number(t);
   return Number.isFinite(n) ? n : undefined;
-}
-
-export interface SubmitPayload {
-  name: string;
-  sku?: string;
-  barcode?: string;
-  category?: string;
-  unit?: string;
-  unitsPerBox?: number;
-  description?: string;
-  pricePerUnit: number;
-  standardCost?: number;
-  currentStock?: number;
-  reorderPoint?: number;
-  reorderQty?: number;
-  isActive: boolean;
-}
-
-export function buildProductPayload(form: ProductFormValues): SubmitPayload | { error: string } {
-  const name = form.name.trim();
-  if (!name) return { error: "Name is required." };
-  const price = parseOptionalNumber(form.pricePerUnit);
-  if (price == null || price < 0) return { error: "Enter a valid price." };
-  // unitsPerBox: any positive integer is allowed, but values <= 1 (or empty)
-  // mean "no box packaging" — we omit the field so the API treats the product
-  // as sold by piece.
-  const upbRaw = parseOptionalNumber(form.unitsPerBox);
-  const unitsPerBox =
-    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1 ? Math.floor(upbRaw) : undefined;
-  return {
-    name,
-    sku: form.sku.trim() || undefined,
-    barcode: form.barcode.trim() || undefined,
-    category: form.category.trim() || undefined,
-    unit: form.unit.trim() || undefined,
-    unitsPerBox,
-    description: form.description.trim() || undefined,
-    pricePerUnit: price,
-    standardCost: parseOptionalNumber(form.standardCost),
-    currentStock: parseOptionalNumber(form.currentStock),
-    reorderPoint: parseOptionalNumber(form.reorderPoint),
-    reorderQty: parseOptionalNumber(form.reorderQty),
-    isActive: form.isActive,
-  };
 }
 
 interface ProductFormProps {
@@ -138,9 +50,12 @@ export function ProductForm({
   const router = useRouter();
   const [form, setForm] = React.useState<ProductFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
+  const [parentPickerOpen, setParentPickerOpen] = React.useState(false);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  const isVariant = !!form.parentProductId;
 
   const submit = () => {
     const result = buildProductPayload(form);
@@ -162,14 +77,51 @@ export function ProductForm({
       ) : null}
 
       <FormSection title="Basics">
-        <FormField label="Name">
-          <FormTextInput
-            value={form.name}
-            onChangeText={(v) => set("name", v)}
-            placeholder="e.g. Sourdough loaf"
-            autoCapitalize="sentences"
-          />
+        <FormField
+          label="Variant of (optional)"
+          hint="Link this as a flavor/variety of an existing product. Variants inherit the parent's price tiers, box size, and category unless you override them."
+        >
+          <Pressable style={styles.picker} onPress={() => setParentPickerOpen(true)}>
+            <View style={styles.pickerInner}>
+              <Text style={[styles.pickerText, !isVariant && styles.pickerPlaceholder]}>
+                {isVariant ? (form.parentName ?? "Selected product") : "Standalone product"}
+              </Text>
+              {isVariant ? (
+                <Pressable
+                  onPress={() => {
+                    set("parentProductId", "");
+                    set("variantName", "");
+                    setForm((f) => ({ ...f, parentName: undefined }));
+                  }}
+                  hitSlop={10}
+                >
+                  <Ionicons name="close-circle" size={18} color={ios.label3} />
+                </Pressable>
+              ) : (
+                <Ionicons name="chevron-down" size={14} color={ios.label3} />
+              )}
+            </View>
+          </Pressable>
         </FormField>
+        {isVariant ? (
+          <FormField label="Variant name (flavor)">
+            <FormTextInput
+              value={form.variantName}
+              onChangeText={(v) => set("variantName", v)}
+              placeholder="e.g. Strawberry"
+              autoCapitalize="sentences"
+            />
+          </FormField>
+        ) : (
+          <FormField label="Name">
+            <FormTextInput
+              value={form.name}
+              onChangeText={(v) => set("name", v)}
+              placeholder="e.g. Sourdough loaf"
+              autoCapitalize="sentences"
+            />
+          </FormField>
+        )}
         <FormField label="Category">
           <CategoryInput
             value={form.category}
@@ -319,6 +271,25 @@ export function ProductForm({
         onPress={() => router.back()}
         style={{ position: "absolute", width: 0, height: 0, opacity: 0 }}
       />
+
+      <ProductPickerSheet
+        visible={parentPickerOpen}
+        title="Variant of…"
+        standaloneOnly
+        selectedId={form.parentProductId || undefined}
+        onClose={() => setParentPickerOpen(false)}
+        onSelect={(p) => {
+          setForm((f) => ({
+            ...f,
+            parentProductId: p.id,
+            parentName: p.name,
+            // Seed the flavor from any typed standalone name so the operator
+            // doesn't retype; they can edit it.
+            variantName: f.variantName || f.name,
+          }));
+          setParentPickerOpen(false);
+        }}
+      />
     </FormSheet>
   );
 }
@@ -344,4 +315,15 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   switchLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   switchHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  picker: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    minHeight: 44,
+    justifyContent: "center",
+  },
+  pickerInner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  pickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, flex: 1 },
+  pickerPlaceholder: { color: ios.label3 },
 });

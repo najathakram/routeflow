@@ -60,6 +60,29 @@ export interface CreateProductDto {
   isActive?: boolean;
   /** Requires the tenant's "tobacco_dealer" addon to set true. */
   isTobacco?: boolean;
+  /** Link this product as a variant of an existing standalone product. */
+  parentProductId?: string;
+  /** Flavor/variety label; required when parentProductId is set. */
+  variantName?: string;
+}
+
+/**
+ * The product row POST /products returns — enough to drop straight into an
+ * order/invoice cart (id, price, box size, variant linkage) without a refetch.
+ * `parent` isn't populated on create, so compose display names via
+ * `displayProductName(product, loadedProducts)` which resolves parentProductId.
+ */
+export interface CreatedProduct {
+  id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  unit?: string;
+  category?: string | null;
+  pricePerUnit: number | string;
+  unitsPerBox?: number | null;
+  parentProductId?: string | null;
+  variantName?: string | null;
 }
 
 export function useUpdateReorderSettings() {
@@ -81,7 +104,7 @@ export function useUpdateReorderSettings() {
 
 export function useCreateProduct() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, CreateProductDto>({
+  return useMutation<CreatedProduct, Error, CreateProductDto>({
     mutationFn: (dto) => apiClient.post("/products", dto).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["products"] });

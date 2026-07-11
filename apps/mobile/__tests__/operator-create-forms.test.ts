@@ -24,6 +24,10 @@
  *  - The emptyForm factories initialise synchronously with no network calls
  */
 
+// The product-form logic is now a React-Native-free module, so the tests below
+// exercise the REAL buildProductPayload/emptyProductForm (not a replica).
+import { buildProductPayload, emptyProductForm } from "../lib/product-form";
+
 // ── Utility: mirrors the guard logic extracted from [id].tsx screens ─────────
 
 /** Simulates the `enabled: !!id` guard in all detail hooks. */
@@ -41,82 +45,8 @@ function safeId(id: string | undefined): string {
   return isCreateAlias(id) ? "" : (id ?? "");
 }
 
-// ── Pure form helper logic (extracted, no JSX/React-Native imports) ───────────
-
-interface ProductFormValues {
-  name: string;
-  sku: string;
-  barcode: string;
-  category: string;
-  unit: string;
-  description: string;
-  pricePerUnit: string;
-  standardCost: string;
-  currentStock: string;
-  reorderPoint: string;
-  reorderQty: string;
-  isActive: boolean;
-}
-
-interface ProductSubmitPayload {
-  name: string;
-  sku?: string;
-  barcode?: string;
-  category?: string;
-  unit?: string;
-  description?: string;
-  pricePerUnit: number;
-  standardCost?: number;
-  currentStock?: number;
-  reorderPoint?: number;
-  reorderQty?: number;
-  isActive: boolean;
-}
-
-function emptyProductForm(): ProductFormValues {
-  return {
-    name: "",
-    sku: "",
-    barcode: "",
-    category: "",
-    unit: "ea",
-    description: "",
-    pricePerUnit: "",
-    standardCost: "",
-    currentStock: "",
-    reorderPoint: "",
-    reorderQty: "",
-    isActive: true,
-  };
-}
-
-function parseOptionalNumber(v: string): number | undefined {
-  const t = v.trim();
-  if (!t) return undefined;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-function buildProductPayload(form: ProductFormValues): ProductSubmitPayload | { error: string } {
-  const name = form.name.trim();
-  if (!name) return { error: "Name is required." };
-  const price = parseOptionalNumber(form.pricePerUnit);
-  if (price == null || price < 0) return { error: "Enter a valid price." };
-  return {
-    name,
-    sku: form.sku.trim() || undefined,
-    barcode: form.barcode.trim() || undefined,
-    category: form.category.trim() || undefined,
-    unit: form.unit.trim() || undefined,
-    description: form.description.trim() || undefined,
-    pricePerUnit: price,
-    standardCost: parseOptionalNumber(form.standardCost),
-    currentStock: parseOptionalNumber(form.currentStock),
-    reorderPoint: parseOptionalNumber(form.reorderPoint),
-    reorderQty: parseOptionalNumber(form.reorderQty),
-    isActive: form.isActive,
-  };
-}
+// ── Pure form helper logic ────────────────────────────────────────────────
+// (buildProductPayload / emptyProductForm imported from ../lib/product-form)
 
 interface CustomerFormValues {
   businessName: string;
@@ -251,6 +181,63 @@ describe("ProductForm — buildProductPayload (synchronous, no fetch)", () => {
       expect(result.barcode).toBeUndefined();
       expect(result.standardCost).toBeUndefined();
     }
+  });
+
+  it("standalone product carries no variant linkage", () => {
+    const form = { ...emptyProductForm(), name: "Plain", pricePerUnit: "2" };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.parentProductId).toBeUndefined();
+      expect(result.variantName).toBeUndefined();
+    }
+  });
+
+  it("variant: requires a flavor name when a parent is picked", () => {
+    // Parent selected but no variantName → the standalone Name is irrelevant.
+    const form = {
+      ...emptyProductForm(),
+      name: "ignored",
+      parentProductId: "parent-uuid",
+      variantName: "  ",
+      pricePerUnit: "5",
+    };
+    const result = buildProductPayload(form);
+    expect(result).toEqual({ error: "Variant name (flavor) is required." });
+  });
+
+  it("variant: stores JUST the flavor in name + keeps parent linkage", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "should be ignored for variants",
+      parentProductId: "parent-uuid",
+      variantName: "Strawberry",
+      pricePerUnit: "5",
+    };
+    const result = buildProductPayload(form);
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      // name === the flavor only (PR #44); parent context via parentProductId.
+      expect(result.name).toBe("Strawberry");
+      expect(result.parentProductId).toBe("parent-uuid");
+      expect(result.variantName).toBe("Strawberry");
+    }
+  });
+
+  it("treats unitsPerBox <= 1 (or blank) as non-boxed (omitted)", () => {
+    const one = buildProductPayload({
+      ...emptyProductForm(),
+      name: "A",
+      pricePerUnit: "1",
+      unitsPerBox: "1",
+    });
+    const boxed = buildProductPayload({
+      ...emptyProductForm(),
+      name: "B",
+      pricePerUnit: "1",
+      unitsPerBox: "6",
+    });
+    if (!("error" in one)) expect(one.unitsPerBox).toBeUndefined();
+    if (!("error" in boxed)) expect(boxed.unitsPerBox).toBe(6);
   });
 });
 
