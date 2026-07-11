@@ -285,6 +285,10 @@ export interface AdminInvoice {
     id: string;
     description: string;
     qty: number;
+    /** Boxed denomination snapshot — when set, unitPrice is the BOX price. */
+    boxes?: number | null;
+    pieces?: number | null;
+    unitsPerBox?: number | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;

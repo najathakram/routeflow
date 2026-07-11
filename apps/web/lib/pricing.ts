@@ -365,3 +365,36 @@ export function effectiveBuyerPrice(
   const remembered = Number(rememberedPrice);
   return remembered > Number(listPrice) ? roundMoney(remembered) : tier;
 }
+
+// ─── Qty display: boxes + pieces split ────────────────────────────────────────
+// A boxed line stores its denomination (boxes/pieces/unitsPerBox snapshots) on
+// the order AND invoice line, but read surfaces used to render only the raw
+// piece count. One shared formatter so "2 boxes + 3 pcs" reads identically on
+// the order detail, invoice detail, and PDF. Keep all three mirrors in sync.
+
+export interface QtySplitInput {
+  /** Total quantity (pieces for boxed lines). Used when no split is stored. */
+  qty: number | string;
+  /** Stored split — null/undefined ⇒ not a boxed line (render plain qty). */
+  boxes?: number | null;
+  pieces?: number | null;
+  /** Label for loose pieces; defaults to "pcs". */
+  unitLabel?: string | null;
+}
+
+/** "2 boxes + 3 pcs" | "1 box" | "4 pcs" | plain trimmed qty (non-boxed line). */
+export function formatQtySplit({ qty, boxes, pieces, unitLabel }: QtySplitInput): string {
+  if (boxes == null && pieces == null) {
+    const n = Number(qty);
+    if (!Number.isFinite(n)) return String(qty);
+    // Integers render bare; fractional qty keeps up to 3 dp (Decimal(10,3)).
+    return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  }
+  const b = Math.max(0, Math.trunc(Number(boxes ?? 0)));
+  const p = Math.max(0, Math.trunc(Number(pieces ?? 0)));
+  const label = (unitLabel ?? "").trim() || "pcs";
+  const parts: string[] = [];
+  if (b > 0) parts.push(`${b} ${b === 1 ? "box" : "boxes"}`);
+  if (p > 0) parts.push(`${p} ${label}`);
+  return parts.length > 0 ? parts.join(" + ") : "0";
+}

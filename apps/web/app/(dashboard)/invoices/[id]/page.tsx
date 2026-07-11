@@ -52,6 +52,7 @@ import {
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { useTenant } from "@/components/tenant-provider";
@@ -1630,7 +1631,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                     <tr key={item.id} className="hover:bg-surface-raised">
                       <td className="px-8 py-3 font-medium text-navy">{item.description}</td>
                       <td className="px-4 py-3 text-right">
-                        <span className="mono text-navy/70">{item.qty}</span>
+                        <span
+                          className="mono text-navy/70"
+                          title={
+                            item.boxes != null || item.pieces != null
+                              ? `${Number(item.qty)} pcs total`
+                              : undefined
+                          }
+                        >
+                          {formatQtySplit({
+                            qty: item.qty,
+                            boxes: item.boxes,
+                            pieces: item.pieces,
+                          })}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-right">
                         {item.priceType === "SPECIAL" ? (
