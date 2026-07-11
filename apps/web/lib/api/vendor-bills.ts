@@ -130,6 +130,8 @@ export interface CreateVendorBillDto {
   dueDate: string;
   items: CreateVendorBillItem[];
   notes?: string;
+  /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
+  taxAmount?: number;
 }
 
 export function useCreateVendorBill() {

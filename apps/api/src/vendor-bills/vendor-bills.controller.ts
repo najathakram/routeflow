@@ -54,14 +54,21 @@ export class VendorBillsController {
 
   @Post("scan-invoice")
   @UseInterceptors(
-    // Up to 10 pages, 25MB per file. Field name accepts both `image` (legacy single-file
-    // clients) and `images` (multi-page clients) — multer matches by field name and the
-    // interceptor returns whichever was sent.
+    // Up to 10 pages, 25MB per file, under the field name `images` (multer
+    // matches the field name exactly — clients MUST use "images").
     FilesInterceptor("images", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
   )
   scanInvoice(@UploadedFiles() files: Express.Multer.File[]) {
     if (!files || files.length === 0) {
       throw new BadRequestException("No file provided");
+    }
+    // Multer's fileSize limit is per file only — cap the aggregate so 10×25MB
+    // can't buffer 250MB in memory / ship an oversized payload to Anthropic.
+    const totalBytes = files.reduce((s, f) => s + (f.size ?? f.buffer?.length ?? 0), 0);
+    if (totalBytes > 60 * 1024 * 1024) {
+      throw new BadRequestException(
+        "Combined upload is too large (max 60MB per scan). Split the pages across scans.",
+      );
     }
     const allowed = [
       "image/jpeg",
