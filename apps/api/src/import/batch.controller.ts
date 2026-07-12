@@ -5,6 +5,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   UploadedFiles,
   UseGuards,
@@ -19,6 +20,7 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { BatchImportService } from "./batch-import.service";
 import { CreateBatchDto } from "./dto/create-batch.dto";
+import { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
 
 /**
  * Batch invoice import queue (spec §4). TENANT_ADMIN satisfies @Roles(OPERATOR).
@@ -32,6 +34,12 @@ export class BatchController {
   @Post()
   create(@Body() dto: CreateBatchDto, @CurrentUser() user: JwtPayload) {
     return this.batch.createBatch({ kind: dto.kind, createdById: user.sub });
+  }
+
+  /** Recent batches, most-active first — lets the web page restore its place after a refresh. */
+  @Get()
+  list() {
+    return this.batch.listBatches();
   }
 
   /** Scan one invoice (its page files) into the batch queue. */
@@ -49,6 +57,12 @@ export class BatchController {
   @Get(":id")
   get(@Param("id") id: string) {
     return this.batch.getBatch(id);
+  }
+
+  /** Review UI: remap a line to a product, keep it custom, and/or link the supplier. */
+  @Patch("items/:itemId")
+  updateItem(@Param("itemId") itemId: string, @Body() dto: UpdateBatchItemDto) {
+    return this.batch.updateItemLines(itemId, dto);
   }
 
   @Post("items/:itemId/resolve")
