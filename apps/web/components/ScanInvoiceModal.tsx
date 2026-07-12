@@ -767,15 +767,21 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const splitSum = (splits: VarietySplit[] | undefined) =>
     (splits ?? []).reduce((s, x) => s + (parseFloat(x.qty) || 0), 0);
 
-  // Money discipline: round every line and the sum (these feed the expense
-  // amount, a monetary write).
+  // Money discipline: sum the RAW (unrounded) line amounts and round once at
+  // the end — this must match the server's create() totalOwed computation
+  // exactly (apps/api/src/vendor-bills/vendor-bills.service.ts), which also
+  // sums raw qty*unitCost and rounds only the final total. Rounding each
+  // line first (then summing the rounded values) can drift a cent from the
+  // server's total whenever a line has a fractional qty or an unrounded
+  // unit cost — and this value feeds the paired Expense.amount, which must
+  // agree with the VendorBill.totalOwed for the same invoice.
   const invoiceTotalOf = (inv: InvoiceGroup) =>
     roundMoney(
       inv.reviewItems.reduce((s, item) => {
         const cost = parseFloat(item.unitCost) || 0;
         const qty =
           item.splits && item.splits.length > 0 ? splitSum(item.splits) : parseFloat(item.qty) || 0;
-        return s + roundMoney(qty * cost);
+        return s + qty * cost;
       }, 0),
     );
 

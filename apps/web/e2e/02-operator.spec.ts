@@ -448,16 +448,18 @@ test.describe("Operator — Tenant Dashboard", () => {
     });
 
   /** Canned per-invoice scan payload for the batch-scan tests. */
-  const batchScanPayload = (key: "A" | "B") =>
-    JSON.stringify({
+  const batchScanPayload = (key: "A" | "B", opts?: { tax?: number }) => {
+    const tax = opts?.tax ?? 0;
+    const subtotal = key === "A" ? 70 : 55;
+    return JSON.stringify({
       supplier: `E2E Batch Supplier ${key}`,
       invoiceNumber: `INV-${key}-1`,
       invoiceDate: "2026-07-01",
       expenseDescription: null,
       expenseCategory: null,
-      subtotal: key === "A" ? 70 : 55,
-      tax: 0,
-      total: key === "A" ? 70 : 55,
+      subtotal,
+      tax,
+      total: subtotal + tax,
       notes: null,
       items: [
         {
@@ -484,6 +486,7 @@ test.describe("Operator — Tenant Dashboard", () => {
           : []),
       ],
     });
+  };
 
   const pdfFile = (name: string) => ({
     name,
@@ -654,8 +657,16 @@ test.describe("Operator — Tenant Dashboard", () => {
   test("OP-17e both-mode partial failure: created bill is never re-posted on retry", async ({
     page,
   }) => {
+    // Non-zero tax exercises the money-critical path: the scanned tax must be
+    // forwarded to BOTH the vendor bill's taxAmount AND folded into the
+    // paired expense's amount (apps/web/components/ScanInvoiceModal.tsx
+    // createOne(); apps/api/src/vendor-bills/vendor-bills.service.ts create()).
     await page.route("**/vendor-bills/scan-invoice", (route) =>
-      route.fulfill({ status: 201, contentType: "application/json", body: batchScanPayload("A") }),
+      route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: batchScanPayload("A", { tax: 5 }),
+      }),
     );
     await page.route("**/bookkeeping/expense-categories", (route) => {
       if (route.request().method() !== "GET") return void route.continue();
@@ -666,9 +677,11 @@ test.describe("Operator — Tenant Dashboard", () => {
       });
     });
     let billPosts = 0;
+    const billBodies: any[] = [];
     await page.route("**/vendor-bills", (route) => {
       if (route.request().method() !== "POST") return void route.continue();
       billPosts++;
+      billBodies.push(route.request().postDataJSON());
       void route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -720,13 +733,17 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect.poll(() => billPosts, { timeout: 15_000 }).toBe(1);
     await expect.poll(() => expenseBodies.length, { timeout: 15_000 }).toBe(1);
     await expect(page.getByRole("heading", { name: /ai invoice scanner/i })).toBeVisible();
+    // The scanned tax (5) must reach the bill's taxAmount, not just be displayed.
+    expect(billBodies[0].taxAmount).toBe(5);
 
     // Second attempt: the already-created bill is SKIPPED, only the expense retries.
     await page.getByRole("button", { name: /create bill & expense/i }).click();
     await expect.poll(() => expenseBodies.length, { timeout: 15_000 }).toBe(2);
     expect(billPosts).toBe(1);
     expect(expenseBodies[1].referenceNumber).toBe("INV-A-1");
-    expect(expenseBodies[1].amount).toBe(70);
+    // 70 (items) + 5 (scanned tax) — must equal the bill's own totalOwed for
+    // the same invoice (roundMoney(itemsSum + taxAmount) server-side).
+    expect(expenseBodies[1].amount).toBe(75);
   });
 
   // ── Suppliers ─────────────────────────────────────────────────────────────
