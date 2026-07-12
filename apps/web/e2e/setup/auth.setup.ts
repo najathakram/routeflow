@@ -11,7 +11,7 @@
 import { test as setup } from "@playwright/test";
 import fs from "fs";
 import path from "path";
-import { setTenantCookie } from "../helpers/auth";
+import { fillWorkspaceIfShown, setTenantCookie } from "../helpers/auth";
 import { CREDENTIALS, HAS_SUPER_ADMIN_CREDS, TENANT_SLUG } from "../helpers/constants";
 
 export const AUTH_DIR = path.join(__dirname, ".auth");
@@ -46,6 +46,7 @@ setup("authenticate as super admin", async ({ page }) => {
 setup("authenticate as operator", async ({ page, context }) => {
   await setTenantCookie(context, BASE_URL, TENANT_SLUG);
   await page.goto("/login");
+  await fillWorkspaceIfShown(page);
   await page.getByLabel("Username or email").fill(CREDENTIALS.operator.username);
   await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.operator.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -58,6 +59,7 @@ setup("authenticate as operator", async ({ page, context }) => {
 setup("authenticate as customer", async ({ page, context }) => {
   await setTenantCookie(context, BASE_URL, TENANT_SLUG);
   await page.goto("/login");
+  await fillWorkspaceIfShown(page);
   await page.getByLabel("Username or email").fill(CREDENTIALS.customer.username);
   await page.getByPlaceholder("Enter your password").fill(CREDENTIALS.customer.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
