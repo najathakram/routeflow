@@ -2431,6 +2431,11 @@ model BuyerAccount {
   id                  String             @id @default(uuid())
   email               String             @unique
   passwordHash        String
+  // false only for Google-auto-created accounts (random unguessable hash) —
+  // gates the no-current-password "set password" flow. Accounts created via
+  // Google before this column existed keep the default true and must use the
+  // email reset flow instead (indistinguishable from password accounts).
+  passwordSet         Boolean            @default(true)
   name                String
   phone               String?
   mobile              String?
@@ -2446,6 +2451,7 @@ model BuyerAccount {
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
+  passwordResetTokens      BuyerPasswordResetToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[] @relation("MergeAsPrimary")
   mergeRequestsAsSecondary BuyerMergeRequest[] @relation("MergeAsSecondary")
   favorites                BuyerFavorite[]
@@ -2490,6 +2496,23 @@ model BuyerRefreshToken {
   ipAddress      String?
   deviceName     String?
   lastUsedAt     DateTime?
+
+  buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+// Mirrors PasswordResetToken for BuyerAccount — kept as a separate model (like
+// RefreshToken/BuyerRefreshToken) so staff and buyer reset tokens can never be
+// confused for one another.
+model BuyerPasswordResetToken {
+  id             String    @id @default(uuid())
+  buyerAccountId String
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
 
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 

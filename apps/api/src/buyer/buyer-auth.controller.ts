@@ -21,6 +21,9 @@ import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { BuyerRefreshDto } from "./dto/buyer-refresh.dto";
 import { BuyerChangePasswordDto } from "./dto/buyer-change-password.dto";
+import { BuyerSetPasswordDto } from "./dto/buyer-set-password.dto";
+import { BuyerRequestPasswordResetDto } from "./dto/buyer-request-password-reset.dto";
+import { BuyerResetPasswordDto } from "./dto/buyer-reset-password.dto";
 import { BuyerUpdateAccountDto } from "./dto/buyer-update-account.dto";
 
 @ApiTags("buyer-auth")
@@ -77,6 +80,52 @@ export class BuyerAuthController {
   @ApiOperation({ summary: "Change buyer account password" })
   changePassword(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: BuyerChangePasswordDto) {
     return this.buyerAuthService.changePassword(buyer.sub, dto.currentPassword, dto.newPassword);
+  }
+
+  @Post("set-password")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches reset endpoints
+  @ApiOperation({ summary: "Set a first password on a Google-only buyer account" })
+  setPassword(
+    @CurrentBuyer() buyer: BuyerJwtPayload,
+    @Body() dto: BuyerSetPasswordDto,
+    @Req() req: any,
+  ) {
+    return this.buyerAuthService.setPassword(
+      buyer.sub,
+      dto.newPassword,
+      this.extractDeviceInfo(req),
+    );
+  }
+
+  // ─── Password reset ───────────────────────────────────────────────────────────
+
+  @Post("request-password-reset")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
+  @ApiOperation({ summary: "Request a buyer password reset link" })
+  requestPasswordReset(@Body() dto: BuyerRequestPasswordResetDto) {
+    return this.buyerAuthService.requestPasswordReset(dto.email);
+  }
+
+  @Post("reset-password")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
+  @ApiOperation({ summary: "Reset buyer password with token" })
+  resetPassword(@Body() dto: BuyerResetPasswordDto) {
+    return this.buyerAuthService.resetPassword(dto.token, dto.newPassword);
+  }
+
+  // ─── Profile ──────────────────────────────────────────────────────────────────
+
+  @Get("profile")
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Get the buyer account profile (authoritative hasPassword read)" })
+  getProfile(@CurrentBuyer() buyer: BuyerJwtPayload) {
+    return this.buyerAuthService.getProfile(buyer.sub);
   }
 
   @Patch("profile")

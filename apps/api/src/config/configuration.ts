@@ -38,6 +38,13 @@ export interface AppConfig {
     expiresIn: string;
     refreshExpiresIn: string;
   };
+  /** Public base URLs per client surface — used to build links in outbound
+   *  emails (password reset). Server-side mapping only; client-supplied URLs
+   *  must never reach an email. */
+  urls: {
+    web: string;
+    mobileWeb: string;
+  };
   redis: {
     url: string;
     password: string;
@@ -92,7 +99,15 @@ export const configuration = (): AppConfig => ({
     secret: process.env.JWT_SECRET ?? "",
     refreshSecret: process.env.JWT_REFRESH_SECRET ?? "",
     expiresIn: process.env.JWT_EXPIRES_IN ?? "15m",
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "3d",
+    // 30-day idle cutoff: refresh rotation re-mints a fresh expiry on every
+    // use, so active sessions slide forward indefinitely; only 30 days of
+    // inactivity forces a re-login. Web presence-cookie max-age
+    // (apps/web/lib/presence-cookies.ts) must track this value.
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? "30d",
+  },
+  urls: {
+    web: process.env.WEB_URL ?? "http://localhost:3001",
+    mobileWeb: process.env.MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app",
   },
   redis: {
     url: process.env.REDIS_URL ?? "redis://localhost:6379",

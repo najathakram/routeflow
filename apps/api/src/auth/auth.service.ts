@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
+import type { User } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -125,6 +126,13 @@ export class AuthService {
       tenantSlug = tenant?.slug ?? null;
     }
 
+    // validateUser strips `password` before handing the user here, and getting
+    // this far via password login proves one exists. Callers that pass a raw
+    // user row (legacy Google path, email verification) still carry the field,
+    // so respect it when present.
+    const hasPassword =
+      "password" in user ? !!(user as { password?: string | null }).password : true;
+
     const payload: JwtPayload = {
       sub: user.id,
       username: user.username,
@@ -135,6 +143,7 @@ export class AuthService {
       tenantSlug,
       isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       canActAsDriver: user.canActAsDriver,
+      hasPassword,
     };
 
     // Plans & Billing: embed a compact entitlement snapshot (plan/flags/addons/
@@ -197,6 +206,7 @@ export class AuthService {
         tenantSlug,
         isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
         canActAsDriver: user.canActAsDriver,
+        hasPassword,
       },
     };
   }
@@ -247,6 +257,7 @@ export class AuthService {
       tenantSlug,
       isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
       canActAsDriver: user.canActAsDriver,
+      hasPassword: !!user.password,
     };
 
     // Plans & Billing: refresh re-snapshots entitlement claims into the token.
@@ -285,6 +296,7 @@ export class AuthService {
         tenantSlug,
         isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
         canActAsDriver: user.canActAsDriver,
+        hasPassword: !!user.password,
       },
     };
   }
@@ -376,7 +388,10 @@ export class AuthService {
    * Generates a single-use password reset token and emails a link to the user.
    * Always returns the same shape to prevent email enumeration.
    */
-  async requestPasswordReset(email: string): Promise<{ message: string }> {
+  async requestPasswordReset(
+    email: string,
+    surface: "web" | "mobile" = "mobile",
+  ): Promise<{ message: string }> {
     const MSG = { message: "If that address is registered you will receive a reset link shortly." };
 
     // Look up user by email (cross-tenant safe — find first active match)
@@ -399,7 +414,11 @@ export class AuthService {
       data: { userId: user.id, tokenHash, expiresAt },
     });
 
-    const resetUrl = `https://routeflowmobile-production.up.railway.app/reset-password?token=${rawToken}`;
+    // The base URL is resolved strictly server-side from config — accepting a
+    // client-supplied URL here would let an attacker exfiltrate reset tokens.
+    const urls = this.configService.get<AppConfig["urls"]>("urls")!;
+    const base = surface === "web" ? urls.web : urls.mobileWeb;
+    const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
     this.emailService
       .send({
@@ -472,32 +491,89 @@ export class AuthService {
       data: { password: newHash, forcePasswordChange: false },
     });
 
-    // Revoke all existing refresh tokens (other sessions / stale tokens) then
-    // mint a fresh access+refresh pair for the caller so the just-fixed
-    // forcePasswordChange flag is reflected in their JWT.
-    await this.prisma.refreshToken.deleteMany({ where: { userId } });
+    const tokens = await this.mintSessionForUser(updated);
+
+    return {
+      message: "Password changed successfully. All other sessions have been invalidated.",
+      ...tokens,
+    };
+  }
+
+  /**
+   * First-password setup for a signed-in account that has none (Google-only
+   * sign-ins). Refuses when a password already exists — overwriting one
+   * requires the current-password proof in changePassword. The NULL check runs
+   * against the database, never a JWT claim, so a stale token can't authorize
+   * a takeover.
+   */
+  async setPassword(userId: string, newPassword: string, deviceInfo?: DeviceInfo) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+
+    if (user.password)
+      throw new BadRequestException(
+        "This account already has a password — use change password instead",
+      );
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: newHash, forcePasswordChange: false },
+    });
+
+    const tokens = await this.mintSessionForUser(updated, deviceInfo);
+
+    if (user.email) {
+      // Fire-and-forget — email failures must not block the mutation.
+      this.emailService
+        .send({
+          to: user.email,
+          subject: "A password was set on your RouteFlow account",
+          html: `<p>A password was just set on your RouteFlow account, which previously signed in with Google only.</p>
+                 <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
+                 <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+                 <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+        })
+        .catch(() => {});
+    }
+
+    return {
+      message: "Password set successfully. All other sessions have been invalidated.",
+      ...tokens,
+    };
+  }
+
+  /**
+   * Revoke every refresh token for the user, then mint a fresh access+refresh
+   * pair from current DB state — the shared tail of changePassword/setPassword.
+   * The caller's JWT immediately reflects the mutation (forcePasswordChange,
+   * hasPassword) while every other session dies.
+   */
+  private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
+    await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
     let tenantSlug: string | null = null;
-    if (updated.tenantId) {
+    if (user.tenantId) {
       const tenant = await this.prisma.tenant.findUnique({
-        where: { id: updated.tenantId },
+        where: { id: user.tenantId },
         select: { slug: true },
       });
       tenantSlug = tenant?.slug ?? null;
     }
 
     const payload: JwtPayload = {
-      sub: updated.id,
-      username: updated.username,
-      role: updated.role,
-      status: updated.status,
-      forcePasswordChange: false,
-      tenantId: updated.tenantId ?? null,
+      sub: user.id,
+      username: user.username,
+      role: user.role,
+      status: user.status,
+      forcePasswordChange: user.forcePasswordChange,
+      tenantId: user.tenantId ?? null,
       tenantSlug,
-      isAdmin: updated.isAdmin || updated.role === "TENANT_ADMIN",
-      canActAsDriver: updated.canActAsDriver,
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      canActAsDriver: user.canActAsDriver,
+      hasPassword: !!user.password,
     };
 
     // Plans & Billing: re-snapshot entitlement claims into the fresh token.
@@ -510,17 +586,13 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: updated.id },
+      { sub: user.id },
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    await this.storeRefreshToken(updated.id, refreshToken);
+    await this.storeRefreshToken(user.id, refreshToken, deviceInfo);
 
-    return {
-      message: "Password changed successfully. All other sessions have been invalidated.",
-      accessToken,
-      refreshToken,
-    };
+    return { accessToken, refreshToken };
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────

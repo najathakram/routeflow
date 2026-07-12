@@ -11,6 +11,7 @@ import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
@@ -30,6 +31,7 @@ export class BuyerAuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig>,
+    private readonly emailService: EmailService,
   ) {}
 
   // ─── Register ─────────────────────────────────────────────────────────────────
@@ -60,12 +62,13 @@ export class BuyerAuthService {
       account.email,
       account.name,
       deviceInfo,
+      true, // registered with a password
     );
     this.logger.log(`BuyerAccount registered: ${account.email}`);
 
     return {
       ...tokens,
-      buyer: { id: account.id, email: account.email, name: account.name },
+      buyer: { id: account.id, email: account.email, name: account.name, hasPassword: true },
     };
   }
 
@@ -110,11 +113,17 @@ export class BuyerAuthService {
       account.email,
       account.name,
       deviceInfo,
+      account.passwordSet,
     );
 
     return {
       ...tokens,
-      buyer: { id: account.id, email: account.email, name: account.name },
+      buyer: {
+        id: account.id,
+        email: account.email,
+        name: account.name,
+        hasPassword: account.passwordSet,
+      },
     };
   }
 
@@ -159,10 +168,16 @@ export class BuyerAuthService {
       account.email,
       account.name,
       effectiveDeviceInfo,
+      account.passwordSet,
     );
     return {
       ...tokens,
-      buyer: { id: account.id, email: account.email, name: account.name },
+      buyer: {
+        id: account.id,
+        email: account.email,
+        name: account.name,
+        hasPassword: account.passwordSet,
+      },
     };
   }
 
@@ -253,13 +268,154 @@ export class BuyerAuthService {
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.buyerAccount.update({
       where: { id: buyerAccountId },
-      data: { passwordHash },
+      // passwordSet:true is defensive — proving the current password means it
+      // was already a real one, but keep the invariant explicit.
+      data: { passwordHash, passwordSet: true },
     });
 
     // Revoke all refresh tokens on password change
     await this.prisma.buyerRefreshToken.deleteMany({ where: { buyerAccountId } });
 
     return { message: "Password changed successfully" };
+  }
+
+  // ─── Set password (Google-only accounts) ──────────────────────────────────────
+
+  /**
+   * First-password setup for a signed-in Google-auto-created account
+   * (passwordSet=false — its hash is a random placeholder nobody knows).
+   * Refuses when a real password exists — overwriting one requires the
+   * current-password proof in changePassword. The flag is checked against the
+   * database, never a JWT claim, so a stale token can't authorize a takeover.
+   * Note: accounts auto-created via Google BEFORE the passwordSet column
+   * existed default to true and must use the email reset flow instead.
+   */
+  async setPassword(buyerAccountId: string, newPassword: string, deviceInfo?: BuyerDeviceInfo) {
+    const account = await this.prisma.buyerAccount.findUnique({ where: { id: buyerAccountId } });
+    if (!account || account.deletedAt || account.status !== "ACTIVE") {
+      throw new UnauthorizedException();
+    }
+
+    if (account.passwordSet)
+      throw new BadRequestException(
+        "This account already has a password — use change password instead",
+      );
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.buyerAccount.update({
+      where: { id: buyerAccountId },
+      data: { passwordHash, passwordSet: true },
+    });
+
+    // Revoke every session, then reissue a pair so the caller stays signed in
+    // with a token that reflects hasPassword:true.
+    await this.prisma.buyerRefreshToken.deleteMany({ where: { buyerAccountId } });
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      deviceInfo,
+      true,
+    );
+
+    // Fire-and-forget — email failures must not block the mutation.
+    this.emailService
+      .send({
+        to: account.email,
+        subject: "A password was set on your RouteFlow account",
+        html: `<p>A password was just set on your RouteFlow portal account, which previously signed in with Google only.</p>
+               <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
+               <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+               <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+      })
+      .catch(() => {});
+
+    return {
+      message: "Password set successfully. All other sessions have been invalidated.",
+      ...tokens,
+      buyer: { id: account.id, email: account.email, name: account.name, hasPassword: true },
+    };
+  }
+
+  // ─── Password reset (mirrors auth.service.ts RF-018) ──────────────────────────
+
+  /**
+   * Generates a single-use password reset token and emails a link to the buyer.
+   * Always returns the same shape to prevent email enumeration.
+   */
+  async requestPasswordReset(email: string): Promise<{ message: string }> {
+    const MSG = { message: "If that address is registered you will receive a reset link shortly." };
+
+    const account = await this.prisma.buyerAccount.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+    if (!account || account.deletedAt || account.status !== "ACTIVE") return MSG;
+
+    // Raw 32-byte random token
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = this.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+
+    // Clean up any previous unexpired tokens for this buyer to avoid table bloat
+    await this.prisma.buyerPasswordResetToken.deleteMany({
+      where: { buyerAccountId: account.id, usedAt: null, expiresAt: { gt: new Date() } },
+    });
+
+    await this.prisma.buyerPasswordResetToken.create({
+      data: { buyerAccountId: account.id, tokenHash, expiresAt },
+    });
+
+    // The base URL is resolved strictly server-side from config — accepting a
+    // client-supplied URL here would let an attacker exfiltrate reset tokens.
+    const urls = this.configService.get<AppConfig["urls"]>("urls")!;
+    const resetUrl = `${urls.web}/buyer/reset-password?token=${rawToken}`;
+
+    this.emailService
+      .send({
+        to: account.email,
+        subject: "Reset your RouteFlow password",
+        html: `<p>Hi,</p>
+<p>We received a request to reset the password for your RouteFlow portal account.</p>
+<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+      })
+      .catch(() => {});
+
+    return MSG;
+  }
+
+  /**
+   * Validates a reset token, updates the buyer's password, and invalidates all
+   * existing refresh tokens so active sessions are force-logged-out. Also flips
+   * passwordSet:true — this is the supported "claim a password" path for buyer
+   * accounts auto-created via Google before the passwordSet column existed.
+   */
+  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
+    const tokenHash = this.hashToken(token);
+    const record = await this.prisma.buyerPasswordResetToken.findUnique({ where: { tokenHash } });
+
+    if (!record) throw new BadRequestException("Reset link is invalid or has already been used.");
+    if (record.usedAt) throw new BadRequestException("Reset link has already been used.");
+    if (record.expiresAt < new Date()) throw new BadRequestException("Reset link has expired.");
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    // Mark token used and update password in a transaction
+    await this.prisma.$transaction([
+      this.prisma.buyerPasswordResetToken.update({
+        where: { tokenHash },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.buyerAccount.update({
+        where: { id: record.buyerAccountId },
+        data: { passwordHash, passwordSet: true },
+      }),
+      this.prisma.buyerRefreshToken.deleteMany({
+        where: { buyerAccountId: record.buyerAccountId },
+      }),
+    ]);
+
+    return { message: "Password reset successfully. Please log in with your new password." };
   }
 
   // ─── Get profile ──────────────────────────────────────────────────────────────
@@ -275,10 +431,14 @@ export class BuyerAuthService {
         mobile: true,
         emailVerified: true,
         createdAt: true,
+        googleId: true,
+        passwordSet: true,
       },
     });
     if (!account) throw new UnauthorizedException();
-    return account;
+    const { googleId, passwordSet, ...rest } = account;
+    // Authoritative hasPassword read — JWT claims go stale after a set/reset.
+    return { ...rest, googleLinked: !!googleId, hasPassword: passwordSet };
   }
 
   async updateProfile(
@@ -367,10 +527,17 @@ export class BuyerAuthService {
     email: string,
     name: string = "",
     deviceInfo?: BuyerDeviceInfo,
+    hasPassword: boolean = true,
   ) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    const payload: BuyerJwtPayload = { sub: buyerAccountId, email, name, type: "BUYER" };
+    const payload: BuyerJwtPayload = {
+      sub: buyerAccountId,
+      email,
+      name,
+      type: "BUYER",
+      hasPassword,
+    };
 
     const accessToken = this.jwtService.sign(payload, {
       secret: jwtConfig.secret,
