@@ -100,6 +100,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     stockMovement: modelProxy(),
     stockLot: modelProxy(),
     supplier: modelProxy(),
+    productMapping: modelProxy(),
     purchaseOrder: modelProxy(),
     purchaseOrderItem: modelProxy(),
     tenantAddon: modelProxy(),

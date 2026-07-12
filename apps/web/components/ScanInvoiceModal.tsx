@@ -850,6 +850,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       let billId = inv.createdBillId;
       if (wantsBill && !billId) {
         const billItems = buildBillItems(inv);
+        const scannedTax = inv.scanResult?.tax ?? 0;
         const bill = await createBill.mutateAsync({
           supplierId: inv.supplierId,
           billDate: inv.billDate,
@@ -858,6 +859,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           // Persist the supplier's own invoice number — it's how the operator
           // reconciles against the supplier statement later.
           notes: inv.invoiceNumber ? `Supplier invoice #${inv.invoiceNumber}` : undefined,
+          // Sales tax is owed too; the server folds it into totalOwed (line
+          // items only carry the pre-tax unit costs).
+          taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
         });
         billId = (bill as { id?: string })?.id ?? null;
         patchInvoiceById(invoiceId, { createdBillId: billId });
@@ -888,8 +892,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       }
 
       if (wantsExpense && !inv.expenseCreated) {
+        // The expense records the money actually spent — include detected tax.
         const expenseTotal = wantsBill
-          ? invoiceTotalOf(inv)
+          ? roundMoney(invoiceTotalOf(inv) + (inv.scanResult?.tax ?? 0))
           : roundMoney(inv.scanResult?.total ?? invoiceTotalOf(inv));
         await createExpense.mutateAsync({
           categoryId: inv.expenseCategoryId,
@@ -1947,7 +1952,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           </div>
                           {scanResult?.tax != null && scanResult.tax > 0 && (
                             <div className="mt-1 flex justify-between gap-8">
-                              <span className="text-navy">Tax (detected)</span>
+                              <span className="text-navy">Tax (added to amount owed)</span>
                               <span className="text-navy">{fmt(scanResult.tax)}</span>
                             </div>
                           )}

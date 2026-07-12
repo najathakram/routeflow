@@ -1,11 +1,32 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ServiceUnavailableException,
+  UnprocessableEntityException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+
+const mockAnthropicCreate = jest.fn();
+jest.mock("@anthropic-ai/sdk", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ messages: { create: mockAnthropicCreate } })),
+}));
+
+const mockSharpToBuffer = jest.fn();
+jest.mock("sharp", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    rotate: jest.fn().mockReturnThis(),
+    jpeg: jest.fn().mockReturnThis(),
+    toBuffer: mockSharpToBuffer,
+  })),
+}));
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -233,6 +254,130 @@ describe("VendorBillsService", () => {
       expect(where.AND).toEqual([
         { OR: [{ items: { none: {} } }, { items: { some: { productId: null } } }] },
       ]);
+    });
+  });
+
+  // ─── create ─────────────────────────────────────────────────────────────────
+
+  describe("create", () => {
+    beforeEach(() => {
+      prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
+      prisma.vendorBill.create.mockResolvedValue(bill());
+    });
+
+    it("rounds totalOwed computed from items (no float artifacts)", async () => {
+      await service.create({
+        requireSupplier: false,
+        items: [
+          { description: "A", qty: 3, unitCost: 0.1 },
+          { description: "B", qty: 1, unitCost: 0.2 },
+        ],
+      });
+
+      // 3×0.1 + 0.2 = 0.5000000000000001 unrounded — must be written as 0.5
+      const data = prisma.vendorBill.create.mock.calls[0][0].data;
+      expect(data.totalOwed).toBe(0.5);
+    });
+
+    it("folds taxAmount into totalOwed (scanned supplier invoices carry sales tax)", async () => {
+      await service.create({
+        requireSupplier: false,
+        taxAmount: 5.999,
+        items: [{ description: "A", qty: 3, unitCost: 1.4849 }],
+      });
+
+      // 3×1.4849 = 4.4547; + 5.999 = 10.4537 → rounded to cents
+      const data = prisma.vendorBill.create.mock.calls[0][0].data;
+      expect(data.totalOwed).toBe(10.45);
+    });
+
+    it("ignores a missing/garbage taxAmount", async () => {
+      await service.create({
+        requireSupplier: false,
+        taxAmount: "not-a-number",
+        items: [{ description: "A", qty: 2, unitCost: 10 }],
+      });
+
+      const data = prisma.vendorBill.create.mock.calls[0][0].data;
+      expect(data.totalOwed).toBe(20);
+    });
+  });
+
+  // ─── scanInvoice ────────────────────────────────────────────────────────────
+
+  describe("scanInvoice", () => {
+    const jpegPage = { buffer: Buffer.from("img"), mimeType: "image/jpeg" };
+
+    beforeEach(async () => {
+      // Provide an API key so the scan reaches the Anthropic call.
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          VendorBillsService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+          { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        ],
+      }).compile();
+      service = module.get<VendorBillsService>(VendorBillsService);
+      mockAnthropicCreate.mockReset();
+      mockSharpToBuffer.mockReset();
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.productMapping.findMany.mockResolvedValue([]);
+    });
+
+    it("maps an Anthropic auth failure to a typed AI_KEY_INVALID 400 (not an opaque 500)", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 401 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: BadRequestException,
+        response: expect.objectContaining({ code: "AI_KEY_INVALID" }),
+      });
+    });
+
+    it("maps Anthropic overload/rate-limit to AI_UNAVAILABLE 503", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 529 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: ServiceUnavailableException,
+        response: expect.objectContaining({ code: "AI_UNAVAILABLE" }),
+      });
+    });
+
+    it("maps an unparseable AI response to AI_PARSE_FAILED 422", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: "sorry, no JSON here" }],
+      });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: UnprocessableEntityException,
+        response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
+      });
+    });
+
+    it("skips an unreadable HEIC page and discloses it in notes instead of failing the scan", async () => {
+      mockSharpToBuffer.mockRejectedValue(new Error("bad heic"));
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+      });
+
+      const result = await service.scanInvoice([
+        jpegPage,
+        { buffer: Buffer.from("heic"), mimeType: "image/heic" },
+      ]);
+
+      expect(result.notes).toMatch(/page 2 couldn't be read/i);
+      // Only the readable page was sent to Claude.
+      const content = mockAnthropicCreate.mock.calls[0][0].messages[0].content;
+      expect(content.filter((b: { type: string }) => b.type === "image")).toHaveLength(1);
+    });
+
+    it("rejects when every page is unreadable", async () => {
+      mockSharpToBuffer.mockRejectedValue(new Error("bad heic"));
+
+      await expect(
+        service.scanInvoice([{ buffer: Buffer.from("heic"), mimeType: "image/heic" }]),
+      ).rejects.toThrow(/couldn't read any/i);
+      expect(mockAnthropicCreate).not.toHaveBeenCalled();
     });
   });
 
