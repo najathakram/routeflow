@@ -1004,7 +1004,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         // Keep the modal open: failed invoices stay editable, succeeded ones
         // are marked created and will be skipped on the next attempt.
         const firstFailed = invoicesRef.current.findIndex((x) => x.status === "scanned");
-        if (firstFailed >= 0) setActiveIndex(firstFailed);
+        if (firstFailed >= 0) {
+          setActiveIndex(firstFailed);
+          setCreateFromRow(null);
+        }
         toast({
           title: `Created ${created} of ${targets.length} — ${failed} failed`,
           description:
@@ -1164,6 +1167,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                 <InvoiceNavigator
                   invoices={invoices}
                   activeIndex={activeIndex}
+                  disabled={isPending}
                   onNavigate={(i) => {
                     setActiveIndex(Math.max(0, Math.min(invoices.length - 1, i)));
                     setCreateFromRow(null);
@@ -1666,7 +1670,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                 <button
                                                   type="button"
                                                   onClick={() => setCreateFromRow(i)}
-                                                  className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline"
+                                                  disabled={isPending}
+                                                  className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
                                                 >
                                                   <Plus className="h-3 w-3" />
                                                   Create product from this line
@@ -2067,10 +2072,12 @@ const STATUS_DOT: Record<InvoiceStatus, { cls: string; label: string }> = {
 function InvoiceNavigator({
   invoices,
   activeIndex,
+  disabled,
   onNavigate,
 }: {
   invoices: InvoiceGroup[];
   activeIndex: number;
+  disabled?: boolean;
   onNavigate: (index: number) => void;
 }) {
   const active = invoices[activeIndex];
@@ -2099,7 +2106,7 @@ function InvoiceNavigator({
       <button
         type="button"
         onClick={() => onNavigate(activeIndex - 1)}
-        disabled={activeIndex === 0}
+        disabled={disabled || activeIndex === 0}
         className="flex items-center gap-1 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-semibold text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-30"
         title="Previous invoice"
         data-testid="invoice-nav-prev"
@@ -2127,8 +2134,9 @@ function InvoiceNavigator({
               key={inv.id}
               type="button"
               onClick={() => onNavigate(i)}
+              disabled={disabled}
               className={cn(
-                "h-2.5 w-2.5 rounded-full transition-all",
+                "h-2.5 w-2.5 rounded-full transition-all disabled:cursor-not-allowed disabled:opacity-40",
                 STATUS_DOT[inv.status].cls,
                 i === activeIndex && "ring-2 ring-brand-300 ring-offset-1",
               )}
@@ -2140,7 +2148,7 @@ function InvoiceNavigator({
       <button
         type="button"
         onClick={() => onNavigate(activeIndex + 1)}
-        disabled={activeIndex === invoices.length - 1}
+        disabled={disabled || activeIndex === invoices.length - 1}
         className="flex items-center gap-1 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-semibold text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-30"
         title="Next invoice"
         data-testid="invoice-nav-next"
