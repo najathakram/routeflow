@@ -221,9 +221,13 @@ export default function CustomerLoginScreen() {
           </TouchableOpacity>
 
           {/* BUG-B2-7: Forgot Password? link — /forgot-password route already
-              exists, was simply missing the entry point on this screen. */}
+              exists, was simply missing the entry point on this screen.
+              audience=buyer targets the buyer reset endpoints (this is also
+              how Google-created buyers claim a first password). */}
           <TouchableOpacity
-            onPress={() => router.push("/(auth)/forgot-password")}
+            onPress={() =>
+              router.push({ pathname: "/(auth)/forgot-password", params: { audience: "buyer" } })
+            }
             style={{ marginTop: 14, alignSelf: "center" }}
             hitSlop={8}
           >
