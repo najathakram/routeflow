@@ -585,7 +585,11 @@ export class VendorBillsService {
     }
 
     // Phase 1 uses Haiku — cheap OCR, no catalog reasoning required at this step.
-    const anthropic = new Anthropic({ apiKey });
+    // maxRetries:0 — the SDK's default retry (2, each getting its own fresh
+    // 110s window) would let a single scan run ~3x past the timeout below,
+    // well past the client's 120s abandon point. The UI already has an
+    // explicit per-invoice Retry button; that's the intended retry path.
+    const anthropic = new Anthropic({ apiKey, maxRetries: 0 });
 
     const promptText = `Extract data from this supplier invoice and return JSON only (no markdown, no explanation).
 
@@ -642,6 +646,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           message:
             "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
           code: "AI_KEY_INVALID",
+        });
+      }
+      // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
+      // retrying the SAME file will fail identically, unlike a real outage
+      // or rate-limit (429/5xx), so don't tell the user to "try again".
+      if (status !== undefined && status >= 400 && status < 500 && status !== 429) {
+        throw new BadRequestException({
+          message:
+            "The scanner couldn't process this file. Try a clearer photo or re-export as JPEG.",
+          code: "AI_SCAN_REJECTED",
         });
       }
       throw new ServiceUnavailableException({

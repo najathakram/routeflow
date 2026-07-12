@@ -343,6 +343,24 @@ describe("VendorBillsService", () => {
       });
     });
 
+    it("maps a non-transient Anthropic 4xx (e.g. a rejected/corrupt image) to AI_SCAN_REJECTED 400, not AI_UNAVAILABLE", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 400 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: BadRequestException,
+        response: expect.objectContaining({ code: "AI_SCAN_REJECTED" }),
+      });
+    });
+
+    it("keeps a 429 rate-limit mapped to the retryable AI_UNAVAILABLE, not AI_SCAN_REJECTED", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 429 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toMatchObject({
+        constructor: ServiceUnavailableException,
+        response: expect.objectContaining({ code: "AI_UNAVAILABLE" }),
+      });
+    });
+
     it("maps an unparseable AI response to AI_PARSE_FAILED 422", async () => {
       mockAnthropicCreate.mockResolvedValue({
         content: [{ type: "text", text: "sorry, no JSON here" }],

@@ -7,10 +7,16 @@
  * unformatted.
  *
  * Gate 2 — code-map freshness: CLAUDE.md requires `.claude/code-map/` to be
- * updated surgically with every code change, in every session. Blocks when
+ * updated surgically with every code change, in every session. Only runs when
+ * `.claude/code-map/_meta.json` exists (repos/worktrees with no map yet are
+ * never blocked). Blocks when
  * (a) this session has uncommitted code changes but no code-map change, or
- * (b) commits since the map's `_meta.json.mappedSha` touched code without any
- *     of them touching the map (drift left behind by an earlier session).
+ * (b) commits since the last commit that touched `.claude/code-map/` (found
+ *     via `git log -1 -- .claude/code-map`, NOT by reading `_meta.json`'s
+ *     content) touched code without any of them touching the map (drift left
+ *     behind by an earlier session).
+ * Test/spec files (`*.spec.ts`, `*.test.ts`, `__tests__/`) don't count as
+ * "code" for either gate — they don't need a map entry of their own.
  *
  * Why prettier-only (no eslint here): ESLint flat config resolves from the
  * current working directory, and this repo has NO root eslint.config — eslint
@@ -66,9 +72,13 @@ if (source.length > 0) {
 
 // ── Gate 2: code-map freshness ────────────────────────────────────────────
 const norm = (f) => f.replace(/\\/g, "/");
+const TEST_FILE = /(\.(spec|test)\.[tj]sx?$|(^|\/)__tests__\/)/;
 const isCode = (f) =>
-  /^(apps|packages|scripts)\/.*\.(ts|tsx|js|jsx|cjs|mjs|prisma)$/.test(norm(f)) && !SKIP.test(f);
+  /^(apps|packages|scripts)\/.*\.(ts|tsx|js|jsx|cjs|mjs|prisma)$/.test(norm(f)) &&
+  !SKIP.test(f) &&
+  !TEST_FILE.test(norm(f));
 const isMap = (f) => norm(f).startsWith(".claude/code-map/");
+const hasMap = existsSync(".claude/code-map/_meta.json");
 
 const HOW_TO_FIX =
   "Surgically update the touched entries (.claude/code-map/INDEX.md → the area file: " +
@@ -77,7 +87,7 @@ const HOW_TO_FIX =
 
 // (a) session-local: code changed in the working tree, map untouched
 const uncommittedCode = changed.filter(isCode);
-if (uncommittedCode.length > 0 && !changed.some(isMap)) {
+if (hasMap && uncommittedCode.length > 0 && !changed.some(isMap)) {
   const list = uncommittedCode.slice(0, 10).join("\n  ");
   process.stderr.write(
     `Stop gate: code changed but .claude/code-map/ was not updated (CLAUDE.md code-map routine).\n` +
@@ -91,7 +101,7 @@ if (uncommittedCode.length > 0 && !changed.some(isMap)) {
 // fixing commit touches .claude/code-map/ and becomes the new anchor, and a
 // commit carrying code + map together is always clean. An uncommitted
 // code-map change counts as the fix in progress — don't re-block.
-if (!changed.some(isMap) && existsSync(".claude/code-map/_meta.json")) {
+if (hasMap && !changed.some(isMap)) {
   const lastMap = sh("git log -1 --format=%H -- .claude/code-map").out.trim();
   if (/^[0-9a-f]{40}$/i.test(lastMap)) {
     const codeDrift = sh(`git diff --name-only ${lastMap} HEAD -- apps packages scripts`)
