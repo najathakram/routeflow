@@ -8,8 +8,8 @@
  * client-side redirect was reverted precisely because stale state caused a
  * `/` → `/dashboard` → `/login` bounce that hid the marketing site. Hence:
  *
- *  - max-age tracks the API refresh-token TTL (JWT_REFRESH_EXPIRES_IN = "3d"
- *    in apps/api/src/config/configuration.ts) instead of the old 30 days;
+ *  - max-age tracks the API refresh-token TTL (JWT_REFRESH_EXPIRES_IN = "30d"
+ *    in apps/api/src/config/configuration.ts);
  *  - callers re-set the cookie on every successful token refresh (sliding
  *    window) and clear it whenever a refresh is rejected.
  *
@@ -20,8 +20,8 @@
 export const OP_PRESENCE_COOKIE = "rf-op-auth";
 export const BUYER_PRESENCE_COOKIE = "rf-buyer-auth";
 
-/** Must match the API refresh-token TTL (3 days). */
-export const PRESENCE_COOKIE_MAX_AGE = 60 * 60 * 24 * 3;
+/** Must match the API refresh-token TTL (30 days). */
+export const PRESENCE_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
 function setPresenceCookie(name: string): void {
   if (typeof document === "undefined") return;

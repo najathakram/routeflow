@@ -5,16 +5,25 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowLeft, KeyRound } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { buyerChangePassword } from "@/lib/buyer-auth";
+import {
+  buyerChangePassword,
+  buyerSetPassword,
+  getBuyerProfile,
+  type BuyerProfile,
+} from "@/lib/buyer-auth";
+import { BUYER_KEYS } from "@/lib/auth-keys";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
+// currentPassword is validated conditionally in onSubmit — set mode (Google
+// accounts with no password yet) hides the field entirely.
 const schema = z
   .object({
-    currentPassword: z.string().min(1, "Current password is required"),
+    currentPassword: z.string(),
     // Mirrors the server policy (BuyerChangePasswordDto): upper + lower + digit-or-special.
     newPassword: z
       .string()
@@ -38,6 +47,10 @@ export default function BuyerChangePasswordPage() {
   const { buyer, isLoading, isAuthenticated } = useBuyerAuth();
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState(false);
+  const [profile, setProfile] = React.useState<BuyerProfile | null>(null);
+
+  const accessToken =
+    typeof window !== "undefined" ? localStorage.getItem(BUYER_KEYS.accessToken) : null;
 
   // Redirect if not authenticated
   React.useEffect(() => {
@@ -46,23 +59,52 @@ export default function BuyerChangePasswordPage() {
     }
   }, [isLoading, isAuthenticated, router]);
 
+  // Authoritative hasPassword read — the JWT copy goes stale after a set/reset.
+  React.useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    getBuyerProfile(accessToken)
+      .then((p) => {
+        if (!cancelled) setProfile(p);
+      })
+      .catch(() => {
+        // Older API or transient failure → keep change mode (safe default).
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  // false ONLY when the server confirms this is a Google-created account with
+  // no usable password — then we offer "set a password" without a current one.
+  const hasPassword = profile?.hasPassword ?? true;
+
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
     reset,
-  } = useForm<FormValues>({ resolver: zodResolver(schema) });
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  });
 
   const onSubmit = async (data: FormValues) => {
     setApiError(null);
-    const accessToken =
-      typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
     if (!accessToken) {
       setApiError("You are not logged in. Please sign in again.");
       return;
     }
+    if (hasPassword && !data.currentPassword) {
+      setApiError("Current password is required.");
+      return;
+    }
     try {
-      await buyerChangePassword(data.currentPassword, data.newPassword, accessToken);
+      if (hasPassword) {
+        await buyerChangePassword(data.currentPassword, data.newPassword, accessToken);
+      } else {
+        await buyerSetPassword(data.newPassword, accessToken);
+      }
       setSuccess(true);
       reset();
       // Return to portal after a short delay
@@ -77,24 +119,27 @@ export default function BuyerChangePasswordPage() {
 
   if (isLoading || !isAuthenticated) return null;
 
-  // Detect Google-only accounts (no password set — googleId present, no passwordHash usable)
-  // We rely on the buyer object; if buyer was created via Google the email may give a hint,
-  // but the definitive check is a failed request. Show a notice if the error is about wrong password.
   const isGoogleOnlyHint =
-    apiError?.toLowerCase().includes("current password") ||
-    apiError?.toLowerCase().includes("incorrect");
+    hasPassword &&
+    (apiError?.toLowerCase().includes("current password") ||
+      apiError?.toLowerCase().includes("incorrect"));
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="mb-8 flex flex-col items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-buyer.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
-          <h1 className="text-2xl font-bold text-navy">Change Password</h1>
+          <h1 className="text-2xl font-bold text-navy">
+            {hasPassword ? "Change Password" : "Set a Password"}
+          </h1>
           <p className="text-center text-sm text-navy/70">
-            {buyer?.email
-              ? `Updating password for ${buyer.email}`
-              : "Update your buyer portal password"}
+            {!hasPassword
+              ? "You sign in with Google. Add a password to also sign in with your email."
+              : buyer?.email
+                ? `Updating password for ${buyer.email}`
+                : "Update your buyer portal password"}
           </p>
         </div>
 
@@ -107,7 +152,9 @@ export default function BuyerChangePasswordPage() {
                 <KeyRound className="h-6 w-6 text-success" />
               </div>
               <div>
-                <p className="font-semibold text-navy">Password changed successfully!</p>
+                <p className="font-semibold text-navy">
+                  {hasPassword ? "Password changed successfully!" : "Password set successfully!"}
+                </p>
                 <p className="mt-1 text-sm text-navy/70">Redirecting you to the portal…</p>
               </div>
             </div>
@@ -118,18 +165,23 @@ export default function BuyerChangePasswordPage() {
                   <p className="text-sm text-danger">{apiError}</p>
                   {isGoogleOnlyHint && (
                     <p className="mt-1 text-xs text-danger/80">
-                      If you signed up with Google, you may not have a password set. Google accounts
-                      manage passwords through Google.
+                      If you signed up with Google and never set a password, use{" "}
+                      <Link href="/buyer/forgot-password" className="underline">
+                        forgot password
+                      </Link>{" "}
+                      to create one.
                     </p>
                   )}
                 </div>
               )}
-              <PasswordInput
-                label="Current password"
-                autoComplete="current-password"
-                register={register("currentPassword")}
-                error={errors.currentPassword?.message}
-              />
+              {hasPassword && (
+                <PasswordInput
+                  label="Current password"
+                  autoComplete="current-password"
+                  register={register("currentPassword")}
+                  error={errors.currentPassword?.message}
+                />
+              )}
               <PasswordInput
                 label="New password"
                 autoComplete="new-password"
