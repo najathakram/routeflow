@@ -7,6 +7,56 @@
 > endpoint map `project/specs/backend-wiring-index.md`. Follow the **db-migration**
 > and **rebuild** skills + `CLAUDE_SESSION_PREAMBLE.md` for every migration/deploy.
 
+## STATUS — updated 2026-07-12 (READ THIS FIRST; the per-block text below is the original plan and is now STALE)
+
+**The entire W1→W7b ladder SHIPPED and is LIVE in prod.** All migrations are applied
+(`20260706120000_regulated_items_foundation`, `20260707120000_add_regulated_filing`,
+`20260709000000_add_authorization_expiry_notify`, `20260710000000_add_credit_note_item`,
+`20260710010000_regulated_pod_age_id`). Ignore the "BUILT on a branch / awaiting user
+approval" wording in the W-block list below — it predates the deploys. Authoritative
+signature-level status lives in `.claude/code-map/api.md` (regulated section) + `web.md`/`mobile.md`.
+
+### DONE (wired + deployed)
+- **W1** schema foundation + tobacco backfill (seed row #1, `taxType=NONE`, `requiresLicense=false`).
+- **W2** tracked-categories CRUD (`apps/api/src/tracked-categories/`) + web **Regulated Items hub**
+  (`apps/web/app/(dashboard)/compliance/page.tsx`), `CategoryFormModal` + `AssignProductsModal`.
+- **W4** invoice split — `SEPARATE_INVOICE` categories emit paired sibling invoices (`invoiceGroupId`, `-R1/-R2`).
+- **W5a/b/c** regulated ledger writer + generic filings (`prepareFiling`/CSV, web filings table WIRED) +
+  credit-note/return ledger reversal. (`apps/api/src/regulated/`.)
+- **W6a/b** authorization lifecycle + point-of-sale license guard (409 `REGULATED_AUTH_REQUIRED`, 3 exits) +
+  buyer self-serve `/buyer/authorizations` + invoice-time backstop. (`apps/api/src/authorizations/`.)
+- **W7** license-expiry cron (30/7/1-day), buyer catalog visibility gate, **W7b** POD age/ID delivery gate
+  (`common/regulated-delivery.ts`, 400 `REGULATED_POD_REQUIRED`) + driver/buyer surfaces.
+- **Mobile parity** (buyer licenses, POS guard modal, catalog gate + expiry bell, driver POD capture) shipped in #225.
+
+### LEFT for the next session (nothing is in flight)
+1. **In-invoice regulated SECTION heading** (`SEPARATE_SECTION` treatment) — the requested "group regulated
+   vs unregulated under a heading on the same invoice." **Display-only, no migration, no money math.** Today
+   `invoices.service.groupOrderLinesForInvoicing` (:465-515) only splits `SEPARATE_INVOICE`; `SEPARATE_SECTION`/
+   `LINE_TAX` lines fold flat with a warn (:497-501). Path: join `TrackedCategory.name`+`invoiceTreatment` onto
+   invoice-line payloads (`findOne` items include :1325, `invoice-pdf.service` include :47, PDF template item
+   shape, web `lib/api/invoices.ts` line type, mobile `lib/api/invoices.ts` line type — all product-only today);
+   add one pure `groupInvoiceItems(items)` helper (web+mobile mirror); render an unheaded standard group then one
+   heading per non-null-category group on web detail (:1618-1734), PDF template (:472-508), mobile operator/customer
+   invoice detail. Any regulated line co-resident on a mixed invoice is by definition `SEPARATE_SECTION`/`LINE_TAX`
+   (SEPARATE_INVOICE is already hived off), so grouping on `trackedCategoryId != null` is correct.
+2. **W3 category TAX is inert** — `taxType`/`rate` are stored + editable, but `RegulatedSalesLedger.categoryTax`
+   is snapshot 0 and `createSplitInvoices` (:562-568) hard-blocks any non-zero category rate. Actually computing
+   per-`taxType` tax (EXCISE_PER_UNIT/PERCENT_OF_SALE/PER_VOLUME/DEPOSIT_PER_CONTAINER, boxed-line interaction)
+   is the real money-path block — adversarial review + `06-critical-paths.spec.ts` gate REQUIRED.
+3. **Product-form category picker** — assigning a product to a tracked category is bulk-only (`AssignProductsModal`);
+   no `trackedCategoryId` selector on product create/edit (web or mobile). Scope selector (`appliesScope`) also unbuilt.
+4. **Ledger completeness** — writes only on the split-invoice path; `reconcileOrderDraftInvoice`/manual-create/
+   partial/draft-update sync, `orderItemId` provenance, `unitBasisQty` conversion, and a **filing cron** (filings
+   are manual "prepare" only) are deferred.
+5. **Authorization edges** — license-DOCUMENT upload (`documentKey` unwired, buyer+operator); §8 create-path override
+   post-create binding; geo `deliveryCity` scope threading; cross-seller license propagation.
+6. **Nav gating** — the Regulated Items hub is nav-gated behind the tobacco addon (`layout.tsx:785`); a non-tobacco
+   regulated tenant can't see it in the sidebar. Consider gating on "≥1 active TrackedCategory" instead.
+7. **W1 follow-ups still open** — customer merge/delete does NOT re-point `CustomerAuthorization`/`AuthorizationOverride`
+   (`customers.service.ts` merge ~1198-1217); **no operator tracked-category MANAGEMENT or customer-authorization
+   approve/reject/renew on MOBILE** (web-only).
+
 ## The one idea
 
 Everything routes to a generic **`TrackedCategory`** that replaces the hardcoded
