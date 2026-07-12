@@ -37,6 +37,10 @@ const en = {
   "reauth.switch": "Switch account",
   "reauth.unlock": "Unlock and continue",
   "reauth.badPassword": "That password did not match. Try again.",
+  "reauth.or": "or",
+  "reauth.continueGoogle": "Continue with Google",
+  "reauth.forgot": "Forgot password?",
+  "reauth.googleUnavailable": "Google sign-in is unavailable right now. Use your password instead.",
 
   // Top bar / avatar menu
   "topbar.searchPlaceholder": "Search or jump to…",
@@ -81,6 +85,11 @@ const es: Messages = {
   "reauth.switch": "Cambiar de cuenta",
   "reauth.unlock": "Desbloquear y continuar",
   "reauth.badPassword": "La contraseña no coincide. Inténtalo de nuevo.",
+  "reauth.or": "o",
+  "reauth.continueGoogle": "Continuar con Google",
+  "reauth.forgot": "¿Olvidaste tu contraseña?",
+  "reauth.googleUnavailable":
+    "Google no está disponible en este momento. Usa tu contraseña en su lugar.",
 
   "topbar.searchPlaceholder": "Busca o salta a…",
   "menu.profile": "Perfil y ajustes",
