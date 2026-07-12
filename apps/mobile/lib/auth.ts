@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
+import { setLastUsername } from "./last-username";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
@@ -188,6 +189,7 @@ export async function login(username: string, password: string): Promise<AuthRes
   await storage.set(keys.refreshToken, data.refreshToken);
   // BUG-XR1-4: pin the active role so subsequent reads target the right bucket.
   await storage.set(CURRENT_ROLE_KEY, currentRoleFromJwtRole(data.user.role));
+  await setLastUsername(data.user.username);
   // Register push token after successful login
   await registerPushToken();
   return data;
@@ -256,6 +258,7 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
     canActAsDriver: (payload?.canActAsDriver as boolean) ?? false,
   };
 
+  await setLastUsername(user.username);
   await registerPushToken();
 
   return {
