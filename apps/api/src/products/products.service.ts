@@ -80,7 +80,10 @@ export class ProductsService {
     }
   }
 
-  async findAll(query: ListProductsDto, opts?: { excludeTrackedCategoryIds?: string[] }) {
+  async findAll(
+    query: ListProductsDto,
+    opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
+  ) {
     const page = Number(query.page ?? 1);
     // limit=0 is the internal "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -129,6 +132,13 @@ export class ProductsService {
     } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
       where.isActive = true;
       where.currentStock = { gt: 5 };
+    }
+
+    // Internal-only extra AND clauses (buyer catalog v2 smart collections —
+    // set by BuyerCatalogService, never from client input). Folded via AND so
+    // they compose with the search OR and the stock-status OR.
+    if (opts?.andWhere?.length) {
+      where.AND = [...(where.AND ?? []), ...opts.andWhere];
     }
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
