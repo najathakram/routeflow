@@ -2157,4 +2157,467 @@ describe("OrdersService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
   });
+
+  // ─── P5-09: approveChangeRequestAtStop (approve-merge money path) ──────────
+
+  describe("approveChangeRequestAtStop (P5-09)", () => {
+    const driverPayload = {
+      sub: "user-drv",
+      username: "driver1",
+      role: "DRIVER" as const,
+      status: "ACTIVE" as const,
+      forcePasswordChange: false,
+    };
+
+    const baseCr = (overrides: Record<string, any> = {}) => ({
+      id: "cr-1",
+      tenantId: "test-tenant",
+      orderId: "ord-1",
+      orderItemId: null,
+      productId: null,
+      routeRunStopId: "stop-1",
+      type: "CHANGE_QTY",
+      status: "PENDING",
+      payload: {},
+      note: null,
+      requestedById: "user-cust",
+      requestedByName: "Buyer Co",
+      requestedByRole: "CUSTOMER",
+      ...overrides,
+    });
+
+    const baseOrder = (lineItems: any[], overrides: Record<string, any> = {}) => ({
+      id: "ord-1",
+      customerId: "cust-1",
+      orderNumber: "ORD-123",
+      status: "OUT_FOR_DELIVERY",
+      subtotal: 24,
+      tax: 0,
+      total: 24,
+      routeRunId: "run-1",
+      routeRunStopId: "stop-1",
+      lineItems,
+      routeRun: { id: "run-1", status: "IN_PROGRESS", driverId: "drv-1" },
+      routeRunStop: { id: "stop-1", status: "PENDING" },
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: null, pricingTier: 1 });
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+    });
+
+    it("CHANGE_QTY boxed proration: 24 -> 18 on a 12-per-box line prices via computeLineSubtotal, not qty*unitPrice", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitPrice: 24,
+        subtotal: 48,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "CHANGE_QTY",
+          orderItemId: "li-1",
+          payload: { orderItemId: "li-1", newQty: 18 },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "li-1",
+          productId: "prod-1",
+          qty: 18,
+          unitPrice: 24,
+          subtotal: 36,
+          status: "PENDING",
+          trackedCategoryId: null,
+        },
+      ]);
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+      // 24 * (1 box + 6/12) = 36.00 — NOT 18 * 24 = 432.
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { qty: 18, boxes: 1, pieces: 6, unitsPerBox: 12, subtotal: 36 },
+      });
+    });
+
+    it("ADD_ITEM onto an existing line keeps the line's stored (agreed) unitPrice", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 10,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 8.5,
+        subtotal: 85,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "ADD_ITEM",
+          productId: "prod-1",
+          payload: {
+            productId: "prod-1",
+            qty: 5,
+            boxes: null,
+            pieces: null,
+            productName: "Widget",
+          },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      // Catalog price moved to 10 — the merge must NOT re-price the agreed line.
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-1",
+        name: "Widget",
+        pricePerUnit: 10,
+        unitsPerBox: null,
+        category: null,
+        trackedCategoryId: null,
+      });
+      prisma.orderItem.findMany
+        .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+        .mockResolvedValue([
+          {
+            id: "li-1",
+            productId: "prod-1",
+            qty: 15,
+            unitPrice: 8.5,
+            subtotal: 127.5,
+            status: "PENDING",
+            trackedCategoryId: null,
+          },
+        ]);
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { qty: 15, boxes: null, pieces: null, unitsPerBox: null, subtotal: 127.5 },
+      });
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+
+    it("ADD_ITEM new line prices through the customer's tier (resolveBuyerLinePrice) and records an ADD_ON mutation", async () => {
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "ADD_ITEM",
+          productId: "prod-2",
+          payload: { productId: "prod-2", qty: 5, boxes: null, pieces: null, productName: "Basil" },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([])); // no existing line for prod-2
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 2, creditLimit: null });
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-2",
+        name: "Basil",
+        pricePerUnit: 10,
+        priceTier2: 9,
+        unitsPerBox: null,
+        category: null,
+        trackedCategoryId: null,
+      });
+      prisma.orderItem.create.mockResolvedValue({ id: "li-new" });
+      prisma.orderItem.findMany
+        .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+        .mockResolvedValue([
+          {
+            id: "li-new",
+            productId: "prod-2",
+            qty: 5,
+            unitPrice: 9,
+            subtotal: 45,
+            status: "PENDING",
+            trackedCategoryId: null,
+          },
+        ]);
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          orderId: "ord-1",
+          productId: "prod-2",
+          qty: 5,
+          unitPrice: 9,
+          originalPrice: 10,
+          priceType: "SPECIAL",
+        }),
+      });
+      expect(prisma.deliveryMutation.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: "ADD_ON",
+          routeRunStopId: "stop-1",
+          qty: 5,
+          orderItemId: "li-new",
+          productId: "prod-2",
+        }),
+      });
+    });
+
+    it("REMOVE_ITEM cancels the line (never hard-deletes) and records a REFUSED mutation with negative qty", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 10,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 5,
+        subtotal: 50,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({ type: "REMOVE_ITEM", orderItemId: "li-1", payload: { orderItemId: "li-1" } }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findMany.mockResolvedValue([]); // cancelled line drops out of the active set
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, null);
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith({
+        where: { id: "li-1" },
+        data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+      });
+      expect(prisma.deliveryMutation.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: "REFUSED",
+          qty: -10,
+          orderItemId: "li-1",
+          productId: "prod-1",
+        }),
+      });
+    });
+
+    it("G6 race: a lost claim (updateMany count 0) rejects with 409 and writes nothing", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 10,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 5,
+        subtotal: 50,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "CHANGE_QTY",
+          orderItemId: "li-1",
+          payload: { orderItemId: "li-1", newQty: 12 },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.changeRequest.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+      ).rejects.toMatchObject({ response: { code: "CHANGE_REQUEST_ALREADY_RESOLVED" } });
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+      expect(prisma.deliveryMutation.create).not.toHaveBeenCalled();
+    });
+
+    it("stock guard hard-blocks a DRIVER resolver on an ADD_ITEM that exceeds available stock", async () => {
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "ADD_ITEM",
+          productId: "prod-3",
+          payload: { productId: "prod-3", qty: 5, boxes: null, pieces: null, productName: "Basil" },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([])); // held 0 — a brand-new line
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-3",
+        name: "Basil",
+        pricePerUnit: 10,
+        unitsPerBox: null,
+        category: null,
+        trackedCategoryId: null,
+      });
+      prisma.orderItem.findMany
+        .mockResolvedValueOnce([]) // getCustomerPriceHistory (hoisted, pre-tx)
+        .mockResolvedValue([
+          {
+            id: "li-new",
+            productId: "prod-3",
+            qty: 5,
+            unitPrice: 10,
+            subtotal: 50,
+            status: "PENDING",
+            trackedCategoryId: null,
+          },
+        ]);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-3", name: "Basil", currentStock: 1 }]);
+
+      await expect(
+        service.approveChangeRequestAtStop("cr-1", driverPayload as any, null),
+      ).rejects.toMatchObject({ response: { code: "INSUFFICIENT_STOCK" } });
+
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+    });
+
+    it("credit guard blocks all roles when the merge would exceed the customer's credit limit", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 2,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 10,
+        subtotal: 20,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "CHANGE_QTY",
+          orderItemId: "li-1",
+          payload: { orderItemId: "li-1", newQty: 5 },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "li-1",
+          productId: "prod-1",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          status: "PENDING",
+          trackedCategoryId: null,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 10, pricingTier: 1 });
+
+      await expect(
+        service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+      ).rejects.toMatchObject({ response: { code: "CREDIT_LIMIT_EXCEEDED" } });
+
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+    });
+
+    it("409s with STOP_ALREADY_COMPLETED when the stop is already COMPLETED, without attempting a claim", async () => {
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({ type: "NOTE", payload: { text: "please substitute if out" } }),
+      );
+      prisma.order.findUnique.mockResolvedValue(
+        baseOrder([], { routeRunStop: { id: "stop-1", status: "COMPLETED" } }),
+      );
+
+      await expect(
+        service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+      ).rejects.toMatchObject({ response: { code: "STOP_ALREADY_COMPLETED" } });
+
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("post-commit: reconciles the draft invoice and appends a CHANGE_REQUEST revision", async () => {
+      const line = {
+        id: "li-1",
+        orderId: "ord-1",
+        productId: "prod-1",
+        qty: 2,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitPrice: 10,
+        subtotal: 20,
+        status: "PENDING",
+        deliveredQty: 0,
+      };
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "CHANGE_QTY",
+          orderItemId: "li-1",
+          payload: { orderItemId: "li-1", newQty: 5 },
+          note: "please add more",
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([line]));
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "li-1",
+          productId: "prod-1",
+          qty: 5,
+          unitPrice: 10,
+          subtotal: 50,
+          status: "PENDING",
+          trackedCategoryId: null,
+        },
+      ]);
+
+      await service.approveChangeRequestAtStop("cr-1", operatorPayload, "looked fine at the door");
+
+      expect(invoicesService.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", {
+        basis: "order",
+      });
+      expect(prisma.orderRevision.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            orderId: "ord-1",
+            source: "CHANGE_REQUEST",
+            reason: "please add more",
+          }),
+        }),
+      );
+    });
+
+    it("regulated guard re-runs on ADD_ITEM approval; a throw writes nothing", async () => {
+      prisma.changeRequest.findUnique.mockResolvedValue(
+        baseCr({
+          type: "ADD_ITEM",
+          productId: "prod-4",
+          payload: {
+            productId: "prod-4",
+            qty: 2,
+            boxes: null,
+            pieces: null,
+            productName: "Tobacco",
+          },
+        }),
+      );
+      prisma.order.findUnique.mockResolvedValue(baseOrder([]));
+      prisma.product.findUnique.mockResolvedValue({ id: "prod-4", trackedCategoryId: "cat-1" });
+      const authGuard = (service as any).authGuard;
+      authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(
+        new ConflictException({ code: "REGULATED_AUTH_REQUIRED" }),
+      );
+
+      await expect(
+        service.approveChangeRequestAtStop("cr-1", operatorPayload, null),
+      ).rejects.toMatchObject({ response: { code: "REGULATED_AUTH_REQUIRED" } });
+
+      expect(authGuard.assertAuthorizedOrThrow).toHaveBeenCalledWith({
+        customerId: "cust-1",
+        lines: [{ trackedCategoryId: "cat-1" }],
+        orderId: "ord-1",
+      });
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+  });
 });

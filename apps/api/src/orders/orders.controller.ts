@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
+import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -25,13 +26,18 @@ import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
+import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
+import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller("orders")
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly changeRequestsService: ChangeRequestsService,
+  ) {}
 
   @Get()
   @UseGuards(RolesGuard)
@@ -201,6 +207,41 @@ export class OrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.ordersService.updateOrderItems(id, dto, user);
+  }
+
+  // ─── P5-09: post-dispatch change requests ───────────────────────────────────
+
+  @Post(":id/change-requests")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  createChangeRequest(
+    @Param("id") id: string,
+    @Body() dto: CreateChangeRequestDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.changeRequestsService.create(id, dto, user);
+  }
+
+  @Get(":id/change-requests")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  listChangeRequests(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.changeRequestsService.listForOrder(id, user);
+  }
+
+  // G6: driver-at-stop is the primary authority; the office (OPERATOR /
+  // TENANT_ADMIN via RolesGuard) may resolve only while PENDING. First
+  // resolution wins and locks — a second resolve 409s. Buyers cannot resolve.
+  @Post(":id/change-requests/:crId/resolve")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  resolveChangeRequest(
+    @Param("id") id: string,
+    @Param("crId") crId: string,
+    @Body() dto: ResolveChangeRequestDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.changeRequestsService.resolve(id, crId, dto, user);
   }
 
   // Set/clear carrier shipment tracking on an order shipped via a carrier (not
