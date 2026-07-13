@@ -34,7 +34,15 @@ type FormValues = z.infer<typeof schema>;
 
 function BuyerResetPasswordInner() {
   const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+  // F3-004: capture the single-use token once, then strip it from the visible URL
+  // (history / back button / copy-paste / same-origin Referer) — it's kept in state
+  // for the submit and POSTed in the body, never re-read from the URL.
+  const [token] = React.useState(() => searchParams.get("token") ?? "");
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search) {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
 

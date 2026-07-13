@@ -95,6 +95,18 @@ const nextConfig = {
           { key: "Content-Security-Policy", value: csp },
         ],
       },
+      // F3-004: password-reset pages land with a single-use token in the URL.
+      // Force no-referrer here (stricter than the site default) so the token can
+      // never leak via the Referer of any subresource these pages load. The pages
+      // also strip the token from the visible URL client-side after reading it.
+      {
+        source: "/reset-password",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
+      {
+        source: "/buyer/reset-password",
+        headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
     ];
   },
 };
