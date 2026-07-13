@@ -51,6 +51,7 @@ import {
   type InvoicePayment,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
@@ -941,6 +942,42 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     if (invoice) setTitle(invoice.invoiceNumber);
   }, [invoice, setTitle]);
 
+  // Regulated SEPARATE_SECTION grouping (T1-16#1): lines whose tracked category is
+  // treated as SEPARATE_SECTION are pulled out of the flat list and rendered under
+  // a category heading within this same invoice. Everything else (standard +
+  // LINE_TAX regulated) stays inline. Display-only — line data/totals unchanged.
+  const { data: invTrackedCategories } = useTrackedCategories(
+    { active: true },
+    { enabled: !!invoice },
+  );
+  const invCategoryById = React.useMemo(
+    () => new Map((invTrackedCategories ?? []).map((c) => [c.id, c])),
+    [invTrackedCategories],
+  );
+  const sectionedRows = React.useMemo(() => {
+    const its = invoice?.items ?? [];
+    const inline: typeof its = [];
+    const sections = new Map<string, { name: string; items: typeof its }>();
+    for (const it of its) {
+      const cat = it.trackedCategoryId ? invCategoryById.get(it.trackedCategoryId) : undefined;
+      if (cat && cat.invoiceTreatment === "SEPARATE_SECTION") {
+        const s = sections.get(cat.id) ?? { name: cat.name, items: [] };
+        s.items.push(it);
+        sections.set(cat.id, s);
+      } else {
+        inline.push(it);
+      }
+    }
+    const rows: Array<
+      { kind: "heading"; label: string } | { kind: "item"; item: (typeof its)[number] }
+    > = inline.map((item) => ({ kind: "item", item }));
+    for (const s of Array.from(sections.values()).sort((a, b) => a.name.localeCompare(b.name))) {
+      rows.push({ kind: "heading", label: s.name });
+      for (const item of s.items) rows.push({ kind: "item", item });
+    }
+    return rows;
+  }, [invoice, invCategoryById]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-12">
@@ -1627,108 +1664,127 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
-                  {(invoice.items ?? []).map((item) => (
-                    <tr key={item.id} className="hover:bg-surface-raised">
-                      <td className="px-8 py-3 font-medium text-navy">
-                        {item.description}
-                        {item.notes && (
-                          <p className="mt-0.5 text-xs font-normal italic text-navy/60">
-                            {item.notes}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span
-                          className="mono text-navy/70"
-                          title={
-                            item.boxes != null || item.pieces != null
-                              ? `${Number(item.qty)} pcs total`
-                              : undefined
-                          }
-                        >
-                          {formatQtySplit({
-                            qty: item.qty,
-                            boxes: item.boxes,
-                            pieces: item.pieces,
-                          })}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {item.priceType === "SPECIAL" ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="strike text-xs">
-                              {fmt(Number(item.originalPrice))}
-                            </span>
-                            <span className="money text-success">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                            <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                              Special price
-                            </span>
-                          </div>
-                        ) : item.priceType === "DISCOUNTED" ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="strike text-xs">
-                              {fmt(Number(item.originalPrice))}
-                            </span>
-                            <span className="money text-warning">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                              Discounted price
-                            </span>
-                          </div>
-                        ) : item.priceType === "PROMO" && item.originalPrice != null ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="strike text-xs">
-                              {fmt(Number(item.originalPrice))}
-                            </span>
-                            <span className="money text-brand-600">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                            <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
-                              Promo price
-                            </span>
-                          </div>
-                        ) : item.priceType === "MANUAL" &&
-                          item.originalPrice != null &&
-                          Number(item.unitPrice) > Number(item.originalPrice) ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            {/* Upsell (above list): green, no strikethrough — the base
+                  {sectionedRows.map((row) => {
+                    if (row.kind === "heading") {
+                      return (
+                        <tr key={`section-${row.label}`} className="bg-amber-50/40">
+                          <td
+                            colSpan={4}
+                            className="px-8 py-2 text-[11px] font-semibold uppercase tracking-wider text-amber-700"
+                          >
+                            {row.label} · regulated
+                          </td>
+                        </tr>
+                      );
+                    }
+                    const item = row.item;
+                    return (
+                      <tr key={item.id} className="hover:bg-surface-raised">
+                        <td className="px-8 py-3 font-medium text-navy">
+                          {item.description}
+                          {item.notes && (
+                            <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                              {item.notes}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span
+                            className="mono text-navy/70"
+                            title={
+                              item.boxes != null || item.pieces != null
+                                ? `${Number(item.qty)} pcs total`
+                                : undefined
+                            }
+                          >
+                            {formatQtySplit({
+                              qty: item.qty,
+                              boxes: item.boxes,
+                              pieces: item.pieces,
+                            })}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {item.priceType === "SPECIAL" ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="strike text-xs">
+                                {fmt(Number(item.originalPrice))}
+                              </span>
+                              <span className="money text-success">
+                                {fmt(Number(item.unitPrice))}
+                              </span>
+                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
+                                Special price
+                              </span>
+                            </div>
+                          ) : item.priceType === "DISCOUNTED" ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="strike text-xs">
+                                {fmt(Number(item.originalPrice))}
+                              </span>
+                              <span className="money text-warning">
+                                {fmt(Number(item.unitPrice))}
+                              </span>
+                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
+                                Discounted price
+                              </span>
+                            </div>
+                          ) : item.priceType === "PROMO" && item.originalPrice != null ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="strike text-xs">
+                                {fmt(Number(item.originalPrice))}
+                              </span>
+                              <span className="money text-brand-600">
+                                {fmt(Number(item.unitPrice))}
+                              </span>
+                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
+                                Promo price
+                              </span>
+                            </div>
+                          ) : item.priceType === "MANUAL" &&
+                            item.originalPrice != null &&
+                            Number(item.unitPrice) > Number(item.originalPrice) ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              {/* Upsell (above list): green, no strikethrough — the base
                                 is never shown to the buyer. */}
-                            <span className="money text-success">
+                              <span className="money text-success">
+                                {fmt(Number(item.unitPrice))}
+                              </span>
+                              <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
+                                Upsell
+                              </span>
+                            </div>
+                          ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="strike text-xs">
+                                {fmt(Number(item.originalPrice))}
+                              </span>
+                              <span className="money text-warning">
+                                {fmt(Number(item.unitPrice))}
+                              </span>
+                              <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
+                                Adjusted
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="money text-navy/70">
                               {fmt(Number(item.unitPrice))}
                             </span>
-                            <span className="rounded-full bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success ring-1 ring-success/20">
-                              Upsell
-                            </span>
-                          </div>
-                        ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className="strike text-xs">
-                              {fmt(Number(item.originalPrice))}
-                            </span>
-                            <span className="money text-warning">
-                              {fmt(Number(item.unitPrice))}
-                            </span>
-                            <span className="rounded-full bg-warning-bg px-1.5 py-0.5 text-[10px] font-medium text-warning ring-1 ring-warning/20">
-                              Adjusted
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="money text-navy/70">{fmt(Number(item.unitPrice))}</span>
-                        )}
-                      </td>
-                      <td className="px-8 py-3 text-right">
-                        <span className="money text-navy">
-                          {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
+                          )}
+                        </td>
+                        <td className="px-8 py-3 text-right">
+                          <span className="money text-navy">
+                            {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
                               rounded via pricing.ts). NEVER re-derive qty*unitPrice — that
                               over-charges boxed lines by unitsPerBox and ignores line discounts. */}
-                          {fmt(Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)))}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                            {fmt(
+                              Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)),
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
