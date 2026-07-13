@@ -10,7 +10,11 @@ import {
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
-import { emptyToUndefined, toOptionalDecimalString } from "../../common/dto-transforms";
+import {
+  emptyToNull,
+  emptyToUndefined,
+  toOptionalDecimalString,
+} from "../../common/dto-transforms";
 
 export class CreateProductDto {
   @IsString() name: string;
@@ -40,4 +44,9 @@ export class CreateProductDto {
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier5?: string;
   @IsOptional() @Transform(emptyToUndefined) @IsUUID() parentProductId?: string;
   @IsOptional() @IsString() variantName?: string;
+  // Phase 4 (subcategories): optional regulated section + finer subcategory.
+  // emptyToNull so an empty select CLEARS the tag; the service validates that the
+  // subcategory belongs to the chosen section.
+  @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;
+  @IsOptional() @Transform(emptyToNull) @IsUUID() trackedSubcategoryId?: string | null;
 }

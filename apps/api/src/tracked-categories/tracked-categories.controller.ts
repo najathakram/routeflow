@@ -8,6 +8,8 @@ import { CreateTrackedCategoryDto } from "./dto/create-tracked-category.dto";
 import { UpdateTrackedCategoryDto } from "./dto/update-tracked-category.dto";
 import { ListTrackedCategoriesDto } from "./dto/list-tracked-categories.dto";
 import { AssignProductsDto } from "./dto/assign-products.dto";
+import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
+import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 
 // TENANT_ADMIN satisfies OPERATOR via the RolesGuard hierarchy, so both roles
 // can manage categories; SUPER_ADMIN too. Generic feature — no addon gate.
@@ -50,5 +52,31 @@ export class TrackedCategoriesController {
   @Post(":id/products/unassign")
   unassign(@Param("id") id: string, @Body() dto: AssignProductsDto) {
     return this.service.unassignProducts(id, dto.productIds);
+  }
+
+  // ── Subcategories (nested under a section) ────────────────────────────────
+
+  @Get(":id/subcategories")
+  listSubcategories(@Param("id") id: string) {
+    return this.service.listSubcategories(id);
+  }
+
+  @Post(":id/subcategories")
+  createSubcategory(@Param("id") id: string, @Body() dto: CreateSubcategoryDto) {
+    return this.service.createSubcategory(id, dto);
+  }
+
+  @Patch(":id/subcategories/:subId")
+  updateSubcategory(
+    @Param("id") id: string,
+    @Param("subId") subId: string,
+    @Body() dto: UpdateSubcategoryDto,
+  ) {
+    return this.service.updateSubcategory(id, subId, dto);
+  }
+
+  @Patch(":id/subcategories/:subId/toggle")
+  toggleSubcategory(@Param("id") id: string, @Param("subId") subId: string) {
+    return this.service.toggleSubcategory(id, subId);
   }
 }

@@ -11,6 +11,16 @@ export const emptyToUndefined = ({ value }: { value: unknown }) =>
   value == null || (typeof value === "string" && value.trim() === "") ? undefined : value;
 
 /**
+ * "" / null → null (treat an empty selection as an explicit clear, not absent).
+ * Use for optional FK pointers a form must be able to CLEAR (e.g. removing a
+ * product's regulated section/subcategory) — `null` reaches Prisma as a real
+ * "set column to null", whereas `emptyToUndefined` would leave it unchanged.
+ * `@IsOptional` still skips `@IsUUID` for null, so a valid UUID or null both pass.
+ */
+export const emptyToNull = ({ value }: { value: unknown }) =>
+  value == null || (typeof value === "string" && value.trim() === "") ? null : value;
+
+/**
  * Optional decimal-string fields: "" / null → absent; finite numbers are
  * coerced to their string form so clients may send 12.5 or "12.5"
  * interchangeably. Anything else passes through for @IsDecimal to reject.

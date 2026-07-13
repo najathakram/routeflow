@@ -134,4 +134,121 @@ describe("TrackedCategoriesService", () => {
       expect(res).toEqual({ unassigned: 1 });
     });
   });
+
+  describe("subcategories", () => {
+    const section = { id: "c1", name: "Tobacco", active: true, _count: { products: 0 } };
+
+    describe("listSubcategories", () => {
+      it("lists a section's subcategories mapped with productCount", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.trackedSubcategory.findMany.mockResolvedValue([
+          {
+            id: "s1",
+            name: "Cigarettes",
+            trackedCategoryId: "c1",
+            active: true,
+            _count: { products: 4 },
+          },
+        ]);
+
+        const res = await service.listSubcategories("c1");
+
+        expect(prisma.trackedSubcategory.findMany).toHaveBeenCalledWith({
+          where: { trackedCategoryId: "c1" },
+          orderBy: { name: "asc" },
+          include: { _count: { select: { products: true } } },
+        });
+        expect(res[0]).toMatchObject({ id: "s1", productCount: 4 });
+        expect((res[0] as any)._count).toBeUndefined();
+      });
+
+      it("throws NotFound when the parent section is missing", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(null);
+        await expect(service.listSubcategories("missing")).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+    });
+
+    describe("createSubcategory", () => {
+      it("injects tenantId + parent section and returns productCount", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.trackedSubcategory.create.mockResolvedValue({
+          id: "s1",
+          name: "Cigarettes",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+
+        const res = await service.createSubcategory("c1", { name: "Cigarettes" });
+
+        expect(prisma.trackedSubcategory.create).toHaveBeenCalledWith({
+          data: {
+            name: "Cigarettes",
+            active: true,
+            trackedCategoryId: "c1",
+            tenantId: "test-tenant",
+          },
+          include: { _count: { select: { products: true } } },
+        });
+        expect(res).toMatchObject({ id: "s1", productCount: 0 });
+      });
+
+      it("maps a duplicate name (P2002) to a 409 Conflict", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.trackedSubcategory.create.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "7" }),
+        );
+        await expect(
+          service.createSubcategory("c1", { name: "Cigarettes" }),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it("rejects without a tenant context", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.getTenantId.mockReturnValue(null);
+        await expect(service.createSubcategory("c1", { name: "X" })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+      });
+    });
+
+    describe("update / toggle (section-scoped)", () => {
+      it("throws NotFound when the subcategory belongs to a different section", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "OTHER",
+          active: true,
+          _count: { products: 0 },
+        });
+        await expect(service.updateSubcategory("c1", "s1", { name: "X" })).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+
+      it("toggles active within the section", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.trackedSubcategory.update.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "c1",
+          active: false,
+          _count: { products: 0 },
+        });
+
+        await service.toggleSubcategory("c1", "s1");
+
+        expect(prisma.trackedSubcategory.update).toHaveBeenCalledWith({
+          where: { id: "s1" },
+          data: { active: false },
+          include: { _count: { select: { products: true } } },
+        });
+      });
+    });
+  });
 });
