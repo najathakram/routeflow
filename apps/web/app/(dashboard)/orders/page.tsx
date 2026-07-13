@@ -711,7 +711,22 @@ export default function OrdersPage() {
                       ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
                     </td>
                     <td className="px-4 py-3">
-                      <Badge status={order.status} />
+                      <div className="flex items-center gap-1.5">
+                        <Badge status={order.status} />
+                        {/* P5-11: pending post-dispatch change requests on this order
+                            (filtered _count from the list endpoint; absent = no pill). */}
+                        {(order._count?.changeRequests ?? 0) > 0 && (
+                          <span
+                            title={`${order._count!.changeRequests} pending change request${
+                              (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
+                            }`}
+                            className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                          >
+                            {order._count!.changeRequests} change
+                            {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-sm">
                       {order.requestedDeliveryDate ? (

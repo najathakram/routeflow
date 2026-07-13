@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+
+export type { ChangeRequest } from "@/lib/change-requests";
 
 export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 
@@ -44,6 +47,11 @@ export interface Order {
     editableUntil: string | null;
     closedReason: "DISPATCHED" | "STATUS" | null;
   };
+  /** P5-09: post-dispatch change requests, newest first (absent on older API). */
+  changeRequests?: ChangeRequest[];
+  /** P5-11: filtered relation counts from the LIST endpoint — `changeRequests`
+   *  counts PENDING requests only (absent on detail payloads / older API). */
+  _count?: { changeRequests?: number };
   createdAt: string;
 }
 
@@ -375,6 +383,32 @@ export function useUpdateOrderShipment() {
       apiClient.patch(`/orders/${id}/shipment`, dto).then((r) => r.data),
     onSuccess: (data) => {
       qc.setQueryData(["orders", data.id], data);
+      qc.invalidateQueries({ queryKey: ["orders"] });
+    },
+  });
+}
+
+/**
+ * P5-11: resolve a PENDING change request from the dashboard (the "office").
+ * The driver-at-stop mobile surface is the P10 wave. First resolution wins on
+ * the server — a lost race returns 409 { code: "CHANGE_REQUEST_ALREADY_RESOLVED" };
+ * callers treat that as "someone else got there first": toast + refetch, never
+ * retry. onSettled invalidates on success AND error so a lost race immediately
+ * pulls the winning resolution (and the merged totals) into view.
+ */
+export function useResolveChangeRequest() {
+  const qc = useQueryClient();
+  return useMutation<
+    ChangeRequest,
+    Error,
+    { orderId: string; crId: string; action: ChangeRequestResolveAction; reason?: string }
+  >({
+    mutationFn: ({ orderId, crId, action, reason }) =>
+      apiClient
+        .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action, reason })
+        .then((r) => r.data),
+    onSettled: (_data, _err, { orderId }) => {
+      qc.invalidateQueries({ queryKey: ["orders", orderId] });
       qc.invalidateQueries({ queryKey: ["orders"] });
     },
   });

@@ -17,16 +17,20 @@ import {
   Search,
   Trash2,
   FileText,
+  MessageSquarePlus,
 } from "lucide-react";
-import { Badge, Button, Modal } from "@routeflow/ui/web";
+import { Badge, Button, Modal, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import {
   useBuyerOrder,
   useBuyerCancelOrder,
   useBuyerUpdateOrderItems,
   useBuyerProducts,
+  useBuyerCreateChangeRequest,
+  type BuyerOrder,
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces } from "@/lib/pricing";
+import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -154,6 +158,287 @@ function OrderTimeline({ status }: { status: string }) {
   );
 }
 
+// ─── Request-a-change modal (P5-10) ───────────────────────────────────────────
+// Files a post-dispatch ChangeRequest (P5-09 engine). Deliberately shows NO
+// prices anywhere (not even catalog prices in the search results): an added
+// line is priced by the SERVER at approval through the one buyer pricing path
+// (tier -> sticky -> promo) — a client-side preview would be a second pricing
+// derivation that can drift from the merged result.
+
+type CrFormType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
+
+const CR_TYPE_OPTIONS: Array<{ value: CrFormType; label: string }> = [
+  { value: "ADD_ITEM", label: "Add an item" },
+  { value: "CHANGE_QTY", label: "Change a quantity" },
+  { value: "REMOVE_ITEM", label: "Remove an item" },
+  { value: "NOTE", label: "Note for the driver" },
+];
+
+function RequestChangeModal({
+  order,
+  open,
+  onClose,
+  onFiled,
+}: {
+  order: BuyerOrder;
+  open: boolean;
+  onClose: () => void;
+  onFiled: () => void;
+}) {
+  const createCr = useBuyerCreateChangeRequest();
+  const [type, setType] = React.useState<CrFormType>("ADD_ITEM");
+  const [orderItemId, setOrderItemId] = React.useState("");
+  const [qty, setQty] = React.useState(1);
+  const [note, setNote] = React.useState("");
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
+  const [search, setSearch] = React.useState("");
+  const [searchDebounced, setSearchDebounced] = React.useState("");
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const showSearch = open && type === "ADD_ITEM" && !product && searchDebounced.length >= 2;
+  const { data: searchResults } = useBuyerProducts(
+    showSearch ? { search: searchDebounced, limit: 6 } : { limit: 0 },
+  );
+
+  // Only active, not-yet-delivered lines can be changed/removed — the server
+  // hard-blocks delivered lines at approval (409 LINE_ALREADY_DELIVERED).
+  const changeableLines = order.lineItems.filter(
+    (li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0,
+  );
+  const selectedLine = changeableLines.find((li) => li.id === orderItemId);
+
+  const isValid =
+    type === "ADD_ITEM"
+      ? !!product && qty >= 1
+      : type === "NOTE"
+        ? note.trim().length > 0
+        : !!selectedLine && (type === "REMOVE_ITEM" || qty >= 1);
+
+  const resetAndClose = () => {
+    setType("ADD_ITEM");
+    setOrderItemId("");
+    setQty(1);
+    setNote("");
+    setProduct(null);
+    setSearch("");
+    setFormError(null);
+    onClose();
+  };
+
+  const handleSubmit = async () => {
+    if (!isValid || createCr.isPending) return;
+    setFormError(null);
+    try {
+      await createCr.mutateAsync({
+        orderId: order.id,
+        type,
+        ...(type === "ADD_ITEM" ? { productId: product!.id, qty } : {}),
+        ...(type === "CHANGE_QTY" ? { orderItemId, qty } : {}),
+        ...(type === "REMOVE_ITEM" ? { orderItemId } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+      onFiled();
+      resetAndClose();
+    } catch (err: any) {
+      const code = err?.response?.data?.code;
+      if (code === "EDIT_WINDOW_OPEN") {
+        setFormError(
+          "This order can still be edited directly — close this and use “Edit Items” instead.",
+        );
+      } else if (code === "CHANGE_WINDOW_CLOSED") {
+        setFormError(
+          "The delivery run for this order has ended — changes can no longer be requested.",
+        );
+      } else {
+        setFormError(err?.response?.data?.message ?? "Failed to send the change request.");
+      }
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={resetAndClose}
+      title="Request a change"
+      description="Your order is out for delivery, so changes need the seller's confirmation."
+      footer={
+        <>
+          <Button variant="secondary" onClick={resetAndClose}>
+            Cancel
+          </Button>
+          <Button
+            className="bg-buyer-500 hover:bg-buyer-600 focus-visible:ring-buyer-500"
+            onClick={handleSubmit}
+            disabled={!isValid}
+            loading={createCr.isPending}
+          >
+            Send Request
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {/* Type picker */}
+        <div className="grid grid-cols-2 gap-2">
+          {CR_TYPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => {
+                setType(opt.value);
+                setFormError(null);
+                setOrderItemId("");
+                setQty(1);
+                setProduct(null);
+                setSearch("");
+              }}
+              className={`rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${
+                type === opt.value
+                  ? "border-buyer-500 bg-buyer-50 text-buyer-600"
+                  : "border-surface-border bg-white text-navy/70 hover:text-navy"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ADD_ITEM: product search (NO prices shown) + qty */}
+        {type === "ADD_ITEM" && (
+          <div className="space-y-2">
+            {product ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-2">
+                <span className="text-sm font-medium text-navy truncate">{product.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setProduct(null)}
+                  className="text-xs font-medium text-navy/60 hover:text-navy"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search products (name, SKU, barcode)..."
+                  className="w-full rounded-lg border border-surface-border bg-white py-2 pl-10 pr-4 text-sm text-navy placeholder:text-navy/70 focus:border-buyer-300 focus:outline-none focus:ring-1 focus:ring-buyer-200"
+                />
+              </div>
+            )}
+            {showSearch && (searchResults?.data?.length ?? 0) > 0 && (
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-lg">
+                {searchResults!.data.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      setProduct({ id: p.id, name: p.name });
+                      setSearch("");
+                    }}
+                    className="flex w-full items-center gap-3 border-b border-surface-border px-3 py-2 text-left text-sm last:border-b-0 hover:bg-surface-raised"
+                  >
+                    <Plus className="h-4 w-4 flex-shrink-0 text-buyer-500" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-navy">{p.name}</p>
+                      <p className="text-[11px] text-navy/70">
+                        {p.sku ? `SKU: ${p.sku} · ` : ""}
+                        {p.unit}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {showSearch && searchResults?.data?.length === 0 && (
+              <p className="py-1 text-center text-xs text-navy/70">No products found</p>
+            )}
+            {product && (
+              <label className="flex items-center gap-2 text-sm text-navy">
+                Quantity
+                <input
+                  type="number"
+                  min={1}
+                  value={qty}
+                  onChange={(e) => setQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                  className="w-20 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                />
+              </label>
+            )}
+          </div>
+        )}
+
+        {/* CHANGE_QTY / REMOVE_ITEM: pick a line */}
+        {(type === "CHANGE_QTY" || type === "REMOVE_ITEM") && (
+          <div className="space-y-2">
+            {changeableLines.length === 0 ? (
+              <p className="text-sm text-navy/70">No lines on this order can still be changed.</p>
+            ) : (
+              <select
+                value={orderItemId}
+                onChange={(e) => {
+                  setOrderItemId(e.target.value);
+                  const li = changeableLines.find((l) => l.id === e.target.value);
+                  if (li && type === "CHANGE_QTY") setQty(Math.max(1, Number(li.qty)));
+                }}
+                className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-buyer-300 focus:outline-none"
+              >
+                <option value="">Select an item…</option>
+                {changeableLines.map((li) => (
+                  <option key={li.id} value={li.id}>
+                    {li.product.name} (qty {Number(li.qty)})
+                  </option>
+                ))}
+              </select>
+            )}
+            {type === "CHANGE_QTY" && selectedLine && (
+              <label className="flex items-center gap-2 text-sm text-navy">
+                New quantity
+                <input
+                  type="number"
+                  min={1}
+                  value={qty}
+                  onChange={(e) => setQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                  className="w-20 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                />
+                <span className="text-xs text-navy/60">currently {Number(selectedLine.qty)}</span>
+              </label>
+            )}
+          </div>
+        )}
+
+        {/* Note — required for NOTE, optional context otherwise */}
+        <label className="block text-sm text-navy">
+          {type === "NOTE" ? "Note" : "Note (optional)"}
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            maxLength={1000}
+            placeholder={type === "NOTE" ? "What should the driver know?" : "Anything else?"}
+            className="mt-1 w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/50 focus:border-buyer-300 focus:outline-none"
+          />
+        </label>
+
+        {formError && (
+          <div className="flex items-center gap-2 rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            {formError}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function BuyerOrderDetailPage() {
@@ -183,6 +468,8 @@ export default function BuyerOrderDetailPage() {
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [addSearch, setAddSearch] = React.useState("");
   const [addSearchDebounced, setAddSearchDebounced] = React.useState("");
+  const [crOpen, setCrOpen] = React.useState(false);
+  const { toast } = useToast();
 
   // Debounce product search for adding items
   React.useEffect(() => {
@@ -206,7 +493,19 @@ export default function BuyerOrderDetailPage() {
     }
   }, [authLoading, activeSeller, sellerSlug, router]);
 
-  const canEdit = order && (order.status === "DRAFT" || order.status === "PENDING");
+  // Buyer direct edit: DRAFT/PENDING only, AND the P5-08 server edit window
+  // must still be open (it closes when the run dispatches). Older API without
+  // editWindow falls back to the pure status check.
+  const canEdit =
+    order &&
+    (order.status === "DRAFT" || order.status === "PENDING") &&
+    (order.editWindow?.editable ?? true);
+  // P5-10: change requests exist exactly where direct editing ended — mirror
+  // the server's create gate (run IN_PROGRESS + order still deliverable).
+  const canRequestChange =
+    !!order &&
+    order.routeRun?.status === "IN_PROGRESS" &&
+    ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status);
   const showDeliveryProgress =
     order &&
     (order.status === "PARTIALLY_DELIVERED" ||
@@ -315,6 +614,43 @@ export default function BuyerOrderDetailPage() {
         <OrderTimeline status={order.status} />
       </div>
 
+      {/* P5-10: change requests filed after dispatch — PENDING (amber) flips to
+          Approved (green) / Declined + reason (red) once resolved. */}
+      {(order.changeRequests?.length ?? 0) > 0 && (
+        <div className="mb-6 overflow-hidden rounded-xl border border-surface-border bg-white">
+          <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
+            <h2 className="text-sm font-semibold text-navy">Change requests</h2>
+          </div>
+          <ul className="divide-y divide-surface-border">
+            {order.changeRequests!.map((cr) => {
+              const { title, detail } = describeChangeRequest(cr, order.lineItems);
+              const outcome = describeResolution(cr);
+              return (
+                <li key={cr.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-navy">{title}</p>
+                    {detail && <p className="mt-0.5 text-xs text-navy/70">{detail}</p>}
+                    <p className="mt-0.5 text-[11px] text-navy/50">
+                      Requested {new Date(cr.createdAt).toLocaleString()}
+                    </p>
+                    {outcome && (
+                      <p
+                        className={`mt-1 text-xs font-medium ${
+                          cr.status === "DECLINED" ? "text-danger" : "text-success"
+                        }`}
+                      >
+                        {outcome}
+                      </p>
+                    )}
+                  </div>
+                  <Badge status={cr.status} />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       {/* Order summary cards */}
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
@@ -366,6 +702,11 @@ export default function BuyerOrderDetailPage() {
           {canEdit && !editMode && (
             <Button variant="secondary" size="sm" onClick={enterEditMode}>
               <Edit3 className="mr-1.5 h-3.5 w-3.5" /> Edit Items
+            </Button>
+          )}
+          {!canEdit && canRequestChange && !editMode && (
+            <Button variant="secondary" size="sm" onClick={() => setCrOpen(true)}>
+              <MessageSquarePlus className="mr-1.5 h-3.5 w-3.5" /> Request a change
             </Button>
           )}
           {editMode && (
@@ -637,6 +978,19 @@ export default function BuyerOrderDetailPage() {
           undone.
         </p>
       </Modal>
+
+      <RequestChangeModal
+        order={order}
+        open={crOpen}
+        onClose={() => setCrOpen(false)}
+        onFiled={() =>
+          toast({
+            title: "Change request sent",
+            description: "The seller will confirm it with your driver.",
+            variant: "success",
+          })
+        }
+      />
     </div>
   );
 }
