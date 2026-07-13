@@ -10,6 +10,7 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { clampLimit } from "../common/pagination";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -1995,7 +1996,6 @@ export class InvoicesService {
   }) {
     const {
       page = 1,
-      limit = 25,
       customerId,
       method,
       status,
@@ -2005,6 +2005,9 @@ export class InvoicesService {
       sortBy,
       sortDir,
     } = query;
+    // Raw query-string limit (no DTO on this route) — clamp so a single request
+    // can't force an unbounded scan (security F9-002).
+    const limit = clampLimit(query.limit, 25);
     const skip = (page - 1) * limit;
 
     const where: any = {};

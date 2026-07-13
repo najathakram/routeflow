@@ -1,6 +1,7 @@
-import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsArray, IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { Transform, Type } from "class-transformer";
 import { InvoiceStatus } from "@prisma/client";
+import { MAX_LIST_LIMIT } from "../../common/pagination";
 
 export class ListInvoicesDto {
   @IsOptional() @IsEnum(InvoiceStatus) status?: InvoiceStatus;
@@ -19,5 +20,5 @@ export class ListInvoicesDto {
   /** Shipments view: only invoices that carry a carrier tracking number. */
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() shipped?: boolean;
   @IsOptional() @IsInt() @Min(1) @Type(() => Number) page?: number;
-  @IsOptional() @IsInt() @Min(1) @Type(() => Number) limit?: number;
+  @IsOptional() @IsInt() @Min(1) @Max(MAX_LIST_LIMIT) @Type(() => Number) limit?: number;
 }
