@@ -1321,8 +1321,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   }
 
   const total = Number(order.total);
+  // P5-08: the server's edit window is authoritative — it also closes editing once
+  // the order's run has DISPATCHED (a CONFIRMED order out for delivery is no longer
+  // directly editable). Fall back to the status check when the field isn't present.
   const canEdit =
-    localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED";
+    order?.editWindow?.editable ??
+    (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
 
@@ -1646,6 +1650,28 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             >
               Edit Items
             </Button>
+          )}
+
+          {/* P5-08: editing closed once the order is out for delivery (dispatched). */}
+          {!canEdit && order?.editWindow?.closedReason === "DISPATCHED" && !isEditing && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+              Out for delivery — editing closed
+            </span>
+          )}
+
+          {/* P5-08: revision count (append-only edit history). */}
+          {!isEditing && (order?.revisions?.length ?? 0) > 0 && (
+            <span
+              className="inline-flex items-center rounded-full bg-navy/5 px-2 py-1 text-xs font-medium text-navy/70"
+              title={order!
+                .revisions!.map(
+                  (r) =>
+                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · $${r.snapshot.total.toFixed(2)}`,
+                )
+                .join("\n")}
+            >
+              Edited {order!.revisions!.length}×
+            </span>
           )}
 
           {/* DRAFT actions */}
