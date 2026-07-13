@@ -1,9 +1,13 @@
 # Session Handoff — Regulated Sections + Subcategories
 
-> **Status (2026-07-13):** Phase A (backend) **DONE**; Phases **B/C/D (web) DONE + committed**;
-> Phase E **DEFERRED**. Branch `feat/regulated-subcategories-api` — **not pushed, not merged, not
-> deployed** (deploy is the user-gated step below — it needs the prod migration first). Base master
-> `e28a733`. Extends the Phase-4 regulated program (`PHASE-4-PLAN.md`).
+> **Status (2026-07-13): SHIPPED + LIVE ON PROD.** Phases A–D all **merged to master** via **PR #244**
+> (squash `830f8fa`) and **deployed** (api + web); the additive migration
+> `20260719000000_add_tracked_subcategories` was applied to prod first via `prod-migrate.mjs`;
+> `npm run post-deploy-check` green; `/tracked-categories/:id/subcategories` + `/regulated/ledger`
+> return 401 on prod (live). **Phase E** (subcategory breakdown in the ledger/filings + OrderItem/
+> InvoiceItem snapshot population) remains **DEFERRED** — the only unbuilt part. Extends the Phase-4
+> regulated program (`PHASE-4-PLAN.md`). This doc is now the **as-built record**; the deploy section
+> below is retained for the Phase-E fast-follow.
 >
 > **What shipped in B/C/D (see the code map `web.md` regulated entries for exact files):**
 > web hooks `useTrackedSubcategories`/`useCreate|Update|ToggleSubcategory` + `useRegulatedLedger`
@@ -160,14 +164,20 @@ subcategory breakdown (grouped table / stacked bar) on the per-section page.
 
 ---
 
-## Deploy sequence & caveats
-1. Complete B–D on `feat/regulated-subcategories-api`; gate each on local `npm run verify` (typecheck +
-   lint + Jest) — the **GitHub Actions billing block is active, so CI will not run**.
-2. Ship the whole feature together: **public → apply the migration via
-   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` FIRST → merge → wait for the
-   Railway deploy to go ACTIVE while public → `npm run post-deploy-check` → private.** (The
-   `POSTGRES_PASSWORD` root cause is fixed, so `prod-migrate.mjs` works normally now.)
-3. Migration is additive/reversible; keep money invariants green (`06-critical-paths.spec.ts`).
+## Deploy sequence — DONE (2026-07-13; retained as the pattern for the Phase-E fast-follow)
+How A–D actually shipped (and how Phase E should ship):
+1. Gate on local `npm run verify` (typecheck + lint + Jest) — **GitHub Actions (CI) still needs the repo
+   public to run**, so PR merges here show `UNSTABLE`/no-CI; rely on local verify.
+2. Apply the migration FIRST: `railway run --service postgres node apps/api/scripts/prod-migrate.mjs`
+   (additive/reversible; `POSTGRES_PASSWORD` root cause is fixed so it works normally).
+3. Merge the PR to master → **Railway's GitHub auto-deploy ships it.** **NEW (2026-07-13): the GitHub
+   deploy SUCCEEDS while the repo stays PRIVATE** — the App has private-repo access, so the old
+   "public → … → private" dance is **not needed for the deploy itself** (only CI/Actions needs public).
+   Merge, let master auto-deploy, done — repo never leaves private.
+   ⚠️ Do NOT `railway up` an unmerged branch when master will later auto-deploy: doing that here briefly
+   regressed the feature when a later master push auto-deployed master-without-it. Just merge to master.
+4. `npm run post-deploy-check` (set `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app`).
+   Migration is additive/reversible; keep money invariants green (`06-critical-paths.spec.ts`).
 
 ## Verification checklist (manual, test tenants ONLY — `test` / `e2e-routeflow` / `qa-*`)
 - Settings → Regulated → create a "Liquor" section + "beer"/"wine" subcategories → they appear as a
