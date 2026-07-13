@@ -370,6 +370,7 @@ model Tenant {
   regulatedSalesLedger   RegulatedSalesLedger[]
   regulatedFilings       RegulatedFiling[]
   promotions             Promotion[]
+  orderRevisions         OrderRevision[]
 
   @@index([slug])
   @@index([status])
@@ -1156,6 +1157,7 @@ model Order {
   transaction       Transaction?
   invoices          Invoice[]
   returns           Return[]
+  revisions         OrderRevision[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
   // NULL values are treated as distinct by PostgreSQL, so rows with
@@ -1170,6 +1172,33 @@ model Order {
   @@index([createdAt])
   @@index([requestedDeliveryDate])
   @@index([tenantId])
+}
+
+/// Append-only version history of an order's editable state (P5-08). One row is
+/// APPENDED on every autosaved pre-dispatch edit of a PLACED/CONFIRMED order —
+/// never mutated. `snapshot` is the point-in-time line set + money totals AFTER
+/// the edit; the web timeline renders vN and diffs consecutive rows client-side.
+/// Actor is an immutable FK-less snapshot (mirrors CustomerAuthorization.verifiedById/Name).
+model OrderRevision {
+  id             String   @id @default(uuid())
+  tenantId       String?
+  orderId        String
+  revisionNumber Int
+  editedById     String?
+  editedByName   String?
+  editedByRole   String?
+  source         String   @default("EDIT")
+  reason         String?
+  snapshot       Json
+  createdAt      DateTime @default(now())
+
+  order  Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  @@unique([orderId, revisionNumber])
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([createdAt])
 }
 
 model OrderItem {

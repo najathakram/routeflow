@@ -36,6 +36,37 @@ export interface Order {
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
   shippedAt?: string | null;
+  /** P5-08: append-only edit history (one row per pre-dispatch edit). */
+  revisions?: OrderRevision[];
+  /** P5-08: whether the order can still be edited directly (closes on dispatch). */
+  editWindow?: {
+    editable: boolean;
+    editableUntil: string | null;
+    closedReason: "DISPATCHED" | "STATUS" | null;
+  };
+  createdAt: string;
+}
+
+/** P5-08: immutable post-edit snapshot of an order's line set + money totals. */
+export interface OrderRevision {
+  id: string;
+  revisionNumber: number;
+  editedByName?: string | null;
+  editedByRole?: string | null;
+  source: string;
+  reason?: string | null;
+  snapshot: {
+    subtotal: number;
+    tax: number;
+    total: number;
+    lineItems: Array<{
+      productId: string | null;
+      name: string | null;
+      qty: number;
+      unitPrice: number;
+      subtotal: number;
+    }>;
+  };
   createdAt: string;
 }
 

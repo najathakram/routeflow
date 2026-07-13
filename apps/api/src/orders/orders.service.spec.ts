@@ -1713,4 +1713,112 @@ describe("OrdersService", () => {
       );
     });
   });
+
+  // ─── P5-08: edit window (G7) + OrderRevision versioning ─────────────────────
+  describe("updateOrderItems — edit window + revisions (P5-08)", () => {
+    const confirmedOrder = (routeRun: { status: string; startedAt: Date | null } | null) => ({
+      ...MOCK_ORDER,
+      status: "CONFIRMED" as const,
+      routeRun,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ],
+    });
+
+    it("blocks a direct edit once the order's run has dispatched (EDIT_WINDOW_CLOSED)", async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        confirmedOrder({ status: "IN_PROGRESS", startedAt: new Date() }),
+      );
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
+          operatorPayload,
+        ),
+      ).rejects.toMatchObject({ response: { code: "EDIT_WINDOW_CLOSED", reason: "DISPATCHED" } });
+
+      // Nothing was mutated and no revision was appended on a blocked edit.
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+    });
+
+    it("allows the edit while the run is still SCHEDULED and appends a revision", async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        confirmedOrder({ status: "SCHEDULED", startedAt: null }),
+      );
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: 1 } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
+        operatorPayload,
+      );
+
+      expect(prisma.orderRevision.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            orderId: "ord-1",
+            revisionNumber: 2, // max(1) + 1
+            source: "EDIT",
+            editedByRole: "OPERATOR",
+            snapshot: expect.objectContaining({ subtotal: 15, lineItems: expect.any(Array) }),
+          }),
+        }),
+      );
+    });
+
+    it("numbers the first revision 1 when none exist yet", async () => {
+      prisma.order.findUnique.mockResolvedValue(confirmedOrder(null));
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 2, unitPrice: 5, subtotal: 10, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 2, unitPrice: 5 }] },
+        operatorPayload,
+      );
+
+      expect(prisma.orderRevision.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ revisionNumber: 1 }) }),
+      );
+    });
+
+    it("findOne reports the edit window open for an order with no run", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, routeRun: null, revisions: [] });
+      const result: any = await service.findOne("ord-1", operatorPayload);
+      expect(result.editWindow).toEqual({
+        editable: true,
+        editableUntil: null,
+        closedReason: null,
+      });
+    });
+
+    it("findOne reports the edit window closed (DISPATCHED) once the run started", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        routeRun: { status: "IN_PROGRESS", startedAt: new Date() },
+        revisions: [],
+      });
+      const result: any = await service.findOne("ord-1", operatorPayload);
+      expect(result.editWindow).toMatchObject({ editable: false, closedReason: "DISPATCHED" });
+    });
+  });
 });

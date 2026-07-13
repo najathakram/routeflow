@@ -239,6 +239,9 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         transaction: true,
         invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
+        // P5-08: version history + the run state that governs the edit window.
+        revisions: { orderBy: { revisionNumber: "asc" } },
+        routeRun: { select: { status: true, startedAt: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -252,7 +255,31 @@ export class OrdersService implements OnApplicationBootstrap {
       redactUpsellForCustomer(order);
     }
 
+    // P5-08 edit window (G7): free editing is open until the order's run dispatches.
+    // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
+    // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
+    (order as any).editWindow = this.computeEditWindow(order);
+
     return order;
+  }
+
+  /**
+   * P5-08: derive the non-persisted edit-window descriptor from an order + its run.
+   * editable ⟺ status is DRAFT/PENDING/CONFIRMED AND the order isn't on a dispatched
+   * run. Single source of truth shared by the read and the write gate.
+   */
+  private computeEditWindow(order: {
+    status: string;
+    routeRunId?: string | null;
+    routeRun?: { status: string } | null;
+  }): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
+    const statusEditable = ["DRAFT", "PENDING", "CONFIRMED"].includes(order.status);
+    const dispatched = order.routeRun != null && order.routeRun.status !== "SCHEDULED";
+    return {
+      editable: statusEditable && !dispatched,
+      editableUntil: null,
+      closedReason: dispatched ? "DISPATCHED" : statusEditable ? null : "STATUS",
+    };
   }
 
   /**
@@ -1575,13 +1602,29 @@ export class OrdersService implements OnApplicationBootstrap {
   async updateOrderItems(orderId: string, dto: UpdateOrderItemsDto, user?: JwtPayload) {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
-      include: { lineItems: true },
+      include: {
+        lineItems: true,
+        routeRun: { select: { status: true, startedAt: true } },
+      },
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)) {
       throw new BadRequestException(
         "Items can only be edited on DRAFT, PENDING, or CONFIRMED orders",
       );
+    }
+    // P5-08 edit window (decision G7): free editing closes the moment the order's
+    // stop's RouteRun DISPATCHES (SCHEDULED → IN_PROGRESS, stamped once at
+    // RouteRun.startedAt). Past that, edits become post-dispatch change-requests
+    // (P5-09), not direct edits. Keys off the RUN, not order.status (run-start
+    // never flips the order off CONFIRMED). A CANCELLED run auto-unbinds its orders,
+    // so they revert to the freely-editable null-run state — no special case here.
+    if (order.routeRun != null && order.routeRun.status !== "SCHEDULED") {
+      throw new ConflictException({
+        code: "EDIT_WINDOW_CLOSED",
+        reason: "DISPATCHED",
+        message: "This order is out for delivery and can no longer be edited directly.",
+      });
     }
 
     // If this order already has a SENT pending-mirror invoice, revert it to DRAFT
@@ -2149,6 +2192,17 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // P5-08: append an immutable revision snapshot of the post-edit state. Runs
+    // last — only after guards passed and every write committed — so a blocked or
+    // failed edit never records a revision. Totals copied verbatim (never recomputed).
+    await this.appendOrderRevision(
+      orderId,
+      user,
+      { subtotal, tax, total: roundMoney(subtotal + tax) },
+      "EDIT",
+      dto.orderNotes ?? null,
+    );
+
     return this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
@@ -2160,6 +2214,68 @@ export class OrdersService implements OnApplicationBootstrap {
         },
         transaction: true,
       },
+    });
+  }
+
+  /**
+   * P5-08: append one immutable OrderRevision row capturing the order's line set +
+   * money totals AFTER an edit. The snapshot COPIES stored, already-rounded values
+   * verbatim — it never re-prices (no `qty*unitPrice`, no re-derived discounts). The
+   * per-order `revisionNumber` (max+1) is computed inside a tenant transaction so
+   * rapid autosaves can't collide on the `@@unique([orderId, revisionNumber])`.
+   */
+  private async appendOrderRevision(
+    orderId: string,
+    user: JwtPayload | undefined,
+    totals: { subtotal: number; tax: number; total: number },
+    source: string,
+    reason?: string | null,
+  ) {
+    const tenantId = this.prisma.getTenantId();
+    const lines = await this.prisma.forTenant().orderItem.findMany({
+      where: { orderId, status: { not: "CANCELLED" } },
+      include: { product: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    const snapshot = {
+      subtotal: totals.subtotal,
+      tax: totals.tax,
+      total: totals.total,
+      lineItems: lines.map((li) => ({
+        productId: li.productId,
+        name: li.name ?? li.product?.name ?? null,
+        qty: Number(li.qty),
+        unitPrice: Number(li.unitPrice),
+        subtotal: Number(li.subtotal),
+        originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+        priceType: li.priceType,
+        boxes: li.boxes,
+        pieces: li.pieces,
+        unitsPerBox: li.unitsPerBox,
+        trackedCategoryId: li.trackedCategoryId,
+        trackedSubcategoryId: li.trackedSubcategoryId,
+        notes: li.notes,
+        status: li.status,
+      })),
+    };
+    await this.prisma.tenantTransaction(async (tx) => {
+      const max = await tx.orderRevision.aggregate({
+        where: { orderId },
+        _max: { revisionNumber: true },
+      });
+      await tx.orderRevision.create({
+        data: {
+          tenantId,
+          orderId,
+          revisionNumber: (max._max.revisionNumber ?? 0) + 1,
+          editedById: user?.sub ?? null,
+          editedByName: user?.username ?? null,
+          editedByRole: user?.role ?? null,
+          source,
+          reason: reason ?? null,
+          snapshot,
+        },
+      });
     });
   }
 
