@@ -41,6 +41,7 @@ import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { UnitCombobox } from "@/components/UnitCombobox";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -656,7 +657,8 @@ function CreateProductModal({
   // is scoped to the chosen section and cleared when the section changes.
   const { data: sections = [] } = useTrackedCategories({ active: true });
   const { data: subcategories = [] } = useTrackedSubcategories(form.trackedCategoryId || undefined);
-  const activeSubcategories = subcategories.filter((s) => s.active);
+  const sectionOptions = sectionPickerOptions(sections);
+  const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
 
   const addImages = (files: FileList | null) => {
     if (!files) return;
@@ -911,7 +913,7 @@ function CreateProductModal({
               </div>
 
               {/* Regulated section + subcategory (optional) — see /settings?tab=regulated */}
-              {sections.length > 0 && (
+              {sectionOptions.length > 0 && (
                 <>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-navy">
@@ -929,9 +931,10 @@ function CreateProductModal({
                       className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                     >
                       <option value="">None (not regulated)</option>
-                      {sections.map((s) => (
+                      {sectionOptions.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name}
+                          {s.inactive ? " (inactive)" : ""}
                         </option>
                       ))}
                     </select>
@@ -941,19 +944,20 @@ function CreateProductModal({
                     <select
                       value={form.trackedSubcategoryId}
                       onChange={(e) => set("trackedSubcategoryId", e.target.value)}
-                      disabled={!form.trackedCategoryId || activeSubcategories.length === 0}
+                      disabled={!form.trackedCategoryId || subcategoryOptions.length === 0}
                       className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised/60 disabled:text-navy/50"
                     >
                       <option value="">
                         {!form.trackedCategoryId
                           ? "Pick a section first"
-                          : activeSubcategories.length === 0
+                          : subcategoryOptions.length === 0
                             ? "No subcategories"
                             : "None"}
                       </option>
-                      {activeSubcategories.map((s) => (
+                      {subcategoryOptions.map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name}
+                          {s.inactive ? " (inactive)" : ""}
                         </option>
                       ))}
                     </select>

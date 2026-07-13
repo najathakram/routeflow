@@ -45,6 +45,7 @@ import {
 } from "@/lib/api/products";
 import { useCostHistory } from "@/lib/api/cost-history";
 import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -279,19 +280,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { data: draftSubcategories = [] } = useTrackedSubcategories(
     (editDraft.trackedCategoryId as string) || undefined,
   );
-  // The section picker lists only ACTIVE sections, but a product may still be
-  // tagged to one that was since deactivated (deactivation keeps tags intact).
-  // Inject that section (labelled inactive) so the picker never misrepresents a
-  // still-regulated product as unregulated, and so its visibility gate stays in
-  // sync with the subcategory row below (both keyed off a selected section).
-  const sectionOptions = React.useMemo(() => {
-    const opts = regulatedSections.map((s) => ({ id: s.id, name: s.name, inactive: false }));
-    const cur = product?.trackedCategory;
-    if (cur && !opts.some((o) => o.id === cur.id)) {
-      opts.push({ id: cur.id, name: cur.name, inactive: true });
-    }
-    return opts;
-  }, [regulatedSections, product?.trackedCategory]);
+  // Option lists keep a since-deactivated current section/subcategory selectable
+  // (labelled inactive) so an edit never silently drops a still-applied tag — the
+  // shared helpers keep this rule identical to the create modal.
+  const sectionOptions = sectionPickerOptions(regulatedSections, product?.trackedCategory);
+  const subcategoryOptions = subcategoryPickerOptions(
+    draftSubcategories,
+    editDraft.trackedSubcategoryId as string,
+  );
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -1561,17 +1557,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         >
                           <option value="">None</option>
-                          {draftSubcategories
-                            .filter(
-                              (s) =>
-                                s.active || s.id === (editDraft.trackedSubcategoryId as string),
-                            )
-                            .map((s) => (
-                              <option key={s.id} value={s.id}>
-                                {s.name}
-                                {s.active ? "" : " (inactive)"}
-                              </option>
-                            ))}
+                          {subcategoryOptions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                              {s.inactive ? " (inactive)" : ""}
+                            </option>
+                          ))}
                         </select>
                       }
                     />

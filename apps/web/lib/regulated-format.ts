@@ -1,5 +1,54 @@
 import { fmt } from "./formatting";
-import type { InvoiceTreatment, ReportCadence, TrackedCategory } from "./api/tracked-categories";
+import type {
+  InvoiceTreatment,
+  ReportCadence,
+  TrackedCategory,
+  TrackedSubcategory,
+} from "./api/tracked-categories";
+
+/** One entry in a section/subcategory `<select>`. */
+export interface RegulatedPickerOption {
+  id: string;
+  name: string;
+  inactive: boolean;
+}
+
+/**
+ * Options for a regulated-section `<select>`: the tenant's active sections, plus
+ * the product's current section injected (flagged inactive) when it was since
+ * deactivated — so an edit form never silently drops a still-applied tag. Shared
+ * by the product create modal and the inline product edit so their filtering
+ * rules can't drift. On the create path `current` is omitted (a new product has
+ * no pre-existing tag), so the result is simply the active sections.
+ */
+export function sectionPickerOptions(
+  activeSections: TrackedCategory[],
+  current?: { id: string; name: string } | null,
+): RegulatedPickerOption[] {
+  const opts: RegulatedPickerOption[] = activeSections.map((s) => ({
+    id: s.id,
+    name: s.name,
+    inactive: false,
+  }));
+  if (current && !opts.some((o) => o.id === current.id)) {
+    opts.push({ id: current.id, name: current.name, inactive: true });
+  }
+  return opts;
+}
+
+/**
+ * Options for a subcategory `<select>` within a section: the active
+ * subcategories, plus the current selection (flagged inactive) if it was since
+ * deactivated. Same drift-proofing as {@link sectionPickerOptions}.
+ */
+export function subcategoryPickerOptions(
+  subcategories: TrackedSubcategory[],
+  currentId?: string | null,
+): RegulatedPickerOption[] {
+  return subcategories
+    .filter((s) => s.active || s.id === currentId)
+    .map((s) => ({ id: s.id, name: s.name, inactive: !s.active }));
+}
 
 /** The most recent completed period for a cadence, as {year, index}. */
 export function lastCompletedPeriod(cadence: ReportCadence): { year: number; index: number } {

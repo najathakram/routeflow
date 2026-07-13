@@ -50,12 +50,14 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
   const from = `${year}-01-01`;
   const ledger = useRegulatedLedger({ category: params.categoryId, from });
 
-  const rows = ledger.data?.rows ?? [];
+  // Read the query's own array reference (stable across renders) so the memo
+  // below doesn't recompute every render on a fresh `?? []`.
+  const ledgerRows = ledger.data?.rows;
   const monthKey = `${year}-${String(currentMonth).padStart(2, "0")}`;
-  const thisMonth = rows.find((r) => r.periodBucket === monthKey);
+  const thisMonth = ledgerRows?.find((r) => r.periodBucket === monthKey);
 
   const chartData = React.useMemo(() => {
-    const byMonth = new Map(rows.map((r) => [r.periodBucket, r]));
+    const byMonth = new Map((ledgerRows ?? []).map((r) => [r.periodBucket, r]));
     const out: { month: string; netSales: number; categoryTax: number }[] = [];
     for (let m = 1; m <= currentMonth; m++) {
       const key = `${year}-${String(m).padStart(2, "0")}`;
@@ -63,7 +65,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
       out.push({ month: key, netSales: r?.netSales ?? 0, categoryTax: r?.categoryTax ?? 0 });
     }
     return out;
-  }, [rows, year, currentMonth]);
+  }, [ledgerRows, year, currentMonth]);
 
   const activeSubs = subs.filter((s) => s.active);
 
