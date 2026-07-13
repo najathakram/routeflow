@@ -192,6 +192,14 @@ export class OrdersService implements OnApplicationBootstrap {
         include: {
           customer: { select: { id: true, businessName: true } },
           lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+          // P5-11: pending change-request count for the orders-list badge.
+          // Filtered relation count — additive; clients that don't know
+          // `_count` ignore it.
+          _count: {
+            select: {
+              changeRequests: { where: { status: ChangeRequestStatus.PENDING } },
+            },
+          },
         },
         skip,
         take: limit,

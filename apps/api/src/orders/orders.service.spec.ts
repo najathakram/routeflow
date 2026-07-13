@@ -225,6 +225,21 @@ describe("OrdersService", () => {
         }),
       );
     });
+
+    it("includes a PENDING-filtered change-request count for the list badge (P5-11)", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 }, operatorPayload);
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            _count: { select: { changeRequests: { where: { status: "PENDING" } } } },
+          }),
+        }),
+      );
+    });
   });
 
   // ─── findOne ──────────────────────────────────────────────────────────────

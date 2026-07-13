@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@/lib/pricing";
+import type { ChangeRequest } from "@/lib/change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,16 @@ export interface BuyerOrder {
     product: { id: string; name: string; unit: string; unitsPerBox?: number | null };
   }>;
   invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
+  /** P5-09: post-dispatch change requests, newest first (absent on older API). */
+  changeRequests?: ChangeRequest[];
+  /** P5-08: server edit window — editing closes when the order's run dispatches. */
+  editWindow?: {
+    editable: boolean;
+    editableUntil: string | null;
+    closedReason: "DISPATCHED" | "STATUS" | null;
+  };
+  /** Run state backing the edit window (null until the order is on a run). */
+  routeRun?: { status: string; startedAt?: string | null } | null;
 }
 
 export interface DashboardData {
@@ -381,6 +392,35 @@ export function useBuyerCancelOrder() {
       qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
       qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
       qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
+    },
+  });
+}
+
+export interface BuyerCreateChangeRequestInput {
+  orderId: string;
+  type: "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
+  /** ADD_ITEM: the catalog product to add. */
+  productId?: string;
+  /** CHANGE_QTY / REMOVE_ITEM: the target order line. */
+  orderItemId?: string;
+  /** ADD_ITEM: qty to add. CHANGE_QTY: the NEW absolute qty (not a delta). */
+  qty?: number;
+  note?: string;
+}
+
+/**
+ * P5-10: file a post-dispatch change request against an order. Only valid once
+ * the order's run has dispatched — the server 409s EDIT_WINDOW_OPEN while
+ * direct editing is still available and CHANGE_WINDOW_CLOSED once the run is
+ * no longer active (both mapped to friendly copy by the caller).
+ */
+export function useBuyerCreateChangeRequest() {
+  const qc = useQueryClient();
+  return useMutation<ChangeRequest, Error, BuyerCreateChangeRequestInput>({
+    mutationFn: ({ orderId, ...dto }) =>
+      buyerApiClient.post(`/buyer/orders/${orderId}/change-requests`, dto).then((r) => r.data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ["buyer", "order", vars.orderId] });
     },
   });
 }

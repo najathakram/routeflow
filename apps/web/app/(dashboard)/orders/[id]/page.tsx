@@ -36,10 +36,17 @@ import {
   useDeleteOrder,
   useUpdateOrderShipment,
   useCustomerPriceHistory,
+  useResolveChangeRequest,
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
+import {
+  describeChangeRequest,
+  describeResolution,
+  type ChangeRequest,
+  type ChangeRequestResolveAction,
+} from "@/lib/change-requests";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
@@ -1218,6 +1225,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
 
+  // P5-11: change-request resolution (office side; driver-at-stop is P10 mobile).
+  const resolveCr = useResolveChangeRequest();
+  const [declineTargetId, setDeclineTargetId] = React.useState<string | null>(null);
+  const [declineReason, setDeclineReason] = React.useState("");
+
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
@@ -1327,6 +1339,75 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const canEdit =
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
+
+  const changeRequests = order.changeRequests ?? [];
+  const pendingChangeRequests = changeRequests.filter((cr) => cr.status === "PENDING");
+
+  /**
+   * Resolve a change request. G6 race rule: the FIRST resolution wins and
+   * locks server-side — a lost race is 409 CHANGE_REQUEST_ALREADY_RESOLVED
+   * (typically the driver resolved it at the stop first). We NEVER retry a
+   * lost race: toast what happened and let the hook's onSettled invalidation
+   * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
+   * existing license-guard modal with a retry, like every other guarded 409
+   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
+   * message and surface via the global mutation toast — no handling needed.
+   */
+  function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
+    const run = () =>
+      resolveCr.mutate(
+        { orderId: order!.id, crId: cr.id, action, reason },
+        {
+          onSuccess: () => {
+            setDeclineTargetId(null);
+            setDeclineReason("");
+            toast({
+              title:
+                action === "DECLINE"
+                  ? "Change request declined"
+                  : action === "APPROVE_NEXT_DELIVERY"
+                    ? "Approved — drafted onto the next delivery"
+                    : "Approved — merged into this order",
+              variant: "success",
+            });
+          },
+          onError: (err: any) => {
+            const code = err?.response?.data?.code;
+            if (code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
+              toast({
+                title: "Already resolved",
+                description:
+                  "This request was just resolved elsewhere (likely by the driver) — showing the latest state.",
+                variant: "error",
+              });
+              setDeclineTargetId(null);
+            } else if (code === "STOP_ALREADY_COMPLETED") {
+              toast({
+                title: "Stop already completed",
+                description:
+                  "Too late to change today's delivery — approve as next delivery instead.",
+                variant: "error",
+              });
+            } else if (code === "LINE_ALREADY_DELIVERED") {
+              toast({
+                title: "Line already delivered",
+                description: "The driver has delivered this line — it can no longer be changed.",
+                variant: "error",
+              });
+            } else if (code === "CHANGE_WINDOW_CLOSED") {
+              toast({
+                title: "Delivery run no longer active",
+                description: "The run has ended — this request can only be declined.",
+                variant: "error",
+              });
+            } else {
+              guardError(run)(err);
+            }
+          },
+        },
+      );
+    run();
+  }
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
 
@@ -1671,6 +1752,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 .join("\n")}
             >
               Edited {order!.revisions!.length}×
+            </span>
+          )}
+
+          {/* P5-11: pending post-dispatch change requests awaiting resolution. */}
+          {!isEditing && pendingChangeRequests.length > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+              {pendingChangeRequests.length} change request
+              {pendingChangeRequests.length > 1 ? "s" : ""} pending
             </span>
           )}
 
@@ -2277,6 +2366,124 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               </div>
             )}
           </div>
+
+          {/* P5-11: post-dispatch change requests + office resolution. */}
+          {!isEditing && changeRequests.length > 0 && (
+            <Card
+              title={`Change Requests${
+                pendingChangeRequests.length > 0 ? ` (${pendingChangeRequests.length} pending)` : ""
+              }`}
+            >
+              <ul className="divide-y divide-surface-border">
+                {changeRequests.map((cr) => {
+                  const { title, detail } = describeChangeRequest(cr, order.lineItems);
+                  const outcome = describeResolution(cr);
+                  const busy = resolveCr.isPending && resolveCr.variables?.crId === cr.id;
+                  // Next-delivery is server-valid only for ADD_ITEM and
+                  // CHANGE_QTY increases — hide it otherwise (400 INVALID_RESOLUTION_FOR_TYPE).
+                  const currentLine = order.lineItems.find(
+                    (li) => li.id === (cr.orderItemId ?? cr.payload.orderItemId),
+                  );
+                  const canNextDelivery =
+                    cr.type === "ADD_ITEM" ||
+                    (cr.type === "CHANGE_QTY" &&
+                      Number(cr.payload.newQty ?? 0) > Number(currentLine?.qty ?? Infinity));
+                  return (
+                    <li key={cr.id} className="py-3 first:pt-0 last:pb-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-navy">{title}</p>
+                          {detail && <p className="mt-0.5 text-xs text-navy/70">{detail}</p>}
+                          <p className="mt-0.5 text-[11px] text-navy/50">
+                            {cr.requestedByName ?? cr.requestedByRole ?? "Requester"} ·{" "}
+                            {new Date(cr.createdAt).toLocaleString()}
+                          </p>
+                          {outcome && (
+                            <p
+                              className={`mt-1 text-xs font-medium ${
+                                cr.status === "DECLINED" ? "text-danger" : "text-success"
+                              }`}
+                            >
+                              {outcome}
+                              {cr.resolvedByName ? ` · by ${cr.resolvedByName}` : ""}
+                            </p>
+                          )}
+                        </div>
+                        <Badge status={cr.status} />
+                      </div>
+                      {cr.status === "PENDING" &&
+                        (declineTargetId === cr.id ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <input
+                              type="text"
+                              value={declineReason}
+                              onChange={(e) => setDeclineReason(e.target.value)}
+                              placeholder="Decline reason (required, shown to the requester)"
+                              maxLength={1000}
+                              className="h-8 min-w-[240px] flex-1 rounded border border-surface-border bg-white px-2 text-sm text-navy placeholder:text-navy/50 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              disabled={!declineReason.trim() || busy}
+                              loading={busy && resolveCr.variables?.action === "DECLINE"}
+                              onClick={() => handleResolve(cr, "DECLINE", declineReason.trim())}
+                            >
+                              Decline
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setDeclineTargetId(null);
+                                setDeclineReason("");
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              disabled={busy}
+                              loading={busy && resolveCr.variables?.action === "APPROVE_AT_STOP"}
+                              onClick={() => handleResolve(cr, "APPROVE_AT_STOP")}
+                            >
+                              Approve at stop
+                            </Button>
+                            {canNextDelivery && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={busy}
+                                loading={
+                                  busy && resolveCr.variables?.action === "APPROVE_NEXT_DELIVERY"
+                                }
+                                onClick={() => handleResolve(cr, "APPROVE_NEXT_DELIVERY")}
+                              >
+                                Approve as next delivery
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              disabled={busy}
+                              onClick={() => {
+                                setDeclineTargetId(cr.id);
+                                setDeclineReason("");
+                              }}
+                            >
+                              Decline…
+                            </Button>
+                          </div>
+                        ))}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
 
           {/* Notes */}
           {order.notes && !isEditing && (
