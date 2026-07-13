@@ -19,6 +19,84 @@ export class InventoryService {
 
   // ─── Stock overview ──────────────────────────────────────────────────────────
 
+  /**
+   * Sum the open (`remainingQty > 0`) lots per product → { qty, value }. Used to
+   * value FIFO/LIFO stock at the actual remaining-lot cost rather than the moving
+   * average (which sales never update, so it drifts after non-uniform restocks).
+   */
+  private async openLotSums(
+    productIds: string[],
+  ): Promise<Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>> {
+    const map = new Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>();
+    if (productIds.length === 0) return map;
+    const lots = await this.prisma.forTenant().stockLot.findMany({
+      where: { productId: { in: productIds }, remainingQty: { gt: 0 } },
+      select: { productId: true, remainingQty: true, unitCost: true },
+    });
+    for (const lot of lots) {
+      const cur = map.get(lot.productId) ?? {
+        qty: new Prisma.Decimal(0),
+        value: new Prisma.Decimal(0),
+      };
+      const qty = new Prisma.Decimal(lot.remainingQty);
+      cur.qty = cur.qty.add(qty);
+      cur.value = cur.value.add(qty.mul(lot.unitCost));
+      map.set(lot.productId, cur);
+    }
+    return map;
+  }
+
+  /**
+   * The single effective-cost + carrying-value rule shared by getStockOverview
+   * and getValuation so the two money surfaces never disagree:
+   *   • FIFO / LIFO → value the remaining open lots (Σ remainingQty × unitCost),
+   *     plus any stock beyond the lots at the average cost; no lots → averageCost.
+   *   • STANDARD    → standardCost ?? averageCost.
+   *   • AVCO / LAST_COST → averageCost.
+   * `unitCost` is the display cost (for FIFO/LIFO it's value ÷ stock).
+   */
+  private effectiveValue(
+    p: {
+      costingMethod: CostingMethod;
+      currentStock: Prisma.Decimal | number;
+      averageCost: Prisma.Decimal | null;
+      standardCost: Prisma.Decimal | null;
+    },
+    lot?: { qty: Prisma.Decimal; value: Prisma.Decimal },
+  ): { unitCost: number | null; value: number | null } {
+    const stock = Number(p.currentStock);
+    const avg = p.averageCost != null ? Number(p.averageCost) : null;
+    const isLotBased =
+      p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO;
+
+    if (isLotBased) {
+      const lotQty = lot ? Number(lot.qty) : 0;
+      if (lotQty > 0) {
+        const lotValue = Number(lot!.value);
+        // Value any stock beyond the open lots at the average cost (rare drift /
+        // negative-lot data); undervalue rather than crash if the cost is unknown.
+        const uncovered = stock - lotQty;
+        const value = lotValue + (uncovered > 0 && avg != null ? uncovered * avg : 0);
+        const unitCost = stock !== 0 ? value / stock : lotValue / lotQty;
+        return { unitCost: +unitCost.toFixed(4), value: +value.toFixed(4) };
+      }
+      // No open lots — fall back to the moving average.
+      return avg != null
+        ? { unitCost: avg, value: +(stock * avg).toFixed(4) }
+        : { unitCost: null, value: null };
+    }
+
+    const eff =
+      p.costingMethod === CostingMethod.STANDARD
+        ? p.standardCost != null
+          ? Number(p.standardCost)
+          : avg
+        : avg;
+    return eff != null
+      ? { unitCost: eff, value: +(stock * eff).toFixed(4) }
+      : { unitCost: null, value: null };
+  }
+
   async getStockOverview() {
     const products = await this.prisma.forTenant().product.findMany({
       orderBy: { name: "asc" },
@@ -39,20 +117,23 @@ export class InventoryService {
       },
     });
 
+    const lotSums = await this.openLotSums(
+      products
+        .filter(
+          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
+        )
+        .map((p) => p.id),
+    );
+
     return products.map((p) => {
       const stock = Number(p.currentStock);
-      let effectiveCost: number | null = null;
-      if (p.costingMethod === CostingMethod.STANDARD) {
-        effectiveCost = p.standardCost ? Number(p.standardCost) : null;
-      } else {
-        effectiveCost = p.averageCost ? Number(p.averageCost) : null;
-      }
+      const { unitCost, value } = this.effectiveValue(p, lotSums.get(p.id));
       return {
         ...p,
         currentStock: stock,
-        averageCost: effectiveCost,
+        averageCost: unitCost,
         costingMethod: p.costingMethod,
-        totalValue: effectiveCost !== null ? +(stock * effectiveCost).toFixed(4) : null,
+        totalValue: value,
       };
     });
   }
@@ -249,6 +330,25 @@ export class InventoryService {
     const reference = `STOCK_COUNT-${dto.sessionId}`;
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // Idempotency: a client whose response was lost (timeout / 502) may re-post
+      // the SAME sessionId. Without this, every ADD delta would be applied twice
+      // and lots duplicated. If this session already wrote movements, return the
+      // prior result instead of re-applying.
+      const already = await tx.stockMovement.findMany({
+        where: { reference },
+        select: { id: true },
+      });
+      if (already.length > 0) {
+        return {
+          sessionId: dto.sessionId,
+          reference,
+          applied: already.length,
+          skipped: 0,
+          movementIds: already.map((m) => m.id),
+          alreadyCommitted: true,
+        };
+      }
+
       const movementIds: string[] = [];
       let skipped = 0;
       // Running stock per product so repeated items in one count session
@@ -677,18 +777,25 @@ export class InventoryService {
       },
     });
 
+    const lotSums = await this.openLotSums(
+      products
+        .filter(
+          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
+        )
+        .map((p) => p.id),
+    );
+
     let totalValue = 0;
     const missingCostProducts: { id: string; name: string }[] = [];
     for (const p of products) {
-      const effectiveCost =
-        p.costingMethod === CostingMethod.STANDARD
-          ? (p.standardCost ?? p.averageCost)
-          : p.averageCost;
-      if (effectiveCost == null) {
+      // Same lot-aware effective-cost rule as getStockOverview so the two money
+      // surfaces reconcile (FIFO/LIFO valued from open lots, not the moving avg).
+      const { value } = this.effectiveValue(p, lotSums.get(p.id));
+      if (value == null) {
         missingCostProducts.push({ id: p.id, name: p.name });
         continue;
       }
-      totalValue += Number(p.currentStock) * Number(effectiveCost);
+      totalValue += value;
     }
 
     return {
@@ -740,7 +847,7 @@ export class InventoryService {
 
   private async setCostBasisInTx(
     tx: Prisma.TransactionClient,
-    product: { id: string; currentStock: Prisma.Decimal },
+    product: { id: string; currentStock: Prisma.Decimal; costingMethod: CostingMethod },
     dto: SetCostBasisDto,
     performedById: string,
   ) {
@@ -759,9 +866,15 @@ export class InventoryService {
       },
     });
 
+    // A STANDARD product is valued from standardCost, so also set it — otherwise
+    // "Set cost" writes averageCost only and the stock table (which reads
+    // standardCost for STANDARD) never clears its "No cost set" state.
     await tx.product.update({
       where: { id: product.id },
-      data: { averageCost: unitCost },
+      data:
+        product.costingMethod === CostingMethod.STANDARD
+          ? { averageCost: unitCost, standardCost: unitCost }
+          : { averageCost: unitCost },
     });
 
     if (dto.applyToLots) {
@@ -787,7 +900,7 @@ export class InventoryService {
     if (dto.productIds?.length) where.id = { in: dto.productIds };
     const products = await this.prisma.forTenant().product.findMany({
       where,
-      select: { id: true, name: true, currentStock: true, averageCost: true },
+      select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
       orderBy: { name: "asc" },
     });
 
@@ -834,7 +947,7 @@ export class InventoryService {
   private async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
     const product = await tx.product.findUnique({
       where: { id: productId },
-      select: { id: true, name: true, currentStock: true, averageCost: true },
+      select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
     });
     if (!product) return;
     await this.replayProduct(product, tx);
@@ -855,6 +968,7 @@ export class InventoryService {
       name: string;
       currentStock: Prisma.Decimal;
       averageCost: Prisma.Decimal | null;
+      costingMethod: CostingMethod;
     },
     tx: Prisma.TransactionClient | null,
   ) {
@@ -865,38 +979,50 @@ export class InventoryService {
       select: { id: true, type: true, quantity: true, unitCost: true },
     });
 
+    // STANDARD products keep averageCost frozen — the live recordPurchase path
+    // deliberately never moves it (valuation reads standardCost). Replaying the
+    // weighted average here would overwrite it and fabricate a bogus dry-run
+    // "correction", so mirror that: carry the existing average forward untouched.
+    const isStandard = product.costingMethod === CostingMethod.STANDARD;
+
     let stock = new Prisma.Decimal(0);
-    let avg: Prisma.Decimal | null = null;
-    let hasCostfulHistory = false;
+    let avg: Prisma.Decimal | null = isStandard
+      ? product.averageCost != null
+        ? costDecimal(product.averageCost)
+        : null
+      : null;
+    let hasCostfulHistory = isStandard && avg != null;
     let movementsBackfilled = 0;
 
     for (const m of movements) {
       const qty = new Prisma.Decimal(m.quantity);
       const unitCost = m.unitCost != null ? new Prisma.Decimal(m.unitCost) : null;
 
-      switch (m.type) {
-        case MovementType.COST_BASIS:
-          if (unitCost != null) {
-            avg = costDecimal(unitCost);
-            hasCostfulHistory = true;
-          }
-          break;
-        case MovementType.PURCHASE:
-          if (unitCost != null) {
-            avg = nextAverageCost(stock, avg, qty, unitCost);
-            hasCostfulHistory = true;
-          }
-          break;
-        case MovementType.ADJUSTMENT:
-          // Costed adjustments are bill-void compensations: reverse the average
-          if (unitCost != null && avg != null) {
-            if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
-            else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
-          }
-          break;
-        default:
-          // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
-          break;
+      if (!isStandard) {
+        switch (m.type) {
+          case MovementType.COST_BASIS:
+            if (unitCost != null) {
+              avg = costDecimal(unitCost);
+              hasCostfulHistory = true;
+            }
+            break;
+          case MovementType.PURCHASE:
+            if (unitCost != null) {
+              avg = nextAverageCost(stock, avg, qty, unitCost);
+              hasCostfulHistory = true;
+            }
+            break;
+          case MovementType.ADJUSTMENT:
+            // Costed adjustments are bill-void compensations: reverse the average
+            if (unitCost != null && avg != null) {
+              if (qty.gt(0)) avg = nextAverageCost(stock, avg, qty, unitCost);
+              else if (qty.lt(0)) avg = reverseAverageCost(stock, avg, qty.neg(), unitCost) ?? avg;
+            }
+            break;
+          default:
+            // SALE / RETURN / WRITE_OFF: quantity only, average carries forward
+            break;
+        }
       }
 
       stock = stock.add(qty);
@@ -910,7 +1036,8 @@ export class InventoryService {
       }
     }
 
-    if (tx && hasCostfulHistory && avg != null) {
+    // STANDARD never rewrites averageCost (frozen); others persist the replayed avg.
+    if (tx && !isStandard && hasCostfulHistory && avg != null) {
       await tx.product.update({
         where: { id: product.id },
         data: { averageCost: avg },
