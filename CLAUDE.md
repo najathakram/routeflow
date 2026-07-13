@@ -116,6 +116,19 @@ Names only — see each app's example file. Never commit values.
 The repo is **private by default** (commercial source). CI (public repos = free Actions) and Railway's
 GitHub deploy (it must **clone** the repo) both need it public. The sequence — **always**:
 
+> **UPDATE 2026-07-13 — GitHub deploys now work while PRIVATE.** PRs #244/#245 auto-deployed from a
+> `gh pr merge` to master with the repo **staying private** (BUILDING → SUCCESS) — the Railway GitHub App
+> DOES have private-repo access now, so the "Snapshot code → repository not found" clone failure below is
+> **no longer the current behavior**. In practice you can **skip steps 1 & 5** (the public/private flips):
+> apply any migration, then just `gh pr merge` and let master auto-deploy. CI (GitHub **Actions**) still
+> needs public to run checks, so private merges show `UNSTABLE`/no-CI — gate on local `npm run verify`.
+> **Note (Claude):** the assistant will NOT flip repo visibility regardless (commercial source → public
+> is a prohibited sharing-permission change) — and it turns out that's unnecessary for deploys.
+> ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master push
+> auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on #244/#245 — merge
+> both to master, don't `railway up`). The steps below are retained as the fallback if a private deploy
+> ever fails.
+
 1. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 2. **(schema change only)** apply the prod migration FIRST — `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
 3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
