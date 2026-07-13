@@ -21,6 +21,7 @@ import {
   useBuyerCreateOrder,
   useBuyerActiveOrder,
   useBuyerPromotions,
+  toPromotionRules,
 } from "@/lib/api/buyer";
 import { computeLineSubtotal, normalizeBoxesPieces, applyBestPromotion } from "@/lib/pricing";
 import { objectPositionForUrl } from "@/lib/image-focal";
@@ -80,19 +81,7 @@ export default function BuyerCartPage() {
   // helper the server uses at order-write, so the displayed savings equals the
   // billed savings to the cent. `net` is the promo-adjusted selling-unit price;
   // `original` is the pre-promo price for the strikethrough (null = no promo).
-  const promoRules = React.useMemo(
-    () =>
-      (promotions ?? []).map((p) => ({
-        id: p.id,
-        type: p.type,
-        value: p.value,
-        minQty: p.minQty,
-        scope: p.scope,
-        category: p.category,
-        productIds: p.productIds,
-      })),
-    [promotions],
-  );
+  const promoRules = React.useMemo(() => toPromotionRules(promotions), [promotions]);
 
   const pricedLines = React.useMemo(() => {
     return cart.items.map((item) => {

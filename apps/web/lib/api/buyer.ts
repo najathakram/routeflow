@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import type { ExpiringAuthorization } from "./authorizations";
+import type { PromotionRule } from "@/lib/pricing";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,14 @@ export interface BuyerProduct {
   thumbnailUrl: string | null;
   imageKeys: string[];
   isFeatured: boolean;
+  isNew?: boolean;
+  isDeal?: boolean;
+  /** Presigned URLs (max 4) for the tile dot-pager; first entry == thumbnailUrl. */
+  imageUrls?: string[];
+  inStock?: boolean;
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** Whole units remaining — present only while stockStatus === "LOW". */
+  stockLeft?: number | null;
 }
 
 export interface BuyerProductDetail extends BuyerProduct {
@@ -162,6 +171,7 @@ export function useBuyerProducts(params?: {
   page?: number;
   limit?: number;
   sort?: string;
+  collection?: "usuals" | "favorites" | "new" | "deals";
 }) {
   return useQuery<BuyerCatalogResult>({
     queryKey: ["buyer", "products", params],
@@ -197,6 +207,48 @@ export function useBuyerCategories() {
   });
 }
 
+/** Category-rail data (P5-02): total + per-category + smart-collection counts + locked categories. */
+export interface BuyerCatalogCounts {
+  total: number;
+  categories: Array<{ name: string; count: number }>;
+  collections: { usuals: number; favorites: number; new: number; deals: number };
+  lockedCategories: LockedCategory[];
+}
+
+export function useBuyerCatalogCounts() {
+  return useQuery<BuyerCatalogCounts>({
+    queryKey: ["buyer", "catalog-counts"],
+    queryFn: () => buyerApiClient.get("/buyer/products/counts").then((r) => r.data),
+    staleTime: 60 * 1000,
+  });
+}
+
+// ─── Replenishment (P5-05) ───────────────────────────────────────────────────
+
+export interface ReplenishmentEstimate {
+  productId: string;
+  name: string;
+  unit: string;
+  unitsPerBox: number | null;
+  imageKey: string | null;
+  lastOrderedAt: string;
+  orderCount: number;
+  cadenceDays: number | null;
+  daysSinceLast: number;
+  estDaysLeft: number | null;
+  typicalQty: number;
+  suggestedQty: number;
+  state: "low" | "due-soon" | "ok";
+}
+
+export function useBuyerReplenishment() {
+  return useQuery<ReplenishmentEstimate[]>({
+    queryKey: ["buyer", "replenishment"],
+    queryFn: () => buyerApiClient.get("/buyer/replenishment").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 // ─── Promotions (P5-04) ─────────────────────────────────────────────────────────
 
 /** Active promotion rule for the current seller (GET /buyer/promotions). Shape
@@ -222,6 +274,23 @@ export function useBuyerPromotions() {
     queryFn: () => buyerApiClient.get("/buyer/promotions").then((r) => r.data),
     staleTime: 5 * 60 * 1000, // 5 min
   });
+}
+
+/**
+ * Map server promotions to the `PromotionRule` shape `applyBestPromotion`
+ * consumes. THE single mapping — the shop tile and the cart page must both use
+ * it so their promo evaluation inputs are byte-identical (cent parity).
+ */
+export function toPromotionRules(promos: BuyerPromotion[] | undefined): PromotionRule[] {
+  return (promos ?? []).map((p) => ({
+    id: p.id,
+    type: p.type,
+    value: p.value,
+    minQty: p.minQty,
+    scope: p.scope,
+    category: p.category,
+    productIds: p.productIds,
+  }));
 }
 
 // ─── Orders ───────────────────────────────────────────────────────────────────
@@ -423,6 +492,8 @@ export function useBuyerAddFavorite() {
       buyerApiClient.post(`/buyer/favorites/${productId}`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "catalog-counts"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "products"] });
     },
   });
 }
@@ -434,6 +505,8 @@ export function useBuyerRemoveFavorite() {
       buyerApiClient.delete(`/buyer/favorites/${productId}`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "catalog-counts"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "products"] });
     },
   });
 }
