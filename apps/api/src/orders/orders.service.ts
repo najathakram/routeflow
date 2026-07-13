@@ -30,6 +30,8 @@ import {
   InvoiceStatus,
   PriceType,
   Prisma,
+  ChangeRequestStatus,
+  ChangeRequestType,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
@@ -241,6 +243,8 @@ export class OrdersService implements OnApplicationBootstrap {
         invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
         // P5-08: version history + the run state that governs the edit window.
         revisions: { orderBy: { revisionNumber: "asc" } },
+        // P5-09: post-dispatch change requests, newest first.
+        changeRequests: { orderBy: { createdAt: "desc" } },
         routeRun: { select: { status: true, startedAt: true } },
       },
     });
@@ -2511,6 +2515,408 @@ export class OrdersService implements OnApplicationBootstrap {
         exposure,
       });
     }
+  }
+
+  /**
+   * P5-09: public credit re-check for the change-request next-delivery path.
+   * Reuses the ONE exposure derivation (assertWithinCreditLimit) — never a
+   * second balance formula.
+   */
+  async assertCreditForProjectedOrder(
+    customerId: string,
+    excludeOrderId: string,
+    projectedTotal: number,
+  ): Promise<void> {
+    await this.assertWithinCreditLimit(
+      this.prisma.forTenant(),
+      customerId,
+      excludeOrderId,
+      projectedTotal,
+    );
+  }
+
+  /**
+   * P5-09 (G6): approve a PENDING ChangeRequest at the stop and merge its delta
+   * into the dispatched order's live line set. The invoice merge is indirect and
+   * reuses the existing money path end-to-end: the delta lands on OrderItem rows
+   * (stored, already-rounded computeLineSubtotal results), the pending-mirror
+   * draft invoice is re-synced via reconcileOrderDraftInvoice, and the eventual
+   * completeStop bills delivered lines by copying/prorating those stored
+   * subtotals. No new pricing/invoice formula exists here.
+   *
+   * Concurrency (G6): the conditional updateMany(status=PENDING) INSIDE the
+   * transaction is the lock — first resolution wins; count===0 → 409; any later
+   * throw (guards, validation) rolls the claim back with the merge.
+   *
+   * Guards re-run on approval (G6): regulated license BEFORE the tx (mirrors
+   * updateOrderItems :1642-1658), stock + credit INSIDE the tx on the
+   * authoritative recomputed line set (mirrors :2175-2187).
+   */
+  async approveChangeRequestAtStop(
+    crId: string,
+    resolver: JwtPayload,
+    reason?: string | null,
+  ): Promise<{ merged: true; subtotal: number; tax: number; total: number }> {
+    const cr = await this.prisma.forTenant().changeRequest.findUnique({ where: { id: crId } });
+    if (!cr) throw new NotFoundException("Change request not found");
+    if (cr.status !== ChangeRequestStatus.PENDING) {
+      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: cr.status });
+    }
+    const payload = cr.payload as any;
+
+    const order = await this.prisma.forTenant().order.findUnique({
+      where: { id: cr.orderId },
+      include: {
+        lineItems: true,
+        routeRun: { select: { id: true, status: true, driverId: true } },
+        routeRunStop: { select: { id: true, status: true } },
+      },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+    if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
+      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "ORDER_STATUS" });
+    }
+    if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
+      throw new ConflictException({ code: "CHANGE_WINDOW_CLOSED", reason: "RUN_NOT_ACTIVE" });
+    }
+    if (
+      order.routeRunStop != null &&
+      ["COMPLETED", "SKIPPED"].includes(order.routeRunStop.status)
+    ) {
+      // The at-door authority window is over — resolve as next-delivery instead.
+      throw new ConflictException({ code: "STOP_ALREADY_COMPLETED" });
+    }
+
+    // NOTE-type requests carry no money delta: claim + return, nothing else.
+    if (cr.type === ChangeRequestType.NOTE) {
+      const claimed = await this.prisma.forTenant().changeRequest.updateMany({
+        where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+        data: {
+          status: ChangeRequestStatus.APPROVED,
+          resolution: "MERGED_AT_STOP",
+          resolutionReason: reason ?? null,
+          resolvedById: resolver.sub ?? null,
+          resolvedByName: resolver.username ?? null,
+          resolvedByRole: resolver.role ?? null,
+          resolvedAt: new Date(),
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+      }
+      const subtotal = Number(order.subtotal);
+      const tax = Number(order.tax);
+      return { merged: true, subtotal, tax, total: Number(order.total) };
+    }
+
+    // Regulated license guard re-runs on approval for the incoming product
+    // (mirrors updateOrderItems :1642-1658; ORDER-scoped §8 overrides apply).
+    if (cr.type === ChangeRequestType.ADD_ITEM) {
+      const prod = await this.prisma.forTenant().product.findUnique({
+        where: { id: (cr.productId ?? payload.productId) as string },
+        select: { id: true, trackedCategoryId: true },
+      });
+      if (!prod) throw new BadRequestException("Product no longer exists");
+      await this.authGuard.assertAuthorizedOrThrow({
+        customerId: order.customerId,
+        lines: [{ trackedCategoryId: prod.trackedCategoryId ?? null }],
+        orderId: order.id,
+      });
+    }
+
+    // Auto-revert a SENT pending-mirror invoice to DRAFT so the merge re-syncs
+    // into it; throws if it carries payments (money never detaches). Mirrors
+    // updateOrderItems :1630-1634.
+    await this.invoicesService.revertLinkedInvoicesForOrderEdit(order.id);
+
+    // P5-08b posture: reference reads on separate pooled connections are
+    // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
+    const taxRate = await this.getTaxRate();
+    const buyerPromos =
+      cr.type === ChangeRequestType.ADD_ITEM
+        ? await this.loadActivePromotions(UserRole.CUSTOMER)
+        : [];
+    const priceHistory =
+      cr.type === ChangeRequestType.ADD_ITEM
+        ? await this.getCustomerPriceHistory(order.customerId)
+        : {};
+
+    const { subtotal, tax } = await this.prisma.tenantTransaction(
+      async (tx: any) => {
+        // ── G6 atomic claim: FIRST resolution wins and LOCKS ─────────────────
+        const claimed = await tx.changeRequest.updateMany({
+          where: { id: cr.id, status: ChangeRequestStatus.PENDING },
+          data: {
+            status: ChangeRequestStatus.APPROVED,
+            resolution: "MERGED_AT_STOP",
+            resolutionReason: reason ?? null,
+            resolvedById: resolver.sub ?? null,
+            resolvedByName: resolver.username ?? null,
+            resolvedByRole: resolver.role ?? null,
+            resolvedAt: new Date(),
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+        }
+
+        let mutationRow: {
+          orderItemId: string | null;
+          productId: string | null;
+          qty: number;
+          note: string;
+        } | null = null;
+
+        if (cr.type === ChangeRequestType.CHANGE_QTY || cr.type === ChangeRequestType.REMOVE_ITEM) {
+          const targetId = (cr.orderItemId ?? payload.orderItemId) as string;
+          const li = order.lineItems.find((l) => l.id === targetId);
+          if (!li || li.status === "CANCELLED") {
+            throw new BadRequestException("Order line not found or already cancelled");
+          }
+          if (Number(li.deliveredQty) > 0) {
+            throw new ConflictException({ code: "LINE_ALREADY_DELIVERED" });
+          }
+          if (cr.type === ChangeRequestType.REMOVE_ITEM) {
+            // CANCEL semantics, never hard-delete post-dispatch — a mirror
+            // invoice line may reference it (mirrors updateOrderItems :2003-2007).
+            await tx.orderItem.update({
+              where: { id: li.id },
+              data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+            });
+            mutationRow = {
+              orderItemId: li.id,
+              productId: li.productId,
+              qty: -Number(li.qty),
+              note: `Line removed via approved change request ${cr.id}`,
+            };
+          } else {
+            // Qty change — EXACTLY the operator qty-edit math (:2053-2157):
+            // preserve denomination, keep the line's stored (agreed) unitPrice,
+            // recompute subtotal via computeLineSubtotal. NEVER qty*unitPrice
+            // on a boxed line.
+            const newQty = Number(payload.newQty);
+            if (!(newQty > 0)) {
+              throw new BadRequestException("newQty must be > 0 — use REMOVE_ITEM instead");
+            }
+            let upb = Number((li as any).unitsPerBox ?? 0);
+            if (upb === 0 && li.productId && li.boxes != null) {
+              const p = await tx.product.findUnique({
+                where: { id: li.productId },
+                select: { unitsPerBox: true },
+              });
+              upb = Number(p?.unitsPerBox ?? 0);
+            }
+            const wasBoxSplit = li.boxes != null;
+            const split =
+              wasBoxSplit && upb > 1
+                ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: upb })
+                : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
+            const unitPrice = Number(li.unitPrice);
+            await tx.orderItem.update({
+              where: { id: li.id },
+              data: {
+                qty: split.qty,
+                boxes: split.boxes,
+                pieces: split.pieces,
+                unitsPerBox: split.boxes != null && upb > 1 ? upb : null,
+                subtotal: computeLineSubtotal({
+                  unitPrice,
+                  qty: split.qty,
+                  boxes: split.boxes,
+                  pieces: split.pieces,
+                  unitsPerBox: upb,
+                }),
+              },
+            });
+            mutationRow = {
+              orderItemId: li.id,
+              productId: li.productId,
+              qty: split.qty - Number(li.qty),
+              note: `Qty ${Number(li.qty)} -> ${split.qty} via approved change request ${cr.id}`,
+            };
+          }
+        } else if (cr.type === ChangeRequestType.ADD_ITEM) {
+          const product = await tx.product.findUnique({
+            where: { id: (cr.productId ?? payload.productId) as string },
+          });
+          if (!product) throw new BadRequestException("Product no longer exists");
+          const upb = Number(product.unitsPerBox ?? 0);
+          const addQty = Number(payload.qty);
+          if (!(addQty > 0)) throw new BadRequestException("qty must be > 0");
+
+          const existing = order.lineItems.find(
+            (l) =>
+              l.productId === product.id &&
+              l.status !== "CANCELLED" &&
+              Number(l.deliveredQty) === 0,
+          );
+          if (existing) {
+            // Same product already on the order → increase THAT line at its
+            // stored (agreed) unitPrice; the agreed price always wins.
+            const lineUpb = Number((existing as any).unitsPerBox ?? upb);
+            const wasBoxSplit = existing.boxes != null;
+            const newQty = Number(existing.qty) + addQty;
+            const split =
+              wasBoxSplit && lineUpb > 1
+                ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: lineUpb })
+                : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
+            const unitPrice = Number(existing.unitPrice);
+            await tx.orderItem.update({
+              where: { id: existing.id },
+              data: {
+                qty: split.qty,
+                boxes: split.boxes,
+                pieces: split.pieces,
+                unitsPerBox: split.boxes != null && lineUpb > 1 ? lineUpb : null,
+                subtotal: computeLineSubtotal({
+                  unitPrice,
+                  qty: split.qty,
+                  boxes: split.boxes,
+                  pieces: split.pieces,
+                  unitsPerBox: lineUpb,
+                }),
+              },
+            });
+            mutationRow = {
+              orderItemId: existing.id,
+              productId: product.id,
+              qty: addQty,
+              note: `Added ${addQty} at the door via approved change request ${cr.id}`,
+            };
+          } else {
+            // New line → the CUSTOMER's effective price (tier → sticky upsell →
+            // promo), the exact buyer create/merge pricing path (:1775-1787).
+            // The buyer pays regardless of who requested, so customer pricing
+            // applies uniformly.
+            const buyerTier =
+              (
+                await tx.customer.findUnique({
+                  where: { id: order.customerId },
+                  select: { pricingTier: true },
+                })
+              )?.pricingTier ?? 1;
+            const cp = await tx.customerPrice.findFirst({
+              where: { customerId: order.customerId, productId: product.id },
+            });
+            const hasSplit = payload.boxes != null || payload.pieces != null;
+            const split = hasSplit
+              ? normalizeBoxesPieces({
+                  boxes: payload.boxes,
+                  pieces: payload.pieces,
+                  unitsPerBox: upb,
+                })
+              : { qty: addQty, boxes: null as number | null, pieces: null as number | null };
+            const qtyPieces = split.boxes != null ? split.qty : upb > 1 ? addQty * upb : addQty;
+            const priced = this.resolveBuyerLinePrice(
+              product,
+              cp?.pricingTier ?? buyerTier,
+              buyerPromos,
+              qtyPieces,
+              priceHistory[product.id]?.lastPrice ?? null,
+            );
+            const created = await tx.orderItem.create({
+              data: {
+                orderId: order.id,
+                productId: product.id,
+                qty: split.qty,
+                boxes: split.boxes,
+                pieces: split.pieces,
+                unitsPerBox: split.boxes != null && upb > 1 ? upb : null,
+                unitPrice: priced.unitPrice,
+                originalPrice: priced.originalPrice,
+                priceType: priced.priceType,
+                subtotal: computeLineSubtotal({
+                  unitPrice: priced.unitPrice,
+                  qty: split.qty,
+                  boxes: split.boxes,
+                  pieces: split.pieces,
+                  unitsPerBox: upb,
+                }),
+                status: "PENDING",
+                notes: cr.note ?? null,
+                trackedCategoryId: product.trackedCategoryId ?? null,
+              },
+            });
+            mutationRow = {
+              orderItemId: created.id,
+              productId: product.id,
+              qty: split.qty,
+              note: `Added at the door via approved change request ${cr.id}`,
+            };
+          }
+        }
+
+        // ── Totals recompute — identical to updateOrderItems :2163-2168 ──────
+        const activeItems = await tx.orderItem.findMany({
+          where: { orderId: order.id, status: { not: "CANCELLED" } },
+        });
+        const subtotal = roundMoney(activeItems.reduce((s, l) => s + Number(l.subtotal), 0));
+        const tax = roundMoney(subtotal * taxRate);
+
+        // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
+        // A throw rolls back the claim AND the merge. Resolver role drives the
+        // stock guard's block/warn semantics (DRIVER hard-blocks; operators
+        // warn-only, matching create()/edit posture). Credit blocks all roles.
+        await this.assertStockAvailableForEdit(tx, order, activeItems, resolver);
+        await this.assertWithinCreditLimit(
+          tx,
+          order.customerId,
+          order.id,
+          roundMoney(subtotal + tax),
+        );
+
+        // NO status revert here — post-dispatch orders must NOT flip to PENDING
+        // (the shouldRevert logic in updateOrderItems is pre-dispatch-only).
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            subtotal,
+            tax,
+            total: roundMoney(subtotal + tax),
+            hasRegulated: activeItems.some((l) => l.trackedCategoryId != null),
+          },
+        });
+
+        // ── Provenance: the DeliveryMutation row recording the at-door merge
+        // (the P5-09 primitive; same table completeStop writes :2638-2650).
+        if (mutationRow) {
+          const driverId =
+            resolver.role === UserRole.DRIVER
+              ? ((await tx.driver.findFirst({ where: { userId: resolver.sub } }))?.id ?? null)
+              : null;
+          await tx.deliveryMutation.create({
+            data: {
+              orderId: order.id,
+              orderItemId: mutationRow.orderItemId,
+              productId: mutationRow.productId,
+              routeRunStopId: order.routeRunStopId ?? cr.routeRunStopId ?? null,
+              type:
+                cr.type === ChangeRequestType.REMOVE_ITEM
+                  ? MutationType.REFUSED
+                  : MutationType.ADD_ON,
+              qty: mutationRow.qty,
+              note: mutationRow.note,
+              driverId,
+            },
+          });
+        }
+        return { subtotal, tax };
+      },
+      { timeout: 15_000 },
+    );
+
+    // Post-commit, mirrors updateOrderItems :2222-2246: mirror draft invoice in
+    // lockstep + immutable revision. Never a new money formula.
+    await this.invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "order" });
+    await this.appendOrderRevision(
+      order.id,
+      resolver,
+      { subtotal, tax, total: roundMoney(subtotal + tax) },
+      "CHANGE_REQUEST",
+      cr.note ?? null,
+    );
+
+    return { merged: true, subtotal, tax, total: roundMoney(subtotal + tax) };
   }
 
   /**

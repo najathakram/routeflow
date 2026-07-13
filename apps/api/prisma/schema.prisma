@@ -110,6 +110,19 @@ enum MutationType {
   SUBSTITUTED
 }
 
+enum ChangeRequestType {
+  ADD_ITEM
+  CHANGE_QTY
+  REMOVE_ITEM
+  NOTE
+}
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
 enum TxnStatus {
   UNPAID
   PARTIAL
@@ -371,6 +384,7 @@ model Tenant {
   regulatedFilings       RegulatedFiling[]
   promotions             Promotion[]
   orderRevisions         OrderRevision[]
+  changeRequests         ChangeRequest[]
 
   @@index([slug])
   @@index([status])
@@ -873,6 +887,7 @@ model Product {
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   orderItems            OrderItem[]
   deliveryMutations     DeliveryMutation[]
+  changeRequests        ChangeRequest[]
   templateItems         OrderTemplateItem[]
   stockMovements        StockMovement[]
   stockLots             StockLot[]
@@ -1105,6 +1120,7 @@ model RouteRunStop {
   orders            Order[]
   deliveryMutations DeliveryMutation[]
   deliveryBatches   DeliveryBatch[]
+  changeRequests    ChangeRequest[]
 
   @@unique([routeRunId, stopNumber])
   @@index([routeRunId])
@@ -1158,6 +1174,7 @@ model Order {
   invoices          Invoice[]
   returns           Return[]
   revisions         OrderRevision[]
+  changeRequests    ChangeRequest[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
   // NULL values are treated as distinct by PostgreSQL, so rows with
@@ -1198,6 +1215,55 @@ model OrderRevision {
   @@unique([orderId, revisionNumber])
   @@index([tenantId])
   @@index([orderId])
+  @@index([createdAt])
+}
+
+/// P5-09: post-dispatch change request. Created when the G7 edit window is
+/// closed (order's RouteRun dispatched) and a buyer/driver wants a change.
+/// Resolution authority (G6): driver-at-stop primary; office only while
+/// PENDING; FIRST resolution wins and locks (atomic conditional update).
+/// `payload` is the typed delta:
+///   ADD_ITEM   { productId, qty, boxes?, pieces?, productName }
+///   CHANGE_QTY { orderItemId, newQty, productName }
+///   REMOVE_ITEM{ orderItemId, productName }
+///   NOTE       { text }
+/// Actor fields are immutable FK-less snapshots (mirror OrderRevision).
+/// `resolution` = MERGED_AT_STOP | NEXT_DELIVERY | DECLINED;
+/// `nextOrderId` = plain pointer (no FK) to the next-delivery draft order.
+model ChangeRequest {
+  id               String              @id @default(uuid())
+  tenantId         String?
+  orderId          String
+  orderItemId      String?
+  productId        String?
+  routeRunStopId   String?
+  type             ChangeRequestType
+  status           ChangeRequestStatus @default(PENDING)
+  payload          Json
+  note             String?
+  requestedById    String?
+  requestedByName  String?
+  requestedByRole  String?
+  resolvedById     String?
+  resolvedByName   String?
+  resolvedByRole   String?
+  resolution       String?
+  resolutionReason String?
+  nextOrderId      String?
+  resolvedAt       DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id])
+  orderItem    OrderItem?    @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  product      Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  routeRunStop RouteRunStop? @relation(fields: [routeRunStopId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([status])
+  @@index([routeRunStopId])
   @@index([createdAt])
 }
 
@@ -1247,6 +1313,7 @@ model OrderItem {
   deliveryMutations  DeliveryMutation[]
   transactionItems   TransactionItem[]
   invoiceItems       InvoiceItem[]
+  changeRequests     ChangeRequest[]
 
   @@index([orderId])
   @@index([productId])

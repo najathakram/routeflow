@@ -31,6 +31,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
+import { ChangeRequestsService } from "../orders/change-requests.service";
+import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
@@ -78,6 +80,7 @@ export class BuyerController {
     private readonly replenishmentService: ReplenishmentService,
     private readonly promotionsService: PromotionsService,
     private readonly ordersService: OrdersService,
+    private readonly changeRequestsService: ChangeRequestsService,
     private readonly invoicesService: InvoicesService,
     private readonly invoicePdfService: InvoicePdfService,
     private readonly customersService: CustomersService,
@@ -392,6 +395,28 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
   ) {
     return this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+  }
+
+  @Post("orders/:id/change-requests")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "File a post-dispatch change request against an order" })
+  createChangeRequest(
+    @Param("id") id: string,
+    @Body() dto: CreateChangeRequestDto,
+    @CurrentBuyerCustomer() ctx: any,
+  ) {
+    return this.changeRequestsService.create(id, dto, makePseudoUser(ctx));
+  }
+
+  @Get("orders/:id/change-requests")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "List change requests filed against an order" })
+  listChangeRequests(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.changeRequestsService.listForOrder(id, makePseudoUser(ctx));
   }
 
   @Post("orders/:id/cancel")
