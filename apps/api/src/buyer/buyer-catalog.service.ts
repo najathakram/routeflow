@@ -6,6 +6,11 @@ import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { getTierPrice } from "../utils/pricing";
 import { effectiveBuyerPrice } from "../common/pricing";
 import { OrdersService } from "../orders/orders.service";
+import { ReplenishmentService } from "./replenishment.service";
+import { PromotionsService } from "../promotions/promotions.service";
+
+/** Max images presigned per product for the tile's dot-pager (P5-02). */
+const MAX_TILE_IMAGES = 4;
 
 export interface BuyerProduct {
   id: string;
@@ -20,9 +25,15 @@ export interface BuyerProduct {
   thumbnailUrl: string | null;
   imageKeys: string[];
   isFeatured: boolean;
+  isNew: boolean;
+  isDeal: boolean;
+  /** Presigned URLs for the first images (max 4) — the tile dot-pager. [] when no images. */
+  imageUrls: string[];
   // RF-200: stock availability fields
   inStock: boolean;
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  /** Whole units remaining, exposed ONLY while stockStatus === "LOW" ("Only N left"); else null. */
+  stockLeft: number | null;
 }
 
 @Injectable()
@@ -33,7 +44,28 @@ export class BuyerCatalogService {
     private readonly storage: StorageService,
     private readonly visibility: RegulatedVisibilityService,
     private readonly ordersService: OrdersService,
+    private readonly replenishment: ReplenishmentService,
+    private readonly promotions: PromotionsService,
   ) {}
+
+  /**
+   * Where-fragment matching every product that would surface as a deal: the
+   * isDeal merch flag OR coverage by an active promotion's scope. An ALL-scope
+   * promo makes the whole catalog a deal ({} matches everything). QTY_BREAK
+   * promos count as deals even though their struck price only appears at the
+   * qty threshold (the tile shows the rule as a chip).
+   */
+  private dealsWhere(
+    promos: Array<{ scope: string; category: string | null; productIds: string[] }>,
+  ): Record<string, unknown> {
+    const or: Record<string, unknown>[] = [{ isDeal: true }];
+    for (const p of promos) {
+      if (p.scope === "ALL") return {};
+      if (p.scope === "CATEGORY" && p.category) or.push({ category: p.category });
+      if (p.scope === "PRODUCTS" && p.productIds.length > 0) or.push({ id: { in: p.productIds } });
+    }
+    return { OR: or };
+  }
 
   /**
    * The customer's remembered override prices per product (their last agreed
@@ -52,26 +84,64 @@ export class BuyerCatalogService {
    * sort in memory, then paginate. For name sorts, the DB handles ordering natively.
    */
   async getCatalog(
-    query: { search?: string; category?: string; page?: number; limit?: number; sort?: string },
+    query: {
+      search?: string;
+      category?: string;
+      page?: number;
+      limit?: number;
+      sort?: string;
+      collection?: "usuals" | "favorites" | "new" | "deals";
+    },
     customerId: string,
+    buyerAccountId?: string,
   ) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
+    const isBestSort = query.sort === "best";
+    // Price + best sorts rank on data resolved in-memory (buyer pricing /
+    // replenishment frequency), so fetch ALL matches and paginate after sorting.
+    const fetchAll = isPriceSort || isBestSort;
 
     // W7 gate: hide products in regulated categories the buyer isn't licensed for.
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
 
-    // For price sorts, fetch ALL matching products (limit=0) so sorting is global
+    // Smart-collection filter → extra AND clauses (query-level so pagination
+    // counts stay correct AND the regulated exclusion composes automatically).
+    const andWhere: Record<string, unknown>[] = [];
+    if (query.collection === "new") {
+      andWhere.push({ isNew: true });
+    } else if (query.collection === "deals") {
+      andWhere.push(this.dealsWhere(await this.promotions.activeForCatalog()));
+    } else if (query.collection === "usuals") {
+      const estimates = await this.replenishment.estimates(customerId);
+      const ids = estimates.filter((e) => e.orderCount >= 2).map((e) => e.productId);
+      andWhere.push({ id: { in: ids } });
+    } else if (query.collection === "favorites" && buyerAccountId) {
+      const favs = await this.prisma.forTenant().buyerFavorite.findMany({
+        where: { buyerAccountId, customerId },
+        select: { productId: true },
+      });
+      andWhere.push({ id: { in: favs.map((f) => f.productId) } });
+    }
+
+    const opts =
+      hiddenIds.size > 0 || andWhere.length > 0
+        ? {
+            ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
+            ...(andWhere.length > 0 ? { andWhere } : {}),
+          }
+        : undefined;
+
     const result = await this.productsService.findAll(
       {
         search: query.search,
         category: query.category,
         isActive: true,
-        page: isPriceSort ? 1 : page,
-        limit: isPriceSort ? 0 : limit,
+        page: fetchAll ? 1 : page,
+        limit: fetchAll ? 0 : limit,
       },
-      hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : undefined,
+      opts,
     );
 
     // Load customer's pricing tier
@@ -95,36 +165,51 @@ export class BuyerCatalogService {
     const priceHist = await this.getRememberedPrices(customerId);
 
     // Map to buyer-safe objects with resolved pricing
-    let products: BuyerProduct[] = result.data.map((p: any) => {
-      const effectiveTier = cpMap.get(p.id) ?? defaultTier;
-      const buyerPrice = effectiveBuyerPrice(
-        getTierPrice(p, effectiveTier),
-        Number(p.pricePerUnit),
-        priceHist[p.id]?.lastPrice ?? null,
-      );
+    let products: BuyerProduct[] = await Promise.all(
+      result.data.map(async (p: any) => {
+        const effectiveTier = cpMap.get(p.id) ?? defaultTier;
+        const buyerPrice = effectiveBuyerPrice(
+          getTierPrice(p, effectiveTier),
+          Number(p.pricePerUnit),
+          priceHist[p.id]?.lastPrice ?? null,
+        );
 
-      const stock = Number(p.currentStock ?? 0);
-      const lowThreshold = Number(p.lowStockThreshold ?? 5);
-      const stockStatus: BuyerProduct["stockStatus"] =
-        stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
+        const stock = Number(p.currentStock ?? 0);
+        const lowThreshold = Number(p.lowStockThreshold ?? 5);
+        const stockStatus: BuyerProduct["stockStatus"] =
+          stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
 
-      return {
-        id: p.id,
-        name: p.name,
-        description: p.description,
-        sku: p.sku,
-        barcode: p.barcode,
-        unit: p.unit,
-        category: p.category,
-        buyerPrice,
-        unitsPerBox: p.unitsPerBox ?? null,
-        isFeatured: p.isFeatured ?? false,
-        thumbnailUrl: p.thumbnailUrl ?? null,
-        imageKeys: p.imageKeys ?? [],
-        inStock: stock > 0,
-        stockStatus,
-      };
-    });
+        // Dot pager: presign up to the first 4 images (HMAC-local, no network).
+        // First entry corresponds to thumbnailUrl (same key, first image).
+        const imageUrls =
+          (p.imageKeys?.length ?? 0) > 0
+            ? await this.storage.presignedUrls(p.imageKeys.slice(0, MAX_TILE_IMAGES))
+            : [];
+
+        return {
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          sku: p.sku,
+          barcode: p.barcode,
+          unit: p.unit,
+          category: p.category,
+          buyerPrice,
+          unitsPerBox: p.unitsPerBox ?? null,
+          isFeatured: p.isFeatured ?? false,
+          isNew: p.isNew ?? false,
+          isDeal: p.isDeal ?? false,
+          thumbnailUrl: p.thumbnailUrl ?? null,
+          imageKeys: p.imageKeys ?? [],
+          imageUrls,
+          inStock: stock > 0,
+          stockStatus,
+          // Whole units only, floor >= 1 so a fractional Decimal never renders
+          // "Only 0 left" while status is LOW (stock > 0 by definition here).
+          stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+        };
+      }),
+    );
 
     // Apply sorting
     if (query.sort === "price_asc") {
@@ -133,11 +218,27 @@ export class BuyerCatalogService {
       products.sort((a, b) => b.buyerPrice - a.buyerPrice);
     } else if (query.sort === "name_desc") {
       products.sort((a, b) => b.name.localeCompare(a.name));
+    } else if (isBestSort) {
+      // "Best for you" = the replenishment frequency slice (G10): most-often
+      // reordered first, then the one running out soonest, then name.
+      const estimates = await this.replenishment.estimates(customerId);
+      const freq = new Map(estimates.map((e) => [e.productId, e]));
+      products.sort((a, b) => {
+        const ea = freq.get(a.id);
+        const eb = freq.get(b.id);
+        const oa = ea?.orderCount ?? 0;
+        const ob = eb?.orderCount ?? 0;
+        if (oa !== ob) return ob - oa;
+        const da = ea?.estDaysLeft ?? Number.POSITIVE_INFINITY;
+        const db = eb?.estDaysLeft ?? Number.POSITIVE_INFINITY;
+        if (da !== db) return da - db;
+        return a.name.localeCompare(b.name);
+      });
     }
     // name_asc is the default from ProductsService — no additional sort needed
 
-    // For price sorts, manually paginate the fully-sorted result
-    if (isPriceSort) {
+    // For price/best sorts, manually paginate the fully-sorted result
+    if (fetchAll) {
       const total = products.length;
       const start = (page - 1) * limit;
       products = products.slice(start, start + limit);
@@ -154,6 +255,57 @@ export class BuyerCatalogService {
     }
 
     return { data: products, meta: result.meta, hiddenCategories: locked };
+  }
+
+  /**
+   * Category-rail data: total + per-category product counts + smart-collection
+   * counts + the locked regulated categories. Every count applies the W7
+   * visibility gate so a locked category's products are never countable.
+   */
+  async getCatalogCounts(customerId: string, buyerAccountId: string) {
+    const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
+    const baseWhere: Record<string, unknown> = { isActive: true };
+    if (hiddenIds.size > 0) baseWhere.trackedCategoryId = { notIn: [...hiddenIds] };
+
+    const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
+      this.prisma.forTenant().product.count({ where: baseWhere }),
+      this.prisma.forTenant().product.groupBy({
+        by: ["category"],
+        where: { ...baseWhere, category: { not: null } },
+        _count: { _all: true },
+      }),
+      this.prisma.forTenant().product.count({ where: { ...baseWhere, isNew: true } }),
+      this.prisma.forTenant().buyerFavorite.findMany({
+        where: { buyerAccountId, customerId },
+        select: { productId: true },
+      }),
+      this.replenishment.estimates(customerId),
+      this.promotions.activeForCatalog(),
+    ]);
+
+    const usualIds = estimates.filter((e) => e.orderCount >= 2).map((e) => e.productId);
+    const favIds = favRows.map((f) => f.productId);
+    const [usuals, favorites, deals] = await Promise.all([
+      usualIds.length > 0
+        ? this.prisma.forTenant().product.count({ where: { ...baseWhere, id: { in: usualIds } } })
+        : Promise.resolve(0),
+      favIds.length > 0
+        ? this.prisma.forTenant().product.count({ where: { ...baseWhere, id: { in: favIds } } })
+        : Promise.resolve(0),
+      this.prisma
+        .forTenant()
+        .product.count({ where: { AND: [baseWhere, this.dealsWhere(promos)] } }),
+    ]);
+
+    return {
+      total,
+      categories: (byCategory as Array<{ category: string | null; _count: { _all: number } }>)
+        .filter((c) => c.category)
+        .map((c) => ({ name: c.category as string, count: c._count._all }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      collections: { usuals, favorites, new: newCount, deals },
+      lockedCategories: locked,
+    };
   }
 
   /**

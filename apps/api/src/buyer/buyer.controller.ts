@@ -228,21 +228,33 @@ export class BuyerController {
     return this.catalogService.getCategories();
   }
 
+  @Get("products/counts")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Category-rail counts: per-category + smart collections + locked" })
+  getCatalogCounts(@CurrentBuyer() buyer: BuyerJwtPayload, @CurrentBuyerCustomer() ctx: any) {
+    return this.catalogService.getCatalogCounts(ctx.customerId, buyer.sub);
+  }
+
   @Get("products")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Browse product catalog with buyer-specific pricing" })
   getProducts(
+    @CurrentBuyer() buyer: BuyerJwtPayload,
     @CurrentBuyerCustomer() ctx: any,
     @Query("search") search?: string,
     @Query("category") category?: string,
     @Query("page") page?: string,
     @Query("limit") limit?: string,
     @Query("sort") sort?: string,
+    @Query("collection") collection?: string,
   ) {
     const parsedPage = page ? Number(page) : undefined;
     const parsedLimit = limit ? Number(limit) : undefined;
+    const validCollections = ["usuals", "favorites", "new", "deals"];
     return this.catalogService.getCatalog(
       {
         search,
@@ -250,8 +262,12 @@ export class BuyerController {
         page: Number.isFinite(parsedPage) && parsedPage! >= 1 ? parsedPage : undefined,
         limit: Number.isFinite(parsedLimit) && parsedLimit! >= 1 ? parsedLimit : undefined,
         sort,
+        collection: validCollections.includes(collection ?? "")
+          ? (collection as "usuals" | "favorites" | "new" | "deals")
+          : undefined,
       },
       ctx.customerId,
+      buyer.sub,
     );
   }
 
