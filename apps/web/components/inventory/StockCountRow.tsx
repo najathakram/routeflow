@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Trash2 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { DecimalInput } from "@/components/MoneyInput";
 import type { StockCountMode, StockCountRow as Row } from "@/lib/stock-count-storage";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
@@ -29,7 +30,7 @@ export const StockCountRow = React.memo(function StockCountRow({
   onChangeMode,
   onRemove,
 }: StockCountRowProps) {
-  const step = isDecimalUnit(row.unit) ? 0.001 : 1;
+  const decimals = isDecimalUnit(row.unit) ? 3 : 0;
   const delta = row.mode === "REPLACE" ? row.scannedQty - row.currentStockSnapshot : row.scannedQty;
   const replacingDown = row.mode === "REPLACE" && row.scannedQty < row.currentStockSnapshot;
 
@@ -57,13 +58,13 @@ export const StockCountRow = React.memo(function StockCountRow({
       </td>
       <td className="px-3 py-2 text-right text-sm text-navy/70">{row.currentStockSnapshot}</td>
       <td className="px-3 py-2">
-        <input
-          type="number"
-          min={0}
-          step={step}
+        <DecimalInput
           value={row.scannedQty}
-          onChange={(e) => onChangeQty(row.rowId, Number(e.target.value))}
-          className="w-24 rounded border border-surface-border px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          onChange={(v) => onChangeQty(row.rowId, v ?? 0)}
+          decimals={decimals}
+          min={0}
+          max={9999999.999}
+          className="w-24 px-2 py-1 text-right"
         />
       </td>
       <td className="px-3 py-2">

@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -21,6 +22,7 @@ export class CommitStockCountItemDto {
   @IsNumber()
   @Type(() => Number)
   @Min(0)
+  @Max(9999999.999) // quantity column is Decimal(10,3)
   quantity: number;
 
   @IsIn(["REPLACE", "ADD"])

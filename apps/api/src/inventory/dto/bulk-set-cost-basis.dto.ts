@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -15,6 +16,7 @@ export class BulkSetCostBasisItemDto {
 
   @IsNumber()
   @Min(0)
+  @Max(999999.9999) // unitCost column is Decimal(10,4)
   @Type(() => Number)
   unitCost: number;
 }
