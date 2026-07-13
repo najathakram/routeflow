@@ -1657,525 +1657,567 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
-    // Customer/Driver path: replace items by productId
-    if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
-      if (user.role === UserRole.CUSTOMER) {
-        const customer = await this.prisma
-          .forTenant()
-          .customer.findFirst({ where: { userId: user.sub } });
-        if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
-      }
+    // P5-08b: reference-data reads (tax rate, active promotions, buyer price
+    // history) are hoisted OUT of the transaction below. Each hits the DB on a
+    // SEPARATE pooled connection (systemConfig / promotionsService /
+    // forTenant().orderItem), so issuing them while the interactive tx holds its
+    // own connection risks connection-pool starvation under concurrent edits.
+    // Mirrors create(), which loads these before opening its transaction.
+    const taxRate = await this.getTaxRate();
+    const buyerPromos =
+      user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER
+        ? await this.loadActivePromotions(user.role)
+        : [];
+    const buyerPriceHistory =
+      user?.role === UserRole.CUSTOMER ? await this.getCustomerPriceHistory(order.customerId) : {};
 
-      // Customers send items as { productId, qty } — replace all line items
-      const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-      const products = await this.prisma
-        .forTenant()
-        .product.findMany({ where: { id: { in: productIds } } });
-      const productMap = new Map(products.map((p) => [p.id, p]));
-
-      // P5-04: buyer pricing context (tier + per-product override + active promos).
-      // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
-      // legacy list pricing unchanged. This also corrects a pre-existing bug where
-      // the buyer merge billed LIST price, ignoring the customer's tier.
-      const isBuyerEdit = user.role === UserRole.CUSTOMER;
-      const buyerTierCtx = isBuyerEdit
-        ? await this.prisma
-            .forTenant()
-            .customer.findUnique({ where: { id: order.customerId }, select: { pricingTier: true } })
-        : null;
-      const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
-      const buyerCustomerPrices =
-        isBuyerEdit && productIds.length > 0
-          ? await this.prisma.forTenant().customerPrice.findMany({
-              where: { customerId: order.customerId, productId: { in: productIds } },
-            })
-          : [];
-      const buyerCpMap = new Map(buyerCustomerPrices.map((cp) => [cp.productId, cp.pricingTier]));
-      const buyerPromos = await this.loadActivePromotions(user.role);
-      // Sticky upsell for the buyer merge/edit path (mirrors create()).
-      const buyerPriceHistory = isBuyerEdit
-        ? await this.getCustomerPriceHistory(order.customerId)
-        : {};
-
-      // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
-      // existing line was stored with a box/piece split (box-aware create). Lines
-      // created box-UNAWARE (mobile cart, operator add-line) store `qty` as a
-      // selling-unit/box count with boxes=null — for those we must NOT re-split,
-      // or a $120 (2-box) line would drop to $20 (2-piece) on any edit.
-      const pieceDenominated = new Set(
-        (order.lineItems ?? [])
-          .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
-          .map((li) => li.productId as string),
-      );
-
-      await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
-      for (const item of dto.items) {
-        if (!item.productId) {
-          // Preserve an operator-added unlisted (catalog-free) line carried
-          // through a buyer's cart merge. Buyers can't author these themselves.
-          const name = (item.name ?? "").trim();
-          const qty = item.qty ?? 0;
-          if (!name || qty <= 0 || item.unitPrice == null) continue;
-          const unitPrice = Number(item.unitPrice);
-          await this.prisma.forTenant().orderItem.create({
-            data: {
-              orderId,
-              productId: null,
-              name,
-              qty,
-              unitPrice,
-              subtotal: computeLineSubtotal({ unitPrice, qty }),
-              status: "PENDING",
-              notes: item.notes,
-              priceType: PriceType.MANUAL,
-            },
-          });
-          continue;
-        }
-        if (!item.qty) continue;
-        const product = productMap.get(item.productId);
-        if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-        // Boxed + piece-denominated line: `qty` is the piece count, so re-split it
-        // and prorate by the BOX price (mirrors createOrder + the operator path).
-        // Without this a plain qty*unitPrice over-charges boxed lines by
-        // unitsPerBox. Selling-unit lines (see pieceDenominated) keep qty*price.
-        const upb = Number(product.unitsPerBox ?? 0);
-        const shouldSplit = upb > 1 && pieceDenominated.has(item.productId);
-        const split = shouldSplit
-          ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
-          : null;
-        const boxes = split ? split.boxes : null;
-        const pieces = split ? split.pieces : null;
-        const qty = split ? split.qty : item.qty;
-        // P5-04: buyers get their tier price + best active promotion. The
-        // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
-        // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
-        // DRIVER edits keep the legacy list price (unchanged).
-        const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
-        const priced = isBuyerEdit
-          ? this.resolveBuyerLinePrice(
-              product,
-              buyerCpMap.get(item.productId) ?? buyerDefaultTier,
-              buyerPromos,
-              qtyPieces,
-              buyerPriceHistory[item.productId]?.lastPrice ?? null,
-            )
-          : {
-              unitPrice: Number(product.pricePerUnit),
-              originalPrice: null as number | null,
-              priceType: PriceType.STANDARD,
-            };
-        await this.prisma.forTenant().orderItem.create({
-          data: {
-            orderId,
-            productId: item.productId,
-            qty,
-            unitPrice: priced.unitPrice,
-            subtotal: computeLineSubtotal({
-              unitPrice: priced.unitPrice,
-              qty,
-              boxes,
-              pieces,
-              unitsPerBox: upb,
-            }),
-            boxes,
-            pieces,
-            // Snapshot the sale-time box size on box-split lines (see create()).
-            unitsPerBox: boxes != null && upb > 1 ? upb : null,
-            originalPrice: priced.originalPrice,
-            priceType: priced.priceType,
-            status: "PENDING",
-            notes: item.notes,
-            // Snapshot the regulated category so an edited-in line invoices/ledgers
-            // correctly (mirrors orders.service.create; spec §7).
-            trackedCategoryId: product.trackedCategoryId ?? null,
-          },
-        });
-      }
-    } else {
-      // Operator/admin path.
-      // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
-      // Explicit `replaceAll` wins; otherwise fall back to the legacy heuristic so
-      // existing mobile clients (which omit the flag and send a full id-less list)
-      // keep working. The web edit UI sends `replaceAll: false`, so adding a new
-      // item there merges/appends instead of deleting the untouched lines.
-      const allNewItems = dto.items.every((i) => !i.id);
-      const replaceAll = dto.replaceAll ?? allNewItems;
-
-      if (replaceAll) {
-        // Replace-all: client sends the full item list. Delete existing items then
-        // re-create, honoring any per-line price override and any boxes/pieces
-        // split (boxed products use BOX-price proration).
-        const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-        const products = await this.prisma
-          .forTenant()
-          .product.findMany({ where: { id: { in: productIds } } });
-        const productMap = new Map(products.map((p) => [p.id, p]));
-
-        await this.prisma.forTenant().orderItem.deleteMany({ where: { orderId } });
-        for (const item of dto.items) {
-          if (!item.productId) {
-            // Unlisted (ad-hoc) line — free-text name + unitPrice, no product
-            // lookup, no stock, no boxed proration. Stored as MANUAL-priced.
-            const name = (item.name ?? "").trim();
-            const qty = item.qty ?? 0;
-            if (!name || qty <= 0 || item.unitPrice == null) continue;
-            const unitPrice = Number(item.unitPrice);
-            await this.prisma.forTenant().orderItem.create({
-              data: {
-                orderId,
-                productId: null,
-                name,
-                qty,
-                unitPrice,
-                subtotal: computeLineSubtotal({ unitPrice, qty }),
-                status: "PENDING",
-                notes: item.notes,
-                priceType: PriceType.MANUAL,
-              },
-            });
-            continue;
+    // P5-08b: the entire mutation phase — item writes, totals recompute, the
+    // stock/credit guards, and the order-header update — runs in ONE tenant
+    // transaction. A guard violation (or any failure) rolls back every item
+    // write, so a blocked edit leaves the order byte-identical and appends no
+    // revision. The guards intentionally consume the AUTHORITATIVE recomputed
+    // totals/line set (not a pre-mutation simulation), so there is no second
+    // pricing formula to drift. reconcileOrderDraftInvoice and
+    // appendOrderRevision stay OUTSIDE (after commit), unchanged.
+    const { subtotal, tax, shouldRevert } = await this.prisma.tenantTransaction(
+      async (tx: any) => {
+        // Customer/Driver path: replace items by productId
+        if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
+          if (user.role === UserRole.CUSTOMER) {
+            const customer = await tx.customer.findFirst({ where: { userId: user.sub } });
+            if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
           }
-          const product = productMap.get(item.productId);
-          if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
 
-          // Recompute qty from boxes/pieces when the operator split a boxed
-          // product (matches createOrder's authority). Normalize to integers and
-          // roll loose pieces >= unitsPerBox into boxes. Falls back to plain qty.
-          let qty = item.qty ?? 0;
-          let boxes = item.boxes ?? null;
-          let pieces = item.pieces ?? null;
-          if (item.boxes != null || item.pieces != null) {
-            const split = normalizeBoxesPieces({
-              boxes: item.boxes,
-              pieces: item.pieces,
-              unitsPerBox: product.unitsPerBox,
-            });
-            qty = split.qty;
-            boxes = split.boxes;
-            pieces = split.pieces;
-          }
-          if (qty <= 0) continue;
+          // Customers send items as { productId, qty } — replace all line items
+          const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
+          const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+          const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
 
-          const catalogPrice = Number(product.pricePerUnit);
-          const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
-          const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
-          const unitPrice = isManualOverride ? overridePrice : catalogPrice;
-          const subtotal = computeLineSubtotal({
-            unitPrice,
-            qty,
-            boxes,
-            pieces,
-            unitsPerBox: product.unitsPerBox,
-          });
-          await this.prisma.forTenant().orderItem.create({
-            data: {
-              orderId,
-              productId: item.productId,
-              qty,
-              boxes,
-              pieces,
-              // Snapshot the sale-time box size on box-split lines (see create()).
-              unitsPerBox:
-                boxes != null && Number(product.unitsPerBox ?? 0) > 1
-                  ? Number(product.unitsPerBox)
-                  : null,
-              unitPrice,
-              subtotal,
-              status: "PENDING",
-              notes: item.notes,
-              priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
-              originalPrice: isManualOverride ? catalogPrice : null,
-              overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
-              overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
-              // Snapshot the regulated category (spec §7).
-              trackedCategoryId: product.trackedCategoryId ?? null,
-            },
-          });
-        }
-      } else {
-        // Individual item updates (dispatcher workflow with explicit item IDs)
-        for (const item of dto.items) {
-          // New unlisted item (no id, no productId, has name + unitPrice).
-          if (!item.id && !item.productId && (item.name ?? "").trim() && (item.qty ?? 0) > 0) {
-            if (item.unitPrice == null) continue;
-            const name = (item.name as string).trim();
-            const qty = item.qty as number;
-            const unitPrice = Number(item.unitPrice);
-            await this.prisma.forTenant().orderItem.create({
-              data: {
-                orderId,
-                productId: null,
-                name,
-                qty,
-                unitPrice,
-                subtotal: computeLineSubtotal({ unitPrice, qty }),
-                status: "PENDING",
-                notes: item.notes,
-                priceType: PriceType.MANUAL,
-              },
-            });
-            continue;
-          }
-          // New item (no id, has productId; qty OR boxes/pieces)
-          const newQtyHint = item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
-          if (!item.id && item.productId && newQtyHint > 0) {
-            const product = await this.prisma
-              .forTenant()
-              .product.findUnique({ where: { id: item.productId } });
-            if (!product) continue;
-            // Recompute qty from boxes/pieces when present.
-            let qty = item.qty ?? 0;
-            if (item.boxes != null || item.pieces != null) {
-              const upb = Number(product.unitsPerBox ?? 0);
-              qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+          // P5-04: buyer pricing context (tier + per-product override + active promos).
+          // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
+          // legacy list pricing unchanged. This also corrects a pre-existing bug where
+          // the buyer merge billed LIST price, ignoring the customer's tier.
+          const isBuyerEdit = user.role === UserRole.CUSTOMER;
+          const buyerTierCtx = isBuyerEdit
+            ? await tx.customer.findUnique({
+                where: { id: order.customerId },
+                select: { pricingTier: true },
+              })
+            : null;
+          const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
+          const buyerCustomerPrices =
+            isBuyerEdit && productIds.length > 0
+              ? await tx.customerPrice.findMany({
+                  where: { customerId: order.customerId, productId: { in: productIds } },
+                })
+              : [];
+          const buyerCpMap = new Map<string, number>(
+            buyerCustomerPrices.map((cp: any) => [cp.productId, cp.pricingTier]),
+          );
+          // buyerPromos + buyerPriceHistory (sticky upsell) are hoisted above the
+          // transaction (pool-starvation fix) and closed over here.
+
+          // Denomination gate: a boxed line's incoming `qty` is only PIECES when the
+          // existing line was stored with a box/piece split (box-aware create). Lines
+          // created box-UNAWARE (mobile cart, operator add-line) store `qty` as a
+          // selling-unit/box count with boxes=null — for those we must NOT re-split,
+          // or a $120 (2-box) line would drop to $20 (2-piece) on any edit.
+          const pieceDenominated = new Set(
+            (order.lineItems ?? [])
+              .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
+              .map((li) => li.productId as string),
+          );
+
+          await tx.orderItem.deleteMany({ where: { orderId } });
+          for (const item of dto.items) {
+            if (!item.productId) {
+              // Preserve an operator-added unlisted (catalog-free) line carried
+              // through a buyer's cart merge. Buyers can't author these themselves.
+              const name = (item.name ?? "").trim();
+              const qty = item.qty ?? 0;
+              if (!name || qty <= 0 || item.unitPrice == null) continue;
+              const unitPrice = Number(item.unitPrice);
+              await tx.orderItem.create({
+                data: {
+                  orderId,
+                  productId: null,
+                  name,
+                  qty,
+                  unitPrice,
+                  subtotal: computeLineSubtotal({ unitPrice, qty }),
+                  status: "PENDING",
+                  notes: item.notes,
+                  priceType: PriceType.MANUAL,
+                },
+              });
+              continue;
             }
-            if (qty <= 0) continue;
-            const catalogPrice = Number(product.pricePerUnit);
-            const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
-            const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
-            const unitPrice = isManualOverride ? overridePrice : catalogPrice;
-            const subtotal = computeLineSubtotal({
-              unitPrice,
-              qty,
-              boxes: item.boxes ?? null,
-              pieces: item.pieces ?? null,
-              unitsPerBox: product.unitsPerBox,
-            });
-            await this.prisma.forTenant().orderItem.create({
+            if (!item.qty) continue;
+            const product = productMap.get(item.productId);
+            if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+            // Boxed + piece-denominated line: `qty` is the piece count, so re-split it
+            // and prorate by the BOX price (mirrors createOrder + the operator path).
+            // Without this a plain qty*unitPrice over-charges boxed lines by
+            // unitsPerBox. Selling-unit lines (see pieceDenominated) keep qty*price.
+            const upb = Number(product.unitsPerBox ?? 0);
+            const shouldSplit = upb > 1 && pieceDenominated.has(item.productId);
+            const split = shouldSplit
+              ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
+              : null;
+            const boxes = split ? split.boxes : null;
+            const pieces = split ? split.pieces : null;
+            const qty = split ? split.qty : item.qty;
+            // P5-04: buyers get their tier price + best active promotion. The
+            // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
+            // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
+            // DRIVER edits keep the legacy list price (unchanged).
+            const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
+            const priced = isBuyerEdit
+              ? this.resolveBuyerLinePrice(
+                  product,
+                  buyerCpMap.get(item.productId) ?? buyerDefaultTier,
+                  buyerPromos,
+                  qtyPieces,
+                  buyerPriceHistory[item.productId]?.lastPrice ?? null,
+                )
+              : {
+                  unitPrice: Number(product.pricePerUnit),
+                  originalPrice: null as number | null,
+                  priceType: PriceType.STANDARD,
+                };
+            await tx.orderItem.create({
               data: {
                 orderId,
                 productId: item.productId,
                 qty,
-                boxes: item.boxes ?? null,
-                pieces: item.pieces ?? null,
-                // Snapshot the sale-time box size on box-split lines (see create()).
-                unitsPerBox:
-                  item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
-                    ? Number(product.unitsPerBox)
-                    : null,
-                unitPrice,
-                subtotal,
-                status: "PENDING",
-                notes: item.notes,
-                priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
-                originalPrice: isManualOverride ? catalogPrice : null,
-                overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
-                overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
-                // Snapshot the regulated category (spec §7).
-                trackedCategoryId: product.trackedCategoryId ?? null,
-              },
-            });
-            continue;
-          }
-          if (item.action === "DELETE" && item.id) {
-            // Hard-remove a line added by mistake. Only safe when nothing
-            // downstream references it — a billed or delivered line is struck
-            // off instead so invoice/delivery history stays intact.
-            const li = order.lineItems.find((l) => l.id === item.id);
-            const hasDeliveries = await this.prisma
-              .forTenant()
-              .deliveryMutation.count({ where: { orderItemId: item.id } });
-            if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
-              await this.prisma.forTenant().orderItem.update({
-                where: { id: item.id },
-                data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
-              });
-            } else {
-              await this.prisma.forTenant().orderItem.delete({ where: { id: item.id } });
-            }
-          } else if (item.action === "CANCEL") {
-            await this.prisma.forTenant().orderItem.update({
-              where: { id: item.id },
-              data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
-            });
-          } else if (item.substituteProductId) {
-            const product = await this.prisma.forTenant().product.findUniqueOrThrow({
-              where: { id: item.substituteProductId },
-            });
-            const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
-            // Substitution may also carry a box/piece split when the substitute
-            // is itself a boxed product. Honor it the same way as a fresh add.
-            let qtyVal = item.qty ?? Number(existingQty);
-            if (item.boxes != null || item.pieces != null) {
-              const upb = Number(product.unitsPerBox ?? 0);
-              qtyVal = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
-            }
-            const unitPrice = Number(product.pricePerUnit);
-            const subtotal = computeLineSubtotal({
-              unitPrice,
-              qty: qtyVal,
-              boxes: item.boxes ?? null,
-              pieces: item.pieces ?? null,
-              unitsPerBox: product.unitsPerBox,
-            });
-            await this.prisma.forTenant().orderItem.update({
-              where: { id: item.id },
-              data: {
-                productId: item.substituteProductId,
-                unitPrice,
-                qty: qtyVal,
-                boxes: item.boxes ?? null,
-                pieces: item.pieces ?? null,
-                // Re-snapshot the substitute's box size on box-split lines.
-                unitsPerBox:
-                  item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
-                    ? Number(product.unitsPerBox)
-                    : null,
-                subtotal,
-                status: "PENDING",
-                notes: item.notes,
-                priceType: PriceType.STANDARD,
-                originalPrice: null,
-                overrideReason: null,
-                overriddenBy: null,
-                // The product changed — re-snapshot the substitute's category so
-                // it doesn't keep the replaced product's (spec §7).
-                trackedCategoryId: product.trackedCategoryId ?? null,
-              },
-            });
-          } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
-            const li = order.lineItems.find((li) => li.id === item.id);
-            if (!li) continue;
-            const isUnlisted = !li.productId;
-            const editHasSplit = item.boxes != null || item.pieces != null;
-            const wasBoxSplit = li.boxes != null;
-            // Resolve the box size for a catalog line even on a qty-ONLY edit —
-            // prefer the line's sale-time snapshot, fall back to the live product.
-            // Without this a qty-only edit of a box-split line dropped to non-boxed
-            // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
-            let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
-            if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
-              const product = await this.prisma.forTenant().product.findUnique({
-                where: { id: li.productId },
-                select: { unitsPerBox: true },
-              });
-              unitsPerBox = product?.unitsPerBox ?? null;
-            }
-            const upb = Number(unitsPerBox ?? 0);
-
-            // Resolve qty + the box/piece split, PRESERVING the line's denomination:
-            //  - an explicit boxes/pieces edit wins;
-            //  - else a box-split line re-derives its split from the new qty (box
-            //    price prorated, stale boxes/pieces refreshed);
-            //  - else a selling-unit / non-boxed line keeps boxes/pieces null.
-            let qty: number;
-            let boxes: number | null;
-            let pieces: number | null;
-            if (editHasSplit) {
-              const split = normalizeBoxesPieces({
-                boxes: item.boxes,
-                pieces: item.pieces,
-                unitsPerBox: upb,
-              });
-              qty = split.qty;
-              boxes = split.boxes;
-              pieces = split.pieces;
-            } else if (wasBoxSplit && upb > 1) {
-              const split = normalizeBoxesPieces({
-                qty: item.qty ?? Number(li.qty),
-                unitsPerBox: upb,
-              });
-              qty = split.qty;
-              boxes = split.boxes;
-              pieces = split.pieces;
-            } else {
-              qty = item.qty ?? Number(li.qty);
-              boxes = null;
-              pieces = null;
-            }
-            if (qty <= 0) continue;
-
-            const existingUnitPrice = Number(li.unitPrice);
-            const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
-            const isManualOverride = overridePrice !== null && overridePrice !== existingUnitPrice;
-            const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
-            // Anchor the struck-through original to the CATALOG list price (like the
-            // replace-all / new-item branches), never the line's prior net price —
-            // otherwise re-editing an override (e.g. an upsell nudged down but still
-            // above list) would flip its derived upsell/discount direction and show a
-            // bogus "was" price to the customer/operator.
-            let catalogPrice = existingUnitPrice;
-            if (isManualOverride && !isUnlisted && li.productId) {
-              const prod = await this.prisma.forTenant().product.findUnique({
-                where: { id: li.productId },
-                select: { pricePerUnit: true },
-              });
-              if (prod) catalogPrice = Number(prod.pricePerUnit);
-            }
-            const subtotal = computeLineSubtotal({
-              unitPrice,
-              qty,
-              boxes,
-              pieces,
-              unitsPerBox: upb,
-            });
-            await this.prisma.forTenant().orderItem.update({
-              where: { id: item.id },
-              data: {
-                qty,
-                // Always set the split explicitly so a qty-only edit can't leave
-                // stale boxes/pieces behind (the reverse-divergence class).
+                unitPrice: priced.unitPrice,
+                subtotal: computeLineSubtotal({
+                  unitPrice: priced.unitPrice,
+                  qty,
+                  boxes,
+                  pieces,
+                  unitsPerBox: upb,
+                }),
                 boxes,
                 pieces,
+                // Snapshot the sale-time box size on box-split lines (see create()).
                 unitsPerBox: boxes != null && upb > 1 ? upb : null,
-                // Allow renaming an unlisted line; catalog lines keep name null.
-                ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
-                unitPrice,
-                subtotal,
-                ...(item.notes !== undefined ? { notes: item.notes } : {}),
-                ...(isManualOverride
-                  ? isUnlisted
-                    ? // Unlisted lines have no catalog "list price" — a price change is
-                      // just the new MANUAL price, no struck-through original.
-                      { priceType: PriceType.MANUAL, originalPrice: null }
-                    : {
-                        priceType: PriceType.MANUAL,
-                        originalPrice: catalogPrice,
-                        overrideReason: item.overrideReason ?? null,
-                        overriddenBy: user?.sub ?? null,
-                      }
-                  : {}),
+                originalPrice: priced.originalPrice,
+                priceType: priced.priceType,
+                status: "PENDING",
+                notes: item.notes,
+                // Snapshot the regulated category so an edited-in line invoices/ledgers
+                // correctly (mirrors orders.service.create; spec §7).
+                trackedCategoryId: product.trackedCategoryId ?? null,
               },
             });
           }
+        } else {
+          // Operator/admin path.
+          // Whether to wipe + recreate (mobile "replace-all") vs. merge incrementally.
+          // Explicit `replaceAll` wins; otherwise fall back to the legacy heuristic so
+          // existing mobile clients (which omit the flag and send a full id-less list)
+          // keep working. The web edit UI sends `replaceAll: false`, so adding a new
+          // item there merges/appends instead of deleting the untouched lines.
+          const allNewItems = dto.items.every((i) => !i.id);
+          const replaceAll = dto.replaceAll ?? allNewItems;
+
+          if (replaceAll) {
+            // Replace-all: client sends the full item list. Delete existing items then
+            // re-create, honoring any per-line price override and any boxes/pieces
+            // split (boxed products use BOX-price proration).
+            const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
+            const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+            const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+
+            await tx.orderItem.deleteMany({ where: { orderId } });
+            for (const item of dto.items) {
+              if (!item.productId) {
+                // Unlisted (ad-hoc) line — free-text name + unitPrice, no product
+                // lookup, no stock, no boxed proration. Stored as MANUAL-priced.
+                const name = (item.name ?? "").trim();
+                const qty = item.qty ?? 0;
+                if (!name || qty <= 0 || item.unitPrice == null) continue;
+                const unitPrice = Number(item.unitPrice);
+                await tx.orderItem.create({
+                  data: {
+                    orderId,
+                    productId: null,
+                    name,
+                    qty,
+                    unitPrice,
+                    subtotal: computeLineSubtotal({ unitPrice, qty }),
+                    status: "PENDING",
+                    notes: item.notes,
+                    priceType: PriceType.MANUAL,
+                  },
+                });
+                continue;
+              }
+              const product = productMap.get(item.productId);
+              if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
+
+              // Recompute qty from boxes/pieces when the operator split a boxed
+              // product (matches createOrder's authority). Normalize to integers and
+              // roll loose pieces >= unitsPerBox into boxes. Falls back to plain qty.
+              let qty = item.qty ?? 0;
+              let boxes = item.boxes ?? null;
+              let pieces = item.pieces ?? null;
+              if (item.boxes != null || item.pieces != null) {
+                const split = normalizeBoxesPieces({
+                  boxes: item.boxes,
+                  pieces: item.pieces,
+                  unitsPerBox: product.unitsPerBox,
+                });
+                qty = split.qty;
+                boxes = split.boxes;
+                pieces = split.pieces;
+              }
+              if (qty <= 0) continue;
+
+              const catalogPrice = Number(product.pricePerUnit);
+              const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+              const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
+              const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+              const subtotal = computeLineSubtotal({
+                unitPrice,
+                qty,
+                boxes,
+                pieces,
+                unitsPerBox: product.unitsPerBox,
+              });
+              await tx.orderItem.create({
+                data: {
+                  orderId,
+                  productId: item.productId,
+                  qty,
+                  boxes,
+                  pieces,
+                  // Snapshot the sale-time box size on box-split lines (see create()).
+                  unitsPerBox:
+                    boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                      ? Number(product.unitsPerBox)
+                      : null,
+                  unitPrice,
+                  subtotal,
+                  status: "PENDING",
+                  notes: item.notes,
+                  priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                  originalPrice: isManualOverride ? catalogPrice : null,
+                  overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
+                  overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+                  // Snapshot the regulated category (spec §7).
+                  trackedCategoryId: product.trackedCategoryId ?? null,
+                },
+              });
+            }
+          } else {
+            // Individual item updates (dispatcher workflow with explicit item IDs)
+            for (const item of dto.items) {
+              // New unlisted item (no id, no productId, has name + unitPrice).
+              if (!item.id && !item.productId && (item.name ?? "").trim() && (item.qty ?? 0) > 0) {
+                if (item.unitPrice == null) continue;
+                const name = (item.name as string).trim();
+                const qty = item.qty as number;
+                const unitPrice = Number(item.unitPrice);
+                await tx.orderItem.create({
+                  data: {
+                    orderId,
+                    productId: null,
+                    name,
+                    qty,
+                    unitPrice,
+                    subtotal: computeLineSubtotal({ unitPrice, qty }),
+                    status: "PENDING",
+                    notes: item.notes,
+                    priceType: PriceType.MANUAL,
+                  },
+                });
+                continue;
+              }
+              // New item (no id, has productId; qty OR boxes/pieces)
+              const newQtyHint = item.boxes != null || item.pieces != null ? 1 : (item.qty ?? 0);
+              if (!item.id && item.productId && newQtyHint > 0) {
+                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                if (!product) continue;
+                // Recompute qty from boxes/pieces when present.
+                let qty = item.qty ?? 0;
+                if (item.boxes != null || item.pieces != null) {
+                  const upb = Number(product.unitsPerBox ?? 0);
+                  qty = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+                }
+                if (qty <= 0) continue;
+                const catalogPrice = Number(product.pricePerUnit);
+                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const isManualOverride = overridePrice !== null && overridePrice !== catalogPrice;
+                const unitPrice = isManualOverride ? overridePrice : catalogPrice;
+                const subtotal = computeLineSubtotal({
+                  unitPrice,
+                  qty,
+                  boxes: item.boxes ?? null,
+                  pieces: item.pieces ?? null,
+                  unitsPerBox: product.unitsPerBox,
+                });
+                await tx.orderItem.create({
+                  data: {
+                    orderId,
+                    productId: item.productId,
+                    qty,
+                    boxes: item.boxes ?? null,
+                    pieces: item.pieces ?? null,
+                    // Snapshot the sale-time box size on box-split lines (see create()).
+                    unitsPerBox:
+                      item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                        ? Number(product.unitsPerBox)
+                        : null,
+                    unitPrice,
+                    subtotal,
+                    status: "PENDING",
+                    notes: item.notes,
+                    priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+                    originalPrice: isManualOverride ? catalogPrice : null,
+                    overrideReason: isManualOverride ? (item.overrideReason ?? null) : null,
+                    overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
+                    // Snapshot the regulated category (spec §7).
+                    trackedCategoryId: product.trackedCategoryId ?? null,
+                  },
+                });
+                continue;
+              }
+              if (item.action === "DELETE" && item.id) {
+                // Hard-remove a line added by mistake. Only safe when nothing
+                // downstream references it — a billed or delivered line is struck
+                // off instead so invoice/delivery history stays intact.
+                const li = order.lineItems.find((l) => l.id === item.id);
+                const hasDeliveries = await tx.deliveryMutation.count({
+                  where: { orderItemId: item.id },
+                });
+                if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
+                  await tx.orderItem.update({
+                    where: { id: item.id },
+                    data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+                  });
+                } else {
+                  await tx.orderItem.delete({ where: { id: item.id } });
+                }
+              } else if (item.action === "CANCEL") {
+                await tx.orderItem.update({
+                  where: { id: item.id },
+                  data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+                });
+              } else if (item.substituteProductId) {
+                const product = await tx.product.findUniqueOrThrow({
+                  where: { id: item.substituteProductId },
+                });
+                const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
+                // Substitution may also carry a box/piece split when the substitute
+                // is itself a boxed product. Honor it the same way as a fresh add.
+                let qtyVal = item.qty ?? Number(existingQty);
+                if (item.boxes != null || item.pieces != null) {
+                  const upb = Number(product.unitsPerBox ?? 0);
+                  qtyVal = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+                }
+                const unitPrice = Number(product.pricePerUnit);
+                const subtotal = computeLineSubtotal({
+                  unitPrice,
+                  qty: qtyVal,
+                  boxes: item.boxes ?? null,
+                  pieces: item.pieces ?? null,
+                  unitsPerBox: product.unitsPerBox,
+                });
+                await tx.orderItem.update({
+                  where: { id: item.id },
+                  data: {
+                    productId: item.substituteProductId,
+                    unitPrice,
+                    qty: qtyVal,
+                    boxes: item.boxes ?? null,
+                    pieces: item.pieces ?? null,
+                    // Re-snapshot the substitute's box size on box-split lines.
+                    unitsPerBox:
+                      item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
+                        ? Number(product.unitsPerBox)
+                        : null,
+                    subtotal,
+                    status: "PENDING",
+                    notes: item.notes,
+                    priceType: PriceType.STANDARD,
+                    originalPrice: null,
+                    overrideReason: null,
+                    overriddenBy: null,
+                    // The product changed — re-snapshot the substitute's category so
+                    // it doesn't keep the replaced product's (spec §7).
+                    trackedCategoryId: product.trackedCategoryId ?? null,
+                  },
+                });
+              } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
+                const li = order.lineItems.find((li) => li.id === item.id);
+                if (!li) continue;
+                const isUnlisted = !li.productId;
+                const editHasSplit = item.boxes != null || item.pieces != null;
+                const wasBoxSplit = li.boxes != null;
+                // Resolve the box size for a catalog line even on a qty-ONLY edit —
+                // prefer the line's sale-time snapshot, fall back to the live product.
+                // Without this a qty-only edit of a box-split line dropped to non-boxed
+                // math (per-piece × BOX price → overcharge) and left stale boxes/pieces.
+                let unitsPerBox: number | null = (li as any).unitsPerBox ?? null;
+                if (unitsPerBox == null && li.productId && (editHasSplit || wasBoxSplit)) {
+                  const product = await tx.product.findUnique({
+                    where: { id: li.productId },
+                    select: { unitsPerBox: true },
+                  });
+                  unitsPerBox = product?.unitsPerBox ?? null;
+                }
+                const upb = Number(unitsPerBox ?? 0);
+
+                // Resolve qty + the box/piece split, PRESERVING the line's denomination:
+                //  - an explicit boxes/pieces edit wins;
+                //  - else a box-split line re-derives its split from the new qty (box
+                //    price prorated, stale boxes/pieces refreshed);
+                //  - else a selling-unit / non-boxed line keeps boxes/pieces null.
+                let qty: number;
+                let boxes: number | null;
+                let pieces: number | null;
+                if (editHasSplit) {
+                  const split = normalizeBoxesPieces({
+                    boxes: item.boxes,
+                    pieces: item.pieces,
+                    unitsPerBox: upb,
+                  });
+                  qty = split.qty;
+                  boxes = split.boxes;
+                  pieces = split.pieces;
+                } else if (wasBoxSplit && upb > 1) {
+                  const split = normalizeBoxesPieces({
+                    qty: item.qty ?? Number(li.qty),
+                    unitsPerBox: upb,
+                  });
+                  qty = split.qty;
+                  boxes = split.boxes;
+                  pieces = split.pieces;
+                } else {
+                  qty = item.qty ?? Number(li.qty);
+                  boxes = null;
+                  pieces = null;
+                }
+                if (qty <= 0) continue;
+
+                const existingUnitPrice = Number(li.unitPrice);
+                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const isManualOverride =
+                  overridePrice !== null && overridePrice !== existingUnitPrice;
+                const unitPrice = isManualOverride ? overridePrice : existingUnitPrice;
+                // Anchor the struck-through original to the CATALOG list price (like the
+                // replace-all / new-item branches), never the line's prior net price —
+                // otherwise re-editing an override (e.g. an upsell nudged down but still
+                // above list) would flip its derived upsell/discount direction and show a
+                // bogus "was" price to the customer/operator.
+                let catalogPrice = existingUnitPrice;
+                if (isManualOverride && !isUnlisted && li.productId) {
+                  const prod = await tx.product.findUnique({
+                    where: { id: li.productId },
+                    select: { pricePerUnit: true },
+                  });
+                  if (prod) catalogPrice = Number(prod.pricePerUnit);
+                }
+                const subtotal = computeLineSubtotal({
+                  unitPrice,
+                  qty,
+                  boxes,
+                  pieces,
+                  unitsPerBox: upb,
+                });
+                await tx.orderItem.update({
+                  where: { id: item.id },
+                  data: {
+                    qty,
+                    // Always set the split explicitly so a qty-only edit can't leave
+                    // stale boxes/pieces behind (the reverse-divergence class).
+                    boxes,
+                    pieces,
+                    unitsPerBox: boxes != null && upb > 1 ? upb : null,
+                    // Allow renaming an unlisted line; catalog lines keep name null.
+                    ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
+                    unitPrice,
+                    subtotal,
+                    ...(item.notes !== undefined ? { notes: item.notes } : {}),
+                    ...(isManualOverride
+                      ? isUnlisted
+                        ? // Unlisted lines have no catalog "list price" — a price change is
+                          // just the new MANUAL price, no struck-through original.
+                          { priceType: PriceType.MANUAL, originalPrice: null }
+                        : {
+                            priceType: PriceType.MANUAL,
+                            originalPrice: catalogPrice,
+                            overrideReason: item.overrideReason ?? null,
+                            overriddenBy: user?.sub ?? null,
+                          }
+                      : {}),
+                  },
+                });
+              }
+            }
+          }
         }
-      }
-    }
 
-    // Recalculate order totals from all non-cancelled items
-    const activeItems = await this.prisma.forTenant().orderItem.findMany({
-      where: { orderId, status: { not: "CANCELLED" } },
-    });
-    const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
-    const tax = roundMoney(subtotal * (await this.getTaxRate()));
+        // Recalculate order totals from all non-cancelled items
+        const activeItems = await tx.orderItem.findMany({
+          where: { orderId, status: { not: "CANCELLED" } },
+        });
+        const subtotal = roundMoney(activeItems.reduce((s, li) => s + Number(li.subtotal), 0));
+        const tax = roundMoney(subtotal * taxRate);
 
-    // Revert CONFIRMED (or later) orders back to PENDING when items are edited
-    // so the operator must re-confirm the updated pick list before dispatch.
-    const shouldRevert =
-      !["DRAFT", "PENDING"].includes(order.status) &&
-      user?.role !== UserRole.CUSTOMER &&
-      user?.role !== UserRole.DRIVER;
-    const revertNote = shouldRevert
-      ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
-      : undefined;
+        // P5-08b inline guards (completes P5-08 "credit / regulated / stock-
+        // violating edit blocked inline"). DRAFT edits are exempt, matching the
+        // regulated guard above and create()'s !isDraft stock gate — a draft
+        // edit isn't a sale yet. Order: stock first (more actionable message),
+        // then credit. A throw here rolls back the whole transaction.
+        if (order.status !== "DRAFT") {
+          await this.assertStockAvailableForEdit(tx, order, activeItems, user);
+          await this.assertWithinCreditLimit(
+            tx,
+            order.customerId,
+            orderId,
+            // The exact total the order.update below writes — Σ of stored
+            // computeLineSubtotal results + tax, cents-rounded. Note: mirrors
+            // the existing edit recompute, which (pre-existing) does not
+            // subtract Order.discountAmount.
+            roundMoney(subtotal + tax),
+          );
+        }
 
-    await this.prisma.forTenant().order.update({
-      where: { id: orderId },
-      data: {
-        subtotal,
-        tax,
-        total: roundMoney(subtotal + tax),
-        // Recompute the denormalized regulated flag from the edited line set.
-        hasRegulated: activeItems.some((li) => li.trackedCategoryId != null),
-        ...(shouldRevert ? { status: "PENDING" } : {}),
-        ...(dto.orderNotes !== undefined
-          ? { notes: (order.notes ?? "") + (revertNote ?? "") + "\n" + dto.orderNotes }
-          : revertNote
-            ? { notes: (order.notes ?? "") + revertNote }
-            : {}),
+        // Revert CONFIRMED (or later) orders back to PENDING when items are edited
+        // so the operator must re-confirm the updated pick list before dispatch.
+        const shouldRevert =
+          !["DRAFT", "PENDING"].includes(order.status) &&
+          user?.role !== UserRole.CUSTOMER &&
+          user?.role !== UserRole.DRIVER;
+        const revertNote = shouldRevert
+          ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
+          : undefined;
+
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            subtotal,
+            tax,
+            total: roundMoney(subtotal + tax),
+            // Recompute the denormalized regulated flag from the edited line set.
+            hasRegulated: activeItems.some((li) => li.trackedCategoryId != null),
+            ...(shouldRevert ? { status: "PENDING" } : {}),
+            ...(dto.orderNotes !== undefined
+              ? { notes: (order.notes ?? "") + (revertNote ?? "") + "\n" + dto.orderNotes }
+              : revertNote
+                ? { notes: (order.notes ?? "") + revertNote }
+                : {}),
+          },
+        });
+        return { subtotal, tax, shouldRevert };
       },
-    });
+      // Headroom over Prisma's 5s default: the merge branch issues per-line
+      // queries inside the transaction (same shape as create()'s in-tx per-line work).
+      { timeout: 15_000 },
+    );
 
     // Keep the order's pending-mirror draft invoice (if any) in lockstep with the
     // edit. updateOrderItems only runs on undelivered orders, so a basis="order"
@@ -2277,6 +2319,198 @@ export class OrdersService implements OnApplicationBootstrap {
         },
       });
     });
+  }
+
+  /**
+   * P5-08b stock guard — VALIDATE-ONLY, delta-based. Never decrements stock.
+   *
+   * Lifecycle (why delta, not absolute): create() already decremented
+   * Product.currentStock for every non-draft line under a row lock (RF-017,
+   * create() ~line 1196-1249), so the order's existing lines are already "out
+   * of" currentStock; delivery decrements separately via
+   * InventoryService.recordSale. Edits never touch stock. An edit therefore
+   * only needs the INCREASE over what the order already holds to be coverable;
+   * requiring the absolute qty would false-block any edit of an order whose
+   * own creation emptied the shelf (stock 10 → order of 10 → currentStock 0 →
+   * a same-qty edit would 409). Brand-new lines have held = 0, so they need
+   * full coverage — identical to create()'s check.
+   *
+   * Role semantics mirror create(): CUSTOMER/DRIVER hard-block (409
+   * INSUFFICIENT_STOCK), everyone else (operator/admin/undefined = internal
+   * caller) may knowingly oversell — warn-only log. Quantities compare in each
+   * line's own stored denomination (pieces for box-split lines, selling units
+   * otherwise) — the same mixed-denomination convention create() uses against
+   * currentStock. No SELECT ... FOR UPDATE: this guard reserves nothing, so a
+   * lock would close no race. Unknown/missing product rows and non-numeric
+   * quantities fail OPEN (skip) — same posture as create()'s `if (p && ...)`.
+   */
+  private async assertStockAvailableForEdit(
+    db: any,
+    order: { id: string; status: string; lineItems: any[] },
+    finalActiveItems: Array<{ productId: string | null; qty: any }>,
+    user?: JwtPayload,
+  ): Promise<void> {
+    // Qty the order already holds per product (pre-edit, non-cancelled lines).
+    const held = new Map<string, number>();
+    for (const li of order.lineItems ?? []) {
+      if (li.productId && li.status !== "CANCELLED") {
+        held.set(li.productId, (held.get(li.productId) ?? 0) + Number(li.qty));
+      }
+    }
+    // Qty the edit requests per product (post-edit active line set).
+    const requested = new Map<string, number>();
+    for (const li of finalActiveItems) {
+      if (li.productId) {
+        requested.set(li.productId, (requested.get(li.productId) ?? 0) + Number(li.qty));
+      }
+    }
+    const increases = [...requested.entries()]
+      .map(([productId, req]) => ({
+        productId,
+        requested: req,
+        delta: req - (held.get(productId) ?? 0),
+      }))
+      .filter((x) => x.delta > 0);
+    if (increases.length === 0) return;
+
+    const products = await db.product.findMany({
+      where: { id: { in: increases.map((x) => x.productId) } },
+      select: { id: true, name: true, currentStock: true },
+    });
+    const violations: Array<{
+      productId: string;
+      name: string;
+      available: number;
+      requested: number;
+      delta: number;
+    }> = [];
+    for (const inc of increases) {
+      const p = products.find((lp: any) => lp.id === inc.productId);
+      if (p && Number(p.currentStock) < inc.delta) {
+        violations.push({
+          productId: inc.productId,
+          name: p.name,
+          available: Number(p.currentStock),
+          requested: inc.requested,
+          delta: inc.delta,
+        });
+      }
+    }
+    if (violations.length === 0) return;
+
+    if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
+      // Operators/admins may oversell — matches create()'s warn-only path.
+      this.logger.warn(
+        `Operator edit of order ${order.id} will go below stock: ` +
+          violations
+            .map((v) => `${v.name} (available: ${v.available}, requested increase: ${v.delta})`)
+            .join("; "),
+      );
+      return;
+    }
+    const first = violations[0];
+    throw new ConflictException({
+      code: "INSUFFICIENT_STOCK",
+      message:
+        `Not enough stock for ${first.name} ` +
+        `(available: ${first.available}, requested: ${first.requested}).`,
+      productId: first.productId,
+      available: first.available,
+      requested: first.requested,
+    });
+  }
+
+  /**
+   * P5-08b credit-limit guard — the FIRST credit enforcement in the codebase
+   * (verified: no other creditLimit read exists in apps/api/src outside DTOs).
+   *
+   * Exposure mirrors customers.service.ts getStatementForOperator (the
+   * authoritative statement derivation — do NOT invent a second balance
+   * formula):
+   *   • open invoice balances: status ∉ {PAID, VOID, WRITTEN_OFF}, each worth
+   *     Number(total) − Σ payments.amount (statement's `outstanding`);
+   *   • open-order totals: status ∈ {PENDING, CONFIRMED, OUT_FOR_DELIVERY}
+   *     (statement's `pendingOrdersAmount`) — but ONLY orders with no counted
+   *     open invoice, else every order carrying a draft/sent mirror invoice
+   *     (reconcileOrderDraftInvoice keeps one in lockstep) counts twice;
+   *   • the order being edited is EXCLUDED from both buckets and represented
+   *     by projectedOrderTotal instead. Exact, not approximate: an editable
+   *     order's linked invoice can never carry payments —
+   *     revertLinkedInvoicesForOrderEdit (already called by updateOrderItems)
+   *     throws if it does;
+   *   • credit notes / advance payments are NOT netted (the statement reports
+   *     them separately from outstandingAmount; netting loosens a money guard);
+   *   • the Transaction model is NOT read — delivered orders have BOTH a
+   *     Transaction and an invoice, so mixing the two double-counts.
+   *
+   * creditLimit == null (or customer row not found) → no limit → no check.
+   * Blocks ALL roles — money exposure is stricter than stock (operators may
+   * oversell, they may not silently extend credit); the shared error code
+   * leaves room for a future explicit operator-override flow.
+   *
+   * Runs INSIDE the updateOrderItems transaction, after the totals recompute:
+   * projectedOrderTotal is the SAME roundMoney(subtotal + tax) the order.update
+   * persists. A throw rolls the whole edit back.
+   */
+  private async assertWithinCreditLimit(
+    db: any,
+    customerId: string,
+    currentOrderId: string,
+    projectedOrderTotal: number,
+  ): Promise<void> {
+    const customer = await db.customer.findUnique({
+      where: { id: customerId },
+      select: { creditLimit: true },
+    });
+    if (customer?.creditLimit == null) return;
+    const limit = Number(customer.creditLimit);
+
+    // JS-side exclusion of the edited order's invoices (avoids SQL null
+    // semantics of `not` on the nullable orderId column).
+    const openInvoices = (
+      await db.invoice.findMany({
+        where: {
+          customerId,
+          status: {
+            notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+          },
+        },
+        select: { total: true, orderId: true, payments: { select: { amount: true } } },
+      })
+    ).filter((inv: any) => inv.orderId !== currentOrderId);
+
+    const invoiceExposure = openInvoices.reduce(
+      (sum: number, inv: any) =>
+        sum +
+        (Number(inv.total) - inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0)),
+      0,
+    );
+
+    const invoicedOrderIds = new Set(openInvoices.map((inv: any) => inv.orderId).filter(Boolean));
+    const openOrders = await db.order.findMany({
+      where: {
+        customerId,
+        status: {
+          in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY],
+        },
+      },
+      select: { id: true, total: true },
+    });
+    const uninvoicedOrderExposure = openOrders
+      .filter((o: any) => o.id !== currentOrderId && !invoicedOrderIds.has(o.id))
+      .reduce((sum: number, o: any) => sum + Number(o.total), 0);
+
+    const exposure = roundMoney(invoiceExposure + uninvoicedOrderExposure + projectedOrderTotal);
+    if (exposure > limit) {
+      throw new ConflictException({
+        code: "CREDIT_LIMIT_EXCEEDED",
+        message:
+          `This edit would take the customer's exposure to ${exposure.toFixed(2)}, ` +
+          `over their credit limit of ${limit.toFixed(2)}.`,
+        limit,
+        exposure,
+      });
+    }
   }
 
   /**

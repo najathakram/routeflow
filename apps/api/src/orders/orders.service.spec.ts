@@ -85,6 +85,10 @@ describe("OrdersService", () => {
   let service: OrdersService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let inventoryService: { recordSale: jest.Mock };
+  // P5-08b: captured so the credit-guard tests can assert the post-transaction
+  // reconcile never runs on a blocked edit — mirrors how inventoryService is
+  // captured below.
+  let invoicesService: { reconcileOrderDraftInvoice: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -171,6 +175,7 @@ describe("OrdersService", () => {
 
     service = module.get<OrdersService>(OrdersService);
     inventoryService = module.get(InventoryService);
+    invoicesService = module.get(InvoicesService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -1819,6 +1824,337 @@ describe("OrdersService", () => {
       });
       const result: any = await service.findOne("ord-1", operatorPayload);
       expect(result.editWindow).toMatchObject({ editable: false, closedReason: "DISPATCHED" });
+    });
+  });
+
+  // ─── P5-08b: credit-limit + stock inline guards on edit ────────────────────
+
+  describe("updateOrderItems — credit-limit guard (P5-08b)", () => {
+    // PENDING order (guards skip DRAFT), no run (edit window open), one line
+    // qty 2 @ $5. The merge edit below moves it to qty 3 → recompute stub says
+    // subtotal 15; tax rate is 0 in tests → projected total = 15.
+    const editableOrder = () => ({
+      ...MOCK_ORDER,
+      status: "PENDING" as const,
+      routeRun: null,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    });
+    const editDto = { items: [{ id: "li-1", action: "UPDATE" as const, qty: 3, unitPrice: 5 }] };
+    const postEditItems = [
+      { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+    ];
+
+    beforeEach(() => {
+      prisma.order.findUnique.mockResolvedValue(editableOrder());
+      prisma.orderItem.findMany.mockResolvedValue(postEditItems);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+    });
+
+    it("creditLimit null → no limit: passes without querying exposure", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: null });
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("under the limit passes (exposure = open invoice balance + projected total)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 50, orderId: null, payments: [{ amount: 20 }] }, // balance 30
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      // 30 + 15 = 45 ≤ 100
+      expect(prisma.order.update).toHaveBeenCalled();
+      expect(prisma.orderRevision.create).toHaveBeenCalled();
+    });
+
+    it("over the limit blocks ALL roles and persists nothing (409 CREDIT_LIMIT_EXCEEDED)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 135 }, // 120 + 15
+      });
+
+      // Guard throws inside the transaction, before the header write; the
+      // post-transaction reconcile + revision never run.
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+    });
+
+    it("excludes the edited order from exposure (its mirror invoice AND its order row)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      // Both rows belong to the order being edited — must not count; the
+      // projected total (15) represents it instead.
+      prisma.invoice.findMany.mockResolvedValue([{ total: 500, orderId: "ord-1", payments: [] }]);
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-1", total: 500 }]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload); // 15 ≤ 100
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("nets partial payments off an open invoice (partially-paid handling)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 90, orderId: null, payments: [{ amount: 60 }, { amount: 10 }] }, // balance 20
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload); // 20 + 15 = 35
+
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("exposure exactly at the limit passes; one cent over blocks", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 85, orderId: null, payments: [] }, // 85 + 15 = 100 → not over
+      ]);
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+      expect(prisma.order.update).toHaveBeenCalled();
+
+      jest.clearAllMocks();
+      prisma.order.findUnique.mockResolvedValue(editableOrder());
+      prisma.orderItem.findMany.mockResolvedValue(postEditItems);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 85.01, orderId: null, payments: [] }, // 100.01 → over
+      ]);
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({ response: { code: "CREDIT_LIMIT_EXCEEDED", exposure: 100.01 } });
+    });
+
+    it("does NOT double-count an open order that already has an open mirror invoice", async () => {
+      // ord-2 appears as BOTH an open invoice (40) and an open order (40):
+      // exposure must be 40 + 30 + 15 = 85, not 125.
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 90 });
+      prisma.invoice.findMany.mockResolvedValue([{ total: 40, orderId: "ord-2", payments: [] }]);
+      prisma.order.findMany.mockResolvedValue([
+        { id: "ord-2", total: 40 },
+        { id: "ord-3", total: 30 },
+      ]);
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload); // 85 ≤ 90
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("blocks a CUSTOMER edit over the limit (buyer replace path)", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" }); // ownership
+      // Serves BOTH the branch's pricingTier read and the guard's creditLimit read.
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, creditLimit: 10 });
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", unitsPerBox: null },
+      ]);
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 3 }] },
+          customerPayload,
+        ),
+      ).rejects.toMatchObject({ response: { code: "CREDIT_LIMIT_EXCEEDED" } });
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it("skips both guards entirely on a DRAFT order", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), status: "DRAFT" });
+      // Would block if the guard ran:
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 0.01 });
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      expect(prisma.invoice.findMany).not.toHaveBeenCalled();
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+  });
+
+  describe("updateOrderItems — stock guard (P5-08b, validate-only, delta-based)", () => {
+    // PENDING order already holding qty 5 of prod-1 (create() decremented that
+    // 5 from currentStock at order time — only INCREASES need coverage).
+    const stockOrder = () => ({
+      ...MOCK_ORDER,
+      status: "PENDING" as const,
+      routeRun: null,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 5,
+          unitPrice: 5,
+          subtotal: 25,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    });
+
+    beforeEach(() => {
+      prisma.order.findUnique.mockResolvedValue(stockOrder());
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+      // Credit guard stays inert in this block:
+      prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1, creditLimit: null });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+    });
+
+    it("blocks a CUSTOMER increase beyond available stock (delta 3 > available 2)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 2, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
+      ]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 8 }] },
+          customerPayload,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: "INSUFFICIENT_STOCK", productId: "prod-1", available: 2, requested: 8 },
+      });
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+    });
+
+    it("checks the DELTA, not the absolute qty: 5 → 8 passes with only 3 in stock", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 3, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 8 }] },
+        customerPayload,
+      );
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("never false-blocks a same-qty edit when the shelf is empty (delta 0, stock 0)", async () => {
+      // The order's own creation emptied the shelf; re-saving qty 5 must pass
+      // and must not even query product stock.
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 0, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 5, unitPrice: 5, subtotal: 25, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 5 }] },
+        customerPayload,
+      );
+      expect(prisma.order.update).toHaveBeenCalled();
+    });
+
+    it("a NEW line needs full coverage (held 0): qty 4 vs stock 3 blocks", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 99, unitsPerBox: null },
+        { ...MOCK_PRODUCT, id: "prod-2", name: "Basil", currentStock: 3, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 5, unitPrice: 5, subtotal: 25, status: "PENDING" },
+        { id: "li-2", productId: "prod-2", qty: 4, unitPrice: 2, subtotal: 8, status: "PENDING" },
+      ]);
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          {
+            items: [
+              { productId: "prod-1", qty: 5 },
+              { productId: "prod-2", qty: 4 },
+            ],
+          },
+          customerPayload,
+        ),
+      ).rejects.toMatchObject({
+        response: { code: "INSUFFICIENT_STOCK", productId: "prod-2", available: 3, requested: 4 },
+      });
+    });
+
+    it("operator over-stock increase WARNS and passes (may oversell, matches create())", async () => {
+      const warnSpy = jest.spyOn((service as any).logger, "warn").mockImplementation();
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 1, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "li-1",
+          productId: "prod-1",
+          qty: 50,
+          unitPrice: 5,
+          subtotal: 250,
+          status: "PENDING",
+        },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 50, unitPrice: 5 }] },
+        operatorPayload,
+      );
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("below stock"));
+      expect(prisma.order.update).toHaveBeenCalled();
+      expect(prisma.orderRevision.create).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it("never decrements currentStock on edit (validate-only)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-1", currentStock: 100, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 8, unitPrice: 5, subtotal: 40, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 8 }] },
+        customerPayload,
+      );
+
+      expect(prisma.product.update).not.toHaveBeenCalled();
     });
   });
 });
