@@ -300,4 +300,76 @@ describe("CustomersService", () => {
       await expect(service.restoreCustomer("missing")).rejects.toThrow(NotFoundException);
     });
   });
+
+  // ─── mergeCustomers: regulated authorization re-pointing ────────────────────
+  describe("mergeCustomers (regulated authorizations)", () => {
+    const PRIMARY = { id: "cust-primary", userId: "user-p" };
+    const SECONDARY = { id: "cust-secondary", userId: "user-s" };
+
+    const setup = (primaryAuths: any[], secondaryAuths: any[]) => {
+      prisma.customer.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.id === PRIMARY.id ? PRIMARY : where.id === SECONDARY.id ? SECONDARY : null,
+        ),
+      );
+      prisma.customerAuthorization.findMany.mockImplementation(({ where }: any) =>
+        Promise.resolve(where.customerId === PRIMARY.id ? primaryAuths : secondaryAuths),
+      );
+    };
+
+    it("moves a secondary license to the primary when the primary has none for that category", async () => {
+      setup(
+        [],
+        [{ id: "auth-s", trackedCategoryId: "cat-tobacco", status: "VERIFIED", expiresAt: null }],
+      );
+
+      await service.mergeCustomers(PRIMARY.id, SECONDARY.id);
+
+      expect(prisma.customerAuthorization.update).toHaveBeenCalledWith({
+        where: { id: "auth-s" },
+        data: { customerId: PRIMARY.id },
+      });
+      // Nothing deleted — the primary had no colliding row.
+      expect(prisma.customerAuthorization.delete).not.toHaveBeenCalled();
+    });
+
+    it("keeps the stronger authorization on a category collision (secondary VERIFIED beats primary EXPIRED)", async () => {
+      setup(
+        [{ id: "auth-p", trackedCategoryId: "cat-tobacco", status: "EXPIRED", expiresAt: null }],
+        [{ id: "auth-s", trackedCategoryId: "cat-tobacco", status: "VERIFIED", expiresAt: null }],
+      );
+
+      await service.mergeCustomers(PRIMARY.id, SECONDARY.id);
+
+      // Primary's weaker row dropped, secondary's re-pointed onto the primary.
+      expect(prisma.customerAuthorization.delete).toHaveBeenCalledWith({ where: { id: "auth-p" } });
+      expect(prisma.customerAuthorization.update).toHaveBeenCalledWith({
+        where: { id: "auth-s" },
+        data: { customerId: PRIMARY.id },
+      });
+    });
+
+    it("keeps the primary's authorization when it is at least as strong (drops the secondary's, no move)", async () => {
+      setup(
+        [{ id: "auth-p", trackedCategoryId: "cat-tobacco", status: "VERIFIED", expiresAt: null }],
+        [{ id: "auth-s", trackedCategoryId: "cat-tobacco", status: "NONE", expiresAt: null }],
+      );
+
+      await service.mergeCustomers(PRIMARY.id, SECONDARY.id);
+
+      expect(prisma.customerAuthorization.delete).toHaveBeenCalledWith({ where: { id: "auth-s" } });
+      expect(prisma.customerAuthorization.update).not.toHaveBeenCalled();
+    });
+
+    it("re-points authorization overrides to the primary", async () => {
+      setup([], []);
+
+      await service.mergeCustomers(PRIMARY.id, SECONDARY.id);
+
+      expect(prisma.authorizationOverride.updateMany).toHaveBeenCalledWith({
+        where: { customerId: SECONDARY.id },
+        data: { customerId: PRIMARY.id },
+      });
+    });
+  });
 });

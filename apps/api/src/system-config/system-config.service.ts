@@ -1,18 +1,60 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { EncryptionService } from "../common/encryption.service";
 
 @Injectable()
 export class SystemConfigService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(SystemConfigService.name);
+
+  /**
+   * Secret-valued keys (security F5-004): encrypted at rest via EncryptionService,
+   * mirroring the TenantConfig SMTP/OAuth path. Everything else stays plaintext.
+   */
+  private static readonly SECRET_KEYS = new Set([
+    "email.smtpPassword",
+    "anthropic.apiKey",
+    "zoho.clientSecret",
+    "zoho.refreshToken",
+  ]);
+  /** AES-256-GCM storage shape from EncryptionService: IV_HEX:TAG_HEX:CIPHERTEXT_B64. */
+  private static readonly ENCRYPTED_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
+
+  private isSecretKey(key: string): boolean {
+    return SystemConfigService.SECRET_KEYS.has(key);
+  }
+
+  private encryptIfSecret(key: string, value: string): string {
+    // Only encrypt non-empty secrets — an empty string is the "cleared" sentinel.
+    return value && this.isSecretKey(key) ? this.encryption.encrypt(value) : value;
+  }
+
+  private decryptIfSecret(key: string, value: string | null): string | null {
+    if (!value || !this.isSecretKey(key)) return value;
+    // Legacy rows written before F5-004 are plaintext (don't match the cipher shape)
+    // — pass them through so existing SMTP/API keys keep working until re-saved.
+    if (!SystemConfigService.ENCRYPTED_FORMAT.test(value)) return value;
+    try {
+      return this.encryption.decrypt(value);
+    } catch {
+      this.logger.error(`Failed to decrypt SystemConfig secret "${key}"`);
+      return null;
+    }
+  }
 
   async get(key: string): Promise<string | null> {
     // findFirst instead of findUnique because the unique constraint is now
     // composite (tenantId, key) and forTenant() injects tenantId at runtime.
     const record = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
-    return record?.value ?? null;
+    return this.decryptIfSecret(key, record?.value ?? null);
   }
 
   async set(key: string, value: string): Promise<void> {
+    const toStore = this.encryptIfSecret(key, value);
     // Use findFirst + create/update instead of upsert because upsert requires
     // a composite unique key (tenantId_key) that the forTenant() extension
     // cannot auto-inject into the `where` clause.
@@ -20,10 +62,10 @@ export class SystemConfigService {
     if (existing) {
       await this.prisma
         .forTenant()
-        .systemConfig.update({ where: { id: existing.id }, data: { value } });
+        .systemConfig.update({ where: { id: existing.id }, data: { value: toStore } });
     } else {
       // tenantId is injected automatically by forTenant() at runtime
-      await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value } });
+      await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value: toStore } });
     }
   }
 
@@ -31,7 +73,9 @@ export class SystemConfigService {
     const records = await this.prisma.forTenant().systemConfig.findMany({
       where: { key: { startsWith: prefix } },
     });
-    return Object.fromEntries(records.map((r) => [r.key, r.value]));
+    return Object.fromEntries(
+      records.map((r) => [r.key, this.decryptIfSecret(r.key, r.value) ?? ""]),
+    );
   }
 
   async getZohoConfig(): Promise<{

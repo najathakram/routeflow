@@ -246,6 +246,33 @@ describe("OrdersService", () => {
     });
   });
 
+  // ─── getOrderTracking (F2-002 ownership) ────────────────────────────────────
+  describe("getOrderTracking", () => {
+    it("throws ForbiddenException when a customer requests another customer's order", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, routeRunStop: null });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-other" });
+
+      await expect(service.getOrderTracking("ord-1", customerPayload)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it("returns tracking for the owning customer", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, routeRunStop: null });
+      prisma.customer.findFirst.mockResolvedValue({ id: MOCK_ORDER.customerId });
+
+      const result = await service.getOrderTracking("ord-1", customerPayload);
+      expect(result).toEqual({ status: MOCK_ORDER.status, tracking: null });
+    });
+
+    it("does not run an ownership lookup for operators", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, routeRunStop: null });
+
+      await service.getOrderTracking("ord-1", operatorPayload);
+      expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── create ───────────────────────────────────────────────────────────────
 
   describe("create", () => {

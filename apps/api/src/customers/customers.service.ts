@@ -1137,6 +1137,43 @@ export class CustomersService {
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
 
+  /**
+   * Effective strength of a regulated authorization, used to resolve a
+   * per-category collision when merging two customers. Mirrors the guard's
+   * lazy-expiry semantics: a VERIFIED row past its expiry is no stronger than an
+   * EXPIRED one. Higher wins. An explicit REJECTED outranks a default NONE so a
+   * deliberate denial is never silently replaced by "never asked".
+   */
+  private authRank(a: { status: string; expiresAt: Date | string | null }): number {
+    const expired = a.expiresAt ? new Date(a.expiresAt).getTime() <= Date.now() : false;
+    switch (a.status) {
+      case "VERIFIED":
+        return expired ? 2 : 4;
+      case "PENDING_REVIEW":
+        return 3;
+      case "EXPIRED":
+        return 2;
+      case "REJECTED":
+        return 1;
+      default:
+        return 0; // NONE
+    }
+  }
+
+  /** True if the secondary authorization is strictly stronger than the primary's
+   * (rank, then later expiry). Ties keep the primary — the surviving customer. */
+  private authSecondaryWins(
+    sec: { status: string; expiresAt: Date | string | null },
+    pri: { status: string; expiresAt: Date | string | null },
+  ): boolean {
+    const rs = this.authRank(sec);
+    const rp = this.authRank(pri);
+    if (rs !== rp) return rs > rp;
+    const es = sec.expiresAt ? new Date(sec.expiresAt).getTime() : -Infinity;
+    const ep = pri.expiresAt ? new Date(pri.expiresAt).getTime() : -Infinity;
+    return es > ep;
+  }
+
   async mergeCustomers(primaryId: string, secondaryId: string) {
     if (primaryId === secondaryId) {
       throw new BadRequestException("Cannot merge a customer into itself");
@@ -1209,6 +1246,43 @@ export class CustomersService {
           data: { customerId: primaryId },
         });
         await tx.orderTemplate.updateMany({
+          where: { customerId: secondaryId },
+          data: { customerId: primaryId },
+        });
+
+        // Regulated compliance: re-point the secondary's licenses/overrides to the
+        // primary. Both CustomerAuthorization and AuthorizationOverride FK-cascade on
+        // customer delete, so WITHOUT this the merge below would silently destroy the
+        // secondary's regulated authorizations. CustomerAuthorization is unique per
+        // (customerId, trackedCategoryId), so per-category collisions are resolved by
+        // keeping the stronger authorization (see authSecondaryWins); the loser is
+        // deleted so the re-point never trips the unique constraint.
+        const [primaryAuths, secondaryAuths] = await Promise.all([
+          tx.customerAuthorization.findMany({ where: { customerId: primaryId } }),
+          tx.customerAuthorization.findMany({ where: { customerId: secondaryId } }),
+        ]);
+        const primaryAuthByCategory = new Map<string, (typeof primaryAuths)[number]>(
+          primaryAuths.map((a) => [a.trackedCategoryId, a]),
+        );
+        for (const sec of secondaryAuths) {
+          const pri = primaryAuthByCategory.get(sec.trackedCategoryId);
+          if (!pri) {
+            await tx.customerAuthorization.update({
+              where: { id: sec.id },
+              data: { customerId: primaryId },
+            });
+          } else if (this.authSecondaryWins(sec, pri)) {
+            await tx.customerAuthorization.delete({ where: { id: pri.id } });
+            await tx.customerAuthorization.update({
+              where: { id: sec.id },
+              data: { customerId: primaryId },
+            });
+          } else {
+            await tx.customerAuthorization.delete({ where: { id: sec.id } });
+          }
+        }
+        // Overrides carry no per-category uniqueness — move them all.
+        await tx.authorizationOverride.updateMany({
           where: { customerId: secondaryId },
           data: { customerId: primaryId },
         });

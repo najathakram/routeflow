@@ -2668,6 +2668,16 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
 
+    // Ownership gate (security F2-002): this route has no RolesGuard, so without
+    // this any authenticated CUSTOMER could enumerate order ids and read another
+    // customer's route/driver/stop/delivery-window. Mirror findOne's CUSTOMER gate.
+    if (user.role === UserRole.CUSTOMER) {
+      const customer = await this.prisma
+        .forTenant()
+        .customer.findFirst({ where: { userId: user.sub } });
+      if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
+    }
+
     if (!order.routeRunStop) {
       return { status: order.status, tracking: null };
     }

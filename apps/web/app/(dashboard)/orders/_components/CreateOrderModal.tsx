@@ -26,6 +26,7 @@ import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -167,6 +168,18 @@ export function CreateOrderModal({
   // Per-product last-given price for this customer — fetched once on customer select so
   // scanning is instant (no per-item round trip). Used to pre-fill the discount field.
   const { data: priceHistory } = useCustomerPriceHistory(selectedCustomer?.id);
+
+  // Regulated tracked-categories (for the per-line "· regulated" tag + the live
+  // invoice-split preview). Only staff build orders here; fetch while open.
+  const { data: trackedCategories } = useTrackedCategories({ active: true }, { enabled: isOpen });
+  const categoryById = React.useMemo(
+    () => new Map((trackedCategories ?? []).map((c) => [c.id, c])),
+    [trackedCategories],
+  );
+  const lineCategory = React.useCallback(
+    (li: LineItem) => (li.trackedCategoryId ? categoryById.get(li.trackedCategoryId) : undefined),
+    [categoryById],
+  );
 
   // Live cost/margin: the "negotiation floor" (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
@@ -334,6 +347,40 @@ export function CreateOrderModal({
   const tax = subtotal * taxRate;
   const discountAmt = parseFloat(orderDiscount) || 0;
   const total = subtotal + tax - discountAmt;
+
+  // Live preview of the eventual invoice split (mirrors the API's
+  // groupOrderLinesForInvoicing): each SEPARATE_INVOICE regulated category becomes
+  // its own invoice; all other lines (standard + non-SEPARATE_INVOICE regulated)
+  // fold into one standard invoice. Only shown once a split would actually happen.
+  const invoiceSplit = React.useMemo(() => {
+    const lineTotal = (li: LineItem) =>
+      computeLineSubtotal({
+        unitPrice: li.unitPrice,
+        qty: li.qty,
+        boxes: li.boxes ?? null,
+        pieces: li.pieces ?? null,
+        unitsPerBox: li.unitsPerBox ?? null,
+      });
+    const standard = { count: 0, subtotal: 0 };
+    const separate = new Map<string, { name: string; count: number; subtotal: number }>();
+    for (const li of lineItems) {
+      const cat = li.trackedCategoryId ? categoryById.get(li.trackedCategoryId) : undefined;
+      if (cat && cat.invoiceTreatment === "SEPARATE_INVOICE") {
+        const g = separate.get(cat.id) ?? { name: cat.name, count: 0, subtotal: 0 };
+        g.count += 1;
+        g.subtotal += lineTotal(li);
+        separate.set(cat.id, g);
+      } else {
+        standard.count += 1;
+        standard.subtotal += lineTotal(li);
+      }
+    }
+    const groups: { label: string; count: number; subtotal: number }[] = [];
+    if (standard.count > 0) groups.push({ label: "Standard", ...standard });
+    for (const g of Array.from(separate.values()).sort((a, b) => a.name.localeCompare(b.name)))
+      groups.push({ label: g.name, count: g.count, subtotal: g.subtotal });
+    return { groups, willSplit: separate.size > 0 };
+  }, [lineItems, categoryById]);
 
   // ── Stop management ───────────────────────────────────────────────────────
 
@@ -1230,7 +1277,9 @@ export function CreateOrderModal({
                       if (el) rowRefs.current.set(li.tempId, el);
                       else rowRefs.current.delete(li.tempId);
                     }}
-                    className="flex items-start gap-3 px-3 py-2.5"
+                    className={`flex items-start gap-3 px-3 py-2.5${
+                      lineCategory(li) ? " border-l-2 border-l-amber-300 bg-amber-50/30" : ""
+                    }`}
                   >
                     {li.isUnlisted ? (
                       // ── Unlisted (custom) line — editable name + price, no catalog data ──
@@ -1321,6 +1370,12 @@ export function CreateOrderModal({
                           <div className="mt-0.5 text-[10px] text-navy/70">
                             ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
                           </div>
+                        )}
+                        {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
+                        {lineCategory(li) && (
+                          <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                            {lineCategory(li)!.name} · regulated
+                          </span>
                         )}
                         {/* One-time discount input (only when no special price already applied) */}
                         {li.priceType !== "SPECIAL" && (
@@ -1467,6 +1522,30 @@ export function CreateOrderModal({
               </div>
             )}
           </section>
+
+          {/* ── Regulated invoice-split preview (regulated-items-spec §4) ── */}
+          {invoiceSplit.willSplit && (
+            <div className="space-y-1.5 rounded-lg border border-amber-200 bg-amber-50/40 px-4 py-3 text-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700">
+                Splits into {invoiceSplit.groups.length} invoices
+              </p>
+              {invoiceSplit.groups.map((g, i) => (
+                <div key={g.label} className="flex justify-between text-navy/70">
+                  <span>
+                    Invoice {i + 1} — {g.label}{" "}
+                    <span className="text-navy/40">
+                      ({g.count} {g.count === 1 ? "item" : "items"})
+                    </span>
+                  </span>
+                  <span>${g.subtotal.toFixed(2)}</span>
+                </div>
+              ))}
+              <p className="pt-0.5 text-[10px] text-navy/50">
+                Regulated categories are billed on their own invoice. Amounts shown are pre-tax
+                subtotals.
+              </p>
+            </div>
+          )}
 
           {/* ── Order totals ── */}
           {lineItems.length > 0 && (
