@@ -386,5 +386,105 @@ describe("InventoryService", () => {
       expect(result.missingCostCount).toBe(1);
       expect(result.missingCostProducts).toEqual([{ id: "prod-2", name: "No-cost" }]);
     });
+
+    it("values FIFO/LIFO stock from the remaining lots, not the drifted moving average", async () => {
+      // Bought 10@1 then 10@3 (avg 2), sold 10 (FIFO drew down the 10@1 lot):
+      // 10 units remain, all in the 10@3 lot → true value 30, NOT 10×avg(2)=20.
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
+      ]);
+      prisma.stockLot.findMany.mockResolvedValue([
+        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+      ]);
+
+      const result = await service.getValuation();
+
+      expect(result.totalValue).toBe(30);
+      expect(result.missingCostCount).toBe(0);
+    });
+  });
+
+  // ─── getStockOverview ─────────────────────────────────────────────────────────
+
+  describe("getStockOverview", () => {
+    it("reports a FIFO row's value + unit cost from its open lots", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
+      ]);
+      prisma.stockLot.findMany.mockResolvedValue([
+        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+      ]);
+
+      const [row] = await service.getStockOverview();
+
+      expect(row.totalValue).toBe(30);
+      expect(row.averageCost).toBe(3); // value ÷ stock, not the moving average of 2
+    });
+  });
+
+  // ─── commitStockCount — idempotency ───────────────────────────────────────────
+
+  describe("commitStockCount idempotency", () => {
+    it("short-circuits a re-posted session instead of double-applying its deltas", async () => {
+      prisma.product.findMany.mockResolvedValue([product()]);
+      // A prior commit for this session already wrote movements (its response was lost).
+      prisma.stockMovement.findMany.mockResolvedValue([{ id: "existing-1" }, { id: "existing-2" }]);
+
+      const result = await service.commitStockCount(
+        {
+          sessionId: "11111111-1111-1111-1111-111111111111",
+          items: [{ productId: "prod-1", quantity: 5, mode: "ADD" }],
+        } as any,
+        "user-1",
+      );
+
+      expect(result).toMatchObject({ applied: 2, skipped: 0, alreadyCommitted: true });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── recomputeCosts — STANDARD costing ────────────────────────────────────────
+
+  describe("recomputeCosts STANDARD", () => {
+    it("keeps averageCost frozen for a STANDARD product (no AVCO-style overwrite)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({
+          costingMethod: "STANDARD",
+          averageCost: D(5),
+          standardCost: D(5),
+          currentStock: D(10),
+        }),
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(10), unitCost: D(2) },
+      ]);
+
+      const result = await service.recomputeCosts({});
+
+      // Product average NOT rewritten; the dry-run diff shows no bogus correction.
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(result.results[0]).toMatchObject({ oldAvgCost: 5, newAvgCost: 5 });
+    });
+
+    it("invents no cost for a STANDARD product with no cost set", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({
+          costingMethod: "STANDARD",
+          averageCost: null,
+          standardCost: null,
+          currentStock: D(10),
+        }),
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { id: "m1", type: "PURCHASE", quantity: D(10), unitCost: D(2) },
+      ]);
+
+      const result = await service.recomputeCosts({});
+
+      expect(result.updated).toBe(0);
+      expect(result.noHistory).toEqual([{ productId: "prod-1", name: "Flour 25lb" }]);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
   });
 });
