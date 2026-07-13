@@ -144,6 +144,34 @@ jobs:
             apps/web/coverage/
           retention-days: 14
 
+  # ─── Security Audit ────────────────────────────────────────────────────────
+  # F12-001: fail CI on any CRITICAL production advisory, and surface (without
+  # blocking on) highs. Kept non-blocking at the high level for now so every PR
+  # isn't wedged on the two known SemVer-MAJOR fixes (next 14→16, nodemailer 9);
+  # tighten to `--audit-level=high` once those majors are migrated.
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --force
+
+      - name: Fail on critical production advisories
+        run: npm audit --omit=dev --audit-level=critical
+
+      - name: Report high-severity advisories (non-blocking)
+        if: always()
+        run: npm audit --omit=dev --audit-level=high || true
+
   # ─── Playwright E2E ────────────────────────────────────────────────────────
   # Only runs on master push (where Railway deploys from) and manual dispatch.
   # Waits for API health before running so the deploy has time to stabilise.
