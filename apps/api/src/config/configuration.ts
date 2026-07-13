@@ -13,6 +13,15 @@ import * as crypto from "crypto";
 function resolveStorageSigningSecret(): string {
   const explicit = process.env.STORAGE_URL_SIGNING_SECRET;
   if (explicit) return explicit;
+  // F5-001: never fall back to a JWT_SECRET-derived key in production — a JWT_SECRET
+  // leak would otherwise let an attacker forge storage-access signatures. bootstrap's
+  // assertSecrets() already exits when it's unset in prod; this is defense-in-depth
+  // for any other entry point (scripts, workers) that loads config without that guard.
+  if ((process.env.NODE_ENV ?? "") === "production") {
+    throw new Error(
+      "STORAGE_URL_SIGNING_SECRET must be set in production (it is never derived from JWT_SECRET).",
+    );
+  }
   const jwtSecret = process.env.JWT_SECRET ?? "";
   if (!jwtSecret) return "";
   const derived = crypto.hkdfSync(

@@ -36,23 +36,26 @@ function assertSecrets() {
   const missing: string[] = [];
   if (!process.env.JWT_SECRET) missing.push("JWT_SECRET");
   if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
+  // F5-001: in production the storage-URL signing secret MUST be set independently.
+  // Without it the key was derived from JWT_SECRET, so a JWT_SECRET leak let an
+  // attacker forge signed file-access URLs cross-tenant. Fail closed instead.
+  if (process.env.NODE_ENV === "production" && !process.env.STORAGE_URL_SIGNING_SECRET) {
+    missing.push("STORAGE_URL_SIGNING_SECRET");
+  }
   if (missing.length > 0) {
     console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
-    console.error("   JWT secrets must be set in ALL environments (including development).\n");
+    console.error("   These must be set before the API can start.\n");
     process.exit(1);
   }
 
-  // F5-001/F5-002: warn (do NOT crash) when production-recommended secrets are
-  // unset. ENCRYPTION_KEY missing → encrypt() is disabled in prod; STORAGE_URL_
-  // SIGNING_SECRET missing → the key is derived from JWT_SECRET via HKDF.
+  // F5-002: warn (do NOT crash) when ENCRYPTION_KEY is unset in production —
+  // encrypt() self-disables so the app can still boot for non-encryption paths.
   if (process.env.NODE_ENV === "production") {
-    const warn: string[] = [];
     const encKey = process.env.ENCRYPTION_KEY ?? "";
-    if (encKey.length !== 64) warn.push("ENCRYPTION_KEY (expected 64 hex chars)");
-    if (!process.env.STORAGE_URL_SIGNING_SECRET)
-      warn.push("STORAGE_URL_SIGNING_SECRET (deriving from JWT_SECRET)");
-    if (warn.length > 0) {
-      console.warn(`\n⚠️  Production secrets not fully configured: ${warn.join(", ")}\n`);
+    if (encKey.length !== 64) {
+      console.warn(
+        "\n⚠️  Production secret not fully configured: ENCRYPTION_KEY (expected 64 hex chars)\n",
+      );
     }
   }
 }
