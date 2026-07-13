@@ -110,6 +110,15 @@ export interface ApiProduct {
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
+  /**
+   * Regulated section + subcategory tags (Phase 4). `findOne` embeds the related
+   * objects; list endpoints may return only the ids. The section carries the
+   * compliance semantics; the subcategory is classification-only.
+   */
+  trackedCategoryId?: string | null;
+  trackedCategory?: { id: string; name: string } | null;
+  trackedSubcategoryId?: string | null;
+  trackedSubcategory?: { id: string; name: string; trackedCategoryId: string } | null;
 }
 
 export interface ZohoImportItem {

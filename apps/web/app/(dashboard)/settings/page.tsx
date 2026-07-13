@@ -39,6 +39,7 @@ import {
   Loader2,
   FileText,
   Truck,
+  ShieldCheck,
 } from "lucide-react";
 import {
   Input,
@@ -72,6 +73,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
+import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2886,6 +2888,8 @@ function InvoicingTab() {
 export default function SettingsPage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
 
   React.useEffect(() => {
     setTitle("Settings");
@@ -2944,6 +2948,11 @@ export default function SettingsPage() {
           <TabTrigger value="costing" icon={<BarChart3 className="h-4 w-4" />}>
             Costing
           </TabTrigger>
+          {isAdmin && (
+            <TabTrigger value="regulated" icon={<ShieldCheck className="h-4 w-4" />}>
+              Regulated
+            </TabTrigger>
+          )}
           <TabTrigger value="integrations" icon={<Sparkles className="h-4 w-4" />}>
             Integrations
           </TabTrigger>
@@ -2979,6 +2988,12 @@ export default function SettingsPage() {
         <Tabs.Content value="costing" className="mt-6 max-w-3xl focus:outline-none">
           <CostingTab />
         </Tabs.Content>
+
+        {isAdmin && (
+          <Tabs.Content value="regulated" className="mt-6 max-w-3xl focus:outline-none">
+            <RegulatedSettingsTab />
+          </Tabs.Content>
+        )}
 
         <Tabs.Content value="integrations" className="mt-6 max-w-3xl focus:outline-none">
           <AIIntegrationsTab />

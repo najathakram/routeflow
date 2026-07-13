@@ -44,6 +44,8 @@ import {
   type ApiProduct,
 } from "@/lib/api/products";
 import { useCostHistory } from "@/lib/api/cost-history";
+import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -271,6 +273,21 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+
+  // Regulated section + subcategory pickers (edit mode). Subcategories are scoped
+  // to the section currently chosen in the draft.
+  const { data: regulatedSections = [] } = useTrackedCategories({ active: true });
+  const { data: draftSubcategories = [] } = useTrackedSubcategories(
+    (editDraft.trackedCategoryId as string) || undefined,
+  );
+  // Option lists keep a since-deactivated current section/subcategory selectable
+  // (labelled inactive) so an edit never silently drops a still-applied tag — the
+  // shared helpers keep this rule identical to the create modal.
+  const sectionOptions = sectionPickerOptions(regulatedSections, product?.trackedCategory);
+  const subcategoryOptions = subcategoryPickerOptions(
+    draftSubcategories,
+    editDraft.trackedSubcategoryId as string,
+  );
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -386,6 +403,8 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       description: product.description ?? "",
       parentProductId: product.parentProductId ?? "",
       variantName: product.variantName ?? "",
+      trackedCategoryId: product.trackedCategory?.id ?? "",
+      trackedSubcategoryId: product.trackedSubcategory?.id ?? "",
     });
     setIsEditing(true);
   };
@@ -421,6 +440,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         priceTier3: asDecimal(draft.priceTier3),
         priceTier4: asDecimal(draft.priceTier4),
         priceTier5: asDecimal(draft.priceTier5),
+        // Regulated tags: value to set, null to clear (server auto-nulls the
+        // subcategory when the section is cleared).
+        trackedCategoryId: draft.trackedCategoryId || null,
+        trackedSubcategoryId: draft.trackedSubcategoryId || null,
         ...(draft.parentProductId
           ? {
               parentProductId: draft.parentProductId,
@@ -1345,16 +1368,20 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   </div>
                 )}
 
-                {/* Separately handled (regulated category) — Phase 4 */}
-                {(product as any).trackedCategory && (
+                {/* Separately handled (regulated section + subcategory) — Phase 4.
+                    Read mode only; the live pickers render in the details grid while editing. */}
+                {!isEditing && product.trackedCategory && (
                   <div className="mb-4 flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised/50 px-4 py-2">
                     <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
                     <span className="text-sm text-navy">
                       <span className="font-medium">Separately handled:</span>{" "}
-                      {(product as any).trackedCategory.name}
+                      {product.trackedCategory.name}
+                      {product.trackedSubcategory && (
+                        <span className="text-navy/70"> · {product.trackedSubcategory.name}</span>
+                      )}
                     </span>
                     <Link
-                      href="/compliance"
+                      href={`/compliance/${product.trackedCategory.id}`}
                       className="ml-auto text-xs font-medium text-brand-600 hover:underline"
                     >
                       Regulated Items →
@@ -1492,6 +1519,54 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       )
                     }
                   />
+                  {isEditing && sectionOptions.length > 0 && (
+                    <InfoRow
+                      label="Regulated section"
+                      value={
+                        <select
+                          value={(editDraft.trackedCategoryId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({
+                              ...d,
+                              trackedCategoryId: e.target.value,
+                              trackedSubcategoryId: "",
+                            }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None (not regulated)</option>
+                          {sectionOptions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                              {s.inactive ? " (inactive)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      }
+                    />
+                  )}
+                  {isEditing && (editDraft.trackedCategoryId as string) && (
+                    <InfoRow
+                      label="Subcategory"
+                      value={
+                        <select
+                          value={(editDraft.trackedSubcategoryId as string) ?? ""}
+                          onChange={(e) =>
+                            setEditDraft((d) => ({ ...d, trackedSubcategoryId: e.target.value }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">None</option>
+                          {subcategoryOptions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                              {s.inactive ? " (inactive)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      }
+                    />
+                  )}
                   <InfoRow
                     label="Unit of Measure"
                     value={

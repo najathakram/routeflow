@@ -364,6 +364,7 @@ model Tenant {
   tobaccoReports         TobaccoReport[]
   saleDrafts             SaleDraft[]
   trackedCategories      TrackedCategory[]
+  trackedSubcategories   TrackedSubcategory[]
   customerAuthorizations CustomerAuthorization[]
   authorizationOverrides AuthorizationOverride[]
   regulatedSalesLedger   RegulatedSalesLedger[]
@@ -823,46 +824,50 @@ model DriverLocation {
 }
 
 model Product {
-  id                String        @id @default(uuid())
-  name              String
-  description       String?
-  sku               String?
-  unit              String
-  pricePerUnit      Decimal       @db.Decimal(10, 2)
-  priceTier2        Decimal       @default(0) @db.Decimal(10, 2)
-  priceTier3        Decimal       @default(0) @db.Decimal(10, 2)
-  priceTier4        Decimal       @default(0) @db.Decimal(10, 2)
-  priceTier5        Decimal       @default(0) @db.Decimal(10, 2)
-  category          String?
-  imageKeys         String[]      @default([])
-  isActive          Boolean       @default(true)
-  isFeatured        Boolean       @default(false)
+  id                   String        @id @default(uuid())
+  name                 String
+  description          String?
+  sku                  String?
+  unit                 String
+  pricePerUnit         Decimal       @db.Decimal(10, 2)
+  priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
+  priceTier3           Decimal       @default(0) @db.Decimal(10, 2)
+  priceTier4           Decimal       @default(0) @db.Decimal(10, 2)
+  priceTier5           Decimal       @default(0) @db.Decimal(10, 2)
+  category             String?
+  imageKeys            String[]      @default([])
+  isActive             Boolean       @default(true)
+  isFeatured           Boolean       @default(false)
   // Buyer merchandising flags (P5-01): drive catalogue tiles + smart collections.
-  isNew             Boolean       @default(false)
-  isDeal            Boolean       @default(false)
+  isNew                Boolean       @default(false)
+  isDeal               Boolean       @default(false)
   // Regulated tobacco product — only settable when the tenant has the
   // "tobacco_dealer" addon; drives separate tracking + monthly tax reports
-  isTobacco         Boolean       @default(false)
-  barcode           String?
-  currentStock      Decimal       @default(0) @db.Decimal(10, 3)
-  averageCost       Decimal?      @db.Decimal(10, 4)
-  costingMethod     CostingMethod @default(FIFO)
-  standardCost      Decimal?      @db.Decimal(10, 4)
-  reorderPoint      Int?
-  reorderQty        Int?
-  unitsPerBox       Int?
-  parentProductId   String?
-  variantName       String?
+  isTobacco            Boolean       @default(false)
+  barcode              String?
+  currentStock         Decimal       @default(0) @db.Decimal(10, 3)
+  averageCost          Decimal?      @db.Decimal(10, 4)
+  costingMethod        CostingMethod @default(FIFO)
+  standardCost         Decimal?      @db.Decimal(10, 4)
+  reorderPoint         Int?
+  reorderQty           Int?
+  unitsPerBox          Int?
+  parentProductId      String?
+  variantName          String?
   // Phase 4: going-forward regulated-category pointer (one max per product);
   // supersedes `isTobacco`, which is kept as a shadow column for one release.
-  trackedCategoryId String?
+  trackedCategoryId    String?
+  // Phase 4 (subcategories): optional finer classification WITHIN the section
+  // above (reporting only, no compliance semantics). Parent must equal
+  // trackedCategoryId (enforced app-side; Prisma can't express the composite FK).
+  trackedSubcategoryId String?
   // Migration & Batch Import (Phase 3): a brand-new product created from a scanned
   // invoice line with only name+SKU+cost is flagged incomplete until price/units
   // are confirmed. Surfaced under a "Finish setup" filter on the import surface.
-  detailsIncomplete Boolean       @default(false)
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  tenantId          String?
+  detailsIncomplete    Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  tenantId             String?
 
   tenant                Tenant?                @relation(fields: [tenantId], references: [id])
   orderItems            OrderItem[]
@@ -883,6 +888,7 @@ model Product {
   parent                Product?               @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants              Product[]              @relation("ProductVariants")
   trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory    TrackedSubcategory?    @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -904,6 +910,7 @@ model Product {
   @@index([tenantId])
   @@index([tenantId, isTobacco])
   @@index([tenantId, trackedCategoryId])
+  @@index([trackedSubcategoryId])
   @@index([tenantId, detailsIncomplete])
 }
 
@@ -1166,55 +1173,58 @@ model Order {
 }
 
 model OrderItem {
-  id                String     @id @default(uuid())
-  orderId           String
+  id                   String     @id @default(uuid())
+  orderId              String
   // Nullable so an order can carry "unlisted" ad-hoc lines that are not in the
   // product catalog. When null, `name` holds the free-text item label.
-  productId         String?
+  productId            String?
   // Free-text label for unlisted items (productId == null). Catalog lines leave
   // this null and read the name from the related product.
-  name              String?
-  status            ItemStatus @default(PENDING)
-  qty               Decimal    @db.Decimal(10, 3)
-  deliveredQty      Decimal    @default(0) @db.Decimal(10, 3)
+  name                 String?
+  status               ItemStatus @default(PENDING)
+  qty                  Decimal    @db.Decimal(10, 3)
+  deliveredQty         Decimal    @default(0) @db.Decimal(10, 3)
   // Cumulative qty already covered by issued invoices (full or partial). Capped at qty.
-  invoicedQty       Decimal    @default(0) @db.Decimal(10, 3)
-  unitPrice         Decimal    @db.Decimal(10, 2)
-  subtotal          Decimal    @default(0) @db.Decimal(10, 2)
-  priceType         PriceType  @default(STANDARD)
-  originalPrice     Decimal?   @db.Decimal(10, 2)
-  overrideReason    String?
-  overriddenBy      String?
-  boxes             Int?
-  pieces            Int?
+  invoicedQty          Decimal    @default(0) @db.Decimal(10, 3)
+  unitPrice            Decimal    @db.Decimal(10, 2)
+  subtotal             Decimal    @default(0) @db.Decimal(10, 2)
+  priceType            PriceType  @default(STANDARD)
+  originalPrice        Decimal?   @db.Decimal(10, 2)
+  overrideReason       String?
+  overriddenBy         String?
+  boxes                Int?
+  pieces               Int?
   // Sale-time snapshot of the product's box size (Product.unitsPerBox). Boxed
   // line math (price proration, box/piece split) must use THIS value, never the
   // live product — a later packaging change must not re-interpret past lines.
   // Null for lines created before the snapshot shipped (fall back to live upb).
-  unitsPerBox       Int?
-  notes             String?
+  unitsPerBox          Int?
+  notes                String?
   // Phase 4: regulated-category snapshot at sale time; `categoryTaxAmount` is the
   // computed category tax for this line (0 until the W3 calculator populates it).
   // Snapshots are never rewritten by later category edits.
-  trackedCategoryId String?
-  categoryTaxAmount Decimal    @default(0) @db.Decimal(10, 2)
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
-  tenantId          String?
+  trackedCategoryId    String?
+  trackedSubcategoryId String?
+  categoryTaxAmount    Decimal    @default(0) @db.Decimal(10, 2)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  tenantId             String?
 
-  order             Order              @relation(fields: [orderId], references: [id])
-  tenant            Tenant?            @relation(fields: [tenantId], references: [id])
-  product           Product?           @relation(fields: [productId], references: [id])
-  trackedCategory   TrackedCategory?   @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
-  deliveryMutations DeliveryMutation[]
-  transactionItems  TransactionItem[]
-  invoiceItems      InvoiceItem[]
+  order              Order               @relation(fields: [orderId], references: [id])
+  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
+  product            Product?            @relation(fields: [productId], references: [id])
+  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
+  deliveryMutations  DeliveryMutation[]
+  transactionItems   TransactionItem[]
+  invoiceItems       InvoiceItem[]
 
   @@index([orderId])
   @@index([productId])
   @@index([status])
   @@index([tenantId])
   @@index([trackedCategoryId])
+  @@index([trackedSubcategoryId])
 }
 
 model DeliveryMutation {
@@ -1599,51 +1609,54 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id                String    @id @default(uuid())
-  invoiceId         String
-  description       String
-  productId         String?
-  qty               Decimal   @db.Decimal(10, 3)
-  unitPrice         Decimal   @db.Decimal(10, 2)
-  discount          Decimal   @default(0) @db.Decimal(10, 2)
-  originalPrice     Decimal?  @db.Decimal(10, 2)
-  priceType         PriceType @default(STANDARD)
-  taxRate           Decimal   @default(0) @db.Decimal(5, 4)
-  subtotal          Decimal   @db.Decimal(10, 2)
-  boxes             Int?
-  pieces            Int?
+  id                   String    @id @default(uuid())
+  invoiceId            String
+  description          String
+  productId            String?
+  qty                  Decimal   @db.Decimal(10, 3)
+  unitPrice            Decimal   @db.Decimal(10, 2)
+  discount             Decimal   @default(0) @db.Decimal(10, 2)
+  originalPrice        Decimal?  @db.Decimal(10, 2)
+  priceType            PriceType @default(STANDARD)
+  taxRate              Decimal   @default(0) @db.Decimal(5, 4)
+  subtotal             Decimal   @db.Decimal(10, 2)
+  boxes                Int?
+  pieces               Int?
   // Sale-time snapshot of the product's box size, carried from the order line.
   // Any recompute of this invoice line (edit form, PDF) must use THIS value, not
   // the live product. Null for lines created before the snapshot shipped.
-  unitsPerBox       Int?
+  unitsPerBox          Int?
   // Per-line note carried verbatim from OrderItem.notes (or entered on a manual
   // invoice line). Buyer-visible: renders under the description on the invoice
   // detail and the PDF.
-  notes             String?
+  notes                String?
   // Provenance: the OrderItem this invoice line was billed from (null for manual
   // / freeform lines). Enables exact partial-billing bookkeeping and precise
   // invoicedQty release on void. SetNull so an order-line hard-delete (order edit
   // replaces line items) never blocks on this FK.
-  orderItemId       String?
+  orderItemId          String?
   // Phase 4: regulated-category snapshot carried from the order line onto the
   // (possibly split) invoice; `categoryTaxAmount` is this line's category tax.
-  trackedCategoryId String?
-  categoryTaxAmount Decimal   @default(0) @db.Decimal(10, 2)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  tenantId          String?
+  trackedCategoryId    String?
+  trackedSubcategoryId String?
+  categoryTaxAmount    Decimal   @default(0) @db.Decimal(10, 2)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  tenantId             String?
 
-  invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
-  product         Product?         @relation(fields: [productId], references: [id])
-  orderItem       OrderItem?       @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
-  trackedCategory TrackedCategory? @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  invoice            Invoice             @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tenant             Tenant?             @relation(fields: [tenantId], references: [id])
+  product            Product?            @relation(fields: [productId], references: [id])
+  orderItem          OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
+  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@index([productId])
   @@index([orderItemId])
   @@index([tenantId])
   @@index([trackedCategoryId])
+  @@index([trackedSubcategoryId])
 }
 
 model InvoicePayment {
@@ -2384,19 +2397,19 @@ model MessagingSettings {
 
 // Inbound message from an unknown number → operator triage queue (link/dismiss).
 model InboundTriage {
-  id                 String       @id @default(uuid())
+  id                 String         @id @default(uuid())
   tenantId           String?
   channel            MessageChannel
   fromNumber         String
   body               String
   providerMsgId      String?
-  status             TriageStatus @default(PENDING)
+  status             TriageStatus   @default(PENDING)
   resolvedCustomerId String?
   resolvedById       String?
   resolvedAt         DateTime?
-  receivedAt         DateTime     @default(now())
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
+  receivedAt         DateTime       @default(now())
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   tenant Tenant? @relation(fields: [tenantId], references: [id])
 
@@ -2447,13 +2460,13 @@ model BuyerAccount {
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
   deletedAt           DateTime?
-  mergedIntoId  String? // audit: set on the secondary after a completed merge
+  mergedIntoId        String? // audit: set on the secondary after a completed merge
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
   passwordResetTokens      BuyerPasswordResetToken[]
-  mergeRequestsAsPrimary   BuyerMergeRequest[] @relation("MergeAsPrimary")
-  mergeRequestsAsSecondary BuyerMergeRequest[] @relation("MergeAsSecondary")
+  mergeRequestsAsPrimary   BuyerMergeRequest[]       @relation("MergeAsPrimary")
+  mergeRequestsAsSecondary BuyerMergeRequest[]       @relation("MergeAsSecondary")
   favorites                BuyerFavorite[]
 
   @@index([email])
@@ -2761,10 +2774,38 @@ model TrackedCategory {
   overrides      AuthorizationOverride[]
   ledgerEntries  RegulatedSalesLedger[]
   filings        RegulatedFiling[]
+  subcategories  TrackedSubcategory[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
   @@index([tenantId, active])
+}
+
+/// Phase 4 (subcategories): a classification child UNDER a TrackedCategory
+/// (section) — e.g. Tobacco → {cigarettes, chewing-tobacco}, Liquor → {beer,
+/// wine, spirits}. REPORTING/CLASSIFICATION ONLY: it carries no license/age/ID/
+/// invoice/tax semantics (all of those stay on the parent section, which is what
+/// keeps the regulated guards + money paths safe). A product may point to a
+/// subcategory IN ADDITION to its section; the subcategory's parent must equal
+/// the product's section (enforced app-side).
+model TrackedSubcategory {
+  id                String   @id @default(uuid())
+  tenantId          String
+  trackedCategoryId String // parent section
+  name              String
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Cascade)
+  products        Product[]
+  orderItems      OrderItem[]
+  invoiceItems    InvoiceItem[]
+
+  @@unique([tenantId, trackedCategoryId, name])
+  @@index([tenantId])
+  @@index([trackedCategoryId])
 }
 
 /// Per-customer, per-category authorization state for one seller (the tenant).

@@ -579,4 +579,120 @@ describe("ProductsService", () => {
       expect(prisma.product.update).toHaveBeenCalled();
     });
   });
+
+  // ─── regulated section + subcategory (Phase 4) ──────────────────────────────
+
+  describe("regulated section + subcategory", () => {
+    it("tags a product with a valid section + subcategory", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // name + sku checks
+      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Marlboro",
+        sku: "MAR-1",
+        unit: "pack",
+        pricePerUnit: "10",
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+      } as any);
+
+      expect(prisma.trackedSubcategory.findUnique).toHaveBeenCalledWith({
+        where: { id: "sub-1" },
+        select: { trackedCategoryId: true },
+      });
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            trackedCategoryId: "sec-1",
+            trackedSubcategoryId: "sub-1",
+          }),
+        }),
+      );
+    });
+
+    it("rejects a subcategory that belongs to a different section", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "OTHER" });
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-1",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedCategoryId: "sec-1",
+          trackedSubcategoryId: "sub-1",
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a subcategory with no section (short-circuits before any lookup)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-2",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedSubcategoryId: "sub-1",
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("clears the subcategory when the section is cleared on update", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedCategoryId: null } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.trackedCategoryId).toBeNull();
+      expect(data.trackedSubcategoryId).toBeNull();
+    });
+
+    it("a variant inherits the parent's section + subcategory when the DTO omits them", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // name / sku
+      prisma.product.findUnique.mockResolvedValue({
+        priceTier2: 1,
+        priceTier3: 1,
+        priceTier4: 1,
+        priceTier5: 1,
+        category: "Vapes",
+        unitsPerBox: 1,
+        costingMethod: "AVCO",
+        standardCost: 1,
+        isTobacco: false,
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+      });
+      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Strawberry",
+        variantName: "Strawberry",
+        parentProductId: "parent-1",
+        unit: "each",
+        pricePerUnit: "30",
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            trackedCategoryId: "sec-1",
+            trackedSubcategoryId: "sub-1",
+          }),
+        }),
+      );
+    });
+  });
 });

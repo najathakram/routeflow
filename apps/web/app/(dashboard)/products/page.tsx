@@ -40,6 +40,8 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { UnitCombobox } from "@/components/UnitCombobox";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
+import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -607,6 +609,8 @@ function CreateProductModal({
     unitsPerBox: "",
     parentProductId: defaultParentId ?? "",
     variantName: "",
+    trackedCategoryId: "",
+    trackedSubcategoryId: "",
   });
 
   // Pre-populate fields from parent when a parent is selected
@@ -648,6 +652,13 @@ function CreateProductModal({
   };
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Regulated section + subcategory pickers (both optional). The subcategory list
+  // is scoped to the chosen section and cleared when the section changes.
+  const { data: sections = [] } = useTrackedCategories({ active: true });
+  const { data: subcategories = [] } = useTrackedSubcategories(form.trackedCategoryId || undefined);
+  const sectionOptions = sectionPickerOptions(sections);
+  const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
 
   const addImages = (files: FileList | null) => {
     if (!files) return;
@@ -693,6 +704,8 @@ function CreateProductModal({
       unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
       parentProductId: form.parentProductId || undefined,
       variantName: form.variantName || undefined,
+      trackedCategoryId: form.trackedCategoryId || undefined,
+      trackedSubcategoryId: form.trackedSubcategoryId || undefined,
     });
     // Upload images if any were queued
     if (pendingImages.length > 0 && product?.id) {
@@ -899,6 +912,59 @@ function CreateProductModal({
                 />
               </div>
 
+              {/* Regulated section + subcategory (optional) — see /settings?tab=regulated */}
+              {sectionOptions.length > 0 && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">
+                      Regulated section
+                    </label>
+                    <select
+                      value={form.trackedCategoryId}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          trackedCategoryId: e.target.value,
+                          trackedSubcategoryId: "",
+                        }))
+                      }
+                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    >
+                      <option value="">None (not regulated)</option>
+                      {sectionOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.inactive ? " (inactive)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-navy">Subcategory</label>
+                    <select
+                      value={form.trackedSubcategoryId}
+                      onChange={(e) => set("trackedSubcategoryId", e.target.value)}
+                      disabled={!form.trackedCategoryId || subcategoryOptions.length === 0}
+                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised/60 disabled:text-navy/50"
+                    >
+                      <option value="">
+                        {!form.trackedCategoryId
+                          ? "Pick a section first"
+                          : subcategoryOptions.length === 0
+                            ? "No subcategories"
+                            : "None"}
+                      </option>
+                      {subcategoryOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.inactive ? " (inactive)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">Description</label>
                 <textarea
@@ -986,6 +1052,12 @@ export default function ProductsPage() {
   React.useEffect(() => {
     setTitle("Products");
   }, [setTitle]);
+
+  // Auto-open the create modal from a deep link (e.g. /products?action=new,
+  // the target of the /products/create redirect stub).
+  React.useEffect(() => {
+    if (searchParams.get("action") === "new") setShowCreate(true);
+  }, [searchParams]);
 
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState("");

@@ -209,9 +209,10 @@ export class ProductsService {
       include: {
         variants: { orderBy: [{ isActive: "desc" as const }, { variantName: "asc" as const }] },
         parent: true,
-        // Phase 4: the assigned regulated ("separately handled") category, shown
-        // on the product detail. Null for standard products.
+        // Phase 4: the assigned regulated ("separately handled") section +
+        // subcategory, shown on the product detail. Null for standard products.
         trackedCategory: { select: { id: true, name: true } },
+        trackedSubcategory: { select: { id: true, name: true, trackedCategoryId: true } },
       },
     });
     if (!product) throw new NotFoundException("Product not found");
@@ -337,12 +338,31 @@ export class ProductsService {
             costingMethod: true,
             standardCost: true,
             isTobacco: true,
+            trackedCategoryId: true,
+            trackedSubcategoryId: true,
           },
         })
       : null;
     if (dto.parentProductId && !parent) {
       throw new BadRequestException("Parent product not found");
     }
+    // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
+    // omits the section entirely, a variant inherits the parent family's pair
+    // (kept together so they stay same-section). Absent/"" section → null.
+    const regulated =
+      dto.trackedCategoryId === undefined && parent
+        ? {
+            trackedCategoryId: parent.trackedCategoryId ?? null,
+            trackedSubcategoryId: parent.trackedSubcategoryId ?? null,
+          }
+        : {
+            trackedCategoryId: dto.trackedCategoryId ?? null,
+            trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
+          };
+    await this.assertSubcategoryInSection(
+      regulated.trackedCategoryId,
+      regulated.trackedSubcategoryId,
+    );
     return this.prisma.forTenant().product.create({
       data: {
         name: dto.name,
@@ -370,6 +390,8 @@ export class ProductsService {
         unitsPerBox: dto.unitsPerBox ?? parent?.unitsPerBox ?? undefined,
         parentProductId: dto.parentProductId ?? null,
         variantName: dto.variantName ?? null,
+        trackedCategoryId: regulated.trackedCategoryId,
+        trackedSubcategoryId: regulated.trackedSubcategoryId,
       },
       include: { variants: true, parent: true },
     });
@@ -423,12 +445,52 @@ export class ProductsService {
     // too, or the variants list keeps rendering the stale flavor.
     const effectiveParentId =
       dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+    // Phase 4: validate the regulated section/subcategory pair on the EFFECTIVE
+    // (post-update) values; clearing the section also clears the subcategory so no
+    // orphaned subcategory can survive.
+    const effectiveCategoryId =
+      dto.trackedCategoryId !== undefined ? dto.trackedCategoryId : existing.trackedCategoryId;
+    const effectiveSubcategoryId =
+      effectiveCategoryId == null
+        ? null
+        : dto.trackedSubcategoryId !== undefined
+          ? dto.trackedSubcategoryId
+          : existing.trackedSubcategoryId;
+    await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
     const data =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // Force the (possibly auto-cleared) subcategory into the write when the section
+    // was cleared but the client didn't also clear the subcategory.
+    if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
+      data.trackedSubcategoryId = null;
+    }
     return this.prisma.forTenant().product.update({
       where: { id },
       data,
     });
+  }
+
+  /**
+   * A product's regulated subcategory (when set) must belong to the chosen
+   * section — Prisma can't express the composite FK, so validate app-side. A
+   * subcategory without a section is rejected. Tenant-scoped lookup.
+   */
+  private async assertSubcategoryInSection(
+    categoryId: string | null | undefined,
+    subcategoryId: string | null | undefined,
+  ): Promise<void> {
+    if (subcategoryId == null) return;
+    if (categoryId == null) {
+      throw new BadRequestException("A regulated subcategory requires a section.");
+    }
+    const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+      where: { id: subcategoryId },
+      select: { trackedCategoryId: true },
+    });
+    if (!sub) throw new BadRequestException("Regulated subcategory not found.");
+    if (sub.trackedCategoryId !== categoryId) {
+      throw new BadRequestException("Subcategory does not belong to the chosen section.");
+    }
   }
 
   /**

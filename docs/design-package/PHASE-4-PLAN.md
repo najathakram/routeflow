@@ -9,6 +9,12 @@
 
 ## STATUS — updated 2026-07-12 (READ THIS FIRST; the per-block text below is the original plan and is now STALE)
 
+> **EXTENSION IN FLIGHT — regulated SECTION→SUBCATEGORY hierarchy.** A two-level model
+> (Section = `TrackedCategory`, NEW `TrackedSubcategory` child) + product-form picker + Settings
+> manager + per-section dashboard. **Phase A (backend) is DONE on branch `feat/regulated-subcategories-api`
+> (unmerged);** web Phases B/C/D remain. Full spec, anchors, and deploy steps:
+> [`SESSION-HANDOFF-REGULATED-SUBCATEGORIES.md`](SESSION-HANDOFF-REGULATED-SUBCATEGORIES.md).
+
 **The entire W1→W7b ladder SHIPPED and is LIVE in prod.** All migrations are applied
 (`20260706120000_regulated_items_foundation`, `20260707120000_add_regulated_filing`,
 `20260709000000_add_authorization_expiry_notify`, `20260710000000_add_credit_note_item`,
