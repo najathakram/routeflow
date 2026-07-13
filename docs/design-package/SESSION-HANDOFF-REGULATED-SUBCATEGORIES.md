@@ -1,8 +1,24 @@
 # Session Handoff — Regulated Sections + Subcategories
 
-> **Status (2026-07-12):** Phase A (backend) **DONE + committed**; Phases B/C/D (web) **NOT started**.
-> Branch `feat/regulated-subcategories-api` @ `b1acd59` — **not pushed, not merged, not deployed.**
-> Base master `e28a733`. Extends the Phase-4 regulated program (`PHASE-4-PLAN.md`).
+> **Status (2026-07-13):** Phase A (backend) **DONE**; Phases **B/C/D (web) DONE + committed**;
+> Phase E **DEFERRED**. Branch `feat/regulated-subcategories-api` — **not pushed, not merged, not
+> deployed** (deploy is the user-gated step below — it needs the prod migration first). Base master
+> `e28a733`. Extends the Phase-4 regulated program (`PHASE-4-PLAN.md`).
+>
+> **What shipped in B/C/D (see the code map `web.md` regulated entries for exact files):**
+> web hooks `useTrackedSubcategories`/`useCreate|Update|ToggleSubcategory` + `useRegulatedLedger`
+> (`tracked-categories.ts`); `ApiProduct` tracked fields; shared `lib/regulated-format.ts` +
+> `components/RegulatedFilingsTable.tsx`. **B:** dependent section→subcategory pickers on the product
+> create modal + inline edit (edit picker keeps a since-deactivated section selectable, labelled
+> "(inactive)"); `?action=new` deep-link fixed. **C:** TENANT_ADMIN "Regulated" settings tab
+> (`settings/_components/RegulatedSettingsTab.tsx`) — section CRUD + per-section subcategory manager.
+> **D:** "Regulated Items" nav **group** over the tenant's active sections; `/compliance` rewritten
+> as a view-only index whose cards link to per-section dashboards; new
+> `compliance/[categoryId]/page.tsx` (ledger KPIs + monthly chart + filings + subcategory chips; tax
+> KPI labelled snapshot-pending). Verified: web typecheck + lint clean, adversarial review (1 real
+> low-sev fix applied — the inactive-section picker above). Known non-blocking: the `/compliance`
+> roll-up index has no direct sidebar entry (reachable via a section page's "← Regulated Items"
+> back-link + Settings) — intentional per this plan (nav children = sections).
 
 ## The feature (what & why)
 
@@ -78,7 +94,7 @@ reject, clear-cascades, variant inheritance).
 
 ---
 
-## Phases B/C/D — TODO (all web; verify anchors vs current master before editing)
+## Phases B/C/D — DONE (2026-07-13, all web) — the plan below is the as-built record
 
 ### Phase B — product-form section + subcategory picker
 Two dependent selects ("Regulated section" → "Subcategory"; the subcategory list is filtered by the

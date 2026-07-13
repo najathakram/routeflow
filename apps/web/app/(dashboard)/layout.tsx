@@ -59,6 +59,7 @@ import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 
@@ -777,21 +778,42 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
+  const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  const { data: regulatedSections } = useTrackedCategories({ active: true }, { enabled: isStaff });
   const navStructure = React.useMemo(() => {
     const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver);
-    // Regulated-items compliance section. Gated on the tobacco addon for now — the
-    // generic Regulated Items hub (Phase 4) and the tobacco detail coexist during
-    // the transition; visibility generalizes when the B2 category manager ships.
-    if (!hasTobacco || user?.role === "CUSTOMER" || user?.role === "DRIVER") return nav;
+    if (!isStaff) return nav;
+
+    // "Regulated Items" nav group — one child per active regulated section, each
+    // opening that section's dashboard. Shown whenever the tenant has ≥1 section
+    // (an empty group is never spliced). The addon-gated Tobacco deep page stays a
+    // separate leaf so existing tobacco tenants keep their dedicated view.
+    const inject: NavEntry[] = [];
+    const sections = regulatedSections ?? [];
+    if (sections.length > 0) {
+      inject.push({
+        kind: "group",
+        label: "Regulated Items",
+        icon: ShieldCheck,
+        children: sections.map((s) => ({
+          kind: "leaf" as const,
+          label: s.name,
+          href: `/compliance/${s.id}`,
+          icon: ShieldCheck,
+        })),
+      });
+    }
+    if (hasTobacco) {
+      inject.push({ kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette });
+    }
+    if (inject.length === 0) return nav;
+
     const idx = nav.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
-    const leaves: NavEntry[] = [
-      { kind: "leaf", label: "Regulated Items", href: "/compliance", icon: ShieldCheck },
-      { kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette },
-    ];
     return idx === -1
-      ? [...nav, ...leaves]
-      : [...nav.slice(0, idx + 1), ...leaves, ...nav.slice(idx + 1)];
-  }, [user, hasTobacco]);
+      ? [...nav, ...inject]
+      : [...nav.slice(0, idx + 1), ...inject, ...nav.slice(idx + 1)];
+  }, [user, isStaff, hasTobacco, regulatedSections]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
