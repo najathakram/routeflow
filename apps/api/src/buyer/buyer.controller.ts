@@ -40,6 +40,7 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
@@ -91,6 +92,7 @@ export class BuyerController {
     private readonly templatesService: OrderTemplatesService,
     private readonly authorizationsService: AuthorizationsService,
     private readonly prisma: PrismaService,
+    private readonly systemConfigService: SystemConfigService,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -222,6 +224,70 @@ export class BuyerController {
   @ApiOperation({ summary: "Get buyer's account statement at the selected seller" })
   getStatement(@CurrentBuyerCustomer() ctx: any) {
     return this.customersService.getStatementForOperator(ctx.customerId);
+  }
+
+  @Get("payments")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Paginated payment history across the buyer's invoices (P5-14)" })
+  async getPayments(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    const parsedPage = Number(page);
+    const parsedLimit = Number(limit);
+    const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
+    const limitNum =
+      Number.isFinite(parsedLimit) && parsedLimit >= 1
+        ? Math.min(Math.floor(parsedLimit), 100)
+        : 20;
+
+    const db = this.prisma.forTenant();
+    const where = { invoice: { customerId: ctx.customerId } };
+    const [rows, total] = await Promise.all([
+      db.invoicePayment.findMany({
+        where,
+        include: { invoice: { select: { invoiceNumber: true } } },
+        orderBy: { paidAt: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+      db.invoicePayment.count({ where }),
+    ]);
+
+    return {
+      // Stored money only — amounts read back, never computed here.
+      data: rows.map((p) => ({
+        id: p.id,
+        invoiceId: p.invoiceId,
+        invoiceNumber: p.invoice.invoiceNumber,
+        amount: Number(p.amount),
+        method: p.method,
+        status: p.status,
+        checkStatus: p.checkStatus ?? null,
+        nsfFeeAmount: p.nsfFeeAmount != null ? Number(p.nsfFeeAmount) : null,
+        paidAt: p.paidAt.toISOString(),
+      })),
+      meta: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.max(1, Math.ceil(total / limitNum)),
+      },
+    };
+  }
+
+  @Get("remittance")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Seller's how-to-pay / remittance instructions (P5-14)" })
+  getRemittance() {
+    // Tenant set by BuyerTenantInterceptor → SystemConfigService.get()'s
+    // forTenant() resolves the SELLER's config. Buyer-visible by design.
+    return this.systemConfigService.getRemittanceConfig();
   }
 
   // ─── Product catalog ──────────────────────────────────────────────────────────

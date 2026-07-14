@@ -85,3 +85,82 @@ describe("SystemConfigService (F5-004 secret encryption)", () => {
     expect(all["zoho.clientSecret"]).toBe("shh");
   });
 });
+
+describe("SystemConfigService — remittance config (P5-14)", () => {
+  let service: SystemConfigService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  const encryption = { encrypt: jest.fn(enc), decrypt: jest.fn(dec) };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    jest.clearAllMocks();
+    const moduleRef: TestingModule = await Test.createTestingModule({
+      providers: [
+        SystemConfigService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: EncryptionService, useValue: encryption },
+      ],
+    }).compile();
+    service = moduleRef.get(SystemConfigService);
+  });
+
+  it("returns {} when nothing is stored", async () => {
+    prisma.systemConfig.findFirst.mockResolvedValue(null);
+    const result = await service.getRemittanceConfig();
+    expect(result).toEqual({});
+  });
+
+  it("parse drops unknown, empty-string, and non-string fields", async () => {
+    prisma.systemConfig.findFirst.mockResolvedValue({
+      id: "1",
+      value: JSON.stringify({
+        payToName: "Acme Wholesale",
+        bankName: "",
+        accountNumber: 12345,
+        notARemittanceField: "ignored",
+      }),
+    });
+    const result = await service.getRemittanceConfig();
+    expect(result).toEqual({ payToName: "Acme Wholesale" });
+  });
+
+  it("returns {} (never throws) on corrupt JSON", async () => {
+    prisma.systemConfig.findFirst.mockResolvedValue({ id: "1", value: "{not valid json" });
+    const result = await service.getRemittanceConfig();
+    expect(result).toEqual({});
+  });
+
+  it("set merges over the existing config and clears empty-string fields", async () => {
+    prisma.systemConfig.findFirst
+      // getRemittanceConfig() read inside setRemittanceConfig
+      .mockResolvedValueOnce({
+        id: "1",
+        value: JSON.stringify({ payToName: "Acme Wholesale", bankName: "First Bank" }),
+      })
+      // set()'s own findFirst before update
+      .mockResolvedValueOnce({ id: "1", value: JSON.stringify({}) });
+
+    await service.setRemittanceConfig({ bankName: "", accountName: "Acme LLC" });
+
+    expect(prisma.systemConfig.update).toHaveBeenCalledWith({
+      where: { id: "1" },
+      data: {
+        value: JSON.stringify({ payToName: "Acme Wholesale", accountName: "Acme LLC" }),
+      },
+    });
+  });
+
+  it("set creates the row when none exists (plaintext, never encrypted)", async () => {
+    prisma.systemConfig.findFirst.mockResolvedValue(null);
+
+    await service.setRemittanceConfig({ payToName: "Acme Wholesale" });
+
+    expect(encryption.encrypt).not.toHaveBeenCalled();
+    expect(prisma.systemConfig.create).toHaveBeenCalledWith({
+      data: {
+        key: "remittance.config",
+        value: JSON.stringify({ payToName: "Acme Wholesale" }),
+      },
+    });
+  });
+});

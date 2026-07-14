@@ -2,6 +2,27 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 
+/**
+ * Seller remit-to / how-to-pay info shown to buyers (P5-14). Stored as ONE JSON
+ * document under `remittance.config` (no migration). Buyer-visible BY DESIGN —
+ * the seller's own remit-to info, same data printed on an invoice — so it is
+ * intentionally NOT in SECRET_KEYS.
+ */
+export const REMITTANCE_FIELDS = [
+  "payToName",
+  "bankName",
+  "accountName",
+  "accountNumber",
+  "routingNumber",
+  "achInstructions",
+  "wireInstructions",
+  "checkInstructions",
+  "mailingAddress",
+  "notes",
+] as const;
+export type RemittanceField = (typeof REMITTANCE_FIELDS)[number];
+export type RemittanceConfig = Partial<Record<RemittanceField, string>>;
+
 @Injectable()
 export class SystemConfigService {
   private readonly logger = new Logger(SystemConfigService.name);
@@ -142,6 +163,40 @@ export class SystemConfigService {
       }
     }
     await Promise.all(updates);
+  }
+
+  // ─── Remittance / how-to-pay config (P5-14) ─────────────────────────────────
+  // ONE JSON blob under `remittance.config`. PATCH semantics: undefined =
+  // untouched, "" = cleared. Reads/writes via get()/set() (tenant scoped).
+  private static readonly REMITTANCE_KEY = "remittance.config";
+
+  async getRemittanceConfig(): Promise<RemittanceConfig> {
+    const raw = await this.get(SystemConfigService.REMITTANCE_KEY);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const out: RemittanceConfig = {};
+      for (const field of REMITTANCE_FIELDS) {
+        const value = parsed[field];
+        if (typeof value === "string" && value.length > 0) out[field] = value;
+      }
+      return out;
+    } catch {
+      this.logger.error("Corrupt remittance.config JSON — returning empty config");
+      return {};
+    }
+  }
+
+  async setRemittanceConfig(dto: RemittanceConfig): Promise<void> {
+    const current = await this.getRemittanceConfig();
+    const next: RemittanceConfig = { ...current };
+    for (const field of REMITTANCE_FIELDS) {
+      const value = dto[field];
+      if (value === undefined) continue;
+      if (value === "") delete next[field];
+      else next[field] = value;
+    }
+    await this.set(SystemConfigService.REMITTANCE_KEY, JSON.stringify(next));
   }
 
   async setZohoConfig(dto: {

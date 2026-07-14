@@ -99,6 +99,10 @@ export function useBuyerNotifications() {
       // P5-12: keep the invoice-detail badge/balance live (e.g. a check
       // lifecycle change) instead of only surfacing a notification toast.
       qc.invalidateQueries({ queryKey: ["buyer", "invoice"] });
+      // P5-14: a check lifecycle change (e.g. BOUNCED) also affects the
+      // payments table and the statement/wallet balance — keep both live.
+      qc.invalidateQueries({ queryKey: ["buyer", "payments"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "statement"] });
     };
 
     const onCreditNoteCreated = (data: { creditNoteNumber?: string }) =>

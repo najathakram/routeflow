@@ -40,6 +40,7 @@ import {
   FileText,
   Truck,
   ShieldCheck,
+  Landmark,
 } from "lucide-react";
 import {
   Input,
@@ -71,6 +72,11 @@ import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 import { useTenant } from "@/components/tenant-provider";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
+import {
+  useRemittanceConfig,
+  useUpdateRemittanceConfig,
+  type RemittanceConfig,
+} from "@/lib/api/remittance";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
@@ -2695,6 +2701,135 @@ function CostingTab() {
   );
 }
 
+// ─── TAB: How to pay / remittance (P5-14) ─────────────────────────────────────
+
+function RemittanceTab() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const { data: config, isLoading } = useRemittanceConfig();
+  const update = useUpdateRemittanceConfig();
+
+  const [form, setForm] = React.useState<RemittanceConfig>({});
+
+  React.useEffect(() => {
+    if (config) setForm(config);
+  }, [config]);
+
+  const set =
+    (key: keyof RemittanceConfig) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const save = () => {
+    update.mutate(form, {
+      onSuccess: () => toast({ title: "Payment info saved", variant: "success" }),
+      onError: () =>
+        toast({
+          title: "Could not save",
+          description: "Only admins can change how-to-pay settings.",
+          variant: "error",
+        }),
+    });
+  };
+
+  if (isLoading) return <p className="text-sm text-navy/70">Loading…</p>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-navy">How buyers pay you</h2>
+        <p className="mt-1 text-sm text-navy/70">
+          Remit-to details and payment instructions shown on your buyers&apos; Payments page.
+        </p>
+      </div>
+
+      <Card className="space-y-5 p-5">
+        <h3 className="text-sm font-semibold text-navy">Remit-to details</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input
+            label="Pay to"
+            value={form.payToName ?? ""}
+            onChange={set("payToName")}
+            disabled={!isAdmin}
+          />
+          <Input
+            label="Bank name"
+            value={form.bankName ?? ""}
+            onChange={set("bankName")}
+            disabled={!isAdmin}
+          />
+          <Input
+            label="Account name"
+            value={form.accountName ?? ""}
+            onChange={set("accountName")}
+            disabled={!isAdmin}
+          />
+          <Input
+            label="Account number"
+            value={form.accountNumber ?? ""}
+            onChange={set("accountNumber")}
+            disabled={!isAdmin}
+          />
+          <Input
+            label="Routing number"
+            value={form.routingNumber ?? ""}
+            onChange={set("routingNumber")}
+            disabled={!isAdmin}
+          />
+        </div>
+        <Textarea
+          label="Mailing address (for checks)"
+          rows={3}
+          value={form.mailingAddress ?? ""}
+          onChange={set("mailingAddress")}
+          disabled={!isAdmin}
+        />
+      </Card>
+
+      <Card className="space-y-5 p-5">
+        <h3 className="text-sm font-semibold text-navy">Payment instructions</h3>
+        <Textarea
+          label="Paying by check"
+          rows={3}
+          value={form.checkInstructions ?? ""}
+          onChange={set("checkInstructions")}
+          disabled={!isAdmin}
+        />
+        <Textarea
+          label="ACH instructions"
+          rows={3}
+          value={form.achInstructions ?? ""}
+          onChange={set("achInstructions")}
+          disabled={!isAdmin}
+        />
+        <Textarea
+          label="Wire instructions"
+          rows={3}
+          value={form.wireInstructions ?? ""}
+          onChange={set("wireInstructions")}
+          disabled={!isAdmin}
+        />
+        <Textarea
+          label="Notes"
+          rows={3}
+          value={form.notes ?? ""}
+          onChange={set("notes")}
+          disabled={!isAdmin}
+        />
+      </Card>
+
+      {isAdmin ? (
+        <Button variant="primary" loading={update.isPending} onClick={save}>
+          Save changes
+        </Button>
+      ) : (
+        <p className="text-xs text-navy/50">Only admins can change how-to-pay settings.</p>
+      )}
+    </div>
+  );
+}
+
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
 const TERMS_OPTIONS = [
@@ -2948,6 +3083,9 @@ export default function SettingsPage() {
           <TabTrigger value="costing" icon={<BarChart3 className="h-4 w-4" />}>
             Costing
           </TabTrigger>
+          <TabTrigger value="remittance" icon={<Landmark className="h-4 w-4" />}>
+            How to Pay
+          </TabTrigger>
           {isAdmin && (
             <TabTrigger value="regulated" icon={<ShieldCheck className="h-4 w-4" />}>
               Regulated
@@ -2987,6 +3125,10 @@ export default function SettingsPage() {
 
         <Tabs.Content value="costing" className="mt-6 max-w-3xl focus:outline-none">
           <CostingTab />
+        </Tabs.Content>
+
+        <Tabs.Content value="remittance" className="mt-6 max-w-3xl focus:outline-none">
+          <RemittanceTab />
         </Tabs.Content>
 
         {isAdmin && (

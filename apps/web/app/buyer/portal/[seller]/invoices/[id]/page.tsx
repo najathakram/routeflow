@@ -18,6 +18,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
+import { checkBadgeFor } from "@/lib/check-badge";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -37,37 +38,6 @@ function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutra
   if (s === "SENT" || s === "VIEWED" || s === "PARTIAL") return "warning";
   if (s === "OVERDUE" || s === "VOID" || s === "WRITTEN_OFF") return "danger";
   return "neutral";
-}
-
-/**
- * P5-12: lifecycle badge for a CHECK payment row. Only checks get a badge.
- * A manually-voided (never-bounced) check has no checkStatus and status
- * VOID — that's a plain void, not a lifecycle event, so no badge.
- * A missing checkStatus on a non-void check is legacy data recorded before
- * the lifecycle existed — treat it as RECORDED.
- */
-function checkBadgeFor(p: {
-  method: string;
-  status?: string;
-  checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-}): { label: string; variant: "success" | "warning" | "danger" | "neutral" | "info" } | null {
-  if (p.method !== "CHECK") return null;
-  if (!p.checkStatus) {
-    if (p.status === "VOID") return null;
-    return { label: "Recorded", variant: "neutral" };
-  }
-  switch (p.checkStatus) {
-    case "RECORDED":
-      return { label: "Recorded", variant: "neutral" };
-    case "DEPOSITED":
-      return { label: "Deposited", variant: "info" };
-    case "CLEARED":
-      return { label: "Cleared", variant: "success" };
-    case "BOUNCED":
-      return { label: "Bounced", variant: "danger" };
-    default:
-      return null;
-  }
 }
 
 export default function BuyerInvoiceDetailPage() {
