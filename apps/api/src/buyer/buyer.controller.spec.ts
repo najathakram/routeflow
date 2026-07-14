@@ -28,7 +28,9 @@ import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { createMockPrisma } from "../testing/prisma-mock";
 import { UserRole } from "@prisma/client";
 
 const MOCK_CTX = {
@@ -57,6 +59,8 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     subscriptionsFor: jest.Mock;
     isSubscribed: jest.Mock;
   };
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let systemConfigService: { getRemittanceConfig: jest.Mock };
 
   beforeEach(async () => {
     ordersService = {
@@ -83,6 +87,10 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
       subscriptionsFor: jest.fn().mockResolvedValue({ productIds: [] }),
       isSubscribed: jest.fn().mockResolvedValue(false),
     };
+    prisma = createMockPrisma();
+    systemConfigService = {
+      getRemittanceConfig: jest.fn().mockResolvedValue({ payToName: "Acme Wholesale" }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
@@ -101,7 +109,8 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: CustomersService, useValue: {} },
         { provide: OrderTemplatesService, useValue: templatesService },
         { provide: AuthorizationsService, useValue: authorizationsService },
-        { provide: PrismaService, useValue: {} },
+        { provide: PrismaService, useValue: prisma },
+        { provide: SystemConfigService, useValue: systemConfigService },
         {
           provide: TenantContextService,
           useValue: { run: jest.fn((id, fn) => fn()), getOrNull: jest.fn().mockReturnValue(null) },
@@ -272,5 +281,71 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   it("unsubscribeStockAlert: delegates with context customerId", () => {
     controller.unsubscribeStockAlert("prod-9", MOCK_CTX as any);
     expect(stockAlertService.unsubscribe).toHaveBeenCalledWith("cust-abc", "prod-9");
+  });
+
+  // ─── Payments & remittance (P5-14) ──────────────────────────────────────────
+
+  it("getPayments: scopes to ctx.customerId via the invoice relation and maps check-lifecycle fields", async () => {
+    (prisma.invoicePayment.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: "pay-1",
+        invoiceId: "inv-1",
+        invoice: { invoiceNumber: "INV-1001" },
+        amount: "125.50",
+        method: "CHECK",
+        status: "PAID",
+        checkStatus: "BOUNCED",
+        nsfFeeAmount: "25",
+        paidAt: new Date("2026-07-01T00:00:00.000Z"),
+      },
+    ]);
+    (prisma.invoicePayment.count as jest.Mock).mockResolvedValue(1);
+
+    const result = await controller.getPayments(MOCK_CTX as any);
+
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { invoice: { customerId: "cust-abc" } } }),
+    );
+    expect(result.data[0]).toEqual({
+      id: "pay-1",
+      invoiceId: "inv-1",
+      invoiceNumber: "INV-1001",
+      amount: 125.5,
+      method: "CHECK",
+      status: "PAID",
+      checkStatus: "BOUNCED",
+      nsfFeeAmount: 25,
+      paidAt: "2026-07-01T00:00:00.000Z",
+    });
+  });
+
+  it("getPayments: paginates — page 2 skips 20 and computes totalPages", async () => {
+    (prisma.invoicePayment.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.invoicePayment.count as jest.Mock).mockResolvedValue(45);
+
+    const result = await controller.getPayments(MOCK_CTX as any, "2", "20");
+
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 20, take: 20 }),
+    );
+    expect(result.meta).toEqual({ total: 45, page: 2, limit: 20, totalPages: 3 });
+  });
+
+  it("getPayments: defaults page/limit to 1/20 on garbage query params", async () => {
+    (prisma.invoicePayment.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.invoicePayment.count as jest.Mock).mockResolvedValue(0);
+
+    const result = await controller.getPayments(MOCK_CTX as any, "not-a-number", "-5");
+
+    expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 0, take: 20 }),
+    );
+    expect(result.meta).toEqual({ total: 0, page: 1, limit: 20, totalPages: 1 });
+  });
+
+  it("getRemittance: delegates to SystemConfigService.getRemittanceConfig", async () => {
+    const result = await controller.getRemittance();
+    expect(systemConfigService.getRemittanceConfig).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ payToName: "Acme Wholesale" });
   });
 });

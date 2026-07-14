@@ -736,6 +736,52 @@ export function useBuyerStatement() {
   });
 }
 
+// ─── Payments & Remittance (P5-14) ────────────────────────────────────────────
+
+/** One payment row across the buyer's invoices (GET /buyer/payments). Amounts
+ *  are stored values read back verbatim — never recomputed here. */
+export interface BuyerPayment {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amount: number;
+  method: string;
+  status: "DRAFT" | "PAID" | "VOID";
+  checkStatus: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
+  nsfFeeAmount: number | null;
+  paidAt: string;
+}
+
+export function useBuyerPayments(params?: { page?: number; limit?: number }) {
+  return useQuery<Paginated<BuyerPayment>>({
+    queryKey: ["buyer", "payments", params],
+    queryFn: () => buyerApiClient.get("/buyer/payments", { params }).then((r) => r.data),
+  });
+}
+
+/** Seller's remit-to / how-to-pay instructions (GET /buyer/remittance). Buyer-
+ *  visible by design — same data a seller would print on an invoice. */
+export interface BuyerRemittance {
+  payToName?: string;
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  routingNumber?: string;
+  achInstructions?: string;
+  wireInstructions?: string;
+  checkInstructions?: string;
+  mailingAddress?: string;
+  notes?: string;
+}
+
+export function useBuyerRemittance() {
+  return useQuery<BuyerRemittance>({
+    queryKey: ["buyer", "remittance"],
+    queryFn: () => buyerApiClient.get("/buyer/remittance").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 // ─── Licenses & Authorizations (W6b — buyer self-serve) ──────────────────────────
 
 export interface BuyerAuthorizationRow {

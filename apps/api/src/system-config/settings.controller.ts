@@ -21,6 +21,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
 import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
+import { RemittanceConfigDto } from "./dto/remittance-config.dto";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -379,5 +380,21 @@ export class SettingsController {
   ) {
     await this.svc.setMarginConfig(dto);
     return this.svc.getMarginConfig();
+  }
+
+  // ─── Remittance / how-to-pay config (P5-14) ────────────────────────────────
+  // Read: any operator (buyer-visible seller info, no reason to admin-gate the
+  // read). Write: admin only — mirrors margin's read/write split.
+
+  @Get("remittance")
+  getRemittanceConfig() {
+    return this.svc.getRemittanceConfig();
+  }
+
+  @Patch("remittance")
+  @Roles(UserRole.TENANT_ADMIN)
+  async updateRemittanceConfig(@Body() dto: RemittanceConfigDto) {
+    await this.svc.setRemittanceConfig(dto);
+    return this.svc.getRemittanceConfig();
   }
 }

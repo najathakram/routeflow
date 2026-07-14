@@ -23,6 +23,7 @@ import {
   X,
   TrendingUp,
   ShieldCheck,
+  CreditCard,
 } from "lucide-react";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerCart } from "@/lib/buyer-cart";
@@ -192,6 +193,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           href: `/buyer/portal/${sellerSlug}/invoices`,
           icon: FileText,
           label: "Invoices",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/payments`,
+          icon: CreditCard,
+          label: "Payments",
         },
         {
           href: `/buyer/portal/${sellerSlug}/finances`,
