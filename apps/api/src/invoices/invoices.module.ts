@@ -10,6 +10,7 @@ import { SystemConfigModule } from "../system-config/system-config.module";
 import { RegulatedModule } from "../regulated/regulated.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { CreditNotesModule } from "../credit-notes/credit-notes.module";
+import { MessagingModule } from "../messaging/messaging.module";
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
     RegulatedModule,
     AuthorizationsModule,
     CreditNotesModule,
+    MessagingModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],

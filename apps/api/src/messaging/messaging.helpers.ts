@@ -98,3 +98,20 @@ export function extractVariables(body: string): string[] {
   }
   return out;
 }
+
+// ─── P6-5: trigger-side formatters (STORED values only — no money math) ───────
+const USD_FORMAT = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+/** Format a stored money value (Prisma Decimal | number | string) as "$1,234.50". */
+export function formatMoney(value: unknown): string {
+  const n = Number(value ?? 0);
+  return USD_FORMAT.format(Number.isFinite(n) ? n : 0);
+}
+
+/** Format a date as "July 14, 2026" (invoice-email style); "" when absent/invalid. */
+export function formatDate(value: Date | string | null | undefined): string {
+  if (!value) return "";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}

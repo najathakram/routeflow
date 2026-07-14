@@ -11,9 +11,12 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { formatMoney } from "../messaging/messaging.helpers";
 import {
   ChangeRequestStatus,
   ChangeRequestType,
+  NotificationEvent,
   Prisma,
   UserRole,
   UserStatus,
@@ -41,6 +44,7 @@ export class ChangeRequestsService {
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
     private readonly authGuard: AuthorizationGuardService,
+    private readonly messaging: MessagingService,
   ) {}
 
   async create(orderId: string, dto: CreateChangeRequestDto, user: JwtPayload) {
@@ -131,7 +135,7 @@ export class ChangeRequestsService {
         throw new BadRequestException("Unknown change request type");
     }
 
-    return this.prisma.forTenant().changeRequest.create({
+    const created = await this.prisma.forTenant().changeRequest.create({
       data: {
         tenantId: this.prisma.getTenantId(),
         orderId: order.id,
@@ -146,8 +150,38 @@ export class ChangeRequestsService {
         requestedByRole: user.role ?? null,
       },
     });
-    // P6-5: wire MessagingService.notify(ORDER_CHANGED_AT_DOOR, ...) here once
-    // the trigger/rule plumbing exists; P5-11 adds the operator/driver surfacing.
+
+    // P6-5: customer notification via the rules matrix (fire-and-forget AFTER
+    // the write commits; notify() no-ops on a disabled cell + meters itself).
+    this.messaging
+      .notifyEvent(NotificationEvent.ORDER_CHANGED_AT_DOOR, {
+        customerId: order.customerId,
+        senderId: user.sub || null,
+        vars: {
+          orderNumber: order.orderNumber ?? "",
+          changeSummary: this.summarizeChange(dto.type, payload),
+          orderTotal: formatMoney(order.total),
+        },
+      })
+      .catch(() => {});
+
+    return created;
+  }
+
+  /** Human-readable one-liner for the ORDER_CHANGED_AT_DOOR {{changeSummary}} var. */
+  private summarizeChange(type: ChangeRequestType, payload: Record<string, unknown>): string {
+    switch (type) {
+      case ChangeRequestType.ADD_ITEM:
+        return `add ${payload.qty as number} × ${(payload.productName as string | undefined) ?? "item"}`;
+      case ChangeRequestType.CHANGE_QTY:
+        return `quantity changed to ${payload.newQty as number}`;
+      case ChangeRequestType.REMOVE_ITEM:
+        return "item removed";
+      case ChangeRequestType.NOTE:
+        return (payload.text as string | undefined) ?? "note added";
+      default:
+        return "order changed";
+    }
   }
 
   async listForOrder(orderId: string, user: JwtPayload) {
@@ -364,10 +398,11 @@ export class ChangeRequestsService {
   }
 
   /**
-   * Notify the requester of the outcome. Push via NotificationsService — the
+   * Notify the requester (whoever filed the change request — driver or office
+   * staff) of a resolution outcome. Push via NotificationsService — the
    * mechanism completeStop already uses. Never fails the resolution.
-   * (MessagingService.notify is NOT used: it requires per-tenant
-   * NotificationRule/MessageTemplate rows that nothing seeds yet — P6-5 wires it.)
+   * Distinct from the customer-facing MessagingService.notifyEvent
+   * (ORDER_CHANGED_AT_DOOR), which fires at request creation, above (P6-5).
    */
   private async notifyRequester(cr: any, order: any, outcome: string, detail: string) {
     const title = `Change request ${outcome}`;

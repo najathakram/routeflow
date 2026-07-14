@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuditModule } from "../audit/audit.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { EmailModule } from "../email/email.module";
+import { MessagingModule } from "../messaging/messaging.module";
 import {
   AuthorizationsController,
   ExpiringAuthorizationsController,
@@ -12,7 +13,7 @@ import { AuthorizationGuardService } from "./authorization-guard.service";
 import { AuthorizationExpiryService } from "./authorization-expiry.service";
 
 @Module({
-  imports: [AuditModule, NotificationsModule, EmailModule],
+  imports: [AuditModule, NotificationsModule, EmailModule, MessagingModule],
   controllers: [AuthorizationsController, ExpiringAuthorizationsController],
   providers: [
     AuthorizationsService,

@@ -1,10 +1,12 @@
 import { Test } from "@nestjs/testing";
+import { NotificationEvent } from "@prisma/client";
 import { AuthorizationExpiryService } from "./authorization-expiry.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
 import { AuditService } from "../audit/audit.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("AuthorizationExpiryService", () => {
@@ -13,6 +15,7 @@ describe("AuthorizationExpiryService", () => {
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
   let email: { send: jest.Mock };
   let audit: { log: jest.Mock };
+  let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
 
   const now = new Date("2026-07-07T12:00:00Z");
   const days = (n: number) => new Date(now.getTime() + n * 86_400_000);
@@ -25,6 +28,10 @@ describe("AuthorizationExpiryService", () => {
     };
     email = { send: jest.fn().mockResolvedValue(undefined) };
     audit = { log: jest.fn().mockResolvedValue(undefined) };
+    messaging = {
+      notify: jest.fn().mockResolvedValue([]),
+      notifyEvent: jest.fn().mockResolvedValue(undefined),
+    };
     const mod = await Test.createTestingModule({
       providers: [
         AuthorizationExpiryService,
@@ -33,6 +40,7 @@ describe("AuthorizationExpiryService", () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: EmailService, useValue: email },
         { provide: AuditService, useValue: audit },
+        { provide: MessagingService, useValue: messaging },
       ],
     }).compile();
     service = mod.get(AuthorizationExpiryService);
@@ -98,6 +106,57 @@ describe("AuthorizationExpiryService", () => {
       expect(r.expired).toBe(0);
       expect(prisma.customerAuthorization.update).not.toHaveBeenCalled();
       expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+      expect(messaging.notifyEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("processTenant — LICENSE_EXPIRING via the messaging engine (P6-5)", () => {
+    it("fires LICENSE_EXPIRING once on the EXPIRED flip", async () => {
+      setScans([auth({ customerId: "c1", expiresAt: days(-1) })], []);
+      await service.processTenant("t1", now);
+      expect(messaging.notifyEvent).toHaveBeenCalledTimes(1);
+      expect(messaging.notifyEvent).toHaveBeenCalledWith(
+        NotificationEvent.LICENSE_EXPIRING,
+        expect.objectContaining({
+          customerId: "c1",
+          senderId: null,
+          vars: expect.objectContaining({ expiryDate: expect.stringContaining("2026") }),
+        }),
+      );
+    });
+
+    it("fires nothing for a non-gated (tobacco) row", async () => {
+      setScans(
+        [
+          auth({
+            expiresAt: days(-1),
+            trackedCategory: { name: "Tobacco", requiresLicense: false },
+          }),
+        ],
+        [],
+      );
+      await service.processTenant("t1", now);
+      expect(messaging.notifyEvent).not.toHaveBeenCalled();
+    });
+
+    it("fires LICENSE_EXPIRING once on a fresh expiring-soon warning", async () => {
+      setScans([], [auth({ id: "a2", customerId: "c1", expiresAt: days(5) })]); // 5 days → bucket 7
+      await service.processTenant("t1", now);
+      expect(messaging.notifyEvent).toHaveBeenCalledTimes(1);
+      expect(messaging.notifyEvent).toHaveBeenCalledWith(
+        NotificationEvent.LICENSE_EXPIRING,
+        expect.objectContaining({
+          customerId: "c1",
+          senderId: null,
+          vars: expect.objectContaining({ expiryDate: expect.stringContaining("2026") }),
+        }),
+      );
+    });
+
+    it("fires nothing when the bucket is already stamped (idempotency marker)", async () => {
+      setScans([], [auth({ id: "a2", expiresAt: days(5), expiringSoonNotifiedBucket: 7 })]);
+      await service.processTenant("t1", now);
+      expect(messaging.notifyEvent).not.toHaveBeenCalled();
     });
   });
 
