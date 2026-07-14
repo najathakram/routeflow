@@ -11,7 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { clampLimit } from "../common/pagination";
-import { CheckStatus, InvoiceStatus, UserRole } from "@prisma/client";
+import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
@@ -31,6 +31,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -66,6 +68,7 @@ export class InvoicesService {
     private readonly ledger: RegulatedLedgerService,
     private readonly authGuard: AuthorizationGuardService,
     private readonly creditNotes: CreditNotesService,
+    private readonly messaging: MessagingService,
   ) {}
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
@@ -1616,6 +1619,21 @@ export class InvoicesService {
       status: auto.invoiceStatus ?? updated.status,
       total: Number(updated.total),
     });
+    // P6-5: INVOICE_SENT (EMAIL/PORTAL only — G12 blocks WA/SMS in the engine).
+    // Once, on the DRAFT→SENT flip; a re-send doesn't re-notify. System sender.
+    if (inv.status === InvoiceStatus.DRAFT) {
+      this.messaging
+        .notifyEvent(NotificationEvent.INVOICE_SENT, {
+          customerId: updated.customerId,
+          senderId: null,
+          vars: {
+            invoiceNumber: updated.invoiceNumber,
+            invoiceTotal: formatMoney(updated.total),
+            dueDate: formatDate(updated.dueDate),
+          },
+        })
+        .catch(() => {});
+    }
     if (auto.applied > 0) {
       const final = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
       if (final) return final;
@@ -1708,6 +1726,22 @@ export class InvoicesService {
       status: auto.invoiceStatus ?? updated.status,
       total: Number(updated.total),
     });
+    // P6-5: INVOICE_SENT (EMAIL/PORTAL only — G12 blocks WA/SMS in the engine).
+    // Once, on the DRAFT→SENT flip; a re-send doesn't re-notify. System sender.
+    if (inv.status === InvoiceStatus.DRAFT) {
+      this.messaging
+        .notifyEvent(NotificationEvent.INVOICE_SENT, {
+          customerId: updated.customerId,
+          senderId: null,
+          vars: {
+            invoiceNumber: updated.invoiceNumber,
+            invoiceTotal: formatMoney(updated.total),
+            dueDate: formatDate(updated.dueDate),
+            customerName: inv.customer?.businessName ?? "Customer",
+          },
+        })
+        .catch(() => {});
+    }
     return { success: true, sentTo: recipientEmail };
   }
 

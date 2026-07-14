@@ -23,7 +23,8 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { CheckStatus, InvoiceStatus } from "@prisma/client";
+import { MessagingService } from "../messaging/messaging.service";
+import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
 
 describe("InvoicesService", () => {
   let service: InvoicesService;
@@ -47,8 +48,15 @@ describe("InvoicesService", () => {
     set: jest.fn().mockResolvedValue(undefined),
   };
 
+  const mockMessaging = {
+    notify: jest.fn().mockResolvedValue([]),
+    notifyEvent: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
+    mockMessaging.notify.mockClear();
+    mockMessaging.notifyEvent.mockClear();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -77,6 +85,7 @@ describe("InvoicesService", () => {
               .mockResolvedValue({ applied: 0, invoiceStatus: null }),
           },
         },
+        { provide: MessagingService, useValue: mockMessaging },
       ],
     }).compile();
 
@@ -561,6 +570,49 @@ describe("InvoicesService", () => {
       });
       await expect(service.send("i1")).resolves.toBeDefined();
       expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("fires INVOICE_SENT once on the DRAFT→SENT flip", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: null,
+        status: InvoiceStatus.DRAFT,
+        deliveryBatchId: null,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+        dueDate: null,
+      });
+      await service.send("i1");
+      expect(mockMessaging.notifyEvent).toHaveBeenCalledTimes(1);
+      expect(mockMessaging.notifyEvent).toHaveBeenCalledWith(NotificationEvent.INVOICE_SENT, {
+        customerId: "c1",
+        senderId: null,
+        vars: { invoiceNumber: "INV-1", invoiceTotal: "$10.00", dueDate: "" },
+      });
+    });
+
+    it("does not re-fire INVOICE_SENT when the invoice is already SENT", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "i1",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        deliveryBatchId: null,
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 10,
+        dueDate: null,
+      });
+      await service.send("i1");
+      expect(mockMessaging.notifyEvent).not.toHaveBeenCalled();
     });
   });
 

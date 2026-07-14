@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
-import { MessageChannel, MeterKey, NotificationEvent } from "@prisma/client";
+import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
@@ -207,6 +207,59 @@ export class MessagingService {
       );
     }
     return outcomes;
+  }
+
+  /**
+   * P6-5: resolve a User id usable as Message.senderId for system-originated
+   * sends (crons / userless endpoints). Oldest ACTIVE TENANT_ADMIN, else oldest
+   * ACTIVE OPERATOR (no Tenant.ownerId exists). Null → callers SKIP.
+   */
+  async resolveSystemSenderId(tenantId: string | null | undefined): Promise<string | null> {
+    if (!tenantId) return null;
+    const admin = await this.prisma.user.findFirst({
+      where: { tenantId, role: UserRole.TENANT_ADMIN, status: UserStatus.ACTIVE, deletedAt: null },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (admin) return admin.id;
+    const operator = await this.prisma.user.findFirst({
+      where: { tenantId, role: UserRole.OPERATOR, status: UserStatus.ACTIVE, deletedAt: null },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    return operator?.id ?? null;
+  }
+
+  /**
+   * P6-5: trigger-facing convenience around notify(). NEVER rejects (fire-and-
+   * forget AFTER a business write commits). senderId=null → resolve the system
+   * sender; no sender → skip. Auto-fills customerName from Customer.businessName.
+   */
+  async notifyEvent(
+    eventKey: NotificationEvent,
+    args: { customerId: string; senderId: string | null; vars?: Record<string, string | number> },
+  ): Promise<void> {
+    try {
+      const senderId =
+        args.senderId ?? (await this.resolveSystemSenderId(this.prisma.getTenantId()));
+      if (!senderId) {
+        this.logger.warn(`notifyEvent(${eventKey}) skipped: no resolvable system sender`);
+        return;
+      }
+      let vars = args.vars ?? {};
+      if (vars.customerName === undefined) {
+        const customer = await this.prisma.forTenant().customer.findUnique({
+          where: { id: args.customerId },
+          select: { businessName: true },
+        });
+        vars = { ...vars, customerName: customer?.businessName ?? "Customer" };
+      }
+      await this.notify(eventKey, { customerId: args.customerId, senderId, vars });
+    } catch (err) {
+      this.logger.warn(
+        `notifyEvent(${eventKey}) failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   // ─── Thin inbox reads (the rich inbox is a later increment) ──────────────────

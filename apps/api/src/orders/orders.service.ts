@@ -32,6 +32,7 @@ import {
   Prisma,
   ChangeRequestStatus,
   ChangeRequestType,
+  NotificationEvent,
 } from "@prisma/client";
 import { ListOrdersDto } from "./dto/list-orders.dto";
 import { CreateOrderDto } from "./dto/create-order.dto";
@@ -55,6 +56,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -70,6 +73,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly inventoryService: InventoryService,
     private readonly authGuard: AuthorizationGuardService,
     private readonly promotionsService: PromotionsService,
+    private readonly messaging: MessagingService,
   ) {}
 
   /**
@@ -1561,6 +1565,45 @@ export class OrdersService implements OnApplicationBootstrap {
     if (notif) {
       this.notifications
         .sendToCustomer(order.customerId, notif.title, notif.body, { orderId: id })
+        .catch(() => {});
+    }
+
+    // P6-5: customer notification via the rules matrix (fire-and-forget AFTER
+    // the status write; notify() no-ops on a disabled cell + meters itself).
+    const messagingEventMap: Partial<Record<OrderStatus, NotificationEvent>> = {
+      [OrderStatus.CONFIRMED]: NotificationEvent.ORDER_CONFIRMED,
+      [OrderStatus.OUT_FOR_DELIVERY]: NotificationEvent.OUT_FOR_DELIVERY,
+      [OrderStatus.DELIVERED]: NotificationEvent.DELIVERED,
+    };
+    const messagingEvent = messagingEventMap[dto.status];
+    if (messagingEvent) {
+      let driverName = "your driver";
+      if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
+        const run = await this.prisma.forTenant().routeRun.findUnique({
+          where: { id: order.routeRunId },
+          select: { driver: { select: { contactName: true } } },
+        });
+        driverName = run?.driver?.contactName ?? "your driver";
+      }
+      const vars: Record<string, string> = {
+        orderNumber: order.orderNumber ?? "",
+        ...(messagingEvent === NotificationEvent.ORDER_CONFIRMED
+          ? {
+              deliveryDate: formatDate(order.requestedDeliveryDate),
+              orderTotal: formatMoney(updated.total),
+            }
+          : {}),
+        ...(messagingEvent === NotificationEvent.OUT_FOR_DELIVERY ? { driverName } : {}),
+        ...(messagingEvent === NotificationEvent.DELIVERED
+          ? { orderTotal: formatMoney(updated.total) }
+          : {}),
+      };
+      this.messaging
+        .notifyEvent(messagingEvent, {
+          customerId: order.customerId,
+          senderId: user.sub || null,
+          vars,
+        })
         .catch(() => {});
     }
 

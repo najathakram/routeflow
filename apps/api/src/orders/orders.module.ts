@@ -11,6 +11,7 @@ import { SystemConfigModule } from "../system-config/system-config.module";
 import { InventoryModule } from "../inventory/inventory.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { PromotionsModule } from "../promotions/promotions.module";
+import { MessagingModule } from "../messaging/messaging.module";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { PromotionsModule } from "../promotions/promotions.module";
     InventoryModule,
     AuthorizationsModule,
     PromotionsModule,
+    MessagingModule,
   ],
   controllers: [OrdersController, RouteRunDeliveryController],
   providers: [OrdersService, ChangeRequestsService],

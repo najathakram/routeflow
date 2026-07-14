@@ -4,6 +4,7 @@ import { RoutesService } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_ROUTE = {
@@ -59,6 +60,7 @@ describe("RoutesService", () => {
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
+  let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -75,12 +77,18 @@ describe("RoutesService", () => {
       sendToDriver: jest.fn().mockResolvedValue(undefined),
     };
 
+    messaging = {
+      notify: jest.fn().mockResolvedValue([]),
+      notifyEvent: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RoutesService,
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: gateway },
         { provide: NotificationsService, useValue: notifications },
+        { provide: MessagingService, useValue: messaging },
       ],
     }).compile();
 
@@ -422,6 +430,71 @@ describe("RoutesService", () => {
       await service.completeStop("run-1", "stop-1", {}, operatorPayload);
 
       expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // P6-5: transactional trigger — DELIVERED fires per eligible order after
+    // the tx commits (driver completion bypasses changeStatus entirely).
+    it("fires DELIVERED once for the eligible order and skips CANCELLED/DELIVERED", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [
+          {
+            id: "ord-1",
+            status: "OUT_FOR_DELIVERY",
+            customerId: "cust-1",
+            orderNumber: "ORD-100",
+            total: 42,
+          },
+          {
+            id: "ord-2",
+            status: "CANCELLED",
+            customerId: "cust-2",
+            orderNumber: "ORD-101",
+            total: 5,
+          },
+          {
+            id: "ord-3",
+            status: "DELIVERED",
+            customerId: "cust-3",
+            orderNumber: "ORD-102",
+            total: 7,
+          },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+
+      expect(messaging.notifyEvent).toHaveBeenCalledTimes(1);
+      expect(messaging.notifyEvent).toHaveBeenCalledWith(
+        "DELIVERED",
+        expect.objectContaining({
+          customerId: "cust-1",
+          senderId: operatorPayload.sub,
+          vars: expect.objectContaining({ orderNumber: "ORD-100", orderTotal: "$42.00" }),
+        }),
+      );
     });
   });
 

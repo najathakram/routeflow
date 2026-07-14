@@ -36,6 +36,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -89,6 +90,8 @@ describe("OrdersService", () => {
   // reconcile never runs on a blocked edit — mirrors how inventoryService is
   // captured below.
   let invoicesService: { reconcileOrderDraftInvoice: jest.Mock };
+  // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
+  let messagingService: { notify: jest.Mock; notifyEvent: jest.Mock };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -170,12 +173,20 @@ describe("OrdersService", () => {
           provide: PromotionsService,
           useValue: { activeForCatalog: jest.fn().mockResolvedValue([]) },
         },
+        {
+          provide: MessagingService,
+          useValue: {
+            notify: jest.fn().mockResolvedValue([]),
+            notifyEvent: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<OrdersService>(OrdersService);
     inventoryService = module.get(InventoryService);
     invoicesService = module.get(InvoicesService);
+    messagingService = module.get(MessagingService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -769,6 +780,75 @@ describe("OrdersService", () => {
 
       expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
       expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+    });
+
+    // ─── P6-5: transactional notification triggers ────────────────────────
+
+    it("CONFIRMED fires ORDER_CONFIRMED with the stored order total", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+
+      await service.changeStatus("ord-1", { status: "CONFIRMED" as any }, operatorPayload);
+
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        "ORDER_CONFIRMED",
+        expect.objectContaining({
+          customerId: "cust-1",
+          senderId: "user-op",
+          vars: expect.objectContaining({
+            orderNumber: "ORD-123",
+            orderTotal: "$16.47",
+          }),
+        }),
+      );
+    });
+
+    it("DELIVERED fires with the stored total formatted", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        "DELIVERED",
+        expect.objectContaining({
+          customerId: "cust-1",
+          senderId: "user-op",
+          vars: expect.objectContaining({
+            orderNumber: "ORD-123",
+            orderTotal: "$16.47",
+          }),
+        }),
+      );
+    });
+
+    it("OUT_FOR_DELIVERY fires with driverName 'your driver' when there is no routeRunId", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "OUT_FOR_DELIVERY" });
+
+      await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+
+      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
+        "OUT_FOR_DELIVERY",
+        expect.objectContaining({
+          customerId: "cust-1",
+          senderId: "user-op",
+          vars: expect.objectContaining({
+            orderNumber: "ORD-123",
+            driverName: "your driver",
+          }),
+        }),
+      );
+      expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("CANCELLED fires no messaging trigger", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+
+      await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
+
+      expect(messagingService.notifyEvent).not.toHaveBeenCalled();
     });
   });
 

@@ -9,7 +9,7 @@ import {
 import { createHash } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
-import { UserRole, RouteRunStatus, OrderStatus, Prisma } from "@prisma/client";
+import { UserRole, RouteRunStatus, OrderStatus, NotificationEvent, Prisma } from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
 import { CreateRouteDto } from "./dto/create-route.dto";
 import { UpdateRouteDto } from "./dto/update-route.dto";
@@ -19,6 +19,8 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
 import {
@@ -89,6 +91,7 @@ export class RoutesService {
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
+    private readonly messaging: MessagingService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -1136,7 +1139,11 @@ export class RoutesService {
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
-      include: { orders: { select: { id: true, status: true, customerId: true } } },
+      include: {
+        orders: {
+          select: { id: true, status: true, customerId: true, orderNumber: true, total: true },
+        },
+      },
     });
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
@@ -1238,6 +1245,19 @@ export class RoutesService {
       }
     });
 
+    // P6-5: DELIVERED per order this completion flipped (driver bypasses
+    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    for (const o of stop.orders) {
+      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      this.messaging
+        .notifyEvent(NotificationEvent.DELIVERED, {
+          customerId: o.customerId,
+          senderId: user.sub || null,
+          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+        })
+        .catch(() => {});
+    }
+
     if (autoCompleted) {
       const completed = await this.prisma.forTenant().routeRun.findUnique({
         where: { id: runId },
@@ -1290,7 +1310,11 @@ export class RoutesService {
 
     const stop = await this.prisma.forTenant().routeRunStop.findFirst({
       where: { id: stopId, routeRunId: runId },
-      include: { orders: { select: { id: true, status: true, customerId: true } } },
+      include: {
+        orders: {
+          select: { id: true, status: true, customerId: true, orderNumber: true, total: true },
+        },
+      },
     });
     if (!stop) throw new NotFoundException("Stop not found");
     if (stop.status === "COMPLETED") throw new BadRequestException("Stop is already completed");
@@ -1424,6 +1448,19 @@ export class RoutesService {
         autoCompleted = true;
       }
     });
+
+    // P6-5: DELIVERED per order this completion flipped (driver bypasses
+    // changeStatus). AFTER the tx, fire-and-forget; skip already CANCELLED/DELIVERED.
+    for (const o of stop.orders) {
+      if (o.status === OrderStatus.CANCELLED || o.status === OrderStatus.DELIVERED) continue;
+      this.messaging
+        .notifyEvent(NotificationEvent.DELIVERED, {
+          customerId: o.customerId,
+          senderId: user.sub || null,
+          vars: { orderNumber: o.orderNumber ?? "", orderTotal: formatMoney(o.total) },
+        })
+        .catch(() => {});
+    }
 
     if (autoCompleted) {
       const completed = await this.prisma.forTenant().routeRun.findUnique({

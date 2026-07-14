@@ -1,10 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
+import { NotificationEvent } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { EmailService } from "../email/email.service";
 import { AuditService } from "../audit/audit.service";
+import { MessagingService } from "../messaging/messaging.service";
+import { formatDate } from "../messaging/messaging.helpers";
 
 type WarnBucket = 30 | 7 | 1;
 
@@ -37,6 +40,7 @@ export class AuthorizationExpiryService {
     private readonly notifications: NotificationsService,
     private readonly email: EmailService,
     private readonly audit: AuditService,
+    private readonly messaging: MessagingService,
   ) {}
 
   /** Days-until-expiry warning bucket (30/7/1), or null if not in one. */
@@ -119,6 +123,11 @@ export class AuthorizationExpiryService {
           `License expired: ${auth.trackedCategory.name}`,
           `has EXPIRED. Regulated sales in this category are blocked until it is renewed.`,
         );
+        await this.messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, {
+          customerId: auth.customerId,
+          senderId: null,
+          vars: { expiryDate: formatDate(auth.expiresAt) },
+        });
         expired++;
       } catch (err) {
         // Per-row isolation — a single bad row must not skip the rest of the sweep.
@@ -155,6 +164,11 @@ export class AuthorizationExpiryService {
           `License expiring in ${bucket} day(s): ${auth.trackedCategory.name}`,
           `expires in ${bucket} day(s). Renew it to avoid a block on regulated sales.`,
         );
+        await this.messaging.notifyEvent(NotificationEvent.LICENSE_EXPIRING, {
+          customerId: auth.customerId,
+          senderId: null,
+          vars: { expiryDate: formatDate(auth.expiresAt) },
+        });
         warned++;
       } catch (err) {
         this.logger.error(

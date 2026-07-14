@@ -10,6 +10,7 @@ import { ChangeRequestsService } from "./change-requests.service";
 import { OrdersService } from "./orders.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { MessagingService } from "../messaging/messaging.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ChangeRequestResolveAction } from "./dto/resolve-change-request.dto";
@@ -49,6 +50,7 @@ const dispatchedOrder = {
   id: "ord-1",
   customerId: "cust-1",
   orderNumber: "ORD-100",
+  total: 16.47,
   status: "OUT_FOR_DELIVERY" as const,
   routeRunId: "run-1",
   routeRunStopId: "stop-1",
@@ -84,6 +86,7 @@ describe("ChangeRequestsService", () => {
   };
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
   let authGuard: { assertAuthorizedOrThrow: jest.Mock };
+  let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -101,6 +104,10 @@ describe("ChangeRequestsService", () => {
       sendToUser: jest.fn().mockResolvedValue(undefined),
     };
     authGuard = { assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined) };
+    messaging = {
+      notify: jest.fn().mockResolvedValue([]),
+      notifyEvent: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -109,6 +116,7 @@ describe("ChangeRequestsService", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: NotificationsService, useValue: notifications },
         { provide: AuthorizationGuardService, useValue: authGuard },
+        { provide: MessagingService, useValue: messaging },
       ],
     }).compile();
 
@@ -153,6 +161,33 @@ describe("ChangeRequestsService", () => {
       expect(prisma.changeRequest.create.mock.calls[0][0].data.status).toBeUndefined();
     });
 
+    // P6-5: transactional trigger — ORDER_CHANGED_AT_DOOR fires on creation.
+    it("fires ORDER_CHANGED_AT_DOOR via MessagingService on ADD_ITEM creation", async () => {
+      prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
+
+      await service.create(
+        "ord-1",
+        { type: "ADD_ITEM" as any, productId: "prod-1", qty: 3 },
+        customerUser,
+      );
+
+      expect(messaging.notifyEvent).toHaveBeenCalledWith(
+        "ORDER_CHANGED_AT_DOOR",
+        expect.objectContaining({
+          customerId: "cust-1",
+          senderId: customerUser.sub,
+          vars: expect.objectContaining({
+            orderNumber: "ORD-100",
+            changeSummary: expect.stringContaining("Tomatoes"),
+            orderTotal: "$16.47",
+          }),
+        }),
+      );
+    });
+
     it("rejects with EDIT_WINDOW_OPEN while the run is still SCHEDULED", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...dispatchedOrder,
@@ -165,6 +200,7 @@ describe("ChangeRequestsService", () => {
         response: expect.objectContaining({ code: "EDIT_WINDOW_OPEN" }),
       });
       expect(prisma.changeRequest.create).not.toHaveBeenCalled();
+      expect(messaging.notifyEvent).not.toHaveBeenCalled();
     });
 
     it("rejects with CHANGE_WINDOW_CLOSED once the run has completed", async () => {
