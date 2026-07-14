@@ -38,6 +38,13 @@ import {
   roundMoney,
 } from "../lib/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
+import { useTrackedCategories } from "../lib/api/tracked-categories";
+import {
+  groupLinesForInvoiceSplit,
+  type InvoiceSplitCategory,
+  type InvoiceSplitLineInput,
+  type InvoiceSplitPreview,
+} from "../lib/invoice-split";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import type { CreatedProduct } from "../lib/api/products";
@@ -367,6 +374,16 @@ function ProductPickView({
   const { data: customerPrices } = useCustomerPrices(customerId);
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
+  // REG-4: category lookup for the invoice-split preview. Reuses the shipped
+  // P10-REG-A hook — no new API surface. Called unconditionally, matching the
+  // rest of this screen's hooks (tenants with no regulated categories just get []).
+  const { data: splitTrackedCategories } = useTrackedCategories({ active: true });
+  const splitCategoryById = useMemo(() => {
+    const m = new Map<string, InvoiceSplitCategory>();
+    for (const c of splitTrackedCategories ?? [])
+      m.set(c.id, { id: c.id, name: c.name, invoiceTreatment: c.invoiceTreatment });
+    return m;
+  }, [splitTrackedCategories]);
   const customerTier = customerDetail?.pricingTier ?? 1;
   const cpMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -732,6 +749,36 @@ function ProductPickView({
     return { total: roundMoney(total), totalItems };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, productById, unlisted, cpMap, customerTier]);
+
+  // REG-4: live, DISPLAY-ONLY preview of how this cart will split into invoices.
+  // Same iteration/inputs as the total memo above (by design — it can never
+  // disagree with what's on screen). NEVER used for money: computeLineSubtotal
+  // inside groupLinesForInvoiceSplit produces the same pre-tax per-line amounts
+  // the total memo already sums; this just also buckets them by category. The
+  // server (createSplitInvoices) is the sole source of truth for the real split.
+  const invoiceSplit: InvoiceSplitPreview = useMemo(() => {
+    const splitLines: InvoiceSplitLineInput[] = [];
+    for (const [id, line] of Object.entries(items)) {
+      const p = productById.get(id);
+      if (!p) continue;
+      const qty = effectiveQty(line, p.unitsPerBox);
+      if (qty <= 0) continue;
+      splitLines.push({
+        trackedCategoryId: p.trackedCategoryId ?? null,
+        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
+        qty,
+        boxes: line.boxes ?? null,
+        pieces: line.pieces ?? null,
+        unitsPerBox: p.unitsPerBox ?? null,
+      });
+    }
+    for (const u of unlisted) {
+      if (u.qty <= 0) continue;
+      splitLines.push({ trackedCategoryId: null, unitPrice: u.unitPrice, qty: u.qty });
+    }
+    return groupLinesForInvoiceSplit(splitLines, splitCategoryById);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, productById, unlisted, splitCategoryById, cpMap, customerTier]);
 
   const inc = (id: string) => addOne(id);
   const dec = (id: string) => removeOne(id);
@@ -1183,6 +1230,12 @@ function ProductPickView({
               {totalItems} ITEM{totalItems === 1 ? "" : "S"}
             </Text>
             <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+            {invoiceSplit.willSplit ? (
+              <View style={styles.splitBadge}>
+                <Ionicons name="layers-outline" size={10} color={ios.system.orangeInk} />
+                <Text style={styles.splitBadgeText}>Splits × {invoiceSplit.groups.length}</Text>
+              </View>
+            ) : null}
           </Pressable>
           <View style={styles.footerActions}>
             {totalItems > 0 ? (
@@ -1288,6 +1341,7 @@ function ProductPickView({
         unlisted={unlisted}
         total={total}
         totalItems={totalItems}
+        invoiceSplit={invoiceSplit}
         saving={createOrder.isPending}
         onClose={() => setCartOpen(false)}
         onChangeBoxes={setBoxes}
@@ -1343,6 +1397,7 @@ function CartModal({
   unlisted,
   total,
   totalItems,
+  invoiceSplit,
   saving,
   onClose,
   onChangeBoxes,
@@ -1373,6 +1428,7 @@ function CartModal({
   unlisted: UnlistedLine[];
   total: number;
   totalItems: number;
+  invoiceSplit: InvoiceSplitPreview;
   saving: boolean;
   onClose: () => void;
   onChangeBoxes: (id: string, n: number) => void;
@@ -1466,6 +1522,25 @@ function CartModal({
                 ))}
               </>
             )}
+            {invoiceSplit.willSplit ? (
+              <View style={styles.splitBanner}>
+                <Text style={styles.splitBannerHeader}>
+                  SPLITS INTO {invoiceSplit.groups.length} INVOICES
+                </Text>
+                {invoiceSplit.groups.map((g, i) => (
+                  <View key={g.label} style={styles.splitGroupRow}>
+                    <Text style={styles.splitGroupLabel} numberOfLines={1}>
+                      Invoice {i + 1} — {g.label} ({g.count} {g.count === 1 ? "item" : "items"})
+                    </Text>
+                    <Text style={styles.splitGroupAmount}>${g.subtotal.toFixed(2)}</Text>
+                  </View>
+                ))}
+                <Text style={styles.splitFootnote}>
+                  Regulated categories are billed on their own invoice. Amounts shown are pre-tax
+                  subtotals.
+                </Text>
+              </View>
+            ) : null}
             <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
               <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
               <Text style={styles.cartAddUnlistedText}>Add unlisted item</Text>
@@ -2148,6 +2223,23 @@ const styles = StyleSheet.create({
     letterSpacing: -0.6,
     fontVariant: ["tabular-nums"],
   },
+  splitBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    marginTop: 3,
+    alignSelf: "flex-start",
+    backgroundColor: ios.system.orangeWash,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  splitBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.2,
+  },
   confirmBtn: {
     backgroundColor: ios.brand,
     borderRadius: 14,
@@ -2413,6 +2505,37 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  splitBanner: {
+    marginTop: 4,
+    marginBottom: 4,
+    backgroundColor: ios.system.orangeWash,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.system.orange,
+    borderRadius: 12,
+    padding: 12,
+    gap: 4,
+  },
+  splitBannerHeader: {
+    fontSize: 11,
+    fontFamily: "Inter_700Bold",
+    color: ios.system.orangeInk,
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  splitGroupRow: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  splitGroupLabel: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  splitGroupAmount: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  splitFootnote: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    marginTop: 2,
   },
   cartFooter: {
     paddingHorizontal: 16,

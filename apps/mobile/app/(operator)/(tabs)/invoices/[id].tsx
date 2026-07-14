@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useAdminInvoice } from "../../../../lib/api/admin";
+import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
   useInvoicePdf,
@@ -25,6 +25,7 @@ import {
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { canWriteOff, isPaymentEditable } from "../../../../lib/invoices-logic";
+import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
@@ -68,6 +69,23 @@ export default function InvoiceDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: invoice, isLoading, refetch } = useAdminInvoice(isCreateAlias ? "" : (id ?? ""));
+  // REG-5: sibling invoices from the same regulated sale-split. No dedicated
+  // "list siblings" endpoint exists — GET /invoices already returns
+  // invoiceGroupId as a raw scalar on every row (verified: findAll's `include`
+  // doesn't restrict scalars), so a narrow customerId + same-issue-date lookup
+  // via the EXISTING useAdminInvoices hook is enough; zero new endpoints. Called
+  // unconditionally (mirrors the "call the hook unconditionally, gate only the
+  // display" convention established by P10-REG-B) — customerId/dateFrom/dateTo
+  // are undefined for one render until `invoice` loads, which just widens that
+  // one query harmlessly; the queryKey changes once real params land.
+  const issueDay = invoice?.issueDate ? invoice.issueDate.slice(0, 10) : undefined;
+  const { data: siblingCandidates } = useAdminInvoices({
+    customerId: invoice?.customer?.id,
+    dateFrom: issueDay,
+    dateTo: issueDay,
+    limit: 25,
+  });
+  const siblingInvoices = siblingInvoicesOf(siblingCandidates?.data ?? [], invoice);
   const sendMut = useSendInvoice();
   const voidMut = useVoidInvoice();
   const deleteMut = useDeleteInvoice();
@@ -255,6 +273,37 @@ export default function InvoiceDetailScreen() {
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
           </View>
+
+          {siblingInvoices.length > 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Also billed on this order</Text>
+              <Text style={styles.siblingHint}>
+                This sale was split into {siblingInvoices.length + 1} invoices by regulated
+                category.
+              </Text>
+              <View style={{ gap: 8, marginTop: 6 }}>
+                {siblingInvoices.map((sib) => {
+                  const sp = statusPill(sib.status);
+                  return (
+                    <Pressable
+                      key={sib.id}
+                      style={styles.siblingRow}
+                      onPress={() => router.push(`/(operator)/invoices/${sib.id}`)}
+                    >
+                      <Text style={styles.siblingNumber} numberOfLines={1}>
+                        {sib.invoiceNumber}
+                      </Text>
+                      <Pill variant={sp.variant} small>
+                        {sp.label}
+                      </Pill>
+                      <Text style={styles.siblingTotal}>{fmtCurrency(sib.total)}</Text>
+                      <Ionicons name="chevron-forward" size={14} color={ios.label3} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ) : null}
 
           {/* Action grid */}
           <View style={styles.actionsGrid}>
@@ -515,6 +564,23 @@ const styles = StyleSheet.create({
   center: { padding: 40, alignItems: "center" },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginBottom: 8 },
+  siblingHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  siblingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  siblingNumber: { flex: 1, fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label },
+  siblingTotal: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   customer: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, marginTop: 8 },
   balance: {
     fontSize: 32,
