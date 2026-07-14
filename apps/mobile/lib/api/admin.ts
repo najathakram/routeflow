@@ -268,6 +268,14 @@ export interface AdminInvoice {
   balanceDue?: number;
   paidAmount?: number;
   isOverdue?: boolean;
+  /** Order this invoice was generated from. Raw scalar the API already returns
+   *  (findOne/findAll use Prisma `include`, not a restrictive `select`) — was
+   *  simply untyped on mobile until P10-REG-C. */
+  orderId?: string | null;
+  /** Set when this invoice was created as part of a regulated sale split;
+   *  sibling invoices from the same split share this id. Same "already
+   *  returned, just untyped" situation as orderId (P10-REG-C). */
+  invoiceGroupId?: string | null;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
@@ -314,6 +322,12 @@ export function useAdminInvoices(params?: {
   isOverdue?: boolean;
   /** When true, return ONLY invoices that have a tracking number (shipments list). */
   shipped?: boolean;
+  /** Issue-date range filter (YYYY-MM-DD) — already validated/applied server-side
+   *  (ListInvoicesDto), just not previously exposed on this hook. Added for the
+   *  P10-REG-C sibling-invoice lookup (scopes a customer's list to one exact
+   *  issue date instead of relying on default-sort + a bare limit). */
+  dateFrom?: string;
+  dateTo?: string;
 }) {
   return useQuery<{ data: AdminInvoice[]; meta: PaginationMeta }>({
     queryKey: ["admin", "invoices", params],
