@@ -537,7 +537,11 @@ export interface BuyerInvoiceDetail {
     id: string;
     amount: number;
     method: string;
-    recordedAt: string;
+    status?: string;
+    checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
+    nsfFeeAmount?: number | null;
+    paidAt?: string | null;
+    createdAt?: string;
   }>;
   customer: { id: string; businessName: string };
 }

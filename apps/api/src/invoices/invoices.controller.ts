@@ -22,6 +22,7 @@ import { InvoicePdfService } from "./invoice-pdf.service";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
+  SetCheckStatusDto,
   StandalonePaymentDto,
   UpdatePaymentDto,
   WriteOffDto,
@@ -198,6 +199,17 @@ export class InvoicesController {
   @Roles(UserRole.OPERATOR)
   voidPayment(@Param("id") id: string, @Param("paymentId") paymentId: string) {
     return this.invoicesService.voidPayment(id, paymentId);
+  }
+
+  /** P5-12: advance a CHECK payment through Recorded→Deposited→Cleared→Bounced. */
+  @Patch(":id/payments/:paymentId/check-status")
+  @Roles(UserRole.OPERATOR)
+  setCheckStatus(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @Body() dto: SetCheckStatusDto,
+  ) {
+    return this.invoicesService.setCheckStatus(id, paymentId, dto);
   }
 
   @Patch(":id/payments/:paymentId")

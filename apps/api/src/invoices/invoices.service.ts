@@ -11,10 +11,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { clampLimit } from "../common/pagination";
-import { InvoiceStatus, UserRole } from "@prisma/client";
+import { CheckStatus, InvoiceStatus, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
   RecordInvoicePaymentDto,
+  SetCheckStatusDto,
   StandalonePaymentDto,
   UpdatePaymentDto,
   WriteOffDto,
@@ -36,6 +37,19 @@ const TERM_DAYS: Record<string, number> = {
   "Net 30": 30,
   "Net 45": 45,
   "Net 60": 60,
+};
+
+/**
+ * P5-12: legal FORWARD transitions for the check lifecycle.
+ * RECORDED → DEPOSITED → CLEARED (strict sequence); any non-bounced state can
+ * go to BOUNCED (a deposited or even cleared check can be returned by the
+ * bank). BOUNCED is terminal.
+ */
+const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
+  RECORDED: ["DEPOSITED", "BOUNCED"],
+  DEPOSITED: ["CLEARED", "BOUNCED"],
+  CLEARED: ["BOUNCED"],
+  BOUNCED: [],
 };
 
 @Injectable()
@@ -1341,7 +1355,11 @@ export class InvoicesService {
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
-    const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+    // P5-12: VOID payments (manually voided OR bounced checks) must not count
+    // toward the paid amount — every other paid-sum already excludes non-VOID.
+    const paidAmount = inv.payments
+      .filter((p) => p.status !== "VOID")
+      .reduce((s, p) => s + Number(p.amount), 0);
     const isSettled =
       inv.status === InvoiceStatus.PAID ||
       inv.status === InvoiceStatus.VOID ||
@@ -2153,6 +2171,7 @@ export class InvoicesService {
           bankCharges: dto.bankCharges,
           status: paymentStatus as any,
           paymentNumber,
+          checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
 
@@ -2410,6 +2429,7 @@ export class InvoicesService {
             status: status as any,
             paymentNumber,
             paymentGroupId,
+            checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
           },
         });
         payments.push(payment);
@@ -2503,6 +2523,137 @@ export class InvoicesService {
         total: Number(invoice.total),
       });
       return { success: true };
+    });
+  }
+
+  // ─── P5-12: check lifecycle (Recorded→Deposited→Cleared→Bounced) ──────────
+
+  /**
+   * Advance a CHECK payment through its lifecycle.
+   *
+   * DEPOSITED / CLEARED are bookkeeping-only: the payment stays PAID and no
+   * balance changes. BOUNCED (NSF) is modeled on voidPayment(): the payment
+   * flips to PaymentStatus VOID so every existing non-VOID paid-sum /
+   * status:PAID aggregation (P&L, AR aging, cash flow, statements) excludes it
+   * automatically — then the invoice status is recomputed, re-opening the
+   * balance. When an NSF fee is given, the customer genuinely owes it: a
+   * non-taxable ad-hoc InvoiceItem line is appended AND the STORED
+   * Invoice.subtotal/total are bumped by roundMoney(fee) in the same
+   * transaction (all balance readers use the stored total).
+   */
+  async setCheckStatus(invoiceId: string, paymentId: string, dto: SetCheckStatusDto) {
+    return this.prisma.tenantTransaction(async (tx) => {
+      const payment = await tx.invoicePayment.findFirst({
+        where: { id: paymentId, invoiceId },
+      });
+      if (!payment) throw new NotFoundException("Payment not found");
+      if (payment.method !== "CHECK")
+        throw new BadRequestException("Check status can only be set on CHECK payments");
+      if (payment.status === "VOID")
+        throw new BadRequestException("Payment is voided — its check status can no longer change");
+
+      const current: CheckStatus = payment.checkStatus ?? "RECORDED";
+      if (!CHECK_TRANSITIONS[current].includes(dto.status)) {
+        throw new BadRequestException(`Cannot move check from ${current} to ${dto.status}`);
+      }
+
+      const now = new Date();
+
+      if (dto.status === "DEPOSITED" || dto.status === "CLEARED") {
+        await tx.invoicePayment.update({
+          where: { id: paymentId },
+          data: {
+            checkStatus: dto.status,
+            ...(dto.status === "DEPOSITED" ? { depositedAt: now } : { clearedAt: now }),
+          },
+        });
+        const invoice = await tx.invoice.findUnique({
+          where: { id: invoiceId },
+          select: { invoiceNumber: true, customerId: true, status: true, total: true },
+        });
+        if (!invoice) throw new NotFoundException("Invoice not found");
+        this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+          invoiceId,
+          invoiceNumber: invoice.invoiceNumber,
+          customerId: invoice.customerId,
+          status: invoice.status,
+          total: Number(invoice.total),
+        });
+        return { success: true, checkStatus: dto.status };
+      }
+
+      // ── BOUNCED (NSF) — mirror voidPayment()'s recompute exactly ──────────
+      const fee = roundMoney(dto.nsfFeeAmount ?? 0);
+      // Compare-and-swap guard against a concurrent double-bounce: two
+      // overlapping requests both read the payment as PAID above, but only the
+      // first flips it to VOID. The loser's updateMany matches 0 rows (the row
+      // is now VOID) and we abort BEFORE billing the NSF fee / bumping the
+      // stored total a second time. The `findFirst` guard alone is not enough —
+      // it reads a stale snapshot under READ COMMITTED.
+      const bounced = await tx.invoicePayment.updateMany({
+        where: { id: paymentId, status: { not: "VOID" as any } },
+        data: {
+          checkStatus: "BOUNCED",
+          bouncedAt: now,
+          nsfFeeAmount: fee,
+          status: "VOID" as any,
+        },
+      });
+      if (bounced.count === 0) {
+        throw new BadRequestException("Payment is voided — its check status can no longer change");
+      }
+
+      const invoice = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: { where: { status: { not: "VOID" as any } } } },
+      });
+      if (!invoice) throw new NotFoundException("Invoice not found");
+
+      let newSubtotal = Number(invoice.subtotal);
+      let newTotal = Number(invoice.total);
+      if (fee > 0) {
+        await tx.invoiceItem.create({
+          data: {
+            invoiceId,
+            description: `NSF fee — returned check${
+              payment.paymentNumber
+                ? ` ${payment.paymentNumber}`
+                : payment.reference
+                  ? ` ${payment.reference}`
+                  : ""
+            }`,
+            qty: 1,
+            unitPrice: fee,
+            discount: 0,
+            taxRate: 0,
+            subtotal: fee,
+          },
+        });
+        newSubtotal = roundMoney(newSubtotal + fee);
+        newTotal = roundMoney(newTotal + fee);
+      }
+
+      const totalPaid = invoice.payments
+        .filter((p) => p.id !== paymentId)
+        .reduce((s, p) => s + Number(p.amount), 0);
+      const newStatus = this.recomputeStatus(totalPaid, newTotal, invoice.dueDate, invoice.status);
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? invoice.paidAt : null,
+          ...(fee > 0 ? { subtotal: newSubtotal, total: newTotal } : {}),
+        },
+      });
+
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        invoiceId,
+        invoiceNumber: invoice.invoiceNumber,
+        customerId: invoice.customerId,
+        status: newStatus,
+        total: newTotal,
+      });
+      return { success: true, checkStatus: "BOUNCED" as CheckStatus };
     });
   }
 

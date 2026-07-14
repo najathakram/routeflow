@@ -46,9 +46,11 @@ import {
   useUnvoidInvoice,
   useAdjustInvoicePrices,
   useUpdateInvoiceShipment,
+  useSetCheckStatus,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
+  type CheckStatus,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -91,6 +93,56 @@ function methodBadgeClass(method: string) {
     default:
       return "bg-gray-100 text-gray-600";
   }
+}
+
+// ─── Check lifecycle (Recorded → Deposited → Cleared → Bounced) ───────────────
+
+/**
+ * Legal FORWARD transitions for a CHECK payment — mirrors the server's
+ * CHECK_TRANSITIONS map (invoices.service.ts) so the dropdown greys out
+ * illegal jumps before the request round-trips.
+ */
+const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
+  RECORDED: ["DEPOSITED", "BOUNCED"],
+  DEPOSITED: ["CLEARED", "BOUNCED"],
+  CLEARED: ["BOUNCED"],
+  BOUNCED: [],
+};
+
+const CHECK_STATUS_META: Record<CheckStatus, { label: string; className: string }> = {
+  RECORDED: { label: "Check recorded", className: "bg-gray-100 text-gray-600" },
+  DEPOSITED: { label: "Deposited", className: "bg-blue-100 text-blue-700" },
+  CLEARED: { label: "Cleared", className: "bg-success-bg text-success" },
+  BOUNCED: { label: "Bounced (NSF)", className: "bg-danger/10 text-danger" },
+};
+
+/**
+ * Where a CHECK payment sits in its lifecycle. `null` on non-check payments,
+ * and also on a payment that was manually voided (via the pre-P5-12
+ * void-payment action) rather than through the bounce flow — we can't know
+ * whether it bounced, so no badge is shown rather than guessing RECORDED.
+ */
+function effectiveCheckStatus(pmt: InvoicePayment): CheckStatus | null {
+  if (pmt.method !== "CHECK") return null;
+  if (pmt.checkStatus) return pmt.checkStatus;
+  if (pmt.status === "VOID") return null;
+  return "RECORDED";
+}
+
+function CheckStatusBadge({ status }: { status: CheckStatus }) {
+  const meta = CHECK_STATUS_META[status];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
+        meta.className,
+      )}
+    >
+      {status === "BOUNCED" && <XCircle className="h-3 w-3" />}
+      {status === "CLEARED" && <CheckCircle2 className="h-3 w-3" />}
+      {meta.label}
+    </span>
+  );
 }
 
 // ─── Status ribbon (diagonal corner badge on invoice doc) ─────────────────────
@@ -640,6 +692,80 @@ function DeletePaymentModal({
   );
 }
 
+// ─── Mark check bounced (NSF) modal ───────────────────────────────────────────
+
+function MarkBouncedModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  amount,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (nsfFeeAmount: number) => void;
+  amount: number;
+  isPending: boolean;
+}) {
+  const [fee, setFee] = React.useState("");
+
+  React.useEffect(() => {
+    if (isOpen) setFee("");
+  }, [isOpen]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const parsed = parseFloat(fee);
+    onConfirm(!fee || isNaN(parsed) || parsed < 0 ? 0 : parsed);
+  }
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Mark Check as Bounced?"
+      description={`This check for ${fmt(amount)} will be voided (NSF) and the invoice balance will re-open.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" type="submit" form="mark-bounced-form" loading={isPending}>
+            Mark Bounced
+          </Button>
+        </>
+      }
+    >
+      <form id="mark-bounced-form" onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex items-start gap-2 rounded-lg bg-danger/5 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+          <p className="text-sm text-danger">
+            This payment will be voided and no longer counts toward the paid amount. This action
+            cannot be undone.
+          </p>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            NSF Fee ($, optional)
+          </label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="0.00"
+            value={fee}
+            onChange={(e) => setFee(e.target.value)}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1 text-xs text-navy/70">
+            Adds a non-taxable fee line to the invoice for the returned-check charge.
+          </p>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── No-email guard modal ─────────────────────────────────────────────────────
 
 function NoEmailModal({
@@ -922,6 +1048,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
+  const setCheckStatus = useSetCheckStatus();
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [showAdjustPanel, setShowAdjustPanel] = React.useState(false);
@@ -933,6 +1060,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isNoEmailOpen, setIsNoEmailOpen] = React.useState(false);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
+  const [bouncingPayment, setBouncingPayment] = React.useState<InvoicePayment | null>(null);
   // Explicit Draft/Final PDF-stage override; null = follow the smart default.
   const [pdfVariantOverride, setPdfVariant] = React.useState<InvoicePdfVariant | null>(null);
   // Floating "View order" preview popup.
@@ -999,7 +1127,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const total = Number(invoice.total);
   const payments: InvoicePayment[] = invoice.payments ?? [];
-  const amountPaid = payments.reduce((s, p) => s + Number(p.amount), 0);
+  // P5-12: VOID payments (manually voided OR bounced checks) don't count
+  // toward the paid amount — a bounce must re-open the displayed balance.
+  const amountPaid = payments
+    .filter((p) => p.status !== "VOID")
+    .reduce((s, p) => s + Number(p.amount), 0);
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -1264,6 +1396,31 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
+  const handleSetCheckStatus = (paymentId: string, checkStatus: CheckStatus, nsfFeeAmount = 0) => {
+    setCheckStatus.mutate(
+      { invoiceId: invoice.id, paymentId, status: checkStatus, nsfFeeAmount },
+      {
+        onSuccess: () => {
+          if (checkStatus === "BOUNCED") setBouncingPayment(null);
+          toast({
+            title:
+              checkStatus === "BOUNCED"
+                ? "Check marked as bounced"
+                : `Check marked as ${checkStatus.toLowerCase()}`,
+            variant: checkStatus === "BOUNCED" ? "info" : "success",
+          });
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to update check status",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
   const handleDuplicate = () => {
     const dto = {
       customerId: invoice.customerId,
@@ -1327,10 +1484,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
-  // For edit payment: max amount = total - (all other payments)
+  // For edit payment: max amount = total - (all other non-VOID payments)
   const editPaymentMax = editingPayment
     ? total -
-      payments.filter((p) => p.id !== editingPayment.id).reduce((s, p) => s + Number(p.amount), 0)
+      payments
+        .filter((p) => p.id !== editingPayment.id && p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0)
     : 0;
 
   return (
@@ -1897,20 +2056,40 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             ) : (
               <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
                 {payments.map((pmt) => {
+                  const isVoided = pmt.status === "VOID";
                   const isEditable =
                     pmt.method !== "CREDIT_NOTE" &&
                     pmt.method !== "ADVANCE" &&
+                    !isVoided &&
                     status !== "VOID" &&
                     status !== "WRITTEN_OFF" &&
                     status !== "PAID";
+                  const checkStatusForRow = effectiveCheckStatus(pmt);
+                  // P5-12: available on any CHECK payment that isn't voided yet — a
+                  // paid invoice can still have its check advanced/bounced.
+                  const canSetCheckStatus = pmt.method === "CHECK" && !isVoided;
                   return (
                     <li key={pmt.id} className="group flex items-start gap-3 px-6 py-4">
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-bg">
-                        <CheckCircle2 className="h-4 w-4 text-success" />
+                      <div
+                        className={cn(
+                          "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+                          isVoided ? "bg-navy/5" : "bg-success-bg",
+                        )}
+                      >
+                        {isVoided ? (
+                          <XCircle className="h-4 w-4 text-navy/30" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4 text-success" />
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="money text-sm font-semibold text-navy">
+                          <span
+                            className={cn(
+                              "money text-sm font-semibold",
+                              isVoided ? "text-navy/40 line-through" : "text-navy",
+                            )}
+                          >
                             {fmt(Number(pmt.amount))}
                           </span>
                           <div className="flex items-center gap-1">
@@ -1935,7 +2114,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             )}
                           </div>
                         </div>
-                        <div className="mt-1 flex items-center gap-2">
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
                           <span
                             className={cn(
                               "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
@@ -1944,11 +2123,51 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           >
                             {methodLabel(pmt.method)}
                           </span>
+                          {checkStatusForRow && <CheckStatusBadge status={checkStatusForRow} />}
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
                         </div>
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
+                        {canSetCheckStatus && (
+                          <div className="mt-1.5">
+                            <DropdownMenu
+                              trigger={
+                                <button className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy">
+                                  Check
+                                  <ChevronDown className="h-3 w-3" />
+                                </button>
+                              }
+                              items={[
+                                {
+                                  label: "Mark deposited",
+                                  onClick: () => handleSetCheckStatus(pmt.id, "DEPOSITED"),
+                                  disabled:
+                                    !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
+                                      "DEPOSITED",
+                                    ),
+                                },
+                                {
+                                  label: "Mark cleared",
+                                  onClick: () => handleSetCheckStatus(pmt.id, "CLEARED"),
+                                  disabled:
+                                    !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
+                                      "CLEARED",
+                                    ),
+                                },
+                                {
+                                  label: "Mark bounced…",
+                                  onClick: () => setBouncingPayment(pmt),
+                                  danger: true,
+                                  disabled:
+                                    !CHECK_TRANSITIONS[checkStatusForRow ?? "RECORDED"].includes(
+                                      "BOUNCED",
+                                    ),
+                                },
+                              ]}
+                            />
+                          </div>
+                        )}
                       </div>
                     </li>
                   );
@@ -2019,6 +2238,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onConfirm={handleDeletePayment}
         amount={Number(deletingPayment?.amount ?? 0)}
         isPending={deletePayment.isPending}
+      />
+
+      <MarkBouncedModal
+        isOpen={!!bouncingPayment}
+        onClose={() => setBouncingPayment(null)}
+        onConfirm={(nsfFeeAmount) => {
+          if (!bouncingPayment) return;
+          handleSetCheckStatus(bouncingPayment.id, "BOUNCED", nsfFeeAmount);
+        }}
+        amount={Number(bouncingPayment?.amount ?? 0)}
+        isPending={setCheckStatus.isPending}
       />
 
       <VoidConfirmModal
