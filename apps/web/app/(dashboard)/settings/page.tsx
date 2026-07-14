@@ -64,7 +64,6 @@ import {
   useToggleDriverPermit,
   AppUser,
 } from "@/lib/api/users";
-import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
@@ -80,6 +79,7 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
+import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -381,109 +381,6 @@ function BusinessProfileTab() {
         </Button>
       </div>
     </form>
-  );
-}
-
-// ─── TAB 2: Notifications ─────────────────────────────────────────────────────
-
-function NotificationsTab() {
-  const { toast } = useToast();
-  const { data: notificationsStatus } = useNotificationsStatus();
-  const sendTest = useSendTestNotification();
-
-  const handleTestNotification = () => {
-    sendTest.mutate(undefined, {
-      onSuccess: (result) =>
-        toast({
-          title: "Test notification sent",
-          description: `Sent to ${result.sent} of ${result.deviceCount} device(s).`,
-          variant: "success",
-        }),
-      onError: (err) => toast({ title: "Failed", description: err.message, variant: "error" }),
-    });
-  };
-
-  return (
-    <div className="space-y-5">
-      <Card title="Push Notifications">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50">
-                <Bell className="h-5 w-5 text-brand-500" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-navy">Driver App Notifications</p>
-                <p className="text-xs text-navy/70">
-                  {notificationsStatus?.configured
-                    ? `${notificationsStatus.deviceCount} device(s) registered`
-                    : "Push notifications are not configured"}
-                </p>
-              </div>
-            </div>
-            {notificationsStatus?.configured ? (
-              <Badge variant="success" label="Active" />
-            ) : (
-              <Badge variant="warning" label="Not set up" />
-            )}
-          </div>
-
-          {!notificationsStatus?.configured && (
-            <div className="text-sm text-navy/70">
-              <p>
-                Push notifications allow drivers to receive real-time alerts for new orders and
-                route assignments. Contact your system administrator to enable this feature.
-              </p>
-            </div>
-          )}
-
-          {notificationsStatus?.configured && (
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-navy/70">
-                Notification Types
-              </p>
-              <div className="space-y-2">
-                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
-                  <input
-                    type="checkbox"
-                    defaultChecked
-                    className="h-4 w-4 rounded border-surface-border"
-                  />
-                  <span className="text-sm text-navy">Order Placed</span>
-                </label>
-                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
-                  <input
-                    type="checkbox"
-                    defaultChecked
-                    className="h-4 w-4 rounded border-surface-border"
-                  />
-                  <span className="text-sm text-navy">Order Delivered</span>
-                </label>
-                <label className="flex items-center gap-3 p-2 rounded hover:bg-surface-raised cursor-pointer">
-                  <input
-                    type="checkbox"
-                    defaultChecked
-                    className="h-4 w-4 rounded border-surface-border"
-                  />
-                  <span className="text-sm text-navy">Payment Received</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<Bell className="h-4 w-4" />}
-            loading={sendTest.isPending}
-            disabled={!notificationsStatus?.configured}
-            onClick={handleTestNotification}
-          >
-            Send Test Notification
-          </Button>
-        </div>
-      </Card>
-    </div>
   );
 }
 
@@ -3103,8 +3000,8 @@ export default function SettingsPage() {
           <BusinessProfileTab />
         </Tabs.Content>
 
-        <Tabs.Content value="notifications" className="mt-6 max-w-3xl focus:outline-none">
-          <NotificationsTab />
+        <Tabs.Content value="notifications" className="mt-6 max-w-4xl focus:outline-none">
+          <NotificationsSettingsTab />
         </Tabs.Content>
 
         <Tabs.Content value="users" className="mt-6 focus:outline-none">
