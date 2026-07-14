@@ -12,10 +12,24 @@ export interface CreditNote {
   customer?: { id: string; businessName: string; contactName?: string; address?: string };
   invoiceId?: string;
   status: CreditNoteStatus;
-  issueDate: string;
+  /** Optional on the wire in some responses — fall back to createdAt for display. */
+  issueDate?: string;
   amount: number;
+  /**
+   * P5-13: dollars already consumed by applications (manual or auto). Open/remaining
+   * balance is ALWAYS `amount - amountUsed`, never `amount` alone — a partially
+   * applied ISSUED note still carries a nonzero amountUsed.
+   */
+  amountUsed: number;
   reason: string;
   notes?: string;
+  /** P5-13: optional expiry — a computed filter, never a status flip. Past this date
+   *  the note is excluded from the wallet and can no longer be applied. */
+  expiresAt?: string;
+  /** P5-13: stamped on first application (manual or auto). */
+  appliedAt?: string;
+  /** P5-13: true if any application of this note happened via auto-apply at send. */
+  autoApplied?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +78,9 @@ export interface CreateCreditNoteDto {
    * Absent => a lump-sum credit that books no regulated reversal.
    */
   items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+  /** P5-13: optional ISO date after which this credit is excluded from the wallet
+   *  and can never be applied (manual or auto). Must be in the future. */
+  expiresAt?: string;
 }
 
 export function useCreateCreditNote() {

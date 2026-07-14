@@ -22,6 +22,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { CheckStatus, InvoiceStatus } from "@prisma/client";
 
 describe("InvoicesService", () => {
@@ -66,6 +67,14 @@ describe("InvoicesService", () => {
           useValue: {
             assertAuthorizedOrThrow: jest.fn().mockResolvedValue(undefined),
             checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }),
+          },
+        },
+        {
+          provide: CreditNotesService,
+          useValue: {
+            autoApplyOldestCreditsInTx: jest
+              .fn()
+              .mockResolvedValue({ applied: 0, invoiceStatus: null }),
           },
         },
       ],

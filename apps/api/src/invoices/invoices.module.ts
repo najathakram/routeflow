@@ -9,6 +9,7 @@ import { EmailModule } from "../email/email.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { RegulatedModule } from "../regulated/regulated.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
+import { CreditNotesModule } from "../credit-notes/credit-notes.module";
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthorizationsModule } from "../authorizations/authorizations.module";
     SystemConfigModule,
     RegulatedModule,
     AuthorizationsModule,
+    CreditNotesModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService, InvoicePdfService],

@@ -12,6 +12,8 @@ import {
   Send,
   Receipt,
   Search,
+  Zap,
+  AlertTriangle,
 } from "lucide-react";
 import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -239,6 +241,13 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
 
   const status = cn.status;
 
+  // P5-13: remaining balance + expiry — canonical predicate mirrors the API's
+  // `amount - amountUsed` / computed-expiry filter. Applying is gated on !isExpired
+  // regardless of status (an expired ISSUED note can never be applied again).
+  const remaining = Number(cn.amount) - Number(cn.amountUsed ?? 0);
+  const isExpired = !!cn.expiresAt && new Date(cn.expiresAt).getTime() <= Date.now();
+  const canApply = status === "ISSUED" && !isExpired;
+
   // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleIssue = () => {
@@ -317,9 +326,19 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold text-navy">{cn.creditNoteNumber}</h1>
           <Badge status={status} />
+          {cn.autoApplied && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[11px] font-medium text-brand-600">
+              <Zap className="h-3 w-3" /> Auto-applied
+            </span>
+          )}
+          {isExpired && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
+              <AlertTriangle className="h-3 w-3" /> Expired
+            </span>
+          )}
         </div>
 
         {/* Actions */}
@@ -351,6 +370,12 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                 size="sm"
                 leftIcon={<Receipt className="h-4 w-4" />}
                 onClick={() => setIsApplyOpen(true)}
+                disabled={!canApply}
+                title={
+                  isExpired
+                    ? "This credit note has expired and can no longer be applied."
+                    : undefined
+                }
               >
                 Apply to Invoice
               </Button>
@@ -414,7 +439,7 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate((cn as any).issueDate ?? cn.createdAt)}
+                  {fmtDate(cn.issueDate ?? cn.createdAt)}
                 </p>
                 {cn.invoiceId && (
                   <p className="mt-1 text-sm text-navy/70">
@@ -481,8 +506,24 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                 <dd className="font-bold text-navy">{fmt(Number(cn.amount))}</dd>
               </div>
               <div className="flex justify-between">
+                <dt className="text-navy/70">Applied</dt>
+                <dd className="text-navy">{fmt(Number(cn.amountUsed ?? 0))}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-navy/70">Remaining</dt>
+                <dd className={`font-semibold ${remaining > 0.001 ? "text-navy" : "text-navy/40"}`}>
+                  {fmt(Math.max(remaining, 0))}
+                </dd>
+              </div>
+              <div className="flex justify-between">
                 <dt className="text-navy/70">Issue Date</dt>
-                <dd className="text-navy">{fmtDate((cn as any).issueDate ?? cn.createdAt)}</dd>
+                <dd className="text-navy">{fmtDate(cn.issueDate ?? cn.createdAt)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-navy/70">Expires</dt>
+                <dd className={isExpired ? "font-medium text-danger" : "text-navy"}>
+                  {cn.expiresAt ? fmtDate(cn.expiresAt) : "Never"}
+                </dd>
               </div>
               {cn.invoiceId && (
                 <div className="flex justify-between">
@@ -521,9 +562,15 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
                   className="w-full"
                   leftIcon={<CheckCircle2 className="h-4 w-4" />}
                   onClick={() => setIsApplyOpen(true)}
+                  disabled={!canApply}
                 >
                   Apply to Invoice
                 </Button>
+                {isExpired && (
+                  <p className="text-xs text-danger">
+                    This credit note expired and can no longer be applied.
+                  </p>
+                )}
               </div>
             )}
           </Card>

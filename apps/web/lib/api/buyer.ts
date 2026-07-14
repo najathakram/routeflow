@@ -696,6 +696,46 @@ export function useBuyerAnalytics() {
   });
 }
 
+// ─── Account Statement / Store Credit wallet (P5-13) ──────────────────────────
+
+/**
+ * One row in the buyer's statement transaction ledger. `runningBalance` is the
+ * open/remaining amount for that row (e.g. for a CREDIT_NOTE it's the remaining
+ * balance `amount - amountUsed`, not the original amount — mirrors the API's
+ * canonical open-credit predicate so a partially-applied credit never looks
+ * bigger than what's actually left in the wallet).
+ */
+export interface BuyerStatementTransaction {
+  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
+  id: string;
+  description: string;
+  date: string;
+  amount: number;
+  runningBalance: number;
+  status: string;
+  /** CREDIT_NOTE only: optional expiry — a computed filter, never a status flip. */
+  expiresAt?: string | null;
+}
+
+export interface BuyerStatement {
+  outstandingAmount: number;
+  overdueAmount: number;
+  /** Wallet balance: Σ roundMoney(amount − amountUsed) over open, non-expired,
+   *  non-VOID credit notes. Never nets AdvancePayment in. */
+  availableCredit: number;
+  advanceBalance: number;
+  pendingOrdersAmount: number;
+  transactions: BuyerStatementTransaction[];
+}
+
+export function useBuyerStatement() {
+  return useQuery<BuyerStatement>({
+    queryKey: ["buyer", "statement"],
+    queryFn: () => buyerApiClient.get("/buyer/statement").then((r) => r.data),
+    staleTime: 30 * 1000,
+  });
+}
+
 // ─── Licenses & Authorizations (W6b — buyer self-serve) ──────────────────────────
 
 export interface BuyerAuthorizationRow {

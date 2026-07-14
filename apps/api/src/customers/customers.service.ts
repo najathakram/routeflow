@@ -12,6 +12,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { roundMoney } from "../common/pricing";
 import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
@@ -227,7 +228,15 @@ export class CustomersService {
         where: { customerId: customer.id },
         orderBy: { createdAt: "desc" },
         take: 50,
-        select: { id: true, creditNoteNumber: true, amount: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          creditNoteNumber: true,
+          amount: true,
+          status: true,
+          createdAt: true,
+          amountUsed: true,
+          expiresAt: true,
+        },
       }),
     ]);
 
@@ -250,9 +259,20 @@ export class CustomersService {
       )
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
-    const availableCredit = creditNotes
-      .filter((c) => c.status === "ISSUED")
-      .reduce((sum, c) => sum + Number(c.amount), 0);
+    // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
+    // (not face amount) prevents the double-count — a partial credit already sits on
+    // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
+    const now = new Date();
+    const availableCredit = roundMoney(
+      creditNotes
+        .filter(
+          (c) =>
+            c.status !== "VOID" &&
+            Number(c.amount) - Number(c.amountUsed) > 0.001 &&
+            (!c.expiresAt || new Date(c.expiresAt) > now),
+        )
+        .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
+    );
 
     const transactions = [
       ...invoicesWithPaid.map((i) => ({
@@ -264,15 +284,21 @@ export class CustomersService {
         runningBalance: -(Number(i.total) - i.amountPaid),
         status: i.status,
       })),
-      ...creditNotes.map((c) => ({
-        type: "CREDIT_NOTE" as const,
-        id: c.id,
-        description: `Credit Note #${c.creditNoteNumber}`,
-        date: c.createdAt.toISOString(),
-        amount: -Number(c.amount),
-        runningBalance: c.status === "APPLIED" ? 0 : Number(c.amount),
-        status: c.status,
-      })),
+      ...creditNotes.map((c) => {
+        const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
+        const remaining =
+          c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+        return {
+          type: "CREDIT_NOTE" as const,
+          id: c.id,
+          description: `Credit Note #${c.creditNoteNumber}`,
+          date: c.createdAt.toISOString(),
+          amount: -Number(c.amount),
+          runningBalance: remaining > 0.001 ? remaining : 0,
+          status: c.status,
+          expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
+        };
+      }),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     return {
@@ -575,7 +601,15 @@ export class CustomersService {
         where: { customerId },
         orderBy: { createdAt: "desc" },
         take: 50,
-        select: { id: true, creditNoteNumber: true, amount: true, status: true, createdAt: true },
+        select: {
+          id: true,
+          creditNoteNumber: true,
+          amount: true,
+          status: true,
+          createdAt: true,
+          amountUsed: true,
+          expiresAt: true,
+        },
       }),
       this.prisma.forTenant().advancePayment.findMany({
         where: { customerId },
@@ -618,9 +652,20 @@ export class CustomersService {
       )
       .reduce((sum, i) => sum + (Number(i.total) - i.amountPaid), 0);
 
-    const availableCredit = creditNotes
-      .filter((c) => c.status === "ISSUED")
-      .reduce((sum, c) => sum + Number(c.amount), 0);
+    // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
+    // (not face amount) prevents the double-count — a partial credit already sits on
+    // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
+    const now = new Date();
+    const availableCredit = roundMoney(
+      creditNotes
+        .filter(
+          (c) =>
+            c.status !== "VOID" &&
+            Number(c.amount) - Number(c.amountUsed) > 0.001 &&
+            (!c.expiresAt || new Date(c.expiresAt) > now),
+        )
+        .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
+    );
 
     const advanceBalance = advancePayments.reduce((sum, a) => sum + Number(a.balance), 0);
 
@@ -636,15 +681,21 @@ export class CustomersService {
         runningBalance: -(Number(i.total) - i.amountPaid),
         status: i.status,
       })),
-      ...creditNotes.map((c) => ({
-        type: "CREDIT_NOTE" as const,
-        id: c.id,
-        description: `Credit Note #${c.creditNoteNumber}`,
-        date: c.createdAt.toISOString(),
-        amount: -Number(c.amount),
-        runningBalance: c.status === "APPLIED" ? 0 : Number(c.amount),
-        status: c.status,
-      })),
+      ...creditNotes.map((c) => {
+        const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
+        const remaining =
+          c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+        return {
+          type: "CREDIT_NOTE" as const,
+          id: c.id,
+          description: `Credit Note #${c.creditNoteNumber}`,
+          date: c.createdAt.toISOString(),
+          amount: -Number(c.amount),
+          runningBalance: remaining > 0.001 ? remaining : 0,
+          status: c.status,
+          expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
+        };
+      }),
       ...advancePayments.map((a) => ({
         type: "ADVANCE_PAYMENT" as const,
         id: a.id,

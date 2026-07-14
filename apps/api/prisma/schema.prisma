@@ -2045,6 +2045,14 @@ model CreditNote {
   reason             String?
   status             CreditNoteStatus @default(ISSUED)
   appliedToInvoiceId String?
+
+  // P5-13 credits wallet: optional expiry, first-application stamp, and whether any
+  // application was automatic. "Expired" is a COMPUTED FILTER in code (excluded from
+  // the wallet, never auto-applies) — NEVER a status flip; an expired note keeps its
+  // amountUsed / already-issued InvoicePayments untouched.
+  expiresAt          DateTime?
+  appliedAt          DateTime?
+  autoApplied        Boolean          @default(false)
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   tenantId           String?
