@@ -32,6 +32,8 @@ import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
+import { StatementService } from "./statement.service";
+import { StatementPdfService } from "./statement-pdf.service";
 
 import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
@@ -83,6 +85,8 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     RegulatedVisibilityService,
     ReplenishmentService,
     ShelfService,
+    StatementService,
+    StatementPdfService,
     BuyerJwtStrategy,
     BuyerJwtAuthGuard,
     BuyerSellerContextGuard,

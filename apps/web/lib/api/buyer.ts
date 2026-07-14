@@ -782,6 +782,22 @@ export function useBuyerRemittance() {
   });
 }
 
+// ─── Monthly statements (P5-15) ───────────────────────────────────────────────
+export function useBuyerStatementMonths() {
+  return useQuery<{ months: string[] }>({
+    queryKey: ["buyer", "statement-months"],
+    queryFn: () => buyerApiClient.get("/buyer/statements").then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** Imperative (generation is slow): returns the presigned URL. Callers MUST
+ *  download via fetchPdfBlob + programmatic <a download> — never <a href>/window.open. */
+export async function fetchStatementPdfUrl(month: string): Promise<string> {
+  const r = await buyerApiClient.get<{ url: string }>(`/buyer/statements/${month}`);
+  return r.data.url;
+}
+
 // ─── Licenses & Authorizations (W6b — buyer self-serve) ──────────────────────────
 
 export interface BuyerAuthorizationRow {
