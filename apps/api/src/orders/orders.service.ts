@@ -1739,6 +1739,16 @@ export class OrdersService implements OnApplicationBootstrap {
               .filter((li) => li.productId && (li.boxes != null || li.pieces != null))
               .map((li) => li.productId as string),
           );
+          // Every product already carrying a line on this order. A boxed product
+          // that is NOT here is being ADDED fresh — on the buyer path its incoming
+          // `qty` is always PIECES (the portal create/merge is piece-denominated by
+          // design), so it must be split like a box-aware create. Only pre-existing
+          // box-UNAWARE lines (above) are protected from re-splitting.
+          const existingProductIds = new Set(
+            (order.lineItems ?? [])
+              .filter((li) => li.productId)
+              .map((li) => li.productId as string),
+          );
 
           await tx.orderItem.deleteMany({ where: { orderId } });
           for (const item of dto.items) {
@@ -1767,12 +1777,18 @@ export class OrdersService implements OnApplicationBootstrap {
             if (!item.qty) continue;
             const product = productMap.get(item.productId);
             if (!product) throw new BadRequestException(`Product ${item.productId} not found`);
-            // Boxed + piece-denominated line: `qty` is the piece count, so re-split it
-            // and prorate by the BOX price (mirrors createOrder + the operator path).
-            // Without this a plain qty*unitPrice over-charges boxed lines by
-            // unitsPerBox. Selling-unit lines (see pieceDenominated) keep qty*price.
+            // Boxed line: `qty` is the piece count, so re-split it and prorate by the
+            // BOX price (mirrors createOrder + the operator path). Without this a plain
+            // qty*unitPrice over-charges boxed lines by unitsPerBox. Split when the line
+            // is already piece-denominated OR (buyer path only) the product is brand-new
+            // to the order — a NEW boxed line added via the buyer create/merge path
+            // arrives piece-denominated too. Pre-existing box-UNAWARE selling-unit lines
+            // keep qty*price, and DRIVER edits keep the strict pieceDenominated gate.
             const upb = Number(product.unitsPerBox ?? 0);
-            const shouldSplit = upb > 1 && pieceDenominated.has(item.productId);
+            const shouldSplit =
+              upb > 1 &&
+              (pieceDenominated.has(item.productId) ||
+                (isBuyerEdit && !existingProductIds.has(item.productId)));
             const split = shouldSplit
               ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb })
               : null;

@@ -31,6 +31,40 @@ export interface BuyerProduct {
   stockLeft?: number | null;
 }
 
+// ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
+export type ChangeRequestType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
+export type ChangeRequestStatus = "PENDING" | "APPROVED" | "DECLINED";
+export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
+
+export interface ChangeRequest {
+  id: string;
+  orderId: string;
+  orderItemId: string | null;
+  productId: string | null;
+  type: ChangeRequestType;
+  status: ChangeRequestStatus;
+  payload: {
+    productId?: string;
+    qty?: number;
+    boxes?: number | null;
+    pieces?: number | null;
+    productName?: string;
+    orderItemId?: string;
+    newQty?: number;
+    text?: string;
+  };
+  note: string | null;
+  requestedByName: string | null;
+  requestedByRole: string | null;
+  resolvedByName: string | null;
+  resolvedByRole: string | null;
+  resolution: ChangeRequestResolution | null;
+  resolutionReason: string | null;
+  nextOrderId: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
 export interface BuyerOrder {
   id: string;
   orderNumber?: string;
@@ -47,13 +81,22 @@ export interface BuyerOrder {
     productId: string;
     qty: number;
     unitPrice: number;
-    /** Server-stored line subtotal (the agreed money). Prefer over recomputing. */
     subtotal?: number;
-    /** Boxed split; boxes==null means qty is in selling units. */
     boxes?: number | null;
     pieces?: number | null;
+    status?: string;
+    deliveredQty?: number;
     product?: { id: string; name: string; unit?: string };
   }>;
+  /** P5-09: post-dispatch change requests, newest first. */
+  changeRequests?: ChangeRequest[];
+  /** P5-08: server edit window — closes when the order's run dispatches. */
+  editWindow?: {
+    editable: boolean;
+    editableUntil: string | null;
+    closedReason: "DISPATCHED" | "STATUS" | null;
+  };
+  routeRun?: { status: string; startedAt?: string | null } | null;
 }
 
 export interface BuyerInvoiceItem {
@@ -401,6 +444,69 @@ export function useBuyerReplenishment() {
   });
 }
 
+// ─── Your Shelf (P5-06/07 twin — P5-16b) ──────────────────────────────────────
+export interface ShelfEstimate extends ReplenishmentEstimate {
+  imageUrl: string | null;
+  snoozed: boolean;
+  snoozedUntil: string | null;
+}
+export interface ShelfActiveOrder {
+  id: string;
+  orderNumber: string | null;
+  itemCount: number;
+  total: number;
+}
+export interface ShelfResponse {
+  estimates: ShelfEstimate[];
+  activeOrder: ShelfActiveOrder | null;
+}
+
+export function useBuyerShelf() {
+  return useQuery<ShelfResponse>({
+    queryKey: ["buyer-shelf"],
+    queryFn: () => buyerApiClient.get("/buyer/shelf").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+export function useSnoozeReplenishment() {
+  const qc = useQueryClient();
+  return useMutation<{ snoozedUntil: string }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.post(`/buyer/replenishment/${productId}/snooze`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer-replenishment"] });
+    },
+  });
+}
+
+export function useUnsnoozeReplenishment() {
+  const qc = useQueryClient();
+  return useMutation<{ ok: boolean }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.delete(`/buyer/replenishment/${productId}/snooze`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer-replenishment"] });
+    },
+  });
+}
+
+/** Box splits computed SERVER-side (shelf.service lowItems) — no client money math. */
+export function useAddAllLow() {
+  const qc = useQueryClient();
+  return useMutation<BuyerOrder | null, Error, void>({
+    mutationFn: () => buyerApiClient.post("/buyer/shelf/add-all-low").then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer-replenishment"] });
+      qc.invalidateQueries({ queryKey: ["buyer-orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
+    },
+  });
+}
+
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
@@ -433,7 +539,10 @@ export function useBuyerCreateOrder() {
     }
   >({
     mutationFn: (dto) => buyerApiClient.post("/buyer/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-orders"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer-shelf"] });
+    },
   });
 }
 
@@ -557,6 +666,29 @@ export function useBuyerUpdateOrderItems() {
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
       qc.invalidateQueries({ queryKey: ["buyer-order", orderId] });
+    },
+  });
+}
+
+// ─── Post-dispatch change requests (P5-10 twin — P5-16b) ──────────────────────
+export interface BuyerCreateChangeRequestInput {
+  orderId: string;
+  type: ChangeRequestType;
+  productId?: string;
+  orderItemId?: string;
+  qty?: number;
+  note?: string;
+}
+
+export function useBuyerCreateChangeRequest() {
+  const qc = useQueryClient();
+  return useMutation<ChangeRequest, Error, BuyerCreateChangeRequestInput>({
+    mutationFn: ({ orderId, ...dto }) =>
+      buyerApiClient.post(`/buyer/orders/${orderId}/change-requests`, dto).then((r) => r.data),
+    onSuccess: () => {
+      // ["buyer-orders"] prefix covers both list (["buyer-orders", params]) and
+      // detail (["buyer-orders", id]) keys.
+      qc.invalidateQueries({ queryKey: ["buyer-orders"] });
     },
   });
 }

@@ -1,11 +1,24 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useBuyerOrder, useBuyerCancelOrder } from "../../../lib/api/buyer";
+import {
+  useBuyerOrder,
+  useBuyerCancelOrder,
+  useBuyerCreateChangeRequest,
+} from "../../../lib/api/buyer";
+import {
+  orderEditable,
+  orderCancellable,
+  canRequestChange,
+  changeRequestChip,
+  describeChangeRequest,
+  describeResolution,
+} from "../../../lib/shelf-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -17,6 +30,8 @@ function orderPill(status: string) {
       return { variant: "brand" as const, label: "Confirmed" };
     case "DRAFT":
       return { variant: "gray" as const, label: "Draft" };
+    case "OUT_FOR_DELIVERY":
+      return { variant: "brand" as const, label: "Out for delivery" };
     case "IN_TRANSIT":
       return { variant: "brand" as const, label: "In transit" };
     case "DELIVERED":
@@ -28,11 +43,26 @@ function orderPill(status: string) {
   }
 }
 
+/** Map the P5-08/09 409 error codes to friendly copy. */
+function friendlyChangeRequestError(e: any): string {
+  const code = e?.response?.data?.code ?? e?.response?.data?.error;
+  if (code === "EDIT_WINDOW_OPEN") {
+    return "This order can still be edited directly — use Edit items instead.";
+  }
+  if (code === "CHANGE_WINDOW_CLOSED") {
+    return "This order is no longer accepting change requests.";
+  }
+  return e?.response?.data?.message ?? e?.message ?? "Try again.";
+}
+
 export default function CustomerOrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError } = useBuyerOrder(id);
   const cancelMut = useBuyerCancelOrder();
+  const createCrMut = useBuyerCreateChangeRequest();
+  const [crModalOpen, setCrModalOpen] = useState(false);
+  const [crNote, setCrNote] = useState("");
 
   if (isLoading) {
     return (
@@ -75,8 +105,9 @@ export default function CustomerOrderDetailScreen() {
       (s, i) => s + (i.subtotal != null ? Number(i.subtotal) : Number(i.qty) * Number(i.unitPrice)),
       0,
     );
-  const canCancel = order.status === "PENDING" || order.status === "DRAFT";
-  const canEdit = order.status === "PENDING" || order.status === "CONFIRMED";
+  const canCancel = orderCancellable(order);
+  const canEdit = orderEditable(order);
+  const canRequest = !canEdit && canRequestChange(order);
 
   const onCancel = () =>
     confirm(
@@ -88,10 +119,26 @@ export default function CustomerOrderDetailScreen() {
             showToast("Order cancelled");
             router.back();
           },
-          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          onError: (e: any) => showToast(friendlyChangeRequestError(e)),
         }),
       { confirmText: "Cancel order", destructive: true },
     );
+
+  const onSubmitChangeRequest = () => {
+    const note = crNote.trim();
+    if (!note) return;
+    createCrMut.mutate(
+      { orderId: id, type: "NOTE", note },
+      {
+        onSuccess: () => {
+          showToast("Change request sent");
+          setCrModalOpen(false);
+          setCrNote("");
+        },
+        onError: (e: any) => showToast(friendlyChangeRequestError(e)),
+      },
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -207,8 +254,101 @@ export default function CustomerOrderDetailScreen() {
           </View>
         ) : null}
 
+        {/* Request a change — post-dispatch, free-text NOTE only (NO prices/product search) */}
+        {canRequest ? (
+          <View style={{ paddingHorizontal: 16, marginTop: 24 }}>
+            <Pressable style={styles.editBtn} onPress={() => setCrModalOpen(true)}>
+              <Text style={styles.editBtnText}>Request a change</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Change requests */}
+        {order.changeRequests && order.changeRequests.length > 0 ? (
+          <>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Change requests</Text>
+            </View>
+            <View style={styles.itemsList}>
+              {order.changeRequests.map((cr, i) => {
+                const { title, detail } = describeChangeRequest(cr, order.lineItems);
+                const chip = changeRequestChip(cr.status);
+                const resolution = describeResolution(cr);
+                return (
+                  <View
+                    key={cr.id}
+                    style={[
+                      styles.crRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemName}>{title}</Text>
+                      {detail ? <Text style={styles.itemMeta}>{detail}</Text> : null}
+                      {resolution ? <Text style={styles.itemMeta}>{resolution}</Text> : null}
+                    </View>
+                    <Pill variant={chip.variant} small>
+                      {chip.label}
+                    </Pill>
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Free-text NOTE composer — NO prices, NO product search */}
+      <Modal
+        visible={crModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setCrModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Request a change</Text>
+            <Text style={styles.itemMeta}>
+              Tell your driver or the seller what you'd like changed. No prices — the seller will
+              confirm the details.
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              value={crNote}
+              onChangeText={(t) => setCrNote(t.slice(0, 1000))}
+              placeholder="e.g. Please add 2 more boxes of..."
+              placeholderTextColor={ios.label2}
+              multiline
+              maxLength={1000}
+            />
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnCancel]}
+                onPress={() => {
+                  setCrModalOpen(false);
+                  setCrNote("");
+                }}
+              >
+                <Text style={styles.modalBtnCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnSubmit]}
+                onPress={onSubmitChangeRequest}
+                disabled={createCrMut.isPending || !crNote.trim()}
+              >
+                <Text style={styles.modalBtnSubmitText}>
+                  {createCrMut.isPending ? "Sending…" : "Send"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -276,4 +416,55 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cancelBtnText: { color: ios.system.redInk, fontSize: 15, fontFamily: "Inter_500Medium" },
+  crRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: ios.bgElev,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    gap: 10,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    letterSpacing: -0.3,
+  },
+  modalInput: {
+    minHeight: 100,
+    borderWidth: 1,
+    borderColor: ios.separator,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+    textAlignVertical: "top",
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+  },
+  modalBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  modalBtnCancel: { backgroundColor: ios.fill3 },
+  modalBtnCancelText: { color: ios.label, fontSize: 15, fontFamily: "Inter_500Medium" },
+  modalBtnSubmit: { backgroundColor: ios.brand },
+  modalBtnSubmitText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });
