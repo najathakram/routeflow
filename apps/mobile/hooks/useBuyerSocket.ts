@@ -119,6 +119,8 @@ export function useBuyerSocket() {
       socket.on("invoice.updated", () => {
         void qc.invalidateQueries({ queryKey: ["buyer-invoices"] });
         void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-payments"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-statement"] });
       });
 
       socket.on("inventory.low.stock", () => {
@@ -128,6 +130,7 @@ export function useBuyerSocket() {
       socket.on("creditNote.created", () => {
         void qc.invalidateQueries({ queryKey: ["buyer-credit-notes"] });
         void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
+        void qc.invalidateQueries({ queryKey: ["buyer-statement"] });
       });
     };
 

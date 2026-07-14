@@ -1,4 +1,10 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { buyerApiClient } from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -109,13 +115,25 @@ export interface BuyerInvoiceItem {
   product?: { id: string; name: string; unit?: string };
 }
 
+/** Check lifecycle states (P5-12). Only ever set when method = CHECK. */
+export type BuyerCheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
+
+/** Raw InvoicePayment row from GET /buyer/invoices/:id (no DTO mapping). Field
+ *  is `method`; `paymentMethod` kept only for older cached shapes. Decimal
+ *  fields may arrive as strings — render via Number(), never do arithmetic. */
 export interface BuyerInvoicePayment {
   id: string;
   amount: number;
   createdAt: string;
+  method?: string;
+  /** @deprecated the API returns `method` — kept for older cached shapes. */
   paymentMethod?: string;
   reference?: string;
   notes?: string;
+  status?: "DRAFT" | "PAID" | "VOID" | string;
+  checkStatus?: BuyerCheckStatus | null;
+  nsfFeeAmount?: number | string | null;
+  paidAt?: string;
 }
 
 export interface BuyerInvoice {
@@ -620,6 +638,107 @@ export function useBuyerAnalytics() {
     queryFn: () => buyerApiClient.get("/buyer/analytics").then((r) => r.data),
     staleTime: 60_000,
   });
+}
+
+// ─── Payments / credits / statement (P5-12/13/14/15 twins — P5-16c) ──────────
+// Mobile mirrors of the SHIPPED web hooks. Same endpoints/shapes; dash-style
+// keys so useBuyerSocket prefix-invalidation covers them. ALL money figures are
+// server values — render verbatim, NEVER recompute.
+
+export interface BuyerStatementTransaction {
+  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
+  id: string;
+  description: string;
+  date: string;
+  amount: number;
+  /** Server-computed OPEN/remaining amount (CREDIT_NOTE = amount − amountUsed). */
+  runningBalance: number;
+  status: string;
+  expiresAt?: string | null;
+}
+
+export interface BuyerStatement {
+  outstandingAmount: number;
+  overdueAmount: number;
+  /** Wallet balance (server Σ roundMoney(amount − amountUsed) over open credits). NEVER re-derive. */
+  availableCredit: number;
+  advanceBalance: number;
+  pendingOrdersAmount: number;
+  transactions: BuyerStatementTransaction[];
+}
+
+export function useBuyerStatement() {
+  return useQuery<BuyerStatement>({
+    queryKey: ["buyer-statement"],
+    queryFn: () => buyerApiClient.get("/buyer/statement").then((r) => r.data),
+    staleTime: 30_000,
+  });
+}
+
+export interface BuyerPayment {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  amount: number;
+  method: string;
+  status: "DRAFT" | "PAID" | "VOID";
+  checkStatus: BuyerCheckStatus | null;
+  nsfFeeAmount: number | null;
+  paidAt: string;
+}
+export interface BuyerPaymentsMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export function useBuyerPayments(params?: { page?: number; limit?: number }) {
+  return useQuery<{ data: BuyerPayment[]; meta: BuyerPaymentsMeta }>({
+    queryKey: ["buyer-payments", params],
+    queryFn: () => buyerApiClient.get("/buyer/payments", { params }).then((r) => r.data),
+    staleTime: 30_000,
+    // Retain the prior page's rows while a Prev/Next fetch is in flight so the
+    // Payments screen doesn't blank to a full-page spinner / reset scroll on
+    // every pagination tap (mirrors web scoping the load gate to the history).
+    placeholderData: keepPreviousData,
+  });
+}
+
+export interface BuyerRemittance {
+  payToName?: string;
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  routingNumber?: string;
+  achInstructions?: string;
+  wireInstructions?: string;
+  checkInstructions?: string;
+  mailingAddress?: string;
+  notes?: string;
+}
+
+export function useBuyerRemittance() {
+  return useQuery<BuyerRemittance>({
+    queryKey: ["buyer-remittance"],
+    queryFn: () => buyerApiClient.get("/buyer/remittance").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useBuyerStatementMonths() {
+  return useQuery<{ months: string[] }>({
+    queryKey: ["buyer-statement-months"],
+    queryFn: () => buyerApiClient.get("/buyer/statements").then((r) => r.data),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Imperative (PDF gen is slow): returns the PRESIGNED URL (no JWT) → hand to
+ *  sharePdf(). No 401: only this call is authenticated, the download is not. */
+export async function fetchStatementPdfUrl(month: string): Promise<string> {
+  const r = await buyerApiClient.get<{ url: string }>(`/buyer/statements/${month}`);
+  return r.data.url;
 }
 
 // ─── Standing orders ──────────────────────────────────────────────────────────
