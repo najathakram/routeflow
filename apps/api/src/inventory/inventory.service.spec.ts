@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { StockAlertService } from "../stock-alerts/stock-alert.service";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -21,12 +22,18 @@ const product = (overrides: Record<string, unknown> = {}) => ({
 describe("InventoryService", () => {
   let service: InventoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let stockAlerts: { fireForProducts: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    stockAlerts = { fireForProducts: jest.fn().mockResolvedValue({ notified: 0 }) };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [InventoryService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        InventoryService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StockAlertService, useValue: stockAlerts },
+      ],
     }).compile();
 
     service = module.get<InventoryService>(InventoryService);
@@ -92,6 +99,55 @@ describe("InventoryService", () => {
       // Snapshot carries the UNCHANGED average forward
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(movementArgs.avgCostAfter.toString()).toBe("2");
+    });
+
+    // ─── P5-03: stock-alert fire hook ─────────────────────────────────────────
+
+    it("fires stock alerts for the product after the tx commits", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordPurchase(
+        { productId: "prod-1", quantity: 5, unitCost: 3.5 } as any,
+        "user-1",
+      );
+
+      expect(stockAlerts.fireForProducts).toHaveBeenCalledWith(["prod-1"]);
+    });
+
+    it("still resolves the inventory write when the stock-alert fire rejects", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+      stockAlerts.fireForProducts.mockRejectedValue(new Error("push provider down"));
+
+      await expect(
+        service.recordPurchase(
+          { productId: "prod-1", quantity: 5, unitCost: 3.5 } as any,
+          "user-1",
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  // ─── recordAdjustment — P5-03 stock-alert fire hook ────────────────────────────
+
+  describe("recordAdjustment", () => {
+    it("fires stock alerts on a positive adjustment", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordAdjustment({ productId: "prod-1", quantity: 5 } as any, "user-1");
+
+      expect(stockAlerts.fireForProducts).toHaveBeenCalledWith(["prod-1"]);
+    });
+
+    it("does NOT fire stock alerts on a negative adjustment", async () => {
+      prisma.product.findUnique.mockResolvedValue(product());
+      prisma.stockMovement.count.mockResolvedValue(0);
+
+      await service.recordAdjustment({ productId: "prod-1", quantity: -3 } as any, "user-1");
+
+      expect(stockAlerts.fireForProducts).not.toHaveBeenCalled();
     });
   });
 

@@ -18,6 +18,7 @@ import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
+import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { OrdersService } from "../orders/orders.service";
 import { ChangeRequestsService } from "../orders/change-requests.service";
@@ -50,6 +51,12 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
   let templatesService: jest.Mocked<Pick<OrderTemplatesService, "findAllForUser">>;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
+  let stockAlertService: {
+    subscribe: jest.Mock;
+    unsubscribe: jest.Mock;
+    subscriptionsFor: jest.Mock;
+    isSubscribed: jest.Mock;
+  };
 
   beforeEach(async () => {
     ordersService = {
@@ -70,6 +77,12 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
       listForBuyer: jest.fn().mockResolvedValue([]),
       submit: jest.fn().mockResolvedValue({ id: "auth-1", status: "PENDING_REVIEW" }),
     };
+    stockAlertService = {
+      subscribe: jest.fn().mockResolvedValue({ subscribed: true }),
+      unsubscribe: jest.fn().mockResolvedValue({ subscribed: false }),
+      subscriptionsFor: jest.fn().mockResolvedValue({ productIds: [] }),
+      isSubscribed: jest.fn().mockResolvedValue(false),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
@@ -79,6 +92,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: BuyerDashboardService, useValue: {} },
         { provide: ReplenishmentService, useValue: {} },
         { provide: ShelfService, useValue: shelfService },
+        { provide: StockAlertService, useValue: stockAlertService },
         { provide: PromotionsService, useValue: {} },
         { provide: OrdersService, useValue: ordersService },
         { provide: ChangeRequestsService, useValue: {} },
@@ -246,5 +260,17 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
 
     await controller.unsnoozeReplenishment("prod-1", MOCK_CTX as any);
     expect(shelfService.unsnooze).toHaveBeenCalledWith("cust-abc", "prod-1");
+  });
+
+  // ─── Stock alerts / Notify-me (P5-03) ───────────────────────────────────────
+
+  it("subscribeStockAlert: delegates with context customerId + tenantId", () => {
+    controller.subscribeStockAlert("prod-9", MOCK_CTX as any);
+    expect(stockAlertService.subscribe).toHaveBeenCalledWith("cust-abc", "prod-9", "tenant-xyz");
+  });
+
+  it("unsubscribeStockAlert: delegates with context customerId", () => {
+    controller.unsubscribeStockAlert("prod-9", MOCK_CTX as any);
+    expect(stockAlertService.unsubscribe).toHaveBeenCalledWith("cust-abc", "prod-9");
   });
 });

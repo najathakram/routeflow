@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
@@ -12,10 +12,36 @@ import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
+import { StockAlertService } from "../stock-alerts/stock-alert.service";
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(InventoryService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly stockAlerts: StockAlertService,
+  ) {}
+
+  /**
+   * P5-03: fire Notify-me stock alerts for products whose stock just
+   * increased. Always called AFTER the inventory transaction has committed
+   * (never inside it) and NEVER throws — a slow or failed push must not roll
+   * back or break the stock write. Idempotent across paths: the service only
+   * transitions PENDING → NOTIFIED, so a second call fires nothing.
+   *
+   * Fire-and-forget: the fan-out (one push per pending subscriber) can be slow
+   * for a heavily-subscribed product, so it must NOT block the operator's HTTP
+   * response. We start it and return immediately; the tenant AsyncLocalStorage
+   * context is retained by the detached continuations, and any error is logged
+   * (fireForProducts already swallows per-alert push failures internally).
+   */
+  private fireStockAlerts(productIds: string[]): void {
+    if (productIds.length === 0) return;
+    void this.stockAlerts.fireForProducts(productIds).catch((err) => {
+      this.logger.warn(`Stock-alert fire failed (non-fatal): ${(err as Error).message}`);
+    });
+  }
 
   // ─── Stock overview ──────────────────────────────────────────────────────────
 
@@ -200,7 +226,7 @@ export class InventoryService {
     const updatesAverage = product.costingMethod !== CostingMethod.STANDARD;
     const avgCostAfter = updatesAverage ? newAvgCost : (product.averageCost ?? null);
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       // Always create a StockLot for lot-tracking (used by FIFO/LIFO)
       await tx.stockLot.create({
         data: {
@@ -252,6 +278,9 @@ export class InventoryService {
 
       return movement;
     });
+
+    this.fireStockAlerts([dto.productId]);
+    return result;
   }
 
   async recordAdjustment(dto: RecordAdjustmentDto, performedById: string) {
@@ -263,7 +292,7 @@ export class InventoryService {
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       const movement = await tx.stockMovement.create({
         data: {
           productId: dto.productId,
@@ -307,6 +336,9 @@ export class InventoryService {
 
       return movement;
     });
+
+    if (qty.gt(0)) this.fireStockAlerts([dto.productId]);
+    return result;
   }
 
   // ─── Stock count / audit session ─────────────────────────────────────────────
@@ -328,8 +360,9 @@ export class InventoryService {
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
+    const restockedProductIds: string[] = [];
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       // Idempotency: a client whose response was lost (timeout / 502) may re-post
       // the SAME sessionId. Without this, every ADD delta would be applied twice
       // and lots duplicated. If this session already wrote movements, return the
@@ -404,6 +437,7 @@ export class InventoryService {
               notes: itemNotes,
             },
           });
+          restockedProductIds.push(item.productId);
         }
       }
 
@@ -415,6 +449,9 @@ export class InventoryService {
         movementIds,
       };
     });
+
+    this.fireStockAlerts(restockedProductIds);
+    return result;
   }
 
   /**
@@ -623,7 +660,9 @@ export class InventoryService {
   }
 
   async receivePurchaseOrder(id: string, dto: any, userId: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    const restockedProductIds: string[] = [];
+
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       const po = await tx.purchaseOrder.findUnique({ where: { id }, include: { items: true } });
       if (!po) throw new NotFoundException("PO not found");
       if (po.status === "CLOSED")
@@ -641,6 +680,7 @@ export class InventoryService {
         const maxReceivable = Number(item.qtyOrdered) - Number(item.qtyReceived);
         const actualQty = Math.min(receivedQty, maxReceivable);
         if (actualQty <= 0) continue;
+        restockedProductIds.push(item.productId);
         const newQtyReceived = Number(item.qtyReceived) + actualQty;
         await tx.purchaseOrderItem.update({
           where: { id: item.id },
@@ -708,6 +748,9 @@ export class InventoryService {
         },
       });
     });
+
+    this.fireStockAlerts(restockedProductIds);
+    return result;
   }
 
   async closePurchaseOrder(id: string) {

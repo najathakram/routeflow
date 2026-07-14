@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-import { CostingMethod } from "@prisma/client";
+import { CostingMethod, StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
@@ -229,7 +229,11 @@ export class ProductsService {
     // Attach presigned image URLs so the frontend can render them directly
     const imageUrls =
       product.imageKeys.length > 0 ? await this.storage.presignedUrls(product.imageKeys) : [];
-    return { ...product, imageUrls };
+    // P5-03: operator waitlist count — additive, buyer-facing DTOs never see it.
+    const stockAlertCount = await this.prisma.forTenant().stockAlert.count({
+      where: { productId: id, status: StockAlertStatus.PENDING },
+    });
+    return { ...product, imageUrls, stockAlertCount };
   }
 
   async uploadImage(

@@ -119,6 +119,8 @@ export interface ApiProduct {
   trackedCategory?: { id: string; name: string } | null;
   trackedSubcategoryId?: string | null;
   trackedSubcategory?: { id: string; name: string; trackedCategoryId: string } | null;
+  /** Number of buyers waiting on a restock notification (P5-03). */
+  stockAlertCount?: number;
 }
 
 export interface ZohoImportItem {

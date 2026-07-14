@@ -386,6 +386,7 @@ model Tenant {
   orderRevisions         OrderRevision[]
   changeRequests         ChangeRequest[]
   replenishmentSnoozes   ReplenishmentSnooze[]
+  stockAlerts            StockAlert[]
 
   @@index([slug])
   @@index([status])
@@ -741,6 +742,7 @@ model Customer {
   authorizations    CustomerAuthorization[]
   authOverrides     AuthorizationOverride[]
   replenishmentSnoozes ReplenishmentSnooze[]
+  stockAlerts          StockAlert[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -904,6 +906,7 @@ model Product {
   buyerFavorites        BuyerFavorite[]
   promotionProducts     PromotionProduct[]
   replenishmentSnoozes  ReplenishmentSnooze[]
+  stockAlerts           StockAlert[]
   parent                Product?               @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants              Product[]              @relation("ProductVariants")
   trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
@@ -2733,6 +2736,36 @@ model ReplenishmentSnooze {
   @@unique([tenantId, customerId, productId])
   @@index([customerId])
   @@index([tenantId])
+}
+
+// ─── Stock Alerts (P5-03 Notify-me) ───────────────────────────────────────────
+
+/// Buyer "notify me when back in stock" subscription. One row per
+/// (tenant, customer, product). A restock flips PENDING → NOTIFIED exactly once
+/// (StockAlertService.fireForProducts only ever transitions PENDING rows, so
+/// re-firing from multiple stock-increase paths is idempotent) and stamps
+/// notifiedAt. Re-subscribing upserts the row back to PENDING.
+model StockAlert {
+  id         String           @id @default(uuid())
+  tenantId   String?
+  customerId String
+  productId  String
+  status     StockAlertStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  notifiedAt DateTime?
+
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, customerId, productId])
+  @@index([productId])
+  @@index([tenantId])
+}
+
+enum StockAlertStatus {
+  PENDING
+  NOTIFIED
 }
 
 // ─── Tobacco Compliance (tobacco_dealer addon) ────────────────────────────────

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Package, Heart, Plus } from "lucide-react";
+import { Package, Heart, Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@/lib/pricing";
 import type { BuyerProduct, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
@@ -72,6 +72,9 @@ export interface ProductTileProps {
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
   onToggleFavorite: () => void;
+  /** P5-03: Notify-me subscribed state + toggle. Only rendered when the tile is OOS and not in the cart. */
+  isAlertSubscribed?: boolean;
+  onToggleStockAlert?: () => void;
 }
 
 export function ProductTile({
@@ -83,6 +86,8 @@ export function ProductTile({
   onAdd,
   onUpdateQty,
   onToggleFavorite,
+  isAlertSubscribed,
+  onToggleStockAlert,
 }: ProductTileProps) {
   const images = product.imageUrls?.length
     ? product.imageUrls
@@ -189,6 +194,18 @@ export function ProductTile({
 
           {cartItem ? (
             <QtyStepper qty={cartItem.qty} onUpdate={onUpdateQty} onRemove={() => onUpdateQty(0)} />
+          ) : outOfStock && onToggleStockAlert ? (
+            <button
+              onClick={onToggleStockAlert}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                isAlertSubscribed
+                  ? "border border-buyer-500 text-buyer-600 hover:bg-buyer-50"
+                  : "bg-buyer-500 text-white hover:bg-buyer-600"
+              }`}
+            >
+              <Bell className={`h-3.5 w-3.5 ${isAlertSubscribed ? "fill-current" : ""}`} />
+              {isAlertSubscribed ? "Notifying ✓" : "Notify me"}
+            </button>
           ) : (
             <button
               onClick={onAdd}
