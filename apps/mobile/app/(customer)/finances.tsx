@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -8,6 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerAnalytics } from "../../lib/api/buyer";
@@ -148,6 +150,18 @@ export default function BuyerFinancesScreen() {
               ))
             )}
           </View>
+          {/* Cross-link to the dedicated Payments screen (wallet/history/statement) */}
+          <Pressable style={styles.crossLink} onPress={() => router.push("/(customer)/payments")}>
+            <View style={styles.crossLinkIcon}>
+              <Ionicons name="card-outline" size={16} color={ios.system.greenInk} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.crossLinkTitle}>All payments &amp; statements</Text>
+              <Text style={styles.crossLinkSub}>Wallet, payment history, monthly statement</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={ios.gray[3]} />
+          </Pressable>
+
           <View style={{ height: 24 }} />
         </ScrollView>
       )}
@@ -231,4 +245,22 @@ const styles = StyleSheet.create({
     color: ios.system.greenInk,
     fontVariant: ["tabular-nums"],
   },
+  crossLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 14,
+  },
+  crossLinkIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: ios.system.greenWash,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  crossLinkTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  crossLinkSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 1 },
 });

@@ -100,8 +100,15 @@ export default function CustomerMoreScreen() {
               // Real unpaid count lives on /buyer/analytics (fetched inside the
               // Finances screen); the dashboard stats don't carry it, so keep the
               // subtitle static rather than show a hardcoded "0 unpaid".
-              subtitle="Spend & statements"
+              subtitle="Spend & invoice status"
               onPress={() => router.push("/(customer)/finances")}
+            />
+            <MenuRow
+              icon={<Ionicons name="card-outline" size={16} color={ios.system.greenInk} />}
+              iconBg={ios.system.greenWash}
+              title="Payments"
+              subtitle="Wallet, history & statements"
+              onPress={() => router.push("/(customer)/payments")}
             />
             <MenuRow
               icon={<Ionicons name="refresh-outline" size={16} color={ios.system.orangeInk} />}

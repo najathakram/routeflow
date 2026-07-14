@@ -12,6 +12,8 @@ import {
 } from "../../../lib/api/buyer";
 import { sharePdf } from "../../../lib/share-pdf";
 import { showToast } from "../../../lib/toast";
+import { checkBadgeFor } from "../../../lib/check-badge";
+import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
@@ -37,11 +39,6 @@ function fmtDate(s?: string | null) {
     day: "numeric",
     year: "numeric",
   });
-}
-
-function fmtPaymentMethod(m?: string | null) {
-  if (!m) return "Payment";
-  return m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 }
 
 export default function CustomerInvoiceDetailScreen() {
@@ -162,24 +159,47 @@ export default function CustomerInvoiceDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Payments</Text>
             <View style={styles.detailCard}>
-              {invoice.payments.map((pmt, i) => (
-                <View
-                  key={pmt.id ?? i}
-                  style={[
-                    styles.detailRow,
-                    i === invoice.payments!.length - 1 && { borderBottomWidth: 0 },
-                  ]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.detailLabel}>{fmtPaymentMethod(pmt.paymentMethod)}</Text>
-                    {pmt.reference ? (
-                      <Text style={styles.detailMeta}>Ref: {pmt.reference}</Text>
-                    ) : null}
-                    <Text style={styles.detailMeta}>{fmtDate(pmt.createdAt)}</Text>
+              {invoice.payments.map((pmt, i) => {
+                const method = pmt.method ?? pmt.paymentMethod;
+                const badge = checkBadgeFor({
+                  method,
+                  status: pmt.status,
+                  checkStatus: pmt.checkStatus,
+                });
+                const flags = paymentRowFlags(pmt);
+                return (
+                  <View
+                    key={pmt.id ?? i}
+                    style={[
+                      styles.detailRow,
+                      i === invoice.payments!.length - 1 && { borderBottomWidth: 0 },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Text style={styles.detailLabel}>{formatPaymentMethod(method)}</Text>
+                        {badge ? (
+                          <Pill variant={badge.variant} small>
+                            {badge.label}
+                          </Pill>
+                        ) : null}
+                      </View>
+                      {pmt.reference ? (
+                        <Text style={styles.detailMeta}>Ref: {pmt.reference}</Text>
+                      ) : null}
+                      <Text style={styles.detailMeta}>{fmtDate(pmt.paidAt ?? pmt.createdAt)}</Text>
+                      {flags.showNsfFee ? (
+                        <Text style={styles.nsfNote}>
+                          + ${Number(pmt.nsfFeeAmount).toFixed(2)} NSF fee
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.detailValue, flags.voided && styles.voidAmount]}>
+                      ${Number(pmt.amount).toFixed(2)}
+                    </Text>
                   </View>
-                  <Text style={styles.detailValue}>${Number(pmt.amount).toFixed(2)}</Text>
-                </View>
-              ))}
+                );
+              })}
             </View>
           </View>
         ) : null}
@@ -320,5 +340,15 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: ios.label,
     textAlign: "right",
+  },
+  nsfNote: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.system.redInk,
+    marginTop: 2,
+  },
+  voidAmount: {
+    color: ios.system.redInk,
+    textDecorationLine: "line-through",
   },
 });
