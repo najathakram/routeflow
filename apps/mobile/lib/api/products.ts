@@ -70,6 +70,10 @@ export interface CreateProductDto {
   parentProductId?: string;
   /** Flavor/variety label; required when parentProductId is set. */
   variantName?: string;
+  /** Regulated section tag. Create: omit when unset. Edit: send `null` to clear. */
+  trackedCategoryId?: string | null;
+  /** Regulated subcategory tag (must belong to trackedCategoryId). Same null-to-clear rule. */
+  trackedSubcategoryId?: string | null;
 }
 
 /**
