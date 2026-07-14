@@ -1300,6 +1300,37 @@ describe("OrdersService", () => {
       expect(created.pieces).toBeNull();
     });
 
+    it("customer ADD of a NEW boxed line (not yet on the order) splits + prorates by the box", async () => {
+      // Buyer create/merge path (buyer.controller.createOrder) folds a shelf/cart
+      // Add into an active order and re-runs updateOrderItems as CUSTOMER. A boxed
+      // product NOT already on the order has no line in `pieceDenominated`, yet its
+      // incoming qty is PIECES (24 = 2 boxes of 12). It must split to boxes=2 and
+      // price 2 × $30 = $60 — NOT store 24 boxes at $30 = $720 (unitsPerBox× over).
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-box-new", pricePerUnit: 30, unitsPerBox: 12 },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-box-new", qty: 24 }] },
+        customerPayload,
+      );
+
+      const created = prisma.orderItem.create.mock.calls[0][0].data;
+      expect(created.qty).toBe(24);
+      expect(created.boxes).toBe(2);
+      expect(created.pieces).toBe(0);
+      expect(created.subtotal).toBeCloseTo(60, 2); // 2 boxes × $30
+      expect(created.subtotal).not.toBeCloseTo(720, 2);
+    });
+
     it("operator UPDATE prorates a boxed line when the client sends boxes/pieces", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,

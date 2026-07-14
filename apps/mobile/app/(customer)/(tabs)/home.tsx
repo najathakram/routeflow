@@ -182,6 +182,13 @@ export default function BuyerHomeScreen() {
                   onPress={() => router.push("/(customer)/(tabs)/invoices")}
                 />
                 <ActionRow
+                  icon="cube-outline"
+                  iconBg={ios.system.orangeWash}
+                  iconColor={ios.system.orangeInk}
+                  title="Your Shelf"
+                  onPress={() => router.push("/(customer)/shelf")}
+                />
+                <ActionRow
                   icon="refresh-outline"
                   iconBg={ios.system.orangeWash}
                   iconColor={ios.system.orangeInk}
