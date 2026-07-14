@@ -256,4 +256,111 @@ describe("BookkeepingService", () => {
       });
     });
   });
+
+  // ─── P5-12: VOID payments must never count as money received ────────────────
+
+  describe("P5-12 — VOID payments excluded from bookkeeping money figures", () => {
+    // The Prisma mock does not itself apply relation `where` filters, so we
+    // simulate the DB: return an invoice's payments already filtered per the
+    // scoped include/select the service passes. This ties each assertion to the
+    // service actually excluding VOID — a regressed (unfiltered) query would see
+    // the full `_allPayments` set (including the bounced payment) and fail.
+    const applyScopedPayments = (row: any, args: any) => {
+      const not =
+        args?.include?.payments?.where?.status?.not ?? args?.select?.payments?.where?.status?.not;
+      const all: any[] = row._allPayments ?? [];
+      const payments = not ? all.filter((p) => p.status !== not) : all;
+      const { _allPayments, ...rest } = row;
+      return { ...rest, payments };
+    };
+
+    it("(a) recordPayment: a fully-bounced (VOID) payment leaves the invoice open, so a new payment is NOT rejected as already paid", async () => {
+      // Invoice fully "covered" by a single VOID (bounced-check) payment.
+      const bouncedInvoice = {
+        id: "inv-void",
+        customerId: "cust-1",
+        invoiceNumber: "INV-VOID",
+        status: "OVERDUE" as const,
+        issueDate: new Date(),
+        total: 100,
+        _allPayments: [{ id: "pay-1", amount: 100, status: "VOID" }],
+      };
+
+      prisma.invoice.findUnique.mockImplementation(async (args: any) =>
+        applyScopedPayments(bouncedInvoice, args),
+      );
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-void",
+        status: "PARTIAL",
+        customerId: "cust-1",
+        issueDate: new Date(),
+        total: 100,
+        invoiceNumber: "INV-VOID",
+        customer: { id: "cust-1", businessName: "Acme" },
+        order: null,
+        payments: [{ id: "pay-2", amount: 40, status: "PAID" }],
+      });
+
+      // With the VOID payment excluded, alreadyPaid = 0 and remaining = 100,
+      // so this must succeed instead of throwing "already fully paid".
+      const result = await service.recordPayment("inv-void", {
+        amount: 40,
+        method: "CASH" as any,
+      });
+
+      expect(result.totalOwed).toBe(100);
+      // Proves the guard was passed and the new payment was written.
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
+      );
+      // Proves the fix is at the payment level (scoped include), not just invoice status.
+      expect(prisma.invoice.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: { payments: { where: { status: { not: "VOID" } } } },
+        }),
+      );
+    });
+
+    it("(b) getSummary: a VOID payment does not reduce outstanding receivables, and paymentsThisWeek excludes VOID", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 100 } });
+      prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      prisma.invoice.count.mockResolvedValue(0);
+      // One OPEN invoice of 100 whose only payment bounced (VOID).
+      prisma.invoice.findMany.mockImplementation(async (args: any) => [
+        applyScopedPayments({ total: 100, _allPayments: [{ amount: 100, status: "VOID" }] }, args),
+      ]);
+
+      const result = await service.getSummary();
+
+      // Full 100 is still outstanding — the bounced payment must not net it out.
+      expect(result.outstandingReceivables).toBe(100);
+      // The weekly-receipts aggregate must exclude VOID at the payment level.
+      expect(prisma.invoicePayment.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: { not: "VOID" } }),
+        }),
+      );
+    });
+
+    it("(b') getReceivableSummary: a VOID payment does not reduce the reported invoice balance", async () => {
+      const bounced = {
+        id: "inv-2",
+        invoiceNumber: "INV-2",
+        status: "OVERDUE" as const,
+        issueDate: new Date(),
+        total: 100,
+        customer: { id: "cust-1", businessName: "Acme" },
+        _allPayments: [{ id: "p", amount: 100, status: "VOID" }],
+      };
+      prisma.invoice.findMany.mockImplementation(async (args: any) => [
+        applyScopedPayments(bounced, args),
+      ]);
+      // creditNote.findMany and invoicePayment.findMany default to [] in the mock.
+
+      const result = await service.getReceivableSummary("2025-01-01", "2025-12-31");
+      const invoiceRow = result.data.find((r) => r.type === "INVOICE");
+
+      expect(invoiceRow?.balance).toBe(100);
+    });
+  });
 });

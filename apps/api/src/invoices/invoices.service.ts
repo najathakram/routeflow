@@ -1307,7 +1307,11 @@ export class InvoicesService {
     // Business rule: grace period extends through the end of the due date.
     const todayIso = new Date().toISOString().slice(0, 10);
     const computedData = data.map((inv) => {
-      const paidAmount = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      // Exclude VOID payments (a bounced check reverses to VOID in P5-12) so the list's
+      // balanceDue/isOverdue match findOne — a VOID payment sits on a still-open invoice.
+      const paidAmount = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       const isSettled =
         inv.status === InvoiceStatus.PAID ||
         inv.status === InvoiceStatus.VOID ||
@@ -2348,8 +2352,10 @@ export class InvoicesService {
 
       await tx.invoicePayment.delete({ where: { id: paymentId } });
 
+      // Exclude the deleted payment AND any VOID (bounced) payment — otherwise a voided
+      // payment left on the invoice would be counted as paid and mis-recompute the status.
       const remaining = inv.payments
-        .filter((p) => p.id !== paymentId)
+        .filter((p) => p.id !== paymentId && p.status !== "VOID")
         .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       const newStatus = this.recomputeStatus(remaining, total, inv.dueDate, inv.status);

@@ -464,4 +464,150 @@ describe("CustomersService", () => {
       expect(voidTx.runningBalance).toBe(0);
     });
   });
+
+  // ─── P5-12 fallout — VOID payments must not count as paid (AR snapshots) ─────
+  // A bounced check flips its InvoicePayment.status to VOID (PaymentStatus enum =
+  // DRAFT | PAID | VOID). Every all-time AR snapshot that sums payment amounts must
+  // exclude VOID rows, or it under-states what the customer still owes. Mirrors the
+  // P5-15 StatementService.receivableAt VOID filter (buyer/statement.service.ts).
+  describe("P5-12 — VOID payments excluded from AR snapshots", () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+    it("getMyStatement: a VOID (bounced) payment does not reduce outstanding/overdue", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          total: 100,
+          status: "OVERDUE",
+          dueDate: daysAgo(5),
+          createdAt: daysAgo(20),
+          payments: [
+            { amount: 100, status: "VOID" }, // bounced — must NOT count as paid
+            { amount: 30, status: "PAID" }, // real partial payment
+          ],
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      const result = await service.getMyStatement(customerPayload);
+
+      // amountPaid = 30 (VOID excluded) → outstanding = 70, and it is overdue.
+      expect(result.outstandingAmount).toBe(70);
+      expect(result.overdueAmount).toBe(70);
+      const tx = result.transactions.find((t: any) => t.id === "inv-1");
+      expect(tx.runningBalance).toBe(-70);
+    });
+
+    it("getStatementForOperator: a VOID payment does not reduce outstanding/overdue", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          total: 200,
+          status: "OVERDUE",
+          dueDate: daysAgo(3),
+          createdAt: daysAgo(30),
+          payments: [
+            { amount: 200, status: "VOID" },
+            { amount: 50, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      expect(result.outstandingAmount).toBe(150);
+      expect(result.overdueAmount).toBe(150);
+    });
+
+    it("findAll: customer receivables exclude VOID payments", async () => {
+      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
+      prisma.customer.count.mockResolvedValue(1);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          customerId: "cust-1",
+          total: 100,
+          payments: [
+            { amount: 100, status: "VOID" },
+            { amount: 40, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      // 100 − 40 (VOID ignored) = 60, not 0.
+      expect((result.data[0] as any).receivables).toBe(60);
+    });
+
+    it("exportCustomers: CSV receivables column excludes VOID payments", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          ...MOCK_CUSTOMER,
+          customerType: "RETAIL",
+          user: { status: "ACTIVE" },
+          invoices: [
+            {
+              total: 100,
+              payments: [
+                { amount: 100, status: "VOID" },
+                { amount: 25, status: "PAID" },
+              ],
+            },
+          ],
+          advancePayments: [],
+        },
+      ]);
+
+      const csv = await service.exportCustomers({});
+      const dataLine = csv.split("\n")[1];
+      // Receivables 75.00, Credits 0.00 → row tail ",75.00,0.00" (VOID's 100 ignored).
+      expect(dataLine).toContain(",75.00,0.00");
+    });
+
+    it("applyAdvancePaymentToInvoice: a VOID payment is not treated as paid, so the full balance is applied", async () => {
+      prisma.advancePayment.findUnique.mockResolvedValue({ id: "ap-1", balance: 100 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        total: 100,
+        status: "OVERDUE",
+        dueDate: daysAgo(1),
+        payments: [{ amount: 100, status: "VOID" }], // bounced — real balance is still 100
+      });
+
+      await service.applyAdvancePaymentToInvoice("ap-1", { invoiceId: "inv-1" });
+
+      // Without the fix, alreadyPaid=100 → balance 0 → "no outstanding balance" throw.
+      // With the fix, alreadyPaid=0 → the full 100 is applied.
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amount: 100, method: "ADVANCE" }),
+        }),
+      );
+      expect(prisma.advancePayment.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { balance: { decrement: 100 } } }),
+      );
+    });
+
+    it("getIncomeChart: the monthly-income query filters out VOID payments", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.expense.findMany.mockResolvedValue([]);
+
+      await service.getIncomeChart("cust-1");
+
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: { not: "VOID" } }),
+        }),
+      );
+    });
+  });
 });
