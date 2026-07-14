@@ -10,10 +10,11 @@ import {
   Clock,
   CheckCircle2,
   Loader2,
+  Wallet,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerAnalytics } from "@/lib/api/buyer";
+import { useBuyerAnalytics, useBuyerStatement } from "@/lib/api/buyer";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,13 @@ function ChartTooltip({ active, payload, label }: any) {
 export default function FinancesPage() {
   const { activeSeller } = useBuyerAuth();
   const { data, isLoading, isError } = useBuyerAnalytics();
+  // P5-13: the wallet tile/list is a separate, independent fetch — never gate the
+  // page's own load/error state on it. If it fails or is still loading, the rest
+  // of Finances renders normally and the wallet simply shows nothing.
+  const { data: statement } = useBuyerStatement();
+  const activeCredits = (statement?.transactions ?? [])
+    .filter((t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001)
+    .slice(0, 6);
 
   if (isLoading) {
     return (
@@ -137,7 +145,7 @@ export default function FinancesPage() {
       </div>
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <StatCard
           icon={DollarSign}
           label="Total Spend"
@@ -165,6 +173,13 @@ export default function FinancesPage() {
           value={String(invoiceBreakdown.paid)}
           sub={`${invoiceBreakdown.overdue} overdue`}
           color="bg-success-bg text-success"
+        />
+        <StatCard
+          icon={Wallet}
+          label="Store Credit"
+          value={fmt(statement?.availableCredit ?? 0)}
+          sub={activeCredits.length > 0 ? `${activeCredits.length} active` : "None available"}
+          color="bg-buyer-50 text-buyer-600"
         />
       </div>
 
@@ -198,6 +213,32 @@ export default function FinancesPage() {
           </ResponsiveContainer>
         )}
       </div>
+
+      {/* Active credits (P5-13) */}
+      {activeCredits.length > 0 && (
+        <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <Wallet className="h-4 w-4 text-buyer-500" />
+            <h2 className="text-sm font-semibold text-navy">Active Credits</h2>
+          </div>
+          <div className="divide-y divide-surface-border">
+            {activeCredits.map((c) => (
+              <div key={c.id} className="flex items-center justify-between py-2.5">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-navy truncate">{c.description}</p>
+                  <p className="text-[11px] text-navy/70 mt-0.5">
+                    {fmtDate(c.date)}
+                    {c.expiresAt ? ` · Expires ${fmtDate(c.expiresAt)}` : ""}
+                  </p>
+                </div>
+                <span className="ml-3 flex-shrink-0 text-sm font-semibold text-buyer-600">
+                  {fmt(c.runningBalance)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Invoice breakdown + Recent payments */}
       <div className="grid gap-4 lg:grid-cols-2">

@@ -9,6 +9,19 @@ import { useCreditNotes, useCreateCreditNote, type CreditNote } from "@/lib/api/
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
+import { roundMoney } from "@/lib/pricing";
+
+// P5-13: canonical open-credit predicate — not VOID, has a positive remaining
+// balance (amount - amountUsed), and is not expired. Mirrors the API's
+// `Σ roundMoney(amount − amountUsed)` — a partially-applied note must never be
+// counted at its full original amount.
+function isOpenCredit(cn: CreditNote): boolean {
+  if (cn.status === "VOID") return false;
+  const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed ?? 0));
+  if (!(remaining > 0.001)) return false;
+  if (cn.expiresAt && new Date(cn.expiresAt).getTime() <= Date.now()) return false;
+  return true;
+}
 
 // ─── Status filter chips (real statuses) ──────────────────────────────────────
 
@@ -29,6 +42,9 @@ interface CreateFormState {
   reason: string;
   issueDate: string;
   notes: string;
+  /** P5-13: optional — after this date the credit is excluded from the wallet
+   *  and can never be applied. */
+  expiresAt: string;
 }
 
 const EMPTY_FORM: CreateFormState = {
@@ -38,6 +54,7 @@ const EMPTY_FORM: CreateFormState = {
   reason: "",
   issueDate: new Date().toISOString().slice(0, 10),
   notes: "",
+  expiresAt: "",
 };
 
 function CreateCreditNoteModal({
@@ -122,6 +139,12 @@ function CreateCreditNoteModal({
     }
     if (!form.reason.trim()) e.reason = "Reason is required.";
     if (!form.issueDate) e.issueDate = "Issue date is required.";
+    if (form.expiresAt) {
+      const d = new Date(form.expiresAt);
+      if (isNaN(d.getTime()) || d.getTime() <= Date.now()) {
+        e.expiresAt = "Expiry date must be in the future.";
+      }
+    }
     return e;
   }
 
@@ -149,6 +172,7 @@ function CreateCreditNoteModal({
         reason: form.reason.trim(),
         issueDate: form.issueDate,
         notes: form.notes.trim() || undefined,
+        expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
       },
       {
         onSuccess: (cn) => {
@@ -363,6 +387,24 @@ function CreateCreditNoteModal({
           {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
         </div>
 
+        {/* Expires (optional) */}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Expires <span className="text-navy/70">(optional)</span>
+          </label>
+          <input
+            type="date"
+            min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+            value={form.expiresAt}
+            onChange={(e) => setForm((f) => ({ ...f, expiresAt: e.target.value }))}
+            className={inputCls(errors.expiresAt)}
+          />
+          {errors.expiresAt && <p className="mt-1 text-xs text-danger">{errors.expiresAt}</p>}
+          <p className="mt-1 text-xs text-navy/60">
+            After this date the credit is excluded from the wallet and can no longer be applied.
+          </p>
+        </div>
+
         {/* Notes */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -455,9 +497,13 @@ export default function CreditNotesPage() {
 
   // Stat tiles — derived from real data only (no fabricated revenue %).
   const stats = React.useMemo(() => {
-    // Open credit: unapplied, unvoided notes still carrying a balance.
-    const openNotes = all.filter((cn) => cn.status === "DRAFT" || cn.status === "ISSUED");
-    const openCredit = openNotes.reduce((s, cn) => s + Number(cn.amount), 0);
+    // Open credit: canonical predicate (not VOID, remaining > 0, not expired) —
+    // summed by REMAINING balance so a partially-applied note is never double-counted.
+    const openNotes = all.filter(isOpenCredit);
+    const openCredit = openNotes.reduce(
+      (s, cn) => roundMoney(s + roundMoney(Number(cn.amount) - Number(cn.amountUsed ?? 0))),
+      0,
+    );
 
     // Issued in the last 30 days (by issue date).
     const cutoff = new Date();

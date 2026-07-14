@@ -66,9 +66,21 @@ export class CreditNotesService {
     // path, which attributes by product). This is what prevents a credit that concerned
     // non-regulated goods from proportionally reversing regulated excise sales.
     items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+    /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
+    expiresAt?: string;
   }) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
+
+    // P5-13: optional expiry. Reject garbage and already-past dates at intake.
+    let expiresAt: Date | null = null;
+    if (dto.expiresAt != null && dto.expiresAt !== "") {
+      expiresAt = new Date(dto.expiresAt);
+      if (isNaN(expiresAt.getTime()))
+        throw new BadRequestException("expiresAt must be a valid ISO date");
+      if (expiresAt.getTime() <= Date.now())
+        throw new BadRequestException("expiresAt must be in the future");
+    }
 
     const lineItems = Array.isArray(dto.items) && dto.items.length > 0 ? dto.items : null;
     if (lineItems && !dto.invoiceId)
@@ -191,6 +203,7 @@ export class CreditNotesService {
             amount: dto.amount,
             reason: dto.reason,
             status: "ISSUED",
+            expiresAt,
           },
           include: { customer: { select: { id: true, businessName: true } } },
         });
@@ -308,12 +321,161 @@ export class CreditNotesService {
     return this.findOne(id);
   }
 
+  /**
+   * P5-13: the single tx-safe primitive that applies (part of) a credit note to an
+   * invoice. Runs INSIDE an already-open tenant transaction `tx` — never opens its
+   * own. Every monetary figure via roundMoney. Returns {applied:0} instead of
+   * throwing so the auto-apply loop can skip; the manual path throws on 0 itself.
+   * Callers pre-filter VOID + expired credits (expiry is a computed filter).
+   */
+  private async applyCreditInTx(
+    tx: any,
+    cn: {
+      id: string;
+      creditNoteNumber: string;
+      amount: unknown;
+      amountUsed: unknown;
+      appliedToInvoiceId: string | null;
+      appliedAt?: Date | null;
+      autoApplied?: boolean;
+    },
+    inv: {
+      id: string;
+      total: unknown;
+      dueDate: Date | null;
+      status: InvoiceStatus;
+      payments?: Array<{ amount: unknown; status?: string }>;
+    },
+    requestedAmount?: number,
+    opts?: { autoApplied?: boolean },
+  ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
+    const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed));
+    // P5-12: a bounced check flips its InvoicePayment to VOID — must NOT count as
+    // paid, so the credit can correctly cover the re-opened balance.
+    const alreadyPaid = roundMoney(
+      (inv.payments ?? [])
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0),
+    );
+    const invoiceBalance = roundMoney(Number(inv.total) - alreadyPaid);
+    const applyAmount = roundMoney(
+      Math.min(remaining, invoiceBalance, requestedAmount ?? Infinity),
+    );
+    // `!(x > 0.001)` (not `x <= 0.001`) so NaN from malformed data also bails out.
+    if (!(applyAmount > 0.001)) return { applied: 0, invoiceStatus: null };
+
+    // The credit consumes invoice balance as a payment — the ONLY place a credit
+    // reduces an invoice, and amountUsed below removes the same dollars from the
+    // wallet (Σ amount − amountUsed). One or the other, never both.
+    await tx.invoicePayment.create({
+      data: {
+        invoiceId: inv.id,
+        amount: applyAmount,
+        method: PaymentMethod.CREDIT_NOTE,
+        creditNoteId: cn.id,
+        reference: cn.creditNoteNumber,
+      },
+    });
+
+    const newPaid = roundMoney(alreadyPaid + applyAmount);
+    const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
+    await tx.invoice.update({
+      where: { id: inv.id },
+      data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
+    });
+
+    const newAmountUsed = roundMoney(Number(cn.amountUsed) + applyAmount);
+    const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
+    await tx.creditNote.update({
+      where: { id: cn.id },
+      data: {
+        amountUsed: newAmountUsed,
+        status: fullyApplied ? "APPLIED" : "ISSUED",
+        appliedToInvoiceId: fullyApplied ? inv.id : cn.appliedToInvoiceId,
+        appliedAt: cn.appliedAt ?? new Date(),
+        autoApplied: opts?.autoApplied ? true : (cn.autoApplied ?? false),
+      },
+    });
+
+    return { applied: applyAmount, invoiceStatus: newStatus };
+  }
+
+  /**
+   * P5-13: auto-apply the customer's OPEN, non-expired credits — OLDEST createdAt
+   * first — to one invoice, inside the caller's transaction (InvoicesService wraps
+   * this with its SENT flip). Idempotent: a re-send finds the balance covered or
+   * credits exhausted and applies nothing.
+   * Canonical open predicate: status != VOID && (amount − amountUsed) > 0.001 &&
+   * (expiresAt == null || expiresAt > now). Prisma can't compare two columns, so
+   * the remaining>0 half is evaluated in JS; status/expiry go into the query.
+   */
+  async autoApplyOldestCreditsInTx(
+    tx: any,
+    invoiceId: string,
+    customerId: string,
+  ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
+    const nothing: { applied: number; invoiceStatus: InvoiceStatus | null } = {
+      applied: 0,
+      invoiceStatus: null,
+    };
+    if (!invoiceId || !customerId) return nothing;
+
+    const first = await tx.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { payments: true },
+    });
+    if (!first) return nothing;
+    const paid = roundMoney(
+      (first.payments ?? [])
+        .filter((p: any) => p.status !== "VOID")
+        .reduce((s: number, p: any) => s + Number(p.amount), 0),
+    );
+    let running = roundMoney(Number(first.total) - paid);
+    if (!(running > 0.001)) return nothing;
+
+    const now = new Date();
+    const candidates = await tx.creditNote.findMany({
+      where: {
+        customerId,
+        status: { not: "VOID" },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const open = (candidates ?? []).filter(
+      (c: any) => roundMoney(Number(c.amount) - Number(c.amountUsed)) > 0.001,
+    );
+    if (open.length === 0) return nothing;
+
+    let totalApplied = 0;
+    let invoiceStatus: InvoiceStatus | null = null;
+    let inv = first;
+    for (const cn of open) {
+      if (!(running > 0.001)) break;
+      // `running` as the requested amount = a hard clamp; over-applying is
+      // impossible even if the invoice re-read were stale.
+      const res = await this.applyCreditInTx(tx, cn, inv, running, { autoApplied: true });
+      if (res.applied <= 0) break;
+      running = roundMoney(running - res.applied);
+      totalApplied = roundMoney(totalApplied + res.applied);
+      invoiceStatus = res.invoiceStatus;
+      const next = await tx.invoice.findUnique({
+        where: { id: invoiceId },
+        include: { payments: true },
+      });
+      if (next) inv = next;
+    }
+    return { applied: totalApplied, invoiceStatus };
+  }
+
   async applyToInvoice(creditNoteId: string, invoiceId: string, amount?: number) {
     return this.prisma.tenantTransaction(
       async (tx) => {
         const cn = await tx.creditNote.findUnique({ where: { id: creditNoteId } });
         if (!cn || cn.status === "APPLIED" || cn.status === "VOID")
           throw new BadRequestException("Credit note is not available for application");
+        if (cn.expiresAt && new Date(cn.expiresAt) <= new Date())
+          throw new BadRequestException("Credit note has expired");
 
         const inv = await tx.invoice.findUnique({
           where: { id: invoiceId },
@@ -331,58 +493,24 @@ export class CreditNotesService {
             `Cannot apply credit note to invoice with status ${inv.status}`,
           );
         }
-
         if (cn.customerId !== inv.customerId) {
           throw new BadRequestException("Credit note and invoice belong to different customers");
         }
 
-        const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
-        const invoiceBalance = Number(inv.total) - alreadyPaid;
-        const cnRemaining = Number(cn.amount) - Number(cn.amountUsed);
-        const applyAmount = Math.min(cnRemaining, invoiceBalance, amount ?? Infinity);
-
-        if (applyAmount <= 0.001)
+        const { applied } = await this.applyCreditInTx(tx, cn, inv, amount);
+        if (applied <= 0)
           throw new BadRequestException(
             "Credit note has no remaining balance or invoice is fully paid",
           );
 
-        // Create invoice payment record for the credit note
-        await tx.invoicePayment.create({
-          data: {
-            invoiceId,
-            amount: applyAmount,
-            method: PaymentMethod.CREDIT_NOTE,
-            creditNoteId: cn.id,
-            reference: cn.creditNoteNumber,
-          },
-        });
-
-        // Recompute invoice status
-        const newPaid = alreadyPaid + applyAmount;
-        const newStatus = this.recomputeStatus(newPaid, Number(inv.total), inv.dueDate, inv.status);
-        const updatedInv = await tx.invoice.update({
+        return tx.invoice.findUnique({
           where: { id: invoiceId },
-          data: { status: newStatus, paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null },
           include: {
             customer: { select: { id: true, businessName: true } },
             items: true,
             payments: { orderBy: { createdAt: "desc" } },
           },
         });
-
-        // Update amountUsed; mark APPLIED only when fully exhausted
-        const newAmountUsed = Number(cn.amountUsed) + applyAmount;
-        const fullyApplied = newAmountUsed >= Number(cn.amount) - 0.001;
-        await tx.creditNote.update({
-          where: { id: creditNoteId },
-          data: {
-            amountUsed: newAmountUsed,
-            status: fullyApplied ? "APPLIED" : "ISSUED",
-            appliedToInvoiceId: fullyApplied ? invoiceId : cn.appliedToInvoiceId,
-          },
-        });
-
-        return updatedInv;
       },
       { isolationLevel: "Serializable" },
     );

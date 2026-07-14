@@ -372,4 +372,96 @@ describe("CustomersService", () => {
       });
     });
   });
+
+  // ─── P5-13 — statement wallet balance (no double-count) ────────────────────
+  describe("P5-13 — statement wallet balance (no double-count)", () => {
+    const FUTURE = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const PAST = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // A mixed set of credit notes: 60 open (partially used, remaining 60), a
+    // fully-exhausted ISSUED note (remaining 0 — must not count), an expired-but-
+    // still-ISSUED note (must not count), a VOID note (must not count even though
+    // its raw amount − amountUsed is positive), and a plain 10 open note.
+    // Expected wallet total: 60 + 10 = 70 — proves amount − amountUsed (not face
+    // amount) drives the sum, so a partial credit's already-applied portion (which
+    // sits on the invoice as a CREDIT_NOTE payment) is never double-counted.
+    const CREDIT_NOTES = [
+      {
+        id: "cn-open-60",
+        creditNoteNumber: "CN-1",
+        amount: 100,
+        amountUsed: 40,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: null,
+      },
+      {
+        id: "cn-exhausted",
+        creditNoteNumber: "CN-2",
+        amount: 50,
+        amountUsed: 50,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: null,
+      },
+      {
+        id: "cn-expired",
+        creditNoteNumber: "CN-3",
+        amount: 25,
+        amountUsed: 0,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: PAST,
+      },
+      {
+        id: "cn-void",
+        creditNoteNumber: "CN-4",
+        amount: 15,
+        amountUsed: 0,
+        status: "VOID",
+        createdAt: new Date(),
+        expiresAt: null,
+      },
+      {
+        id: "cn-open-10",
+        creditNoteNumber: "CN-5",
+        amount: 10,
+        amountUsed: 0,
+        status: "ISSUED",
+        createdAt: new Date(),
+        expiresAt: FUTURE,
+      },
+    ];
+
+    it("getMyStatement: availableCredit sums only open, non-expired, non-VOID remainders", async () => {
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.creditNote.findMany.mockResolvedValue(CREDIT_NOTES);
+
+      const result = await service.getMyStatement(customerPayload);
+
+      expect(result.availableCredit).toBe(70);
+
+      const expiredTx = result.transactions.find((t: any) => t.id === "cn-expired");
+      expect(expiredTx.runningBalance).toBe(0);
+
+      const openTx = result.transactions.find((t: any) => t.id === "cn-open-60");
+      expect(openTx.runningBalance).toBe(60);
+    });
+
+    it("getStatementForOperator: availableCredit sums only open, non-expired, non-VOID remainders", async () => {
+      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.creditNote.findMany.mockResolvedValue(CREDIT_NOTES);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      const result = await service.getStatementForOperator("cust-1");
+
+      expect(result.availableCredit).toBe(70);
+
+      const voidTx = result.transactions.find((t: any) => t.id === "cn-void");
+      expect(voidTx.runningBalance).toBe(0);
+    });
+  });
 });

@@ -17,6 +17,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { roundMoney } from "../common/pricing";
 
 @Injectable()
 export class ReturnsService {
@@ -24,6 +26,7 @@ export class ReturnsService {
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
+    private readonly creditNotes: CreditNotesService,
   ) {}
 
   private generateReturnNumber(): string {
@@ -269,11 +272,64 @@ export class ReturnsService {
   }
 
   async processRefund(id: string) {
-    const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
+    const ret = await this.prisma.forTenant().return.findUnique({
+      where: { id },
+      include: {
+        items: true,
+        order: {
+          select: {
+            orderNumber: true,
+            invoices: { select: { id: true } },
+            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+          },
+        },
+      },
+    });
     if (!ret) throw new NotFoundException("Return not found");
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
-    return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REFUNDED" } });
+
+    // Refund value = Σ returned qty × the order line's EFFECTIVE per-unit price
+    // (subtotal ÷ qty — robust to box-priced lines where unitPrice is per box while
+    // qty is pieces). Items not on the order contribute 0.
+    let refundAmount = 0;
+    for (const item of ret.items ?? []) {
+      const line = ret.order?.lineItems?.find((li) => li.productId === item.productId);
+      if (!line) continue;
+      const lineQty = Number(line.qty);
+      const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
+      refundAmount += Number(item.qty) * perUnit;
+    }
+    refundAmount = roundMoney(refundAmount);
+
+    // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition before
+    // minting any store credit. A racing processRefund (double-click, client retry,
+    // or two operators) matches 0 rows here and aborts, so a single return can never
+    // mint two credits. Mirrors receive()'s claim above — under READ COMMITTED the
+    // second writer re-checks the WHERE after the row lock, so exactly one wins.
+    const claimed = await this.prisma
+      .forTenant()
+      .return.updateMany({ where: { id, status: "RECEIVED" }, data: { status: "REFUNDED" } });
+    if (claimed.count === 0) {
+      throw new BadRequestException("Only RECEIVED returns can be refunded");
+    }
+    const updated = await this.prisma.forTenant().return.findUnique({ where: { id } });
+
+    if (refundAmount <= 0.001) return updated;
+
+    // Sequential, NOT nested: create() opens its own Serializable tx and books NO
+    // regulated reversal for a lump-sum credit (no items) — the returned regulated
+    // goods were already reversed at receive(). Single source invoice engages the cap.
+    const invoices = ret.order?.invoices ?? [];
+    const cn = await this.creditNotes.create({
+      customerId: ret.customerId,
+      invoiceId: invoices.length === 1 ? invoices[0].id : undefined,
+      amount: refundAmount,
+      reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
+    });
+    await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
+
+    return { ...updated, creditNoteId: cn.id };
   }
 
   async cancel(id: string, user: JwtPayload) {

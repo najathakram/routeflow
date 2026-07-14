@@ -30,6 +30,7 @@ import { InvoicePdfService } from "./invoice-pdf.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
 
 const TERM_DAYS: Record<string, number> = {
   "Due on Receipt": 0,
@@ -64,6 +65,7 @@ export class InvoicesService {
     private readonly systemConfig: SystemConfigService,
     private readonly ledger: RegulatedLedgerService,
     private readonly authGuard: AuthorizationGuardService,
+    private readonly creditNotes: CreditNotesService,
   ) {}
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
@@ -1590,17 +1592,34 @@ export class InvoicesService {
     if (inv.status === InvoiceStatus.VOID)
       throw new BadRequestException("Cannot send a voided invoice");
     await this.assertOrderInvoiceUnlocked(inv);
-    const updated = await this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.SENT, sentAt: new Date() },
-    });
+    // P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic operation.
+    // Idempotent on re-send. If the tx throws, the send fails — money first.
+    const { updated, auto } = await this.prisma.tenantTransaction(
+      async (tx) => {
+        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
+        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
+        // zero balance and won't restore the status), which would leave paidAt stale.
+        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
+        const updated = await tx.invoice.update({
+          where: { id },
+          data: { status: nextStatus, sentAt: new Date() },
+        });
+        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId);
+        return { updated, auto };
+      },
+      { isolationLevel: "Serializable" },
+    );
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
       customerId: updated.customerId,
-      status: InvoiceStatus.SENT,
+      status: auto.invoiceStatus ?? updated.status,
       total: Number(updated.total),
     });
+    if (auto.applied > 0) {
+      const final = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
+      if (final) return final;
+    }
     return updated;
   }
 
@@ -1665,16 +1684,28 @@ export class InvoicesService {
       isReminder: false,
     });
 
-    // Mark as SENT
-    const updated = await this.prisma.forTenant().invoice.update({
-      where: { id },
-      data: { status: InvoiceStatus.SENT, sentAt: new Date() },
-    });
+    // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
+    // operation. PDF/email I/O above stays OUTSIDE the tx.
+    const { updated, auto } = await this.prisma.tenantTransaction(
+      async (tx) => {
+        // P5-13: only flip DRAFT → SENT. Re-sending an invoice that credit auto-apply
+        // already made PAID/PARTIAL must NOT downgrade it (auto-apply returns early on a
+        // zero balance and won't restore the status), which would leave paidAt stale.
+        const nextStatus = inv.status === InvoiceStatus.DRAFT ? InvoiceStatus.SENT : inv.status;
+        const updated = await tx.invoice.update({
+          where: { id },
+          data: { status: nextStatus, sentAt: new Date() },
+        });
+        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId);
+        return { updated, auto };
+      },
+      { isolationLevel: "Serializable" },
+    );
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
       customerId: updated.customerId,
-      status: InvoiceStatus.SENT,
+      status: auto.invoiceStatus ?? updated.status,
       total: Number(updated.total),
     });
     return { success: true, sentTo: recipientEmail };

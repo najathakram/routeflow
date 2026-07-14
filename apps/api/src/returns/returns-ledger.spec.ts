@@ -10,6 +10,7 @@ import { ReturnsService } from "./returns.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ReturnsService → regulated ledger (W5c)", () => {
@@ -26,6 +27,7 @@ describe("ReturnsService → regulated ledger (W5c)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitReturnCreated: jest.fn() } },
         { provide: RegulatedLedgerService, useValue: ledger },
+        { provide: CreditNotesService, useValue: { create: jest.fn() } },
       ],
     }).compile();
     service = mod.get(ReturnsService);
