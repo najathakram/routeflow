@@ -47,7 +47,10 @@ export class InvoicePdfService {
         items: {
           include: { product: { select: { id: true, name: true, barcode: true, sku: true } } },
         },
-        payments: { orderBy: { paidAt: "asc" } },
+        // Exclude VOID (bounced) payments (P5-12): the PDF template sums payments
+        // into the headline balance-due, so a reversed payment must not appear as
+        // received on a customer-facing invoice or under-state what they owe.
+        payments: { where: { status: { not: "VOID" } }, orderBy: { paidAt: "asc" } },
         order: { select: { status: true } },
       },
     });
