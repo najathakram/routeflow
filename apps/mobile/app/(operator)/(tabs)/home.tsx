@@ -375,6 +375,7 @@ function formatDriverStopSub(stop: RouteRunStop): string {
 
 function DriverInlineView() {
   const router = useRouter();
+  const setActiveRole = useAuthStore((s) => s.setActiveRole);
   const { data: activeData, isLoading: activeLoading } = useActiveRouteRun();
   const { data: scheduledData, isLoading: scheduledLoading } = useScheduledRouteRuns();
   const updateStatus = useUpdateRunStatus();
@@ -435,7 +436,10 @@ function DriverInlineView() {
               <View style={styles.heroActions}>
                 <Pressable
                   style={[styles.heroBtnGhost, { flex: 1, alignItems: "center" }]}
-                  onPress={() => router.push(`/(driver)/route/stop/${nextStop.id}` as any)}
+                  onPress={() => {
+                    setActiveRole("driver");
+                    router.push(`/(driver)/route/stop/${nextStop.id}` as any);
+                  }}
                 >
                   <Text style={styles.heroBtnGhostText}>Open stop</Text>
                 </Pressable>
@@ -482,7 +486,10 @@ function DriverInlineView() {
                       ? "Up next"
                       : undefined
               }
-              onPress={() => router.push(`/(driver)/route/stop/${stop.id}` as any)}
+              onPress={() => {
+                setActiveRole("driver");
+                router.push(`/(driver)/route/stop/${stop.id}` as any);
+              }}
             />
           ))}
         </View>

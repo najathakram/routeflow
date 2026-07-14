@@ -108,6 +108,24 @@ export function computeLineSubtotal({
 }
 
 /**
+ * Prorate an order line's STORED subtotal by delivered-vs-ordered qty.
+ * Mirrors the server's per-batch invoice line total EXACTLY —
+ * apps/api/src/orders/orders.service.ts:3321
+ *   `subtotal = roundMoney((li.storedSubtotal * li.qty) / li.orderQty)`
+ * — proportional-of-stored-subtotal, NOT a fresh qty×unitPrice recompute, so
+ * boxed/overridden/promo lines prorate correctly. Returns 0 when there's no
+ * stored subtotal yet or nothing was delivered.
+ */
+export function prorateLineSubtotal(
+  storedSubtotal: number | null | undefined,
+  deliveredQty: number,
+  orderQty: number,
+): number {
+  if (storedSubtotal == null || orderQty <= 0 || deliveredQty <= 0) return 0;
+  return roundMoney((storedSubtotal * deliveredQty) / orderQty);
+}
+
+/**
  * Effective qty in pieces, derived from boxes/pieces when present, otherwise
  * the explicit `qty` field. Mirrors the server-side recomputation in
  * `apps/api/src/orders/orders.service.ts`.

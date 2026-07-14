@@ -18,10 +18,18 @@ import {
   useCompleteStop,
   useCompleteWithPayment,
   useRouteRun,
-  type RouteRunStop,
+  type RouteRunOrder,
 } from "../../../../../lib/api/routes";
+import { useOrder } from "../../../../../lib/api/orders";
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { usePodStore } from "../../../../../store/podStore";
+import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
+import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
+import {
+  buildDeliveries,
+  reconciledTotal,
+  type ShortPickLine,
+} from "../../../../../lib/short-pick";
 import { showToast } from "../../../../../lib/toast";
 import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
@@ -42,11 +50,16 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
   }
 }
 
-function totalForStop(stop: RouteRunStop): number {
-  return (stop.orders ?? []).reduce(
-    (sum, o) =>
-      sum +
-      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
+// Stable reference for "no plan recorded for this stop" so the zustand
+// selector below never hands React a fresh {} on every render — a fresh
+// object each call defeats useSyncExternalStore's tearing check and causes
+// an infinite re-render loop (this IS the common case: a stop with no
+// short-pick overrides, or a stale deep link straight to this screen).
+const EMPTY_DELIVERY_PLAN: Record<string, number> = {};
+
+function fullOrderTotal(order: RouteRunOrder): number {
+  return (order.lineItems ?? []).reduce(
+    (s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0),
     0,
   );
 }
@@ -61,7 +74,40 @@ export default function PaymentScreen() {
   const { data: run, isLoading } = useRouteRun(runId ?? "");
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
-  const invoiceTotal = stop ? totalForStop(stop) : 0;
+  const orderId = stop?.orders?.[0]?.id;
+  const { data: order } = useOrder(orderId ?? "");
+  const deliveredQtyById = useDeliveryPlanStore((s) =>
+    stopId ? (s.plansByStop[stopId] ?? EMPTY_DELIVERY_PLAN) : EMPTY_DELIVERY_PLAN,
+  );
+  const clearPlan = useDeliveryPlanStore((s) => s.clearStop);
+
+  const shortPickLines: ShortPickLine[] = useMemo(
+    () =>
+      (order?.lineItems ?? [])
+        .filter((li) => li.status !== "CANCELLED" && Number(li.deliveredQty ?? 0) === 0)
+        .map((li) => ({
+          orderItemId: li.id,
+          productId: li.productId,
+          orderedQty: Number(li.qty),
+          subtotal: li.subtotal ?? null,
+        })),
+    [order],
+  );
+
+  // Charge across EVERY order on the stop. The short-pick review only reconciles
+  // order[0], so that order uses its reconciled (post-short-pick) total once its
+  // richer `order` has loaded (else its full ordered total during the brief
+  // loading window); every OTHER order on the stop always contributes its full
+  // ordered total. Summing all orders is what keeps a multi-order stop charged in
+  // full instead of collecting only order[0]'s amount.
+  const invoiceTotal = (stop?.orders ?? []).reduce(
+    (sum, o) =>
+      sum +
+      (o.id === orderId && shortPickLines.length > 0
+        ? reconciledTotal(shortPickLines, deliveredQtyById)
+        : fullOrderTotal(o)),
+    0,
+  );
   const invoiceLabel = stop?.orders?.[0]?.orderNumber
     ? `ORDER ${stop.orders[0].orderNumber} · ${(stop.customer?.businessName ?? "Customer").toUpperCase()}`
     : "PAYMENT";
@@ -94,13 +140,32 @@ export default function PaymentScreen() {
 
     // RF-005: use the atomic complete-with-payment endpoint so both writes
     // succeed or fail together (no orphaned completed stop without payment).
+    // P10-POS-7: when the short-pick review screen recorded per-line delivered
+    // qty for order[0], honor it (PARTIAL/REFUSED reprice via the server's own
+    // proration — see lib/short-pick.ts); null until its richer `order` loads.
+    const reconciledFirst =
+      shortPickLines.length > 0
+        ? buildDeliveries(shortPickLines, deliveredQtyById).map((d) => ({
+            orderItemId: d.orderItemId,
+            productId: d.productId,
+            type: d.type,
+            quantityDelivered: d.qty,
+          }))
+        : null;
+    // Emit mutations for EVERY order on the stop: order[0] uses its reconciled
+    // plan when available; every other order (and order[0] as a fallback before
+    // it loads) is delivered in full. Iterating all stop.orders is what stops a
+    // second order at the same stop from silently getting zero delivery mutations
+    // (marked DELIVERED server-side yet never entering a delivery batch/invoice).
     const deliveries = (stop.orders ?? []).flatMap((o) =>
-      (o.lineItems ?? []).map((li) => ({
-        orderItemId: li.id,
-        productId: li.productId,
-        type: "DELIVERED" as const,
-        quantityDelivered: Math.round(Number(li.qty ?? 0)),
-      })),
+      o.id === orderId && reconciledFirst
+        ? reconciledFirst
+        : (o.lineItems ?? []).map((li) => ({
+            orderItemId: li.id,
+            productId: li.productId,
+            type: "DELIVERED" as const,
+            quantityDelivered: Math.round(Number(li.qty ?? 0)),
+          })),
     );
 
     // NEW-m1-3: validate that at least one item is being delivered
@@ -161,6 +226,15 @@ export default function PaymentScreen() {
     }
 
     clearPod(stopId);
+    if (stopId) clearPlan(stopId);
+    if (collected > 0 && runId) {
+      useRunSettlementStore.getState().recordCollection(runId, {
+        stopId,
+        method: apiMethod,
+        amount: collected,
+        collectedAt: Date.now(),
+      });
+    }
     showToast("Stop completed");
 
     const remaining = (run?.stops ?? []).filter(

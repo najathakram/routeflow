@@ -39,10 +39,15 @@ import {
 import { sanitizeIntInput } from "../../../../../lib/qty";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
+import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
 import {
   parseRegulatedAuthError,
   type BlockedCategory,
 } from "../../../../../lib/api/authorizations";
+import {
+  parseCreditLimitError,
+  type CreditLimitExceededInfo,
+} from "../../../../../lib/credit-limit-error";
 import { useAuthStore } from "../../../../../lib/auth-store";
 
 /**
@@ -153,6 +158,7 @@ export default function EditOrderItemsScreen() {
   const [substituteFor, setSubstituteFor] = useState<string | null>(null);
   const [priceEditItem, setPriceEditItem] = useState<DraftItem | null>(null);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
+  const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
 
   const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
@@ -403,6 +409,13 @@ export default function EditOrderItemsScreen() {
             setLicenseBlock(blocked);
             return;
           }
+          // Credit-limit block: no server-side bypass exists (see lib/credit-limit-error.ts) —
+          // surface it with the real numbers, never auto-retry.
+          const creditInfo = parseCreditLimitError(e);
+          if (creditInfo) {
+            setCreditBlock(creditInfo);
+            return;
+          }
           showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
         },
       },
@@ -470,6 +483,20 @@ export default function EditOrderItemsScreen() {
           save();
         }}
         onClose={() => setLicenseBlock(null)}
+      />
+
+      <CreditLimitGuardModal
+        open={!!creditBlock}
+        info={creditBlock}
+        onCollectPayment={() => {
+          setCreditBlock(null);
+          // router.push (not replace) — the edit screen stays on the stack, so the
+          // operator's in-progress draft is intact when they come back and hit
+          // Save again after recording the payment. No auto-retry: this screen
+          // never re-sends the exact same request it just watched fail.
+          router.push(`/(operator)/invoices?customerId=${customerId ?? ""}` as any);
+        }}
+        onCancel={() => setCreditBlock(null)}
       />
 
       {showPicker ? (

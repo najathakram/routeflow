@@ -28,6 +28,8 @@ import {
 import { openRouteInMaps } from "../../../components/openInMaps";
 import { useAuthStore } from "../../../lib/auth-store";
 import { startLocationTracking, stopLocationTracking } from "../../../lib/location-tracker";
+import { useRunSettlementStore } from "../../../store/runSettlementStore";
+import type { CollectionEntry } from "../../../lib/run-settlement";
 
 /**
  * Best-effort foreground GPS read. Returns null if perms denied / unavailable —
@@ -58,6 +60,12 @@ async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
   const loc = await readDriverLocation();
   openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
 }
+
+// Stable reference for "no collections recorded for this run" — same reason
+// payment.tsx's EMPTY_DELIVERY_PLAN exists: a fresh `[]` on every selector
+// call defeats useSyncExternalStore's snapshot check and causes an infinite
+// re-render loop for the common case (a run with nothing collected yet).
+const EMPTY_COLLECTIONS: CollectionEntry[] = [];
 
 export default function DriverRouteScreen() {
   const router = useRouter();
@@ -221,9 +229,12 @@ function StartOfDay({ run }: { run: RouteRun }) {
 }
 
 function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: string) => void }) {
+  const router = useRouter();
   const stops = run.stops ?? [];
   const optimize = useOptimizeRouteRun();
   const updateStatus = useUpdateRunStatus();
+  const collections = useRunSettlementStore((s) => s.collectionsByRun[run.id] ?? EMPTY_COLLECTIONS);
+  const hasCashToReconcile = collections.some((c) => c.method === "CASH" || c.method === "CHECK");
 
   const onOptimizeFromHere = async () => {
     const loc = await readDriverLocation();
@@ -304,7 +315,11 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
               <Pressable
                 style={[styles.heroBtnGhost, { alignSelf: "stretch", justifyContent: "center" }]}
                 disabled={updateStatus.isPending}
-                onPress={() =>
+                onPress={() => {
+                  if (hasCashToReconcile) {
+                    router.push(`/(driver)/route/settlement?runId=${run.id}` as any);
+                    return;
+                  }
                   confirm(
                     "Complete route?",
                     "This will mark the run as finished and lock all stops.",
@@ -317,8 +332,8 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
                         },
                       ),
                     { confirmText: "Complete" },
-                  )
-                }
+                  );
+                }}
               >
                 <Text style={styles.heroBtnGhostText}>
                   {updateStatus.isPending ? "Completing…" : "Mark route complete"}
