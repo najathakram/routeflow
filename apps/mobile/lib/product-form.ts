@@ -29,6 +29,14 @@ export interface ProductFormValues {
   variantName: string;
   /** Parent's display name — for the picker label only, not submitted. */
   parentName?: string;
+  /** Regulated section id, "" = none. */
+  trackedCategoryId: string;
+  /** Section's display name — carried alongside the id so the picker can show a
+   *  since-deactivated current section without a second lookup (same pattern as
+   *  `parentName` above for the "Variant of" picker). */
+  trackedCategoryName?: string;
+  /** Regulated subcategory id, "" = none. */
+  trackedSubcategoryId: string;
 }
 
 export function emptyProductForm(): ProductFormValues {
@@ -49,6 +57,9 @@ export function emptyProductForm(): ProductFormValues {
     parentProductId: "",
     variantName: "",
     parentName: undefined,
+    trackedCategoryId: "",
+    trackedCategoryName: undefined,
+    trackedSubcategoryId: "",
   };
 }
 
@@ -74,6 +85,9 @@ export function productFormFromValues(
     parentProductId: p.parentProductId ?? "",
     variantName: p.variantName ?? "",
     parentName: p.parent?.name ?? undefined,
+    trackedCategoryId: p.trackedCategory?.id ?? p.trackedCategoryId ?? "",
+    trackedCategoryName: p.trackedCategory?.name,
+    trackedSubcategoryId: p.trackedSubcategory?.id ?? p.trackedSubcategoryId ?? "",
   };
 }
 
@@ -100,9 +114,14 @@ export interface SubmitPayload {
   isActive: boolean;
   parentProductId?: string;
   variantName?: string;
+  trackedCategoryId?: string | null;
+  trackedSubcategoryId?: string | null;
 }
 
-export function buildProductPayload(form: ProductFormValues): SubmitPayload | { error: string } {
+export function buildProductPayload(
+  form: ProductFormValues,
+  mode: "create" | "edit" = "create",
+): SubmitPayload | { error: string } {
   // Variant vs standalone: a variant stores JUST the flavor in `name` (PR #44),
   // with the parent context in `parentProductId` — the display name is composed
   // at render (displayProductName). So when a parent is picked, the flavor field
@@ -141,5 +160,13 @@ export function buildProductPayload(form: ProductFormValues): SubmitPayload | { 
     isActive: form.isActive,
     parentProductId,
     variantName: parentProductId ? variantName : undefined,
+    trackedCategoryId:
+      mode === "edit"
+        ? form.trackedCategoryId.trim() || null
+        : form.trackedCategoryId.trim() || undefined,
+    trackedSubcategoryId:
+      mode === "edit"
+        ? form.trackedSubcategoryId.trim() || null
+        : form.trackedSubcategoryId.trim() || undefined,
   };
 }

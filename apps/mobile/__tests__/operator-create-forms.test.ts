@@ -26,7 +26,7 @@
 
 // The product-form logic is now a React-Native-free module, so the tests below
 // exercise the REAL buildProductPayload/emptyProductForm (not a replica).
-import { buildProductPayload, emptyProductForm } from "../lib/product-form";
+import { buildProductPayload, emptyProductForm, productFormFromValues } from "../lib/product-form";
 
 // ── Utility: mirrors the guard logic extracted from [id].tsx screens ─────────
 
@@ -238,6 +238,73 @@ describe("ProductForm — buildProductPayload (synchronous, no fetch)", () => {
     });
     if (!("error" in one)) expect(one.unitsPerBox).toBeUndefined();
     if (!("error" in boxed)) expect(boxed.unitsPerBox).toBe(6);
+  });
+});
+
+// ── Tests — REG-3: regulated section/subcategory tagging (create vs edit) ─────
+
+describe("ProductForm — buildProductPayload regulated tagging (REG-3)", () => {
+  it("create (default mode): sends the picked section + subcategory ids", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "sec-1",
+      trackedSubcategoryId: "sub-1",
+    };
+    const result = buildProductPayload(form);
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.trackedCategoryId).toBe("sec-1");
+      expect(result.trackedSubcategoryId).toBe("sub-1");
+    }
+  });
+
+  it("create: blank tracked fields are OMITTED (undefined), not sent as null", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "",
+    };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.trackedCategoryId).toBeUndefined();
+      expect(result.trackedSubcategoryId).toBeUndefined();
+    }
+  });
+
+  it('edit (mode="edit"): blank tracked fields send explicit null to clear', () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "",
+    };
+    const result = buildProductPayload(form, "edit");
+    if (!("error" in result)) {
+      expect(result.trackedCategoryId).toBeNull();
+      expect(result.trackedSubcategoryId).toBeNull();
+    }
+  });
+});
+
+describe("productFormFromValues — regulated tagging (REG-3)", () => {
+  it("seeds trackedCategoryId/Name and trackedSubcategoryId from a tagged product", () => {
+    const form = productFormFromValues({
+      trackedCategory: { id: "sec-1", name: "Alcohol" },
+      trackedSubcategory: { id: "sub-1", name: "Beer" },
+    });
+    expect(form.trackedCategoryId).toBe("sec-1");
+    expect(form.trackedCategoryName).toBe("Alcohol");
+    expect(form.trackedSubcategoryId).toBe("sub-1");
+  });
+
+  it("defaults to empty tracked fields when the product has no regulated tag (matches emptyProductForm)", () => {
+    const form = productFormFromValues({});
+    expect(form.trackedCategoryId).toBe("");
+    expect(form.trackedCategoryName).toBeUndefined();
+    expect(form.trackedSubcategoryId).toBe("");
   });
 });
 

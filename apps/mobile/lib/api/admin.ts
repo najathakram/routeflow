@@ -387,6 +387,8 @@ export interface AdminProduct {
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
   supplier?: { id: string; name: string };
+  /** REG-2/REG-3: the product's regulated-section tag, if any. */
+  trackedCategoryId?: string | null;
 }
 
 export type StockStatusFilter = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";

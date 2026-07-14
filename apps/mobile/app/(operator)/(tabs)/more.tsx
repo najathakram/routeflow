@@ -71,6 +71,14 @@ export default function OperatorMoreScreen() {
             chevron
           />
           <ListRow
+            icon={<Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />}
+            iconBg={ios.brandWash}
+            title="Regulated"
+            subtitle="Tax, licensing & subcategories"
+            onPress={() => router.push("/(operator)/regulated")}
+            chevron
+          />
+          <ListRow
             icon={<Ionicons name="document-text-outline" size={16} color={ios.system.orangeInk} />}
             iconBg={ios.system.orangeWash}
             title="Invoices"

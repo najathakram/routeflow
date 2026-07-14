@@ -6,6 +6,9 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { CategoryInput } from "./CategoryInput";
 import { ProductPickerSheet } from "./ProductPickerSheet";
+import { OptionPickerSheet } from "./OptionPickerSheet";
+import { useTrackedCategories, useTrackedSubcategories } from "../lib/api/tracked-categories";
+import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
 import {
   buildProductPayload,
   emptyProductForm,
@@ -37,6 +40,8 @@ interface ProductFormProps {
   submitLabel: string;
   initial: ProductFormValues;
   submitting?: boolean;
+  /** REG-3: create omits blank tracked-category fields, edit sends explicit null to clear. */
+  mode: "create" | "edit";
   onSubmit: (payload: SubmitPayload) => void | Promise<void>;
 }
 
@@ -45,20 +50,38 @@ export function ProductForm({
   submitLabel,
   initial,
   submitting,
+  mode,
   onSubmit,
 }: ProductFormProps) {
   const router = useRouter();
   const [form, setForm] = React.useState<ProductFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
   const [parentPickerOpen, setParentPickerOpen] = React.useState(false);
+  const [sectionPickerOpen, setSectionPickerOpen] = React.useState(false);
+  const [subcategoryPickerOpen, setSubcategoryPickerOpen] = React.useState(false);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   const isVariant = !!form.parentProductId;
 
+  // Regulated section + subcategory pickers (both optional). The subcategory
+  // list is scoped to the section currently chosen in the form; `current` uses
+  // the ORIGINAL initial value (not the live form) so re-selecting a section
+  // doesn't change what counts as "the tag this product started with" — mirrors
+  // web's product?.trackedCategory (stable across the edit session).
+  const { data: sections = [] } = useTrackedCategories({ active: true });
+  const { data: subcategories = [] } = useTrackedSubcategories(form.trackedCategoryId || undefined);
+  const sectionOptions = sectionPickerOptions(
+    sections,
+    initial.trackedCategoryId
+      ? { id: initial.trackedCategoryId, name: initial.trackedCategoryName ?? "Unknown section" }
+      : null,
+  );
+  const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
+
   const submit = () => {
-    const result = buildProductPayload(form);
+    const result = buildProductPayload(form, mode);
     if ("error" in result) {
       setError(result.error);
       return;
@@ -199,6 +222,42 @@ export function ProductForm({
         </FormField>
       </FormSection>
 
+      {sectionOptions.length > 0 ? (
+        <FormSection title="Regulated (optional)">
+          <FormField label="Regulated section">
+            <Pressable style={styles.picker} onPress={() => setSectionPickerOpen(true)}>
+              <View style={styles.pickerInner}>
+                <Text style={styles.pickerText} numberOfLines={1}>
+                  {form.trackedCategoryId
+                    ? (sectionOptions.find((s) => s.id === form.trackedCategoryId)?.name ?? "—")
+                    : "None (not regulated)"}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={ios.label3} />
+              </View>
+            </Pressable>
+          </FormField>
+          <FormField label="Subcategory">
+            <Pressable
+              style={[styles.picker, !form.trackedCategoryId && { opacity: 0.5 }]}
+              onPress={() => form.trackedCategoryId && setSubcategoryPickerOpen(true)}
+              disabled={!form.trackedCategoryId}
+            >
+              <View style={styles.pickerInner}>
+                <Text style={styles.pickerText} numberOfLines={1}>
+                  {!form.trackedCategoryId
+                    ? "Pick a section first"
+                    : form.trackedSubcategoryId
+                      ? (subcategoryOptions.find((s) => s.id === form.trackedSubcategoryId)?.name ??
+                        "—")
+                      : "None"}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={ios.label3} />
+              </View>
+            </Pressable>
+          </FormField>
+        </FormSection>
+      ) : null}
+
       <FormSection title="Pricing">
         <FormField
           label="Price per unit"
@@ -288,6 +347,40 @@ export function ProductForm({
             variantName: f.variantName || f.name,
           }));
           setParentPickerOpen(false);
+        }}
+      />
+
+      <OptionPickerSheet
+        visible={sectionPickerOpen}
+        title="Regulated section"
+        options={sectionOptions.map((s) => ({
+          id: s.id,
+          label: s.name + (s.inactive ? " (inactive)" : ""),
+        }))}
+        selectedId={form.trackedCategoryId}
+        nullable
+        nullLabel="None (not regulated)"
+        onClose={() => setSectionPickerOpen(false)}
+        onSelect={(opt) => {
+          set("trackedCategoryId", opt.id);
+          set("trackedSubcategoryId", "");
+          setSectionPickerOpen(false);
+        }}
+      />
+      <OptionPickerSheet
+        visible={subcategoryPickerOpen}
+        title="Subcategory"
+        options={subcategoryOptions.map((s) => ({
+          id: s.id,
+          label: s.name + (s.inactive ? " (inactive)" : ""),
+        }))}
+        selectedId={form.trackedSubcategoryId}
+        nullable
+        nullLabel="None"
+        onClose={() => setSubcategoryPickerOpen(false)}
+        onSelect={(opt) => {
+          set("trackedSubcategoryId", opt.id);
+          setSubcategoryPickerOpen(false);
         }}
       />
     </FormSheet>

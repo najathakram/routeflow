@@ -36,6 +36,7 @@ export default function EditProductScreen() {
       title="Edit product"
       submitLabel={mut.isPending ? "Saving…" : "Save"}
       submitting={mut.isPending}
+      mode="edit"
       initial={productFormFromValues(product)}
       onSubmit={(payload) => {
         if (!id) return;
