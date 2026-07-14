@@ -10,6 +10,8 @@ import {
   useBuyerOrder,
   useBuyerCancelOrder,
   useBuyerCreateChangeRequest,
+  useBuyerCreateOrder,
+  useBuyerOrderTracking,
 } from "../../../lib/api/buyer";
 import {
   orderEditable,
@@ -19,6 +21,11 @@ import {
   describeChangeRequest,
   describeResolution,
 } from "../../../lib/shelf-logic";
+import {
+  buildReorderItems,
+  canReorder,
+  trackingStepIndex,
+} from "../../../lib/order-tracking-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -61,6 +68,8 @@ export default function CustomerOrderDetailScreen() {
   const { data: order, isLoading, isError } = useBuyerOrder(id);
   const cancelMut = useBuyerCancelOrder();
   const createCrMut = useBuyerCreateChangeRequest();
+  const { data: tracking } = useBuyerOrderTracking(id);
+  const reorderMut = useBuyerCreateOrder();
   const [crModalOpen, setCrModalOpen] = useState(false);
   const [crNote, setCrNote] = useState("");
 
@@ -108,6 +117,26 @@ export default function CustomerOrderDetailScreen() {
   const canCancel = orderCancellable(order);
   const canEdit = orderEditable(order);
   const canRequest = !canEdit && canRequestChange(order);
+  const canDoReorder = canReorder(order) && buildReorderItems(order).length > 0;
+
+  const onReorder = () =>
+    confirm(
+      "Reorder this order?",
+      "A new order will be created with the same items.",
+      () =>
+        reorderMut.mutate(
+          { items: buildReorderItems(order) },
+          {
+            onSuccess: (newOrder) => {
+              showToast("Order created");
+              router.push(`/(customer)/orders/${newOrder.id}`);
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          },
+        ),
+      { confirmText: "Reorder" },
+    );
 
   const onCancel = () =>
     confirm(
@@ -187,6 +216,64 @@ export default function CustomerOrderDetailScreen() {
           {order.notes ? <Text style={styles.notes}>{order.notes}</Text> : null}
         </View>
 
+        {/* Delivery tracking */}
+        {order.status !== "DRAFT" && order.status !== "CANCELLED" ? (
+          <>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Delivery tracking</Text>
+            </View>
+            <View style={styles.trackingCard}>
+              <View style={styles.trackingSteps}>
+                {["Pending", "Confirmed", "Out for delivery", "Partial", "Delivered"].map(
+                  (label, idx) => {
+                    const stepIdx = trackingStepIndex(order.status);
+                    const done = stepIdx >= idx;
+                    return (
+                      <View key={label} style={styles.trackingStep}>
+                        <View style={[styles.trackingDot, done && styles.trackingDotDone]} />
+                        <Text
+                          style={[styles.trackingStepLabel, done && styles.trackingStepLabelDone]}
+                        >
+                          {label}
+                        </Text>
+                      </View>
+                    );
+                  },
+                )}
+              </View>
+
+              {tracking?.tracking ? (
+                <View style={styles.trackingLive}>
+                  {tracking.tracking.driverName ? (
+                    <Text style={styles.trackingLine}>Driver: {tracking.tracking.driverName}</Text>
+                  ) : null}
+                  {tracking.tracking.runStatus === "IN_PROGRESS" ? (
+                    <Text style={styles.trackingLine}>
+                      {tracking.tracking.stopsAhead === 0
+                        ? "You're next on the route"
+                        : `${tracking.tracking.stopsAhead} stop${tracking.tracking.stopsAhead === 1 ? "" : "s"} ahead of you`}
+                    </Text>
+                  ) : null}
+                  {tracking.tracking.estimatedArrivalWindow.start ? (
+                    <Text style={styles.trackingLine}>
+                      Estimated: {tracking.tracking.estimatedArrivalWindow.start}
+                      {tracking.tracking.estimatedArrivalWindow.end
+                        ? ` – ${tracking.tracking.estimatedArrivalWindow.end}`
+                        : ""}
+                    </Text>
+                  ) : null}
+                  <View style={styles.trackingMapPlaceholder}>
+                    <Ionicons name="map-outline" size={20} color={ios.label3} />
+                    <Text style={styles.trackingMapText}>Live map coming soon</Text>
+                  </View>
+                </View>
+              ) : order.status === "CONFIRMED" ? (
+                <Text style={styles.trackingLine}>Not yet on a delivery route.</Text>
+              ) : null}
+            </View>
+          </>
+        ) : null}
+
         {/* Line items */}
         {order.lineItems.length > 0 ? (
           <>
@@ -249,6 +336,17 @@ export default function CustomerOrderDetailScreen() {
             <Pressable style={styles.cancelBtn} onPress={onCancel} disabled={cancelMut.isPending}>
               <Text style={styles.cancelBtnText}>
                 {cancelMut.isPending ? "Cancelling…" : "Cancel order"}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Reorder — places a new order from this one's items (server re-prices) */}
+        {canDoReorder ? (
+          <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+            <Pressable style={styles.editBtn} onPress={onReorder} disabled={reorderMut.isPending}>
+              <Text style={styles.editBtnText}>
+                {reorderMut.isPending ? "Placing order…" : "Reorder"}
               </Text>
             </Pressable>
           </View>
@@ -467,4 +565,39 @@ const styles = StyleSheet.create({
   modalBtnCancelText: { color: ios.label, fontSize: 15, fontFamily: "Inter_500Medium" },
   modalBtnSubmit: { backgroundColor: ios.brand },
   modalBtnSubmitText: { color: "#fff", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  trackingCard: {
+    marginHorizontal: 16,
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    padding: 14,
+    gap: 12,
+  },
+  trackingSteps: { flexDirection: "row", justifyContent: "space-between" },
+  trackingStep: { alignItems: "center", flex: 1, gap: 4 },
+  trackingDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: ios.fill3 },
+  trackingDotDone: { backgroundColor: ios.brand },
+  trackingStepLabel: {
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+    color: ios.label3,
+    textAlign: "center",
+  },
+  trackingStepLabelDone: { color: ios.brand },
+  trackingLive: {
+    gap: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+    paddingTop: 10,
+  },
+  trackingLine: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  trackingMapPlaceholder: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 16,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  trackingMapText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label3 },
 });

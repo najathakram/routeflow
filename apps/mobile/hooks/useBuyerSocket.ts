@@ -111,9 +111,12 @@ export function useBuyerSocket() {
         dbg("disconnect", reason);
       });
 
-      socket.on("order.statusChanged", () => {
+      socket.on("order.statusChanged", (payload?: { orderId?: string }) => {
         void qc.invalidateQueries({ queryKey: ["buyer-orders"] });
         void qc.invalidateQueries({ queryKey: ["buyer-dashboard"] });
+        if (payload?.orderId) {
+          void qc.invalidateQueries({ queryKey: ["buyer-order-tracking", payload.orderId] });
+        }
       });
 
       socket.on("invoice.updated", () => {

@@ -414,6 +414,24 @@ export class BuyerController {
     return this.ordersService.findOne(id, makePseudoUser(ctx));
   }
 
+  @Get("orders/:id/tracking")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Get live delivery tracking (route/stop/ETA) for an order" })
+  getOrderTrackingForBuyer(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    // Reuses the SAME service method + ownership-check shape as the staff-side
+    // GET /orders/:id/tracking (orders.controller.ts) — zero new business logic.
+    // makePseudoUser(ctx) defaults role: CUSTOMER, matching getOrder() directly
+    // above — NOT the role: OPERATOR workaround getTemplates() uses further
+    // down. That workaround is specific to OrderTemplatesService's own
+    // customerId-based lookup path; getOrderTracking()'s ownership gate is the
+    // IDENTICAL userId-based check findOne() already uses for getOrder()'s own
+    // ordersService.findOne(id, makePseudoUser(ctx)) call one method up, which
+    // buyer order reads already rely on in production. No new risk introduced.
+    return this.ordersService.getOrderTracking(id, makePseudoUser(ctx));
+  }
+
   @Post("orders")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)

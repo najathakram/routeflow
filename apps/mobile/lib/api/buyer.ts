@@ -5,7 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { buyerApiClient } from "../buyer-auth";
+import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -544,6 +544,37 @@ export function useBuyerOrder(id: string) {
   });
 }
 
+export interface BuyerOrderTracking {
+  status: string;
+  tracking: {
+    runId: string;
+    routeName: string | null;
+    driverName: string | null;
+    runStatus: string;
+    stopNumber: number;
+    stopStatus: string;
+    stopsAhead: number;
+    estimatedArrivalWindow: { start: string | null; end: string | null };
+  } | null;
+}
+
+/** Live-ish: polls while the order can still move. There is no per-stop push
+ *  to the buyer socket namespace today — only order.statusChanged is wired
+ *  (useBuyerSocket.ts), which covers status transitions but not driver
+ *  progress WITHIN a status (stopsAhead ticking down). Paused (no interval)
+ *  once DELIVERED/CANCELLED or before dispatch. TanStack v5 function form. */
+export function useBuyerOrderTracking(id: string) {
+  return useQuery<BuyerOrderTracking>({
+    queryKey: ["buyer-order-tracking", id],
+    queryFn: () => buyerApiClient.get(`/buyer/orders/${id}/tracking`).then((r) => r.data),
+    enabled: !!id,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return s === "OUT_FOR_DELIVERY" || s === "PARTIALLY_DELIVERED" ? 20_000 : false;
+    },
+  });
+}
+
 export function useBuyerCreateOrder() {
   const qc = useQueryClient();
   return useMutation<
@@ -809,5 +840,38 @@ export function useBuyerCreateChangeRequest() {
       // detail (["buyer-orders", id]) keys.
       qc.invalidateQueries({ queryKey: ["buyer-orders"] });
     },
+  });
+}
+
+// ─── Sellers directory (P10-BUY-1) ────────────────────────────────────────────
+// Distinct from getBuyerSellers()/setActiveSeller() in ../buyer-auth (the one-off
+// calls used at login, before any React Query cache exists) — these are the
+// query-cached, in-app-switch equivalents. Same GET /buyer/sellers endpoint;
+// zero backend changes anywhere in this section.
+
+export function useBuyerSellers() {
+  return useQuery<BuyerSeller[]>({
+    queryKey: ["buyer-sellers"],
+    queryFn: () => buyerApiClient.get("/buyer/sellers").then((r) => r.data),
+  });
+}
+
+export function useRequestSeller() {
+  const qc = useQueryClient();
+  return useMutation<{ message?: string }, Error, { sellerSlug: string; emailAtSeller: string }>({
+    mutationFn: (dto) => buyerApiClient.post("/buyer/sellers/request", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-sellers"] }),
+  });
+}
+
+/** Also doubles as "cancel request" for a not-yet-approved link — same
+ *  endpoint buyer.service.disconnectSelf() handles for any link status, not
+ *  just ACTIVE. */
+export function useDisconnectSeller() {
+  const qc = useQueryClient();
+  return useMutation<{ message?: string }, Error, string>({
+    mutationFn: (sellerSlug) =>
+      buyerApiClient.delete(`/buyer/sellers/${sellerSlug}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer-sellers"] }),
   });
 }
