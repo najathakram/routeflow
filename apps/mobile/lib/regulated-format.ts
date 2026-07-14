@@ -1,5 +1,6 @@
 import type {
   InvoiceTreatment,
+  ReportCadence,
   TrackedCategory,
   TrackedSubcategory,
 } from "./api/tracked-categories";
@@ -81,4 +82,36 @@ export function treatmentLabel(t: InvoiceTreatment): string {
     : t === "SEPARATE_SECTION"
       ? "Sectioned on invoice"
       : "Per-line tax";
+}
+
+/**
+ * The most recent COMPLETED period for a cadence, as {year, index} — mirrors
+ * apps/web/lib/regulated-format.ts#lastCompletedPeriod exactly. Used by the
+ * mobile section-detail screen's "Prepare filing" action (WP3) to default the
+ * filing to the last full month/quarter/year rather than the still-in-progress
+ * current one.
+ */
+export function lastCompletedPeriod(cadence: ReportCadence): { year: number; index: number } {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth() + 1; // 1-12
+  if (cadence === "ANNUAL") return { year: y - 1, index: 1 };
+  if (cadence === "QUARTERLY") {
+    const q = Math.floor((m - 1) / 3) + 1; // current quarter 1-4
+    return q === 1 ? { year: y - 1, index: 4 } : { year: y, index: q - 1 };
+  }
+  return m === 1 ? { year: y - 1, index: 12 } : { year: y, index: m - 1 }; // MONTHLY: prev month
+}
+
+/**
+ * Format a money amount (a plain number, or a Prisma-Decimal serialized as a
+ * string) as "$X.XX". Mirrors the local `fmt()` idiom already duplicated in
+ * several mobile screens (e.g. app/(operator)/tobacco/index.tsx) — mobile has no
+ * shared currency helper — centralized here since both the hub and per-section
+ * detail screens (WP2/WP3) need it for both numeric ledger rows and
+ * Decimal-string filing totals.
+ */
+export function fmtMoney(n: number | string | undefined): string {
+  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
