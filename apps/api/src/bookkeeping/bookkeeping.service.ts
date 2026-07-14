@@ -81,7 +81,10 @@ export class BookkeepingService implements OnModuleInit {
     ]);
 
     const data = invoices.map((inv) => {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      // Exclude VOID (bounced) payments from the paid total (P5-12).
+      const paid = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       let ledgerStatus: TxnStatus;
       if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
       else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -112,7 +115,10 @@ export class BookkeepingService implements OnModuleInit {
       },
     });
     if (!inv) throw new NotFoundException("Transaction not found");
-    const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+    // Exclude VOID (bounced) payments from the paid total (P5-12).
+    const paid = inv.payments
+      .filter((p) => p.status !== "VOID")
+      .reduce((s, p) => s + Number(p.amount), 0);
     let ledgerStatus: TxnStatus;
     if (inv.status === InvoiceStatus.PAID) ledgerStatus = TxnStatus.PAID;
     else if (inv.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
@@ -135,7 +141,9 @@ export class BookkeepingService implements OnModuleInit {
     return this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id },
-        include: { payments: true },
+        // Exclude VOID (bounced) payments — a bounced check must not count as
+        // paid, or a legitimate re-payment gets wrongly rejected (P5-12).
+        include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Transaction not found");
 
@@ -190,7 +198,9 @@ export class BookkeepingService implements OnModuleInit {
       else if (updated.status === InvoiceStatus.PARTIAL) ledgerStatus = TxnStatus.PARTIAL;
       else ledgerStatus = TxnStatus.UNPAID;
 
-      const paid2 = updated.payments.reduce((s, p) => s + Number(p.amount), 0);
+      const paid2 = updated.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       return {
         id: updated.id,
         status: ledgerStatus,
@@ -853,10 +863,13 @@ export class BookkeepingService implements OnModuleInit {
               ],
             },
           },
-          select: { total: true, payments: { select: { amount: true } } },
+          select: {
+            total: true,
+            payments: { where: { status: { not: "VOID" } }, select: { amount: true } },
+          },
         }),
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { createdAt: { gte: sevenDaysAgo } },
+          where: { status: { not: "VOID" }, createdAt: { gte: sevenDaysAgo } },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().invoice.count({
@@ -905,9 +918,9 @@ export class BookkeepingService implements OnModuleInit {
         },
         _sum: { total: true },
       }),
-      // Total collected (YTD invoice payments)
+      // Total collected (YTD invoice payments) — exclude VOID (bounced) (P5-12)
       this.prisma.forTenant().invoicePayment.aggregate({
-        where: { createdAt: { gte: startOfYear } },
+        where: { status: { not: "VOID" }, createdAt: { gte: startOfYear } },
         _sum: { amount: true },
       }),
       // Total expenses (YTD)
@@ -927,7 +940,10 @@ export class BookkeepingService implements OnModuleInit {
             ],
           },
         },
-        select: { total: true, payments: { select: { amount: true } } },
+        select: {
+          total: true,
+          payments: { where: { status: { not: "VOID" } }, select: { amount: true } },
+        },
       }),
     ]);
 
@@ -970,7 +986,8 @@ export class BookkeepingService implements OnModuleInit {
           ],
         },
       },
-      include: { payments: true },
+      // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
+      include: { payments: { where: { status: { not: "VOID" } } } },
     });
 
     let arCurrent = 0,
@@ -1010,7 +1027,7 @@ export class BookkeepingService implements OnModuleInit {
           _sum: { total: true },
         }),
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { createdAt: { gte: mStart, lte: mEnd } },
+          where: { status: { not: "VOID" }, createdAt: { gte: mStart, lte: mEnd } },
           _sum: { amount: true },
         }),
         this.prisma.forTenant().expense.aggregate({
@@ -1055,7 +1072,7 @@ export class BookkeepingService implements OnModuleInit {
           _sum: { total: true },
         }),
         this.prisma.forTenant().invoicePayment.aggregate({
-          where: { createdAt: { gte: from } },
+          where: { status: { not: "VOID" }, createdAt: { gte: from } },
           _sum: { amount: true },
         }),
       ]);
@@ -1071,7 +1088,8 @@ export class BookkeepingService implements OnModuleInit {
           },
           issueDate: { gte: from },
         },
-        include: { payments: true },
+        // Exclude VOID (bounced) payments from the due balance (P5-12).
+        include: { payments: { where: { status: { not: "VOID" } } } },
       });
       const due = dueInvoices.reduce((sum, inv) => {
         const b = Number(inv.total) - inv.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -1116,7 +1134,11 @@ export class BookkeepingService implements OnModuleInit {
           ],
         },
       },
-      include: { customer: { select: { id: true, businessName: true } }, payments: true },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
+        payments: { where: { status: { not: "VOID" } } },
+      },
     });
 
     // Dynamic bucket labels based on interval
@@ -1251,7 +1273,8 @@ export class BookkeepingService implements OnModuleInit {
       },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true, phone: true } },
-        payments: true,
+        // Exclude VOID (bounced) payments from received/balance/overdue (P5-12).
+        payments: { where: { status: { not: "VOID" } } },
       },
     });
 
@@ -1333,7 +1356,11 @@ export class BookkeepingService implements OnModuleInit {
     if (customerId) where.customerId = customerId;
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where,
-      include: { customer: { select: { id: true, businessName: true } }, payments: true },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        // Exclude VOID (bounced) payments from paid/balance (P5-12).
+        payments: { where: { status: { not: "VOID" } } },
+      },
       orderBy: { issueDate: "desc" },
     });
     return {
@@ -1358,7 +1385,11 @@ export class BookkeepingService implements OnModuleInit {
   async getBadDebtsReport() {
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: { status: InvoiceStatus.WRITTEN_OFF },
-      include: { customer: { select: { id: true, businessName: true } }, payments: true },
+      include: {
+        customer: { select: { id: true, businessName: true } },
+        // Exclude VOID (bounced) payments from bad-debt paid/balance totals (P5-12).
+        payments: { where: { status: { not: "VOID" } } },
+      },
       orderBy: { writtenOffAt: "desc" },
     });
     return {
@@ -1677,7 +1708,8 @@ export class BookkeepingService implements OnModuleInit {
       where,
       include: {
         customer: { select: { id: true, businessName: true } },
-        payments: true,
+        // Exclude VOID (bounced) payments from AR-aging balances (P5-12).
+        payments: { where: { status: { not: "VOID" } } },
       },
       orderBy: { issueDate: "desc" },
     });
@@ -1834,7 +1866,8 @@ export class BookkeepingService implements OnModuleInit {
         },
         include: {
           customer: { select: { id: true, businessName: true } },
-          payments: true,
+          // Exclude VOID (bounced) payments from invoice balances (P5-12).
+          payments: { where: { status: { not: "VOID" } } },
         },
       }),
       this.prisma.forTenant().creditNote.findMany({

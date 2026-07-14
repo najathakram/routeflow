@@ -1463,4 +1463,64 @@ describe("InvoicesService", () => {
       });
     });
   });
+
+  // ─── P5-12 fallout — VOID payments excluded from balance math ────────────────
+  // A bounced check flips its InvoicePayment.status to VOID and reverts the invoice
+  // to OPEN/PARTIAL. Any sum of payment amounts that ignored VOID under-states the
+  // balance; these lock in the payment-level filter that findOne already had.
+  describe("P5-12 — VOID payments excluded from balance math", () => {
+    it("findAll: a VOID (bounced) payment does not reduce balanceDue or clear isOverdue", async () => {
+      const pastDue = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: InvoiceStatus.PARTIAL,
+          total: 100,
+          dueDate: pastDue,
+          payments: [
+            { id: "p1", amount: 100, status: "VOID" }, // bounced — must NOT count
+            { id: "p2", amount: 30, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.invoice.count.mockResolvedValue(1);
+
+      const result = await service.findAll({} as any);
+      const inv = result.data[0] as any;
+
+      expect(inv.paidAmount).toBe(30); // VOID's 100 excluded
+      expect(inv.balanceDue).toBe(70);
+      expect(inv.isOverdue).toBe(true); // 70 still owed and past due
+    });
+
+    it("deletePayment: a VOID payment is not counted when recomputing status", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        payments: [
+          { id: "pay-A", amount: 30, status: "PAID" }, // real, being deleted
+          { id: "pay-B", amount: 100, status: "VOID" }, // bounced — must NOT count
+        ],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        total: 100,
+      });
+
+      await service.deletePayment("inv-1", "pay-A");
+
+      // Remaining real paid = 0 (pay-A deleted, VOID pay-B ignored) → NOT PAID.
+      // Without the fix, VOID's 100 would recompute to PAID and hide a $100 debt.
+      const updateArg = prisma.invoice.update.mock.calls[0][0];
+      expect(updateArg.data.status).not.toBe(InvoiceStatus.PAID);
+      expect(updateArg.data.paidAt).toBeNull();
+    });
+  });
 });

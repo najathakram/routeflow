@@ -150,7 +150,7 @@ export class CustomersService {
         select: {
           customerId: true,
           total: true,
-          payments: { select: { amount: true } },
+          payments: { select: { amount: true, status: true } },
         },
       }),
       this.prisma.forTenant().advancePayment.findMany({
@@ -164,7 +164,11 @@ export class CustomersService {
 
     const receivablesMap: Record<string, number> = {};
     for (const inv of invoices) {
-      const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
+      // in P5-12) so a reversed payment no longer counts against the receivable.
+      const paid = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       const outstanding = Number(inv.total) - paid;
       receivablesMap[inv.customerId] = (receivablesMap[inv.customerId] ?? 0) + outstanding;
     }
@@ -221,7 +225,7 @@ export class CustomersService {
           status: true,
           dueDate: true,
           createdAt: true,
-          payments: { select: { amount: true } },
+          payments: { select: { amount: true, status: true } },
         },
       }),
       this.prisma.forTenant().creditNote.findMany({
@@ -242,7 +246,10 @@ export class CustomersService {
 
     const invoicesWithPaid = invoices.map((i) => ({
       ...i,
-      amountPaid: i.payments.reduce((sum, p) => sum + Number(p.amount), 0),
+      // VOID payments (e.g. a bounced check reversed in P5-12) must not count as paid.
+      amountPaid: i.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((sum, p) => sum + Number(p.amount), 0),
     }));
 
     const outstanding = invoicesWithPaid
@@ -594,7 +601,7 @@ export class CustomersService {
           status: true,
           dueDate: true,
           createdAt: true,
-          payments: { select: { amount: true } },
+          payments: { select: { amount: true, status: true } },
         },
       }),
       this.prisma.forTenant().creditNote.findMany({
@@ -636,7 +643,10 @@ export class CustomersService {
 
     const invoicesWithPaid = invoices.map((i) => ({
       ...i,
-      amountPaid: i.payments.reduce((sum, p) => sum + Number(p.amount), 0),
+      // VOID payments (e.g. a bounced check reversed in P5-12) must not count as paid.
+      amountPaid: i.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((sum, p) => sum + Number(p.amount), 0),
     }));
 
     const outstanding = invoicesWithPaid
@@ -841,7 +851,11 @@ export class CustomersService {
         );
       }
 
-      const alreadyPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      // Ignore VOID payments (a bounced check reverses to VOID in P5-12); otherwise a
+      // reversed payment would understate the balance and under-apply the advance.
+      const alreadyPaid = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       const invoiceBalance = Number(inv.total) - alreadyPaid;
       const applyAmount = Math.min(Number(ap.balance), invoiceBalance, dto.amount ?? Infinity);
 
@@ -1080,6 +1094,9 @@ export class CustomersService {
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
       where: {
         invoice: { customerId },
+        // A bounced/reversed payment (VOID in P5-12) was never really received, so it
+        // must not inflate a month's income.
+        status: { not: "VOID" },
         paidAt: { gte: sixMonthsAgo },
       },
       select: { amount: true, paidAt: true },
@@ -1144,7 +1161,7 @@ export class CustomersService {
         user: { select: { status: true } },
         invoices: {
           where: { status: { notIn: ["PAID", "VOID", "WRITTEN_OFF"] } },
-          select: { total: true, payments: { select: { amount: true } } },
+          select: { total: true, payments: { select: { amount: true, status: true } } },
         },
         advancePayments: {
           where: { balance: { gt: 0 } },
@@ -1166,7 +1183,11 @@ export class CustomersService {
       "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
     const rows = customers.map((c) => {
       const receivables = c.invoices.reduce((sum, inv) => {
-        const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+        // Exclude VOID payments (a bounced check flips InvoicePayment.status to VOID
+        // in P5-12) so a reversed payment no longer counts against the receivable.
+        const paid = inv.payments
+          .filter((p) => p.status !== "VOID")
+          .reduce((s, p) => s + Number(p.amount), 0);
         return sum + (Number(inv.total) - paid);
       }, 0);
       const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);

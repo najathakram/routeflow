@@ -2546,14 +2546,24 @@ export class OrdersService implements OnApplicationBootstrap {
             notIn: [InvoiceStatus.PAID, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
           },
         },
-        select: { total: true, orderId: true, payments: { select: { amount: true } } },
+        select: {
+          total: true,
+          orderId: true,
+          payments: { select: { amount: true, status: true } },
+        },
       })
     ).filter((inv: any) => inv.orderId !== currentOrderId);
 
+    // Exclude VOID payments: a bounced check (P5-12) flips its InvoicePayment to VOID
+    // and reverts the invoice to OPEN/PARTIAL, so a reversed payment must NOT reduce the
+    // customer's credit exposure — otherwise a bounce lets them slip under the limit.
     const invoiceExposure = openInvoices.reduce(
       (sum: number, inv: any) =>
         sum +
-        (Number(inv.total) - inv.payments.reduce((s: number, p: any) => s + Number(p.amount), 0)),
+        (Number(inv.total) -
+          inv.payments
+            .filter((p: any) => p.status !== "VOID")
+            .reduce((s: number, p: any) => s + Number(p.amount), 0)),
       0,
     );
 

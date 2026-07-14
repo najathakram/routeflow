@@ -2055,6 +2055,31 @@ describe("OrdersService", () => {
       expect(prisma.order.update).toHaveBeenCalled();
     });
 
+    it("ignores VOID (bounced) payments when netting exposure — a bounce cannot slip under the limit", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: 120,
+          orderId: null,
+          // A $120 check bounced → VOID (must NOT reduce exposure); a real $20 remains.
+          payments: [
+            { amount: 120, status: "VOID" },
+            { amount: 20, status: "PAID" },
+          ],
+        },
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      // Real balance = 120 − 20 = 100 (VOID ignored) + projected 15 = 115 > 100 → block.
+      // If the VOID counted as paid, balance would be −20 and the edit would wrongly pass.
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 115 },
+      });
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
     it("exposure exactly at the limit passes; one cent over blocks", async () => {
       prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
       prisma.order.findMany.mockResolvedValue([]);
