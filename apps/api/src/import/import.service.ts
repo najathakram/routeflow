@@ -845,7 +845,12 @@ export class ImportService {
     const statusUpdates: Array<{ id: string; status: InvoiceStatus; paidAt: Date | null }> = [];
     for (const inv of allInvoices) {
       if (TERMINAL_STATUSES.includes(inv.status)) continue;
-      const totalPaid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+      // Exclude VOID (bounced) payments (P5-12) — a reversed payment must not
+      // count as paid here, or the recalc would mis-flip a live invoice to
+      // PAID/PARTIAL just like a VOID invoice would wrongly appear OVERDUE above.
+      const totalPaid = inv.payments
+        .filter((p) => p.status !== "VOID")
+        .reduce((s, p) => s + Number(p.amount), 0);
       const total = Number(inv.total);
       let newStatus: InvoiceStatus;
       if (totalPaid >= total - 0.01) newStatus = InvoiceStatus.PAID;
