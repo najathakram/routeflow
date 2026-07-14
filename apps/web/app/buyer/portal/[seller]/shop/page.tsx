@@ -25,6 +25,9 @@ import {
   useBuyerFavorites,
   useBuyerAddFavorite,
   useBuyerRemoveFavorite,
+  useBuyerStockAlerts,
+  useSubscribeStockAlert,
+  useUnsubscribeStockAlert,
   toPromotionRules,
   type LockedCategory,
 } from "@/lib/api/buyer";
@@ -168,6 +171,9 @@ export default function BuyerShopPage() {
   const { data: favorites } = useBuyerFavorites();
   const addFavorite = useBuyerAddFavorite();
   const removeFavorite = useBuyerRemoveFavorite();
+  const { data: stockAlerts } = useBuyerStockAlerts();
+  const subscribeStockAlert = useSubscribeStockAlert();
+  const unsubscribeStockAlert = useUnsubscribeStockAlert();
 
   const cart = useBuyerCart(buyer?.id, sellerSlug);
 
@@ -188,6 +194,17 @@ export default function BuyerShopPage() {
       removeFavorite.mutate(productId);
     } else {
       addFavorite.mutate(productId);
+    }
+  };
+
+  // Build a set of product IDs with a PENDING restock alert (P5-03).
+  const alertIds = React.useMemo(() => new Set(stockAlerts?.productIds ?? []), [stockAlerts]);
+
+  const toggleStockAlert = (productId: string) => {
+    if (alertIds.has(productId)) {
+      unsubscribeStockAlert.mutate(productId);
+    } else {
+      subscribeStockAlert.mutate(productId);
     }
   };
 
@@ -462,6 +479,8 @@ export default function BuyerShopPage() {
                         }
                         onUpdateQty={(qty) => cart.updateQty(p.id, qty)}
                         onToggleFavorite={() => toggleFavorite(p.id)}
+                        isAlertSubscribed={alertIds.has(p.id)}
+                        onToggleStockAlert={() => toggleStockAlert(p.id)}
                       />
                     ))}
                   </div>

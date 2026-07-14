@@ -14,6 +14,7 @@ import { PromotionsModule } from "../promotions/promotions.module";
 import { OrderTemplatesModule } from "../order-templates/order-templates.module";
 import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
+import { StockAlertsModule } from "../stock-alerts/stock-alerts.module";
 
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
@@ -49,6 +50,7 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     OrderTemplatesModule,
     StorageModule,
     AuthorizationsModule,
+    StockAlertsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

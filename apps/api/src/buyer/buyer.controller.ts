@@ -19,6 +19,7 @@ import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { ShelfService } from "./shelf.service";
+import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { BuyerJwtAuthGuard, PublicBuyer } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
@@ -80,6 +81,7 @@ export class BuyerController {
     private readonly dashboardService: BuyerDashboardService,
     private readonly replenishmentService: ReplenishmentService,
     private readonly shelfService: ShelfService,
+    private readonly stockAlertService: StockAlertService,
     private readonly promotionsService: PromotionsService,
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
@@ -281,8 +283,10 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get single product detail with buyer-specific pricing" })
-  getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
-    return this.catalogService.getProductDetail(id, ctx.customerId);
+  async getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
+    const detail = await this.catalogService.getProductDetail(id, ctx.customerId);
+    const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, id);
+    return { ...detail, alertSubscribed };
   }
 
   // ─── Licenses (W7b expiry bell) ───────────────────────────────────────────────
@@ -778,6 +782,37 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
   ) {
     return this.catalogService.removeFavorite(buyer.sub, ctx.customerId, productId);
+  }
+
+  // ─── Stock alerts / Notify-me (P5-03) ────────────────────────────────────────
+
+  @Get("stock-alerts")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Product ids the buyer has a PENDING restock alert on" })
+  getStockAlerts(@CurrentBuyerCustomer() ctx: any) {
+    return this.stockAlertService.subscriptionsFor(ctx.customerId);
+  }
+
+  @Post("products/:productId/stock-alert")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Subscribe to a restock alert (idempotent upsert)" })
+  subscribeStockAlert(@Param("productId") productId: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.stockAlertService.subscribe(ctx.customerId, productId, ctx.tenantId);
+  }
+
+  @Delete("products/:productId/stock-alert")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Cancel a restock alert" })
+  unsubscribeStockAlert(@Param("productId") productId: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.stockAlertService.unsubscribe(ctx.customerId, productId);
   }
 
   // ─── Licenses & Authorizations (W6b — buyer self-serve) ────────────────────────

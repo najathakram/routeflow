@@ -40,6 +40,8 @@ export interface BuyerProductDetail extends BuyerProduct {
     buyerPrice: number;
     unit: string;
   }>;
+  /** P5-03: whether the caller has a PENDING restock alert on this product. */
+  alertSubscribed?: boolean;
 }
 
 export interface BuyerOrder {
@@ -623,6 +625,47 @@ export function useBuyerRemoveFavorite() {
       qc.invalidateQueries({ queryKey: ["buyer", "favorites"] });
       qc.invalidateQueries({ queryKey: ["buyer", "catalog-counts"] });
       qc.invalidateQueries({ queryKey: ["buyer", "products"] });
+    },
+  });
+}
+
+// ─── Stock Alerts / Notify-me (P5-03) ─────────────────────────────────────────
+
+export interface BuyerStockAlerts {
+  /** Product ids the buyer has a PENDING restock alert on. */
+  productIds: string[];
+}
+
+export function useBuyerStockAlerts() {
+  return useQuery<BuyerStockAlerts>({
+    queryKey: ["buyer", "stock-alerts"],
+    queryFn: () => buyerApiClient.get("/buyer/stock-alerts").then((r) => r.data),
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useSubscribeStockAlert() {
+  const qc = useQueryClient();
+  return useMutation<{ subscribed: true }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.post(`/buyer/products/${productId}/stock-alert`).then((r) => r.data),
+    onSuccess: (_d, productId) => {
+      qc.invalidateQueries({ queryKey: ["buyer", "stock-alerts"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "products"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "product", productId] });
+    },
+  });
+}
+
+export function useUnsubscribeStockAlert() {
+  const qc = useQueryClient();
+  return useMutation<{ subscribed: false }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.delete(`/buyer/products/${productId}/stock-alert`).then((r) => r.data),
+    onSuccess: (_d, productId) => {
+      qc.invalidateQueries({ queryKey: ["buyer", "stock-alerts"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "products"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "product", productId] });
     },
   });
 }
