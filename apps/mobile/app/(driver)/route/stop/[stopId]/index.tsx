@@ -340,6 +340,24 @@ export default function StopDetailScreen() {
               onPress={() => router.push(`/route/stop/${stopId}/return`)}
             />
           </View>
+          {/* P10-POS-3: at-the-door actions — reachable in exactly one tap from
+              here (satisfies "≤2 taps deep" together with each destination
+              screen's own Save). "Adjust order" drives the P5-09 change-request
+              engine; "New order at door" links the previously-orphaned
+              new-order.tsx. "Collect payment" needs no tile of its own — the
+              green button below already is the prefilled collect-payment action. */}
+          <View style={styles.actionBtnRow}>
+            {items.length > 0 ? (
+              <SecondaryBtn
+                label="Adjust order"
+                onPress={() => router.push(`/route/stop/${stopId}/adjust`)}
+              />
+            ) : null}
+            <SecondaryBtn
+              label="New order at door"
+              onPress={() => router.push(`/route/stop/${stopId}/new-order`)}
+            />
+          </View>
           {/* Optional split-invoice flow: lets the driver issue 2+ invoices for the
               stop's order(s), each with its own due date. After splitting, the
               auto-invoice on stop completion sees fully-invoiced items and skips. */}

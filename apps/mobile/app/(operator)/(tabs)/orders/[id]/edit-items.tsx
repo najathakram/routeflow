@@ -21,11 +21,15 @@ import { useProducts } from "../../../../../lib/api/products";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
 import {
+  classifyMargin,
   computeLineSubtotal,
+  computeMarginFraction,
   effectiveQty,
   getTierPrice,
+  priceForMarginFloor,
   roundMoney,
 } from "../../../../../lib/pricing";
+import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -67,6 +71,15 @@ type DraftItem = {
   boxSplit?: boolean;
   /** Set when this row substitutes a different product onto its original line. */
   substituteProductId?: string;
+  /**
+   * Per-piece average cost + category — drives the live margin hint
+   * (pos-cost-roles-spec §1). Only `averageCost` is available here (the
+   * order's embedded product `select` doesn't include `standardCost`, unlike
+   * the separate `/products` list `NewOrderScreen` reads from) — rows with no
+   * average cost yet (never sold) simply show no hint.
+   */
+  averageCost?: number | string | null;
+  category?: string | null;
 };
 
 /**
@@ -121,6 +134,11 @@ export default function EditOrderItemsScreen() {
   // Customer accounts shouldn't reach this screen, but defend anyway —
   // box-splitting is operator/driver-only by product policy.
   const canSplitBoxes = userRole !== "CUSTOMER";
+  // Tenant margin config for the live cost/margin hint (P10-POS-1).
+  const { data: marginConfig } = useMarginConfig();
+  // Lines explicitly acked as "sell anyway" below the margin floor —
+  // session-local, keyed by lineId ?? productId.
+  const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
 
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
   // New + existing ad-hoc lines (productId null). Kept separate from `draft`
@@ -179,6 +197,11 @@ export default function EditOrderItemsScreen() {
         lineId: li.id ?? undefined,
         // Preserve the stored denomination so a qty-only edit doesn't invent a split.
         boxSplit: li.boxes != null || li.pieces != null,
+        // NEW (P10-POS-1): read via the existing `any`-cast `product` ref above —
+        // the server already returns these on the order's embedded product, only
+        // AdminOrder's TS type doesn't declare them yet (out of scope here).
+        averageCost: product.averageCost ?? null,
+        category: product.category ?? null,
       };
     }
     setDraft(next);
@@ -266,6 +289,15 @@ export default function EditOrderItemsScreen() {
       if (qty === 0) delete next[id];
       else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
       return next;
+    });
+
+  // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
+  // price-override modal, minus the reason (the ack itself is the record).
+  const setLinePrice = (id: string, unitPrice: number) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      return { ...d, [id]: { ...cur, unitPrice } };
     });
 
   const incQty = (id: string) => {
@@ -552,6 +584,12 @@ export default function EditOrderItemsScreen() {
                     item={it}
                     canSplitBoxes={canSplitBoxes}
                     canEditPrice={["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)}
+                    marginFloor={floorForCategory(marginConfig, it.category)}
+                    acked={floorAcked.has(it.lineId ?? it.productId)}
+                    onSetToFloor={(price) => setLinePrice(it.productId, price)}
+                    onSellAnyway={() =>
+                      setFloorAcked((prev) => new Set(prev).add(it.lineId ?? it.productId))
+                    }
                     onIncQty={() => incQty(it.productId)}
                     onDecQty={() => decQty(it.productId)}
                     onSetQty={(n) => setQty(it.productId, n)}
@@ -644,6 +682,10 @@ function DraftItemCard({
   item,
   canSplitBoxes,
   canEditPrice,
+  marginFloor,
+  acked,
+  onSetToFloor,
+  onSellAnyway,
   onIncQty,
   onDecQty,
   onSetQty,
@@ -657,6 +699,12 @@ function DraftItemCard({
   canSplitBoxes: boolean;
   /** Price / discount editing is offered while the order is editable (DRAFT/PENDING/CONFIRMED). */
   canEditPrice: boolean;
+  /** Category margin floor (fraction) for the live cost/margin hint. */
+  marginFloor: number;
+  /** Whether this line was already acked as "sell anyway" below the floor. */
+  acked: boolean;
+  onSetToFloor: (price: number) => void;
+  onSellAnyway: () => void;
   onIncQty: () => void;
   onDecQty: () => void;
   onSetQty: (n: number) => void;
@@ -680,6 +728,20 @@ function DraftItemCard({
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
   });
+
+  // Live cost/margin hint (P10-POS-1) — hides entirely when cost is unknown
+  // (product never sold yet). Mirrors NewOrderScreen's CartRow.
+  const pieceCost = item.averageCost != null ? toNumber(item.averageCost) : null;
+  const hasCost = pieceCost != null && Number.isFinite(pieceCost);
+  const marginFrac = hasCost
+    ? computeMarginFraction(item.unitPrice, pieceCost, item.unitsPerBox)
+    : null;
+  const marginClass = classifyMargin(marginFrac, marginFloor);
+  const floorPrice =
+    hasCost && marginClass != null
+      ? priceForMarginFloor(pieceCost!, marginFloor, item.unitsPerBox)
+      : null;
+  const below = marginClass === "belowCost" || marginClass === "belowFloor";
 
   return (
     <View style={styles.card}>
@@ -732,6 +794,39 @@ function DraftItemCard({
         </View>
         <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
       </View>
+
+      {/* Live margin hint (pos-cost-roles-spec §1) — margin on the current
+          unit price vs. the product's cost. */}
+      {marginFrac != null ? (
+        <Text
+          style={[
+            styles.marginHint,
+            marginClass === "belowCost" || marginClass === "belowFloor"
+              ? { color: ios.system.red }
+              : marginClass === "warn"
+                ? { color: ios.system.orange }
+                : { color: ios.label2 },
+          ]}
+        >
+          {marginClass === "belowCost"
+            ? `Below cost (${Math.round(marginFrac * 100)}%)`
+            : marginClass === "belowFloor"
+              ? `Below floor · ${Math.round(marginFrac * 100)}% margin`
+              : `${Math.round(marginFrac * 100)}% margin`}
+        </Text>
+      ) : null}
+
+      {/* Below-floor one-tap fix + ack — only while price editing is allowed. */}
+      {canEditPrice && below && !acked && floorPrice != null ? (
+        <View style={{ flexDirection: "row", gap: 10, marginTop: -4 }}>
+          <Pressable onPress={() => onSetToFloor(floorPrice!)} style={styles.floorFixBtn}>
+            <Text style={styles.floorFixBtnText}>Set to floor ${floorPrice.toFixed(2)}</Text>
+          </Pressable>
+          <Pressable onPress={onSellAnyway} hitSlop={6}>
+            <Text style={styles.sellAnywayText}>Sell anyway</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Editor */}
       {isBoxed ? (
@@ -1253,6 +1348,30 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+
+  // ── Margin hint (P10-POS-1) ───────────────────────────────────────────────
+  marginHint: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+  },
+  floorFixBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.system.red,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  floorFixBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.redInk,
+  },
+  sellAnywayText: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    textDecorationLine: "underline",
   },
 
   // ── Stepper row ───────────────────────────────────────────────────────────

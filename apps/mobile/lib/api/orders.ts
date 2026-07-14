@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ChangeRequest } from "./change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -9,7 +10,14 @@ export interface OrderItem {
   productId: string | null;
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
   name?: string | null;
-  product?: { id: string; name: string; unit: string };
+  product?: {
+    id: string;
+    name: string;
+    unit: string;
+    unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
+    averageCost?: number | string | null; // NEW
+    category?: string | null; // NEW
+  };
   qty: number;
   unitPrice: number;
   /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
@@ -23,6 +31,8 @@ export interface OrderItem {
   pieces?: number | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
+  /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */
+  deliveredQty?: number; // NEW
   status: string;
 }
 
@@ -53,6 +63,10 @@ export interface Order {
   shippedAt?: string | null;
   lineItems: OrderItem[];
   createdAt: string;
+  /** P5-09 post-dispatch change requests on this order, newest first. */
+  changeRequests?: ChangeRequest[]; // NEW
+  /** P5-08 edit-window gate — direct PATCH /items vs. change-request flow. */
+  editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null }; // NEW
 }
 
 export interface CreateOrderDto {
