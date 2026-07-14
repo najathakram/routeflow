@@ -23,6 +23,7 @@ import {
 import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { usePodStore } from "../../../../../store/podStore";
 import { showToast } from "../../../../../lib/toast";
+import { regulatedPodGateError } from "../../../../../lib/pod-gating";
 import { openRouteInMaps } from "../../../../../components/openInMaps";
 import * as Location from "expo-location";
 
@@ -109,25 +110,19 @@ export default function PaymentScreen() {
     }
 
     // W7b: a regulated delivery must carry the demanded age/ID checks + a signature
-    // (the server enforces this too — check here for a clear inline message and to
-    // avoid a wasted round-trip).
-    if (stop.ageCheckRequired || stop.identityCheckRequired) {
-      if (!pod?.signatureUri) {
-        setAmountError("A signature is required for this regulated delivery.");
-        return;
-      }
-      if (stop.ageCheckRequired && !pod?.ageVerified) {
-        setAmountError("Confirm the recipient's age before completing this regulated delivery.");
-        return;
-      }
-      if (stop.identityCheckRequired && !pod?.identityVerified) {
-        setAmountError("Verify the recipient's ID before completing this regulated delivery.");
-        return;
-      }
-      if (stop.identityCheckRequired && !pod?.identityType) {
-        setAmountError("Record which type of ID was checked.");
-        return;
-      }
+    // (the server enforces this too — this is a UX shortcut to avoid a wasted
+    // round-trip; see lib/pod-gating.ts for the tested pure logic).
+    const podGateError = regulatedPodGateError({
+      ageCheckRequired: !!stop.ageCheckRequired,
+      identityCheckRequired: !!stop.identityCheckRequired,
+      hasSignature: !!pod?.signatureUri,
+      ageVerified: pod?.ageVerified,
+      identityVerified: pod?.identityVerified,
+      identityType: pod?.identityType,
+    });
+    if (podGateError) {
+      setAmountError(podGateError);
+      return;
     }
 
     const invoiceId = stop.orders?.[0]?.invoiceId;

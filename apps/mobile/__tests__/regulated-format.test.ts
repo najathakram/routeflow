@@ -5,6 +5,8 @@
  * form's section→subcategory picker.
  */
 import {
+  fmtMoney,
+  lastCompletedPeriod,
   sectionPickerOptions,
   subcategoryPickerOptions,
   taxRuleLabel,
@@ -161,5 +163,52 @@ describe("treatmentLabel", () => {
   ];
   it.each(cases)("%s → %s", (treatment, label) => {
     expect(treatmentLabel(treatment)).toBe(label);
+  });
+});
+
+describe("lastCompletedPeriod", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+  const at = (iso: string) => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(iso));
+  };
+
+  it("MONTHLY mid-year (2026-07-14) → previous month {year:2026, index:6}", () => {
+    at("2026-07-14T12:00:00.000Z");
+    expect(lastCompletedPeriod("MONTHLY")).toEqual({ year: 2026, index: 6 });
+  });
+
+  it("MONTHLY in January → previous December, prior year", () => {
+    at("2026-01-15T00:00:00.000Z");
+    expect(lastCompletedPeriod("MONTHLY")).toEqual({ year: 2025, index: 12 });
+  });
+
+  it("QUARTERLY in Q1 (Feb) → Q4 of the prior year", () => {
+    at("2026-02-01T00:00:00.000Z");
+    expect(lastCompletedPeriod("QUARTERLY")).toEqual({ year: 2025, index: 4 });
+  });
+
+  it("QUARTERLY in Q3 (Jul) → Q2 same year", () => {
+    at("2026-07-14T00:00:00.000Z");
+    expect(lastCompletedPeriod("QUARTERLY")).toEqual({ year: 2026, index: 2 });
+  });
+
+  it("ANNUAL → prior year, index 1, regardless of month", () => {
+    at("2026-07-14T00:00:00.000Z");
+    expect(lastCompletedPeriod("ANNUAL")).toEqual({ year: 2025, index: 1 });
+  });
+});
+
+describe("fmtMoney", () => {
+  it.each([
+    [12.5, "$12.50"],
+    ["7.489", "$7.49"],
+    [0, "$0.00"],
+    [undefined, "$0.00"],
+    ["not-a-number", "$0.00"],
+  ])("%p → %s", (input, expected) => {
+    expect(fmtMoney(input as any)).toBe(expected);
   });
 });

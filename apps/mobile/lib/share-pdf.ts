@@ -75,3 +75,65 @@ function sanitizeFilename(name: string): string {
   const base = cleaned || "invoice";
   return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
 }
+
+export interface ShareCsvOptions {
+  /** Fully-qualified (signed) CSV URL, e.g. from `fetchRegulatedFilingUrl(id, "csv")`. */
+  url: string;
+  /** Suggested file name, e.g. "regulated-filing-2026-06.csv". */
+  filename: string;
+  /** Share-sheet title. */
+  dialogTitle?: string;
+}
+
+/**
+ * Share a CSV straight to the OS / browser share sheet, mirroring {@link sharePdf}
+ * but for `text/csv` artifacts (e.g. a regulated filing's presigned CSV URL). Kept
+ * as a standalone sibling rather than a generic parameter on `sharePdf` so the
+ * existing, widely-used PDF path is untouched.
+ */
+export async function shareCsv({ url, filename, dialogTitle }: ShareCsvOptions): Promise<void> {
+  if (Platform.OS === "web") {
+    await shareCsvWeb(url, filename, dialogTitle);
+    return;
+  }
+
+  const target = (FileSystem.cacheDirectory ?? "") + sanitizeCsvFilename(filename);
+  const { uri } = await FileSystem.downloadAsync(url, target);
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error("Sharing isn't available on this device.");
+  }
+  await Sharing.shareAsync(uri, {
+    mimeType: "text/csv",
+    dialogTitle: dialogTitle ?? filename,
+    UTI: "public.comma-separated-values-text",
+  });
+}
+
+async function shareCsvWeb(url: string, filename: string, dialogTitle?: string): Promise<void> {
+  const nav: any = typeof navigator !== "undefined" ? navigator : undefined;
+
+  if (nav?.share && nav?.canShare) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`CSV fetch failed (${res.status})`);
+      const blob = await res.blob();
+      const file = new File([blob], sanitizeCsvFilename(filename), { type: "text/csv" });
+      if (nav.canShare({ files: [file] })) {
+        await nav.share({ files: [file], title: dialogTitle ?? filename });
+        return;
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
+function sanitizeCsvFilename(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const base = cleaned || "export";
+  return base.toLowerCase().endsWith(".csv") ? base : `${base}.csv`;
+}
