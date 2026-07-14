@@ -35,9 +35,11 @@ import {
   costPerSellingUnit,
   effectiveQty,
   getTierPrice,
+  priceForMarginFloor,
   roundMoney,
 } from "../lib/pricing";
 import { useMarginConfig, floorForCategory } from "../lib/api/margin";
+import { CostHistorySheet } from "./CostHistorySheet";
 import { useTrackedCategories } from "../lib/api/tracked-categories";
 import {
   groupLinesForInvoiceSplit,
@@ -374,6 +376,9 @@ function ProductPickView({
   const { data: customerPrices } = useCustomerPrices(customerId);
   // Tenant margin config for the live cost/margin hint in the cart rows.
   const { data: marginConfig } = useMarginConfig();
+  // Lines the operator explicitly acked as "sell anyway" below the margin
+  // floor (pos-cost-roles-spec §1) — keyed by product id, session-local.
+  const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
   // REG-4: category lookup for the invoice-split preview. Reuses the shipped
   // P10-REG-A hook — no new API surface. Called unconditionally, matching the
   // rest of this screen's hooks (tenants with no regulated categories just get []).
@@ -1351,6 +1356,8 @@ function ProductPickView({
         onChangeNote={setLineNote}
         onToggleNote={toggleLineNote}
         showCostEye={canSeeCost}
+        floorAcked={floorAcked}
+        onSellAnyway={(id) => setFloorAcked((prev) => new Set(prev).add(id))}
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
@@ -1407,6 +1414,8 @@ function CartModal({
   onChangeNote,
   onToggleNote,
   showCostEye,
+  floorAcked,
+  onSellAnyway,
   onIncrement,
   onDecrement,
   onRemove,
@@ -1439,6 +1448,9 @@ function CartModal({
   onToggleNote: (id: string) => void;
   /** Whether this role may reveal cost/margin (seller roles only). */
   showCostEye: boolean;
+  /** Product ids acked as "sell anyway" below the margin floor. */
+  floorAcked: Set<string>;
+  onSellAnyway: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
@@ -1504,6 +1516,8 @@ function CartModal({
                     onChangeNote={(t) => onChangeNote(id, t)}
                     onToggleNote={() => onToggleNote(id)}
                     showCostEye={showCostEye}
+                    acked={floorAcked.has(id)}
+                    onSellAnyway={() => onSellAnyway(id)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onRemove={() => onRemove(id)}
@@ -1592,6 +1606,8 @@ function CartRow({
   onChangeNote,
   onToggleNote,
   showCostEye,
+  acked,
+  onSellAnyway,
   onIncrement,
   onDecrement,
   onRemove,
@@ -1611,6 +1627,9 @@ function CartRow({
   onChangeNote: (text: string) => void;
   onToggleNote: () => void;
   showCostEye: boolean;
+  /** Whether this line was already acked as "sell anyway" below the floor. */
+  acked: boolean;
+  onSellAnyway: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
@@ -1645,6 +1664,14 @@ function CartRow({
     ? computeMarginFraction(effUnit, pieceCost, product.unitsPerBox)
     : null;
   const marginClass = classifyMargin(marginFrac, marginFloor);
+  // Negotiation floor (pos-cost-roles-spec §1): the one-tap fix price + the
+  // below-floor/below-cost gate. `historyOpen` opens the cost-tap sheet.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const floorPrice =
+    hasCost && marginClass != null
+      ? priceForMarginFloor(pieceCost!, marginFloor, product.unitsPerBox)
+      : null;
+  const below = marginClass === "belowCost" || marginClass === "belowFloor";
 
   return (
     <View style={styles.cartRow}>
@@ -1709,6 +1736,18 @@ function CartRow({
         </Text>
       ) : null}
 
+      {/* Below-floor one-tap fix + ack, mirrors web MarginHint. */}
+      {below && !acked && floorPrice != null ? (
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 2 }}>
+          <Pressable onPress={() => onChangePrice(floorPrice!)} style={styles.floorFixBtn}>
+            <Text style={styles.floorFixBtnText}>Set to floor ${floorPrice.toFixed(2)}</Text>
+          </Pressable>
+          <Pressable onPress={onSellAnyway} hitSlop={6}>
+            <Text style={styles.sellAnywayText}>Sell anyway</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       {isBoxed ? (
         <>
           <CartStepperRow label="Boxes" value={line.boxes ?? 0} onChange={onChangeBoxes} />
@@ -1730,24 +1769,32 @@ function CartRow({
         />
       )}
 
-      {/* Cost eye — OFF by default; reveals the selling-unit cost + margin. */}
+      {/* Cost eye — OFF by default; reveals the selling-unit cost + margin.
+          Once visible, the cost text itself is tappable → cost history sheet. */}
       {showCostEye && hasCost ? (
-        <Pressable onPress={() => setCostVisible((v) => !v)} hitSlop={6} style={styles.cartNoteAdd}>
-          <Ionicons
-            name={costVisible ? "eye-off-outline" : "eye-outline"}
-            size={14}
-            color={costVisible ? ios.label2 : ios.brand}
-          />
+        <View style={styles.cartNoteAdd}>
+          <Pressable
+            onPress={() => setCostVisible((v) => !v)}
+            hitSlop={6}
+            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+          >
+            <Ionicons
+              name={costVisible ? "eye-off-outline" : "eye-outline"}
+              size={14}
+              color={costVisible ? ios.label2 : ios.brand}
+            />
+            {!costVisible ? <Text style={styles.cartNoteAddText}>Cost</Text> : null}
+          </Pressable>
           {costVisible ? (
-            <Text style={styles.cartCostText}>
-              Cost ${sellingUnitCost!.toFixed(2)}
-              {isBoxed ? " / box" : ""}
-              {marginFrac != null ? ` · ${(marginFrac * 100).toFixed(1)}%` : ""}
-            </Text>
-          ) : (
-            <Text style={styles.cartNoteAddText}>Cost</Text>
-          )}
-        </Pressable>
+            <Pressable onPress={() => setHistoryOpen(true)} hitSlop={6}>
+              <Text style={styles.cartCostText}>
+                Cost ${sellingUnitCost!.toFixed(2)}
+                {isBoxed ? " / box" : ""}
+                {marginFrac != null ? ` · ${(marginFrac * 100).toFixed(1)}%` : ""}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
 
       {/* Per-line note — carried onto the invoice line (buyer-visible). */}
@@ -1772,6 +1819,12 @@ function CartRow({
         <Text style={styles.cartRowFooterLabel}>Line total</Text>
         <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
       </View>
+
+      <CostHistorySheet
+        visible={historyOpen}
+        productId={product.id}
+        onClose={() => setHistoryOpen(false)}
+      />
     </View>
   );
 }
@@ -2437,6 +2490,24 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: ios.label2,
     textDecorationLine: "line-through",
+  },
+  floorFixBtn: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.system.red,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  floorFixBtnText: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.redInk,
+  },
+  sellAnywayText: {
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    textDecorationLine: "underline",
   },
   cartStepperRow: {
     flexDirection: "row",
