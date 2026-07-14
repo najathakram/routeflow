@@ -20,6 +20,7 @@ import { ListRunsDto } from "./dto/list-runs.dto";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { InvoicesService } from "../invoices/invoices.service";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
@@ -92,6 +93,7 @@ export class RoutesService {
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
     private readonly messaging: MessagingService,
+    private readonly invoicesService: InvoicesService,
   ) {}
 
   // ── Route Templates ────────────────────────────────────────────────────
@@ -1404,31 +1406,27 @@ export class RoutesService {
         });
       }
 
-      // 4. Record payment (atomic with stop completion — RF-005)
-      if (dto.payment && dto.payment.invoiceId && dto.payment.amount > 0) {
-        const invoice = await tx.invoice.findFirst({
-          where: { id: dto.payment.invoiceId },
-          select: { id: true, balance: true },
-        });
-        if (invoice) {
-          const paidAmount = new Prisma.Decimal(dto.payment.amount);
-          await tx.invoicePayment.create({
-            data: {
-              invoiceId: invoice.id,
-              amount: paidAmount,
-              method: dto.payment.method as any,
-              paidAt: new Date(),
-              tenantId: this.prisma.getTenantId(),
-            },
-          });
-          const newBalance = new Prisma.Decimal(invoice.balance ?? 0).minus(paidAmount);
-          await tx.invoice.update({
-            where: { id: invoice.id },
-            data: {
-              balance: newBalance,
-              status: newBalance.lessThanOrEqualTo(0) ? ("PAID" as any) : ("PARTIAL" as any),
-            },
-          });
+      // 4. Record payment (atomic with stop completion — RF-005). The invoice is
+      // resolved SERVER-side from the delivered orders — the mobile client cannot
+      // supply an invoiceId (Order has no invoiceId scalar), so the old
+      // client-invoiceId path silently recorded nothing. This ensures a finalized
+      // invoice exists and records the payment the canonical way (InvoicePayment
+      // + recomputeStatus over non-VOID sums).
+      if (dto.payment && dto.payment.amount > 0) {
+        const deliveredOrderIds = stop.orders
+          .filter((o) => o.status !== OrderStatus.CANCELLED)
+          .map((o) => o.id);
+        const { applied } = await this.invoicesService.recordDeliveryPaymentInTx(
+          tx,
+          deliveredOrderIds,
+          dto.payment.amount,
+          dto.payment.method,
+        );
+        if (applied + 0.005 < dto.payment.amount) {
+          this.logger.warn(
+            `completeWithPayment: collected ${dto.payment.amount} but only ${applied} applied to ` +
+              `invoices for orders ${deliveredOrderIds.join(",")} (remainder unrecorded).`,
+          );
         }
       }
 

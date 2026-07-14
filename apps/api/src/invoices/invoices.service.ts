@@ -2270,6 +2270,154 @@ export class InvoicesService {
     });
   }
 
+  /**
+   * Record a driver-collected payment at stop completion, resolving the target
+   * invoice(s) SERVER-side from the delivered orders. The mobile client cannot
+   * supply an invoiceId (Order has no invoiceId scalar and the run/stop payload
+   * never carries one), which is why every at-door payment silently vanished.
+   * Runs INSIDE the caller's transaction so it is atomic with stop completion.
+   *
+   * Per delivered order: ensure a finalized invoice exists — reconcile an open
+   * DRAFT "pending mirror" (full-order basis, as changeStatus→DELIVERED does),
+   * else create one from the order. Then apply the lump-sum across the orders'
+   * non-VOID invoices OLDEST-first (base invoice before any regulated `-R#`
+   * split siblings), capped at each invoice's remaining. Each application
+   * finalizes a DRAFT→SENT (recomputeStatus treats DRAFT as terminal, so a
+   * payment on a still-DRAFT invoice would never move it off DRAFT) and is
+   * recorded the canonical way — an InvoicePayment row + recomputeStatus over
+   * the non-VOID payment sum, NEVER the (non-existent) `balance` scalar the old
+   * completeWithPayment code tried to decrement.
+   *
+   * @returns the amount actually applied (< amount only when the orders'
+   *          invoices were already covered — the caller should log any residual).
+   */
+  async recordDeliveryPaymentInTx(
+    tx: any,
+    orderIds: string[],
+    amount: number,
+    method: string,
+  ): Promise<{ applied: number; invoiceIds: string[] }> {
+    if (!(amount > 0) || orderIds.length === 0) return { applied: 0, invoiceIds: [] };
+    // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
+    // at-door collection is never one of these (On-account sends amount 0), so
+    // refuse to book a phantom payment rather than bypass the source debit.
+    if (method === "CREDIT_NOTE" || method === "ADVANCE") return { applied: 0, invoiceIds: [] };
+
+    // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
+    // must not swallow the cash (recomputeStatus can't advance it), which would also
+    // starve a live sibling since we apply oldest-first.
+    const PAYABLE = [
+      InvoiceStatus.DRAFT,
+      InvoiceStatus.SENT,
+      InvoiceStatus.PARTIAL,
+      InvoiceStatus.OVERDUE,
+    ];
+
+    // 1. Ensure each delivered order has an invoice (tx-safe helpers).
+    for (const orderId of orderIds) {
+      const draft = await this.findOpenOrderDraft(orderId, tx);
+      if (draft) {
+        await this.reconcileOrderDraftInvoice(orderId, { basis: "order", tx });
+      } else {
+        const existing = await tx.invoice.findFirst({
+          where: { orderId, status: { in: PAYABLE } },
+          select: { id: true },
+        });
+        if (!existing) await this.createInvoiceFromOrder(orderId, tx);
+      }
+    }
+
+    // 2. The orders' payable invoices, oldest-first.
+    const invoices = await tx.invoice.findMany({
+      where: { orderId: { in: orderIds }, status: { in: PAYABLE } },
+      orderBy: [{ createdAt: "asc" }, { invoiceNumber: "asc" }],
+      select: {
+        id: true,
+        total: true,
+        status: true,
+        dueDate: true,
+        invoiceNumber: true,
+        customerId: true,
+      },
+    });
+    if (invoices.length === 0) return { applied: 0, invoiceIds: [] };
+
+    // 3. Spread the lump-sum oldest-first, capped at each invoice's remaining.
+    let remaining = roundMoney(amount);
+    const invoiceIds: string[] = [];
+    for (const inv of invoices) {
+      if (remaining <= 0.001) break;
+      // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
+      // back-office payment on the same invoice can't also read 0 and over-collect.
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
+      const priorPayments = await tx.invoicePayment.findMany({
+        where: { invoiceId: inv.id, status: { not: "VOID" as any } },
+        select: { amount: true },
+      });
+      const total = Number(inv.total);
+      const alreadyPaid = priorPayments.reduce((s: number, p: any) => s + Number(p.amount), 0);
+      const invRemaining = roundMoney(total - alreadyPaid);
+      if (invRemaining <= 0.001) continue;
+      const applyHere = roundMoney(Math.min(remaining, invRemaining));
+
+      // A delivered+paid order's invoice is genuinely issued; finalize a DRAFT
+      // pending-mirror so recomputeStatus (DRAFT is terminal) can advance it.
+      const wasDraft = inv.status === InvoiceStatus.DRAFT;
+      const baseStatus = wasDraft ? InvoiceStatus.SENT : inv.status;
+
+      const paymentNumber = await this.nextPaymentNumberInTx(tx);
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId: inv.id,
+          amount: applyHere,
+          method: method as any,
+          paidAt: new Date(),
+          status: "PAID" as any,
+          paymentNumber,
+          checkStatus: method === "CHECK" ? CheckStatus.RECORDED : null,
+        },
+      });
+
+      const newStatus = this.recomputeStatus(
+        alreadyPaid + applyHere,
+        total,
+        inv.dueDate,
+        baseStatus,
+      );
+      await tx.invoice.update({
+        where: { id: inv.id },
+        data: {
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? new Date() : null,
+          ...(wasDraft ? { sentAt: new Date() } : {}),
+        },
+      });
+      this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customerId: inv.customerId,
+        status: newStatus,
+        total,
+      });
+
+      invoiceIds.push(inv.id);
+      remaining = roundMoney(remaining - applyHere);
+    }
+    return { applied: roundMoney(amount - remaining), invoiceIds };
+  }
+
+  /** Tenant-scoped `PAY-XXXX-####` sequence — mirrors recordPayment's counter. */
+  private async nextPaymentNumberInTx(tx: any): Promise<string> {
+    const counterKey = this.prisma.getTenantId() ?? "singleton";
+    const tenantShort = counterKey.slice(0, 6).toUpperCase();
+    const counter = await tx.paymentCounter.upsert({
+      where: { id: counterKey },
+      update: { next: { increment: 1 } },
+      create: { id: counterKey, next: 2 },
+    });
+    return `PAY-${tenantShort}-${String(counter.next - 1).padStart(4, "0")}`;
+  }
+
   async updatePayment(invoiceId: string, paymentId: string, dto: UpdatePaymentDto) {
     if ((dto.method as any) === "CREDIT_NOTE" || (dto.method as any) === "ADVANCE") {
       throw new BadRequestException(

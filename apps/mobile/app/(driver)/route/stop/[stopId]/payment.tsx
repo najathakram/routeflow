@@ -190,7 +190,6 @@ export default function PaymentScreen() {
       return;
     }
 
-    const invoiceId = stop.orders?.[0]?.invoiceId;
     const apiMethod = ({
       Cash: "CASH",
       Card: "CREDIT_CARD",
@@ -214,10 +213,9 @@ export default function PaymentScreen() {
         ageVerified: pod?.ageVerified,
         identityVerified: pod?.identityVerified,
         identityType: pod?.identityType,
-        payment:
-          invoiceId && collected > 0
-            ? { invoiceId, amount: collected, method: apiMethod }
-            : undefined,
+        // The server resolves the invoice from the delivered orders — we only
+        // send amount + method (a client invoiceId was always undefined here).
+        payment: collected > 0 ? { amount: collected, method: apiMethod } : undefined,
         idempotencyKey,
       });
     } catch (e: any) {

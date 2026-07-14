@@ -291,7 +291,8 @@ export interface CompleteWithPaymentDto {
   identityVerified?: boolean;
   identityType?: string | null;
   payment?: {
-    invoiceId: string;
+    // Resolved server-side from the delivered orders; no longer sent by the client.
+    invoiceId?: string;
     amount: number;
     method: string;
   };

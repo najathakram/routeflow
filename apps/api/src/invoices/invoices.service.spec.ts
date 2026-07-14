@@ -1523,4 +1523,166 @@ describe("InvoicesService", () => {
       expect(updateArg.data.paidAt).toBeNull();
     });
   });
+
+  // ─── Driver at-door payment — server resolves the invoice by orderId ─────────
+  // The mobile client cannot supply an invoiceId (Order has no such scalar), so
+  // recordDeliveryPaymentInTx resolves/ensures the invoice server-side and records
+  // the payment the canonical way (InvoicePayment + recomputeStatus, never a
+  // non-existent `balance`).
+  describe("recordDeliveryPaymentInTx (driver Collect payment)", () => {
+    const inv = (over: any = {}) => ({
+      id: "inv-1",
+      total: 100,
+      status: InvoiceStatus.SENT,
+      dueDate: null,
+      invoiceNumber: "INV-1",
+      customerId: "cust-1",
+      payments: [],
+      ...over,
+    });
+
+    beforeEach(() => {
+      // Isolate the method's own logic: stub the ensure-invoice helpers.
+      jest.spyOn(service, "findOpenOrderDraft").mockResolvedValue(null as any);
+      jest.spyOn(service, "reconcileOrderDraftInvoice").mockResolvedValue(undefined as any);
+      jest.spyOn(service, "createInvoiceFromOrder").mockResolvedValue([] as any);
+      prisma.paymentCounter.upsert.mockResolvedValue({ next: 2 } as any);
+      prisma.invoice.update.mockResolvedValue({} as any);
+    });
+
+    it("records an InvoicePayment against the order's existing invoice and marks it PAID", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" }); // ensure-step: invoice exists
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(res.applied).toBe(100);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            invoiceId: "inv-1",
+            amount: 100,
+            method: "CASH",
+            status: "PAID",
+          }),
+        }),
+      );
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-1" },
+          data: expect.objectContaining({ status: InvoiceStatus.PAID }),
+        }),
+      );
+      // createInvoiceFromOrder NOT called (an invoice already existed).
+      expect(service.createInvoiceFromOrder).not.toHaveBeenCalled();
+    });
+
+    it("finalizes a DRAFT pending-mirror (→SENT baseline) so a partial payment lands PARTIAL, not stuck DRAFT", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 40, "CASH");
+
+      const upd = prisma.invoice.update.mock.calls[0][0];
+      // recomputeStatus(40, 100, …, SENT) → PARTIAL (would be DRAFT if not finalized)
+      expect(upd.data.status).toBe(InvoiceStatus.PARTIAL);
+      expect(upd.data.sentAt).toBeInstanceOf(Date); // DRAFT was finalized
+    });
+
+    it("creates an invoice when the order has none, then records the payment", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(null); // no existing invoice
+      // After createInvoiceFromOrder, findMany surfaces the freshly-created invoice.
+      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(service.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", prisma);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("spreads a lump-sum oldest-first across regulated split siblings, capped at each remaining", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-base" });
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-base", invoiceNumber: "INV-9", total: 60 }),
+        inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
+      ]);
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(res.applied).toBe(100);
+      const amounts = prisma.invoicePayment.create.mock.calls.map((c: any) => ({
+        invoiceId: c[0].data.invoiceId,
+        amount: c[0].data.amount,
+      }));
+      expect(amounts).toEqual([
+        { invoiceId: "inv-base", amount: 60 },
+        { invoiceId: "inv-r1", amount: 40 },
+      ]);
+    });
+
+    it("caps at the invoice's remaining (over-collection leaves a reported residual)", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 30 }]); // prior paid → remaining 70
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(res.applied).toBe(70); // 30 residual not applied
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 70 }) }),
+      );
+    });
+
+    it("row-locks the invoice and reads prior paid with VOID excluded", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(res.applied).toBe(100);
+      // FOR UPDATE lock taken (serializes a concurrent back-office payment).
+      expect(prisma.$executeRaw).toHaveBeenCalled();
+      // prior-paid read excludes bounced (VOID) payments.
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ status: { not: "VOID" } }) }),
+      );
+    });
+
+    it("only touches PAYABLE invoices — a written-off/void invoice can't swallow the cash", async () => {
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            status: {
+              in: [
+                InvoiceStatus.DRAFT,
+                InvoiceStatus.SENT,
+                InvoiceStatus.PARTIAL,
+                InvoiceStatus.OVERDUE,
+              ],
+            },
+          }),
+        }),
+      );
+    });
+
+    it("refuses CREDIT_NOTE / ADVANCE (they must debit a source balance, not book a payment)", async () => {
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 50, "ADVANCE");
+      expect(res.applied).toBe(0);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op for a zero amount or no orders", async () => {
+      const a = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 0, "CASH");
+      const b = await service.recordDeliveryPaymentInTx(prisma as any, [], 50, "CASH");
+      expect(a.applied).toBe(0);
+      expect(b.applied).toBe(0);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { InvoicesService } from "../invoices/invoices.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_ROUTE = {
@@ -61,9 +62,13 @@ describe("RoutesService", () => {
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
+  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    invoicesService = {
+      recordDeliveryPaymentInTx: jest.fn().mockResolvedValue({ applied: 0, invoiceIds: [] }),
+    };
 
     gateway = {
       emitStopCompleted: jest.fn(),
@@ -89,6 +94,7 @@ describe("RoutesService", () => {
         { provide: RouteFlowGateway, useValue: gateway },
         { provide: NotificationsService, useValue: notifications },
         { provide: MessagingService, useValue: messaging },
+        { provide: InvoicesService, useValue: invoicesService },
       ],
     }).compile();
 
@@ -503,13 +509,16 @@ describe("RoutesService", () => {
   describe("completeWithPayment (RF-005)", () => {
     const IN_PROGRESS_RUN = { ...MOCK_RUN, status: "IN_PROGRESS" as const };
 
-    it("should complete stop and record payment in one transaction", async () => {
+    it("resolves the invoice server-side and records the payment WITHOUT a client invoiceId", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
       prisma.routeRunStop.findFirst.mockResolvedValue({
         id: "stop-1",
         routeRunId: "run-1",
         status: "PENDING",
-        orders: [],
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
       });
       prisma.driver.findFirst.mockResolvedValue(null);
       const txMock = {
@@ -520,15 +529,9 @@ describe("RoutesService", () => {
           update: jest.fn().mockResolvedValue({}),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
-        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
-        invoice: {
-          ...prisma.invoice,
-          findFirst: jest.fn().mockResolvedValue({ id: "inv-1", balance: 100 }),
-          update: jest.fn().mockResolvedValue({}),
-        },
-        invoicePayment: { ...prisma.invoicePayment, create: jest.fn().mockResolvedValue({}) },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
       (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
@@ -537,15 +540,22 @@ describe("RoutesService", () => {
         status: "COMPLETED",
       });
 
+      // The regression: mobile sends amount + method only (a client invoiceId was
+      // always undefined). The server must still record the payment by resolving
+      // the invoice from the delivered order — the old code silently did nothing.
       await service.completeWithPayment(
         "run-1",
         "stop-1",
-        { payment: { invoiceId: "inv-1", amount: 50, method: "CASH" } },
+        { payment: { amount: 50, method: "CASH" } },
         operatorPayload,
       );
 
-      expect(txMock.invoicePayment.create).toHaveBeenCalled();
-      expect(txMock.invoice.update).toHaveBeenCalled();
+      expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        50,
+        "CASH",
+      );
     });
 
     it("should throw BadRequestException for CASH payment with amount=0 (RF-006)", async () => {
