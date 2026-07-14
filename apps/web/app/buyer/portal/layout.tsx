@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   Heart,
   Bell,
+  Boxes,
   ShieldAlert,
   X,
   TrendingUp,
@@ -171,6 +172,11 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
           href: `/buyer/portal/${sellerSlug}/shop`,
           icon: Store,
           label: "Shop",
+        },
+        {
+          href: `/buyer/portal/${sellerSlug}/shelf`,
+          icon: Boxes,
+          label: "Your Shelf",
         },
         {
           href: `/buyer/portal/${sellerSlug}/favorites`,

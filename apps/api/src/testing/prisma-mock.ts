@@ -147,6 +147,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     buyerRefreshToken: modelProxy(),
     buyerPasswordResetToken: modelProxy(),
     customerLink: modelProxy(),
+    replenishmentSnooze: modelProxy(),
   });
 
   const txModels = () => ({

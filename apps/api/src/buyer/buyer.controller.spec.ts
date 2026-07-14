@@ -17,6 +17,7 @@ import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { ReplenishmentService } from "./replenishment.service";
+import { ShelfService } from "./shelf.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { OrdersService } from "../orders/orders.service";
 import { ChangeRequestsService } from "../orders/change-requests.service";
@@ -39,13 +40,28 @@ const MOCK_CTX = {
 
 describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   let controller: BuyerController;
-  let ordersService: jest.Mocked<Pick<OrdersService, "findAll">>;
+  let ordersService: { findAll: jest.Mock; findActiveOrder: jest.Mock };
+  let shelfService: {
+    shelf: jest.Mock;
+    lowItems: jest.Mock;
+    snooze: jest.Mock;
+    unsnooze: jest.Mock;
+  };
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
   let templatesService: jest.Mocked<Pick<OrderTemplatesService, "findAllForUser">>;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
 
   beforeEach(async () => {
-    ordersService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
+    ordersService = {
+      findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+      findActiveOrder: jest.fn().mockResolvedValue(null),
+    };
+    shelfService = {
+      shelf: jest.fn().mockResolvedValue([]),
+      lowItems: jest.fn().mockResolvedValue([]),
+      snooze: jest.fn().mockResolvedValue({ snoozedUntil: "2026-08-01T00:00:00.000Z" }),
+      unsnooze: jest.fn().mockResolvedValue({ ok: true }),
+    };
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
       findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
@@ -62,6 +78,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
         { provide: ReplenishmentService, useValue: {} },
+        { provide: ShelfService, useValue: shelfService },
         { provide: PromotionsService, useValue: {} },
         { provide: OrdersService, useValue: ordersService },
         { provide: ChangeRequestsService, useValue: {} },
@@ -159,5 +176,75 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     };
     controller.submitAuthorization(MOCK_CTX as any, dto as any);
     expect(authorizationsService.submit).toHaveBeenCalledWith("cust-abc", dto);
+  });
+
+  // ─── Your Shelf (P5-06/07) ───────────────────────────────────────────────────
+
+  it("getShelf: returns snooze-overlaid estimates + active-order summary (stored total only)", async () => {
+    shelfService.shelf.mockResolvedValue([{ productId: "A", state: "low", snoozed: true }]);
+    ordersService.findActiveOrder.mockResolvedValue({
+      id: "o1",
+      orderNumber: "SO-1001",
+      total: "45.50",
+      lineItems: [{}, {}],
+    });
+
+    const res = await controller.getShelf(MOCK_CTX as any);
+
+    expect(shelfService.shelf).toHaveBeenCalledWith("cust-abc");
+    expect(res.estimates[0]).toMatchObject({ productId: "A", snoozed: true });
+    expect(res.activeOrder).toEqual({
+      id: "o1",
+      orderNumber: "SO-1001",
+      itemCount: 2,
+      total: 45.5,
+    });
+  });
+
+  it("getShelf: no active order → activeOrder null", async () => {
+    ordersService.findActiveOrder.mockResolvedValue(null);
+    const res = await controller.getShelf(MOCK_CTX as any);
+    expect(res.activeOrder).toBeNull();
+  });
+
+  it("addAllLow: delegates the low && !snoozed items to the createOrder merge path", async () => {
+    shelfService.lowItems.mockResolvedValue([
+      { productId: "A", qty: 6 },
+      { productId: "B", qty: 24 },
+    ]);
+    const createSpy = jest.spyOn(controller, "createOrder").mockResolvedValue({ id: "o1" } as any);
+
+    const result = await controller.addAllLow(MOCK_CTX as any);
+
+    expect(shelfService.lowItems).toHaveBeenCalledWith("cust-abc");
+    expect(createSpy).toHaveBeenCalledWith(
+      {
+        items: [
+          { productId: "A", qty: 6 },
+          { productId: "B", qty: 24 },
+        ],
+      },
+      MOCK_CTX,
+    );
+    expect(result).toEqual({ id: "o1" });
+  });
+
+  it("addAllLow: empty low list → no-op returning the active order, no create", async () => {
+    shelfService.lowItems.mockResolvedValue([]);
+    ordersService.findActiveOrder.mockResolvedValue({ id: "o9", lineItems: [] });
+    const createSpy = jest.spyOn(controller, "createOrder");
+
+    const result = await controller.addAllLow(MOCK_CTX as any);
+
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ id: "o9" });
+  });
+
+  it("snooze/unsnooze: delegate with ctx.customerId (+ tenantId on snooze)", async () => {
+    await controller.snoozeReplenishment("prod-1", MOCK_CTX as any);
+    expect(shelfService.snooze).toHaveBeenCalledWith("cust-abc", "prod-1", "tenant-xyz");
+
+    await controller.unsnoozeReplenishment("prod-1", MOCK_CTX as any);
+    expect(shelfService.unsnooze).toHaveBeenCalledWith("cust-abc", "prod-1");
   });
 });

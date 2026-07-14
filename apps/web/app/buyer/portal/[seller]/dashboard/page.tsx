@@ -20,6 +20,7 @@ import {
   useBuyerDashboard,
   useBuyerTemplates,
   useBuyerReorder,
+  useBuyerShelf,
   type OrderTemplate,
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
@@ -180,8 +181,15 @@ export default function BuyerDashboardPage() {
   const [frequentWindow, setFrequentWindow] = React.useState<"30d" | "90d" | "all">("all");
   const { data: dashboard, isLoading, isError } = useBuyerDashboard(frequentWindow);
   const { data: templatesData, isLoading: templatesLoading } = useBuyerTemplates();
+  const { data: shelf } = useBuyerShelf();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const templates: OrderTemplate[] = templatesData?.data ?? [];
+
+  // P5-07: chips read the SAME /buyer/shelf payload as Your Shelf and the shop
+  // strip (state === "low" | "due-soon", not snoozed) — identical by construction.
+  const shelfEstimates = shelf?.estimates ?? [];
+  const lowCount = shelfEstimates.filter((e) => e.state === "low" && !e.snoozed).length;
+  const dueSoonCount = shelfEstimates.filter((e) => e.state === "due-soon" && !e.snoozed).length;
 
   React.useEffect(() => {
     if (!authLoading && !activeSeller) router.push("/buyer/portal");
@@ -216,6 +224,33 @@ export default function BuyerDashboardPage() {
         </h1>
         <p className="text-sm text-navy/70 mt-1">Your dashboard at {activeSeller?.tenant.name}</p>
       </div>
+
+      {/* P5-07: replenishment chips → Your Shelf */}
+      {(lowCount > 0 || dueSoonCount > 0) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {lowCount > 0 && (
+            <button
+              type="button"
+              onClick={() => router.push(`/buyer/portal/${sellerSlug}/shelf`)}
+              className="flex items-center gap-1.5 rounded-full border border-danger/30 bg-danger-bg px-3 py-1.5 text-xs font-semibold text-danger transition-colors hover:border-danger/50"
+            >
+              <Package className="h-3.5 w-3.5" />
+              {lowCount} running low
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          )}
+          {dueSoonCount > 0 && (
+            <button
+              type="button"
+              onClick={() => router.push(`/buyer/portal/${sellerSlug}/shelf`)}
+              className="flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 transition-colors hover:border-amber-400"
+            >
+              {dueSoonCount} due soon
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

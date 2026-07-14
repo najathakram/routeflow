@@ -34,6 +34,7 @@ import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./_components/QtyStepper";
 import { ProductTile } from "./_components/ProductTile";
 import { CategoryRail, type RailSelection } from "./_components/CategoryRail";
+import { RunningLowStrip } from "./_components/RunningLowStrip";
 import { ShopSearch } from "./_components/ShopSearch";
 import { deriveTilePrice } from "./_components/tile-pricing";
 
@@ -302,6 +303,9 @@ export default function BuyerShopPage() {
             </div>
           </div>
         </div>
+
+        {/* P5-07: running-low strip — same /buyer/shelf data as Your Shelf */}
+        <RunningLowStrip sellerSlug={sellerSlug} cart={cart} />
 
         <div className="lg:grid lg:grid-cols-[210px_1fr] lg:gap-5">
           {/* Category rail (>= lg) */}

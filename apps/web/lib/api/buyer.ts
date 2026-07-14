@@ -260,6 +260,82 @@ export function useBuyerReplenishment() {
   });
 }
 
+// ─── Your Shelf (P5-06/07) ───────────────────────────────────────────────────
+
+/** A replenishment estimate overlaid with snooze state (GET /buyer/shelf). */
+export interface ShelfEstimate extends ReplenishmentEstimate {
+  /** Presigned URL for `imageKey`, renderable by <img>; null when no image. */
+  imageUrl: string | null;
+  snoozed: boolean;
+  snoozedUntil: string | null;
+}
+
+export interface ShelfActiveOrder {
+  id: string;
+  orderNumber: string | null;
+  itemCount: number;
+  total: number;
+}
+
+export interface ShelfResponse {
+  estimates: ShelfEstimate[];
+  activeOrder: ShelfActiveOrder | null;
+}
+
+/**
+ * THE single data source for Your Shelf, the shop running-low strip and the
+ * dashboard chips — all three read this payload (strip/chips filter
+ * `state === "low" && !snoozed` client-side), so the low list and the
+ * suggested quantities can never disagree between surfaces.
+ */
+export function useBuyerShelf() {
+  return useQuery<ShelfResponse>({
+    queryKey: ["buyer", "shelf"],
+    queryFn: () => buyerApiClient.get("/buyer/shelf").then((r) => r.data),
+    staleTime: 60 * 1000,
+  });
+}
+
+/** Snooze one product for one cycle (server computes now + cadence, 14d fallback). */
+export function useSnoozeReplenishment() {
+  const qc = useQueryClient();
+  return useMutation<{ snoozedUntil: string }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.post(`/buyer/replenishment/${productId}/snooze`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "replenishment"] });
+    },
+  });
+}
+
+export function useUnsnoozeReplenishment() {
+  const qc = useQueryClient();
+  return useMutation<{ ok: boolean }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.delete(`/buyer/replenishment/${productId}/snooze`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "replenishment"] });
+    },
+  });
+}
+
+/** Seed the active order with every running-low item at its suggested qty. */
+export function useAddAllLow() {
+  const qc = useQueryClient();
+  return useMutation<BuyerOrder | null, Error, void>({
+    mutationFn: () => buyerApiClient.post("/buyer/shelf/add-all-low").then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer", "shelf"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "replenishment"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "activeOrder"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "orders"] });
+      qc.invalidateQueries({ queryKey: ["buyer", "dashboard"] });
+    },
+  });
+}
+
 // ─── Promotions (P5-04) ─────────────────────────────────────────────────────────
 
 /** Active promotion rule for the current seller (GET /buyer/promotions). Shape
