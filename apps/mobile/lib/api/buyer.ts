@@ -17,6 +17,18 @@ export interface BuyerProduct {
   isFavorite?: boolean;
   /** Box packaging: when > 1 the buyerPrice/basePrice is the BOX price. */
   unitsPerBox?: number | null;
+  // Catalogue v2 merch/stock fields (P5-02 DTO; optional so older cached shapes
+  // still type-check). Mirrors buyer-catalog.service.ts BuyerProduct.
+  sku?: string | null;
+  barcode?: string | null;
+  thumbnailUrl?: string | null;
+  imageUrls?: string[];
+  isFeatured?: boolean;
+  isNew?: boolean;
+  isDeal?: boolean;
+  inStock?: boolean;
+  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+  stockLeft?: number | null;
 }
 
 export interface BuyerOrder {
@@ -322,6 +334,70 @@ export function useToggleFavorite() {
       qc.invalidateQueries({ queryKey: ["buyer-favorites"] });
       qc.invalidateQueries({ queryKey: ["buyer-products"] });
     },
+  });
+}
+
+// ─── Stock alerts / Notify-me (P5-03 twin — P5-16a) ───────────────────────────
+
+export interface BuyerStockAlerts {
+  productIds: string[];
+}
+
+export function useBuyerStockAlerts() {
+  return useQuery<BuyerStockAlerts>({
+    queryKey: ["buyer-stock-alerts"],
+    queryFn: () => buyerApiClient.get("/buyer/stock-alerts").then((r) => r.data),
+    staleTime: 60_000,
+  });
+}
+
+export function useSubscribeStockAlert() {
+  const qc = useQueryClient();
+  return useMutation<{ subscribed: true }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.post(`/buyer/products/${productId}/stock-alert`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-stock-alerts"] });
+      qc.invalidateQueries({ queryKey: ["buyer-products"] });
+    },
+  });
+}
+
+export function useUnsubscribeStockAlert() {
+  const qc = useQueryClient();
+  return useMutation<{ subscribed: false }, Error, string>({
+    mutationFn: (productId) =>
+      buyerApiClient.delete(`/buyer/products/${productId}/stock-alert`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["buyer-stock-alerts"] });
+      qc.invalidateQueries({ queryKey: ["buyer-products"] });
+    },
+  });
+}
+
+// ─── Replenishment (P5-05 twin — behavioral tile chips) ───────────────────────
+
+export interface ReplenishmentEstimate {
+  productId: string;
+  name: string;
+  unit: string;
+  unitsPerBox: number | null;
+  imageKey: string | null;
+  lastOrderedAt: string;
+  orderCount: number;
+  cadenceDays: number | null;
+  daysSinceLast: number;
+  estDaysLeft: number | null;
+  typicalQty: number;
+  suggestedQty: number;
+  state: "low" | "due-soon" | "ok";
+}
+
+export function useBuyerReplenishment() {
+  return useQuery<ReplenishmentEstimate[]>({
+    queryKey: ["buyer-replenishment"],
+    queryFn: () => buyerApiClient.get("/buyer/replenishment").then((r) => r.data),
+    staleTime: 5 * 60_000,
   });
 }
 
