@@ -61,19 +61,21 @@ export default function DriverMoreScreen() {
             onPress={() => router.push("/(driver)/driver-change-password")}
             chevron
           />
-          <ListRow
-            icon={
-              <Ionicons name="swap-horizontal-outline" size={16} color={ios.system.orangeInk} />
-            }
-            iconBg={ios.system.orangeWash}
-            title="Switch role"
-            subtitle="Go to operator view"
-            onPress={() => {
-              setActiveRole("operator");
-              router.replace("/(operator)/home");
-            }}
-            chevron
-          />
+          {user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN" ? (
+            <ListRow
+              icon={
+                <Ionicons name="swap-horizontal-outline" size={16} color={ios.system.orangeInk} />
+              }
+              iconBg={ios.system.orangeWash}
+              title="Switch role"
+              subtitle="Go to operator view"
+              onPress={() => {
+                setActiveRole("operator");
+                router.replace("/(operator)/home");
+              }}
+              chevron
+            />
+          ) : null}
         </ListGroup>
 
         <ListGroup>

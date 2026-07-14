@@ -10,7 +10,7 @@ import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user, logout, setActiveRole } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
 
@@ -266,6 +266,19 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/change-password")}
             chevron
           />
+          {user?.canActAsDriver ? (
+            <ListRow
+              icon={<Ionicons name="car-outline" size={16} color={ios.system.orangeInk} />}
+              iconBg={ios.system.orangeWash}
+              title="Drive mode"
+              subtitle="Switch to the field layout"
+              onPress={() => {
+                setActiveRole("driver");
+                router.replace("/(driver)/route");
+              }}
+              chevron
+            />
+          ) : null}
         </ListGroup>
 
         <ListGroup>

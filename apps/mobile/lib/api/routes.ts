@@ -277,7 +277,9 @@ export interface CompleteWithPaymentDto {
   driverNote?: string;
   deliveries?: Array<{
     orderItemId: string;
-    productId: string;
+    // Null for an unlisted (ad-hoc) line; the server keys on orderItemId and
+    // derives productId from the DB row, so this field is ignored server-side.
+    productId: string | null;
     type: string;
     quantityDelivered: number;
   }>;

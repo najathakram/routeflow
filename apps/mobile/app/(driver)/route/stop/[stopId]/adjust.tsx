@@ -32,10 +32,15 @@ import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
+import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
 import {
   parseRegulatedAuthError,
   type BlockedCategory,
 } from "../../../../../lib/api/authorizations";
+import {
+  parseCreditLimitError,
+  type CreditLimitExceededInfo,
+} from "../../../../../lib/credit-limit-error";
 import { showToast } from "../../../../../lib/toast";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
 
@@ -101,6 +106,7 @@ export default function AdjustOrderScreen() {
   const [added, setAdded] = useState<AddedLineDraft[]>([]);
   const [saving, setSaving] = useState(false);
   const [licenseBlock, setLicenseBlock] = useState<BlockedCategory[] | null>(null);
+  const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const pendingRef = useRef<{ diff: CreateChangeRequestInput[]; index: number } | null>(null);
   // Id of a CR that was created (buyer already notified) but blocked at resolve
   // by the regulated guard — remembered so it can be declined (cleaned up) when
@@ -247,6 +253,11 @@ export default function AdjustOrderScreen() {
       if (code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
         showToast("That line changed elsewhere — refreshed.");
         return true; // don't block the rest of the batch on a benign race
+      }
+      const creditInfo = parseCreditLimitError(e);
+      if (creditInfo) {
+        setCreditBlock(creditInfo);
+        return false;
       }
       // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED /
       // generic — surface the server message, stop the batch (never a partial
@@ -462,6 +473,19 @@ export default function AdjustOrderScreen() {
           setLicenseBlock(null);
           // Cancelling still leaves the created-but-unresolved CR — clean it up too.
           declineOrphanedBlockedCr();
+          pendingRef.current = null;
+        }}
+      />
+
+      {/* Credit-limit guard — Cancel-only. Unlike the license guard there is no
+          driver-safe "go fix this" destination (DRIVER can't reach /invoices), and
+          no server override exists to record here. The driver's real recourse is
+          simply not pushing this line further; office resolves it later. */}
+      <CreditLimitGuardModal
+        open={!!creditBlock}
+        info={creditBlock}
+        onCancel={() => {
+          setCreditBlock(null);
           pendingRef.current = null;
         }}
       />

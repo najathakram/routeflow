@@ -367,7 +367,7 @@ export default function StopDetailScreen() {
           />
           <Pressable
             style={styles.greenBtn}
-            onPress={() => router.push(`/route/stop/${stopId}/payment`)}
+            onPress={() => router.push(`/route/stop/${stopId}/short-pick`)}
           >
             <Text style={styles.greenBtnText}>Complete & collect →</Text>
           </Pressable>
