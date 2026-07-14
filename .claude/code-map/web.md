@@ -67,6 +67,12 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
   (box-vs-piece aware; the sale-builder "negotiation floor"), and **`applyBestPromotion`/`promotionMatchesProduct`**
   (P5-04). Mirror of `apps/api/src/common/pricing.ts` (+ `apps/mobile/lib/pricing.ts`) — keep all three in sync.
+- **Your Shelf hooks (P5-06/07, WP3):** `lib/api/buyer.ts` += `ShelfEstimate`/`ShelfActiveOrder`/`ShelfResponse` types +
+  `useBuyerShelf()` (`GET /buyer/shelf`, THE single source for the Shelf page, shop running-low strip, and dashboard
+  chips — all three filter the same payload client-side so low lists/suggested qtys can't drift) +
+  `useSnoozeReplenishment()`/`useUnsnoozeReplenishment()` (`POST|DELETE /buyer/replenishment/:productId/snooze`) +
+  `useAddAllLow()` (`POST /buyer/shelf/add-all-low`, delegates to the server createOrder merge path). All 4 mutations
+  invalidate `["buyer","shelf"]`/`["buyer","replenishment"]`; add-all-low also invalidates `activeOrder`/`orders`/`dashboard`.
 - **Promotions pricing (P5-04):** `lib/api/buyer.ts` `useBuyerPromotions()` + `BuyerPromotion`; the buyer cart
   `buyer/portal/[seller]/cart/page.tsx` evaluates each line's best promo via the SAME `applyBestPromotion`
   (base = the catalog `buyerPrice`) → per-line strikethrough + a "Promotion savings" summary line (net line
@@ -151,6 +157,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 
 - **Auth:** `login/page.tsx`, `register/page.tsx`, `change-password/page.tsx`, `invite/[token]/page.tsx`, `verify-merge/page.tsx`.
 - **Portal (`portal/[seller]/`):** `page.tsx` (landing), `shop/page.tsx` (browse/cart), `cart/page.tsx` (checkout → order), `dashboard/page.tsx`, `orders/page.tsx` + `[id]/page.tsx` (+ **P5-10** "Request a change" modal on dispatched orders (run `IN_PROGRESS`; no prices shown by design) → `POST /buyer/orders/:id/change-requests`; CR status chips PENDING/APPROVED/DECLINED from `order.changeRequests`; buyer `canEdit` now honors `editWindow`), `invoices/page.tsx` + `[id]/page.tsx` (PDF), `templates/page.tsx`, `favorites/page.tsx`, `finances/page.tsx`, `licenses/page.tsx` (W6b — self-serve license submit/renew), `account/page.tsx`; `portal/settings/page.tsx`.
+- **Your Shelf + running-low strip/chips (P5-06/07):** `portal/[seller]/shelf/page.tsx` — Running low / Due soon / Snoozed / Everything else sections off `useBuyerShelf()` (`GET /buyer/shelf` — THE single payload the shelf, the shop strip and the dashboard chips all read, so low lists + suggested qtys can't drift). Rows: presigned thumbnail (`imageUrl`), cadence line, days-left bar (`estDaysLeft/cadenceDays` clamped 0..1), suggested qty (no prices — estimates carry none by design), **Add** (server create/merge via `useBuyerCreateOrder` at `suggestedQty`), **Snooze/Unsnooze** (`useSnoozeReplenishment`/`useUnsnoozeReplenishment`; one cycle server-side). Header: **Add all low to cart** (`useAddAllLow` → `POST /buyer/shelf/add-all-low`) + open-order card (number/items/total → order detail; route-day/cutoff calendar deferred — needs a delivery-schedule model). Shop strip `shop/_components/RunningLowStrip.tsx` (low && !snoozed, quick-add to the LOCAL shop cart at suggestedQty, `QtyStepper` when already carted, hidden when empty; rendered above the shop grid). Dashboard chips "N running low"/"N due soon" → `./shelf`. Nav "Your Shelf" (Boxes) after Shop in `portal/layout.tsx`. `lib/api/buyer.ts` += `ShelfEstimate`/`ShelfResponse`/`ShelfActiveOrder`, `useBuyerShelf`, `useSnoozeReplenishment`, `useUnsnoozeReplenishment`, `useAddAllLow`.
 
 ### `(marketing)/` — public site
 

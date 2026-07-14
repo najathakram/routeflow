@@ -18,6 +18,7 @@ import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
 import { ReplenishmentService } from "./replenishment.service";
+import { ShelfService } from "./shelf.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { BuyerJwtAuthGuard, PublicBuyer } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
@@ -78,6 +79,7 @@ export class BuyerController {
     private readonly catalogService: BuyerCatalogService,
     private readonly dashboardService: BuyerDashboardService,
     private readonly replenishmentService: ReplenishmentService,
+    private readonly shelfService: ShelfService,
     private readonly promotionsService: PromotionsService,
     private readonly ordersService: OrdersService,
     private readonly changeRequestsService: ChangeRequestsService,
@@ -458,6 +460,75 @@ export class BuyerController {
   })
   getReplenishment(@CurrentBuyerCustomer() ctx: any) {
     return this.replenishmentService.estimates(ctx.customerId);
+  }
+
+  // ─── Your Shelf (P5-06/07) ────────────────────────────────────────────────────
+  // NOTE: the route-day/cutoff delivery calendar from the P5-06 acceptance is
+  // DEFERRED — there is no delivery-schedule model in schema.prisma. The
+  // data-backed portion (the open-order card via `activeOrder`) is served here.
+
+  @Get("shelf")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Your Shelf: snooze-overlaid replenishment estimates + open-order summary",
+  })
+  async getShelf(@CurrentBuyerCustomer() ctx: any) {
+    const [estimates, active] = await Promise.all([
+      this.shelfService.shelf(ctx.customerId),
+      this.ordersService.findActiveOrder(ctx.customerId),
+    ]);
+    return {
+      estimates,
+      // Stored money only — total is read back, never computed here.
+      activeOrder: active
+        ? {
+            id: active.id,
+            orderNumber: active.orderNumber ?? null,
+            itemCount: active.lineItems.length,
+            total: Number(active.total),
+          }
+        : null,
+    };
+  }
+
+  @Post("replenishment/:productId/snooze")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Snooze a replenishment suggestion for one cycle" })
+  snoozeReplenishment(@Param("productId") productId: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.shelfService.snooze(ctx.customerId, productId, ctx.tenantId);
+  }
+
+  @Delete("replenishment/:productId/snooze")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Remove a replenishment snooze" })
+  unsnoozeReplenishment(@Param("productId") productId: string, @CurrentBuyerCustomer() ctx: any) {
+    return this.shelfService.unsnooze(ctx.customerId, productId);
+  }
+
+  @Post("shelf/add-all-low")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Seed the cart with every running-low item at its suggested qty" })
+  async addAllLow(@CurrentBuyerCustomer() ctx: any) {
+    const items = await this.shelfService.lowItems(ctx.customerId);
+    if (items.length === 0) {
+      // No low items — no-op: return the active order (or null) unchanged.
+      const active = await this.ordersService.findActiveOrder(ctx.customerId);
+      return redactUpsellForCustomer(active);
+    }
+    // Delegate to the EXACT create/merge path the buyer cart uses (@Post("orders")):
+    // pricing, active-order merge and the pending-sweep are inherited, never re-implemented.
+    return this.createOrder({ items } as BuyerCreateOrderDto, ctx);
   }
 
   @Get("promotions")

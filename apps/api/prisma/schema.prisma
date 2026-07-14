@@ -385,6 +385,7 @@ model Tenant {
   promotions             Promotion[]
   orderRevisions         OrderRevision[]
   changeRequests         ChangeRequest[]
+  replenishmentSnoozes   ReplenishmentSnooze[]
 
   @@index([slug])
   @@index([status])
@@ -739,6 +740,7 @@ model Customer {
   documents         CustomerDocument[]
   authorizations    CustomerAuthorization[]
   authOverrides     AuthorizationOverride[]
+  replenishmentSnoozes ReplenishmentSnooze[]
 
   @@index([zohoContactId])
   @@index([businessName])
@@ -901,6 +903,7 @@ model Product {
   productMappings       ProductMapping[]
   buyerFavorites        BuyerFavorite[]
   promotionProducts     PromotionProduct[]
+  replenishmentSnoozes  ReplenishmentSnooze[]
   parent                Product?               @relation("ProductVariants", fields: [parentProductId], references: [id])
   variants              Product[]              @relation("ProductVariants")
   trackedCategory       TrackedCategory?       @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
@@ -2707,6 +2710,28 @@ model BuyerFavorite {
 
   @@unique([buyerAccountId, customerId, productId])
   @@index([buyerAccountId, customerId])
+  @@index([tenantId])
+}
+
+// ─── Replenishment Snooze (P5-06 Your Shelf) ──────────────────────────────────
+
+/// Buyer-side "not this cycle" suppression of one replenishment estimate.
+/// One row per (tenant, customer, product); snoozedUntil = now + one inferred
+/// cadence (14d fallback). Rows past snoozedUntil are simply ignored on read.
+model ReplenishmentSnooze {
+  id           String   @id @default(uuid())
+  tenantId     String?
+  customerId   String
+  productId    String
+  snoozedUntil DateTime
+  createdAt    DateTime @default(now())
+
+  tenant   Tenant?  @relation(fields: [tenantId], references: [id])
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, customerId, productId])
+  @@index([customerId])
   @@index([tenantId])
 }
 
