@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -22,11 +23,25 @@ import {
   useToggleFavorite,
   useBuyerExpiringAuthorizations,
   useBuyerPromotions,
+  useBuyerStockAlerts,
+  useSubscribeStockAlert,
+  useUnsubscribeStockAlert,
+  useBuyerReplenishment,
   type BuyerProduct,
   type LockedCategory,
+  type ReplenishmentEstimate,
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
+import type { PromotionRule } from "../../../lib/pricing";
+import {
+  alertIdSet,
+  behaviorLabel,
+  computeTileChip,
+  deriveTilePrice,
+  stockLabel,
+  tileCta,
+} from "../../../lib/catalog-tile-logic";
 
 function formatCurrency(n: number | string | null | undefined): string {
   return `$${(Number(n) || 0).toFixed(2)}`;
@@ -66,12 +81,10 @@ export default function CustomerCatalogScreen() {
     0,
   );
   const { data: promotions } = useBuyerPromotions();
+  const promoRules = useMemo(() => promoRulesFrom(promotions), [promotions]);
   // Promo-aware total so the floating bar matches the cart screen (and what the
   // server bills) — not the base-price cartStore.total().
-  const cartTotal = useMemo(
-    () => priceCart(cart, promoRulesFrom(promotions)).subtotal,
-    [cart, promotions],
-  );
+  const cartTotal = useMemo(() => priceCart(cart, promoRules).subtotal, [cart, promoRules]);
 
   const { data: favoritesData } = useBuyerFavorites();
   const favoriteIds = useMemo(
@@ -82,6 +95,24 @@ export default function CustomerCatalogScreen() {
 
   // Expiry badge on the licenses icon; tap opens the licenses screen.
   const { data: expiring = [] } = useBuyerExpiringAuthorizations();
+
+  // Stock-alert (Notify-me) subscriptions — tile subscribed-state comes from
+  // this list (no mobile product-detail screen to derive it from per-product).
+  const { data: stockAlerts } = useBuyerStockAlerts();
+  const alertIds = useMemo(() => alertIdSet(stockAlerts), [stockAlerts]);
+  const subscribeAlert = useSubscribeStockAlert();
+  const unsubscribeAlert = useUnsubscribeStockAlert();
+  const toggleStockAlert = (productId: string) => {
+    if (alertIds.has(productId)) unsubscribeAlert.mutate(productId);
+    else subscribeAlert.mutate(productId);
+  };
+
+  // Replenishment estimates power the "Running low" chip + behavior meta line.
+  const { data: replenishment = [] } = useBuyerReplenishment();
+  const estimateByProduct = useMemo(
+    () => new Map(replenishment.map((e) => [e.productId, e])),
+    [replenishment],
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -165,6 +196,10 @@ export default function CustomerCatalogScreen() {
                 isFavorite: favoriteIds.has(item.id),
               })
             }
+            promoRules={promoRules}
+            estimate={estimateByProduct.get(item.id)}
+            isAlertSubscribed={alertIds.has(item.id)}
+            onToggleStockAlert={() => toggleStockAlert(item.id)}
           />
         )}
         showsVerticalScrollIndicator={false}
@@ -218,14 +253,28 @@ export default function CustomerCatalogScreen() {
   );
 }
 
+const TONE_COLORS: Record<"ok" | "warn" | "danger", string> = {
+  ok: "#16A34A",
+  warn: "#B45309",
+  danger: "#DC2626",
+};
+
 function ProductCard({
   product,
   isFavorite,
   onToggleFavorite,
+  promoRules,
+  estimate,
+  isAlertSubscribed,
+  onToggleStockAlert,
 }: {
   product: BuyerProduct;
   isFavorite: boolean;
   onToggleFavorite: () => void;
+  promoRules: PromotionRule[];
+  estimate?: ReplenishmentEstimate;
+  isAlertSubscribed: boolean;
+  onToggleStockAlert: () => void;
 }) {
   const cartItem = useCartStore((s) => s.items.find((i) => i.productId === product.id));
   const add = useCartStore((s) => s.add);
@@ -235,8 +284,22 @@ function ProductCard({
   // Selling units in the cart: boxes for a boxed product, else pieces.
   const units = cartItem ? (boxed ? (cartItem.boxes ?? 0) : cartItem.qty) : 0;
 
+  const priced = deriveTilePrice(product, promoRules, cartItem);
+  const chip = computeTileChip(product, priced, estimate);
+  const behavior = behaviorLabel(estimate);
+  const stock = stockLabel(product);
+  const cta = tileCta(product, units);
+  const thumb = product.imageUrls?.[0] ?? product.thumbnailUrl ?? null;
+
   return (
     <View style={styles.productCard}>
+      {thumb ? (
+        <Image source={{ uri: thumb }} style={styles.thumb} resizeMode="cover" />
+      ) : (
+        <View style={[styles.thumb, styles.thumbPlaceholder]}>
+          <Ionicons name="cube-outline" size={22} color={ios.label3} />
+        </View>
+      )}
       <View style={styles.productInfo}>
         <View style={styles.productNameRow}>
           <Text style={[styles.productName, { flex: 1 }]} numberOfLines={2}>
@@ -250,14 +313,28 @@ function ProductCard({
             />
           </Pressable>
         </View>
+        {chip ? (
+          <View style={[styles.chip, styles[`chip_${chip.kind}`]]}>
+            <Text style={styles.chipText}>{chip.label}</Text>
+          </View>
+        ) : null}
         {product.category ? <Text style={styles.productCategory}>{product.category}</Text> : null}
-        <Text style={styles.productPrice}>
-          {`$${(Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0).toFixed(2)}`}
-          {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+          <Text style={styles.productPrice}>
+            {`$${priced.unitPrice.toFixed(2)}`}
+            {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
+          </Text>
+          {priced.originalPrice != null ? (
+            <Text style={styles.struckPrice}>{`$${priced.originalPrice.toFixed(2)}`}</Text>
+          ) : null}
+        </View>
+        <Text style={styles.metaLine}>
+          {behavior ? `${behavior} · ` : ""}
+          <Text style={{ color: TONE_COLORS[stock.tone] }}>{stock.label}</Text>
         </Text>
       </View>
 
-      {units === 0 ? (
+      {cta === "add" ? (
         <Pressable
           style={styles.addBtn}
           onPress={() =>
@@ -272,6 +349,20 @@ function ProductCard({
           }
         >
           <Ionicons name="add" size={18} color="#fff" />
+        </Pressable>
+      ) : cta === "notify" ? (
+        <Pressable
+          style={[styles.notifyBtn, isAlertSubscribed && styles.notifyBtnSubscribed]}
+          onPress={onToggleStockAlert}
+        >
+          <Ionicons
+            name={isAlertSubscribed ? "notifications" : "notifications-outline"}
+            size={14}
+            color={isAlertSubscribed ? ios.brand : "#fff"}
+          />
+          <Text style={[styles.notifyText, isAlertSubscribed && styles.notifyTextSubscribed]}>
+            {isAlertSubscribed ? "Notifying ✓" : "Notify me"}
+          </Text>
         </Pressable>
       ) : (
         <View style={styles.qtyRow}>
@@ -398,6 +489,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   productInfo: { flex: 1 },
+  thumb: { width: 56, height: 56, borderRadius: 10, alignSelf: "center", flexShrink: 0 },
+  thumbPlaceholder: { backgroundColor: ios.fill3, alignItems: "center", justifyContent: "center" },
   productNameRow: { flexDirection: "row", alignItems: "flex-start", gap: 4 },
   heartBtn: { paddingTop: 1 },
   productName: {
@@ -414,6 +507,25 @@ const styles = StyleSheet.create({
   },
   productPrice: { fontSize: 15, fontFamily: "Inter_700Bold", color: ios.label, marginTop: 6 },
   productUnit: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  struckPrice: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    textDecorationLine: "line-through",
+  },
+  metaLine: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 3 },
+  chip: {
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 2,
+  },
+  chip_deal: { backgroundColor: "#FEE2E2" },
+  chip_new: { backgroundColor: "#DBEAFE" },
+  chip_low: { backgroundColor: "#FEF3C7" },
+  chip_featured: { backgroundColor: "#EDE9FE" },
+  chipText: { fontSize: 10, fontFamily: "Inter_600SemiBold", color: ios.label },
   addBtn: {
     backgroundColor: ios.brand,
     width: 36,
@@ -423,6 +535,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexShrink: 0,
   },
+  notifyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ios.brand,
+    borderWidth: 1,
+    borderColor: ios.brand,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    height: 36,
+    flexShrink: 0,
+  },
+  notifyBtnSubscribed: { backgroundColor: "transparent", borderColor: ios.brand },
+  notifyText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  notifyTextSubscribed: { color: ios.brand },
   qtyRow: {
     flexDirection: "row",
     alignItems: "center",
