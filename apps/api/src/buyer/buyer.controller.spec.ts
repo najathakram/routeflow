@@ -24,6 +24,8 @@ import { OrdersService } from "../orders/orders.service";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
+import { StatementService } from "./statement.service";
+import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -106,6 +108,8 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: ChangeRequestsService, useValue: {} },
         { provide: InvoicesService, useValue: invoicesService },
         { provide: InvoicePdfService, useValue: {} },
+        { provide: StatementService, useValue: {} },
+        { provide: StatementPdfService, useValue: {} },
         { provide: CustomersService, useValue: {} },
         { provide: OrderTemplatesService, useValue: templatesService },
         { provide: AuthorizationsService, useValue: authorizationsService },

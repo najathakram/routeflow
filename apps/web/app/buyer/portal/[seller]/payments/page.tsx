@@ -12,10 +12,20 @@ import {
   ChevronRight,
   Loader2,
   AlertCircle,
+  FileText,
+  Download,
 } from "lucide-react";
-import { Badge } from "@routeflow/ui/web";
+import { Badge, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerPayments, useBuyerStatement, useBuyerRemittance } from "@/lib/api/buyer";
+import {
+  useBuyerPayments,
+  useBuyerStatement,
+  useBuyerRemittance,
+  useBuyerStatementMonths,
+  fetchStatementPdfUrl,
+} from "@/lib/api/buyer";
+import { buyerApiClient } from "@/lib/buyer-api-client";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -37,6 +47,16 @@ function formatPaymentMethod(method: string): string {
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** "YYYY-MM" → "July 2026", UTC-safe (never shifts across a local-timezone day boundary). */
+function monthLabel(bucket: string): string {
+  const [y, m] = bucket.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
@@ -99,10 +119,54 @@ export default function BuyerPaymentsPage() {
   // reads (useBuyerStatement().availableCredit) — never recomputed here.
   const { data: statement } = useBuyerStatement();
   const { data: remittance } = useBuyerRemittance();
+  const { toast } = useToast();
 
   const activeCredits = (statement?.transactions ?? []).filter(
     (t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001,
   );
+
+  // P5-15: monthly statement PDF download.
+  const { data: statementMonths } = useBuyerStatementMonths();
+  const months = statementMonths?.months ?? [];
+  const [statementMonth, setStatementMonth] = React.useState<string>("");
+  const [statementDownloading, setStatementDownloading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!statementMonth && months.length > 0) {
+      setStatementMonth(months[0]);
+    }
+  }, [months, statementMonth]);
+
+  /** Mirrors invoice detail's handleDownloadPdf EXACTLY: fetch the presigned
+   *  URL, pull the bytes through fetchPdfBlob (auth'd vs bare by origin), then
+   *  a programmatic <a download> — never <a href>/window.open. */
+  async function handleDownloadStatement() {
+    if (!statementMonth) return;
+    setStatementDownloading(true);
+    try {
+      const url = await fetchStatementPdfUrl(statementMonth);
+      const blob = await fetchPdfBlob(url, buyerApiClient);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `statement-${statementMonth}.pdf`;
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast({
+        title: "Couldn't download statement",
+        description:
+          status === 401 ? "Please refresh the page and try again." : "Try again in a moment.",
+        variant: "error",
+      });
+    } finally {
+      setStatementDownloading(false);
+    }
+  }
 
   // Validate slug matches active seller.
   React.useEffect(() => {
@@ -158,6 +222,46 @@ export default function BuyerPaymentsPage() {
           value={fmt(statement?.outstandingAmount ?? 0)}
           color="bg-warning-bg text-warning"
         />
+      </div>
+
+      {/* Monthly statement */}
+      <div className="rounded-xl border border-surface-border bg-white p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText className="h-4 w-4 text-buyer-500" />
+          <h2 className="text-sm font-semibold text-navy">Monthly statement</h2>
+        </div>
+        {months.length === 0 ? (
+          <p className="py-4 text-center text-xs text-navy/70">
+            Statements become available after your first invoice.
+          </p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={statementMonth}
+              onChange={(e) => setStatementMonth(e.target.value)}
+              className="rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-buyer-500"
+            >
+              {months.map((m) => (
+                <option key={m} value={m}>
+                  {monthLabel(m)}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void handleDownloadStatement()}
+              disabled={!statementMonth || statementDownloading}
+              className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-medium text-navy transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {statementDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              Download
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Payments table */}

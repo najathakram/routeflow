@@ -37,6 +37,8 @@ import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
 import { InvoicePdfService } from "../invoices/invoice-pdf.service";
+import { StatementService } from "./statement.service";
+import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
@@ -88,6 +90,8 @@ export class BuyerController {
     private readonly changeRequestsService: ChangeRequestsService,
     private readonly invoicesService: InvoicesService,
     private readonly invoicePdfService: InvoicePdfService,
+    private readonly statementService: StatementService,
+    private readonly statementPdfService: StatementPdfService,
     private readonly customersService: CustomersService,
     private readonly templatesService: OrderTemplatesService,
     private readonly authorizationsService: AuthorizationsService,
@@ -224,6 +228,29 @@ export class BuyerController {
   @ApiOperation({ summary: "Get buyer's account statement at the selected seller" })
   getStatement(@CurrentBuyerCustomer() ctx: any) {
     return this.customersService.getStatementForOperator(ctx.customerId);
+  }
+
+  @Get("statements")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "List month buckets available for statement PDFs (P5-15)" })
+  getStatementMonths(@CurrentBuyerCustomer() ctx: any) {
+    return this.statementService.listAvailableMonths(ctx.customerId);
+  }
+
+  @Get("statements/:month")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({
+    summary: "Generate the monthly statement PDF + return its presigned URL (P5-15)",
+  })
+  async getStatementPdf(@Param("month") month: string, @CurrentBuyerCustomer() ctx: any) {
+    // The URL is presigned (R2 GET or local HMAC) — browser downloads it WITHOUT
+    // a JWT (no 401). Month format validated inside buildMonthlyStatement (400).
+    const url = await this.statementPdfService.generateAndUpload(ctx.customerId, month);
+    return { url };
   }
 
   @Get("payments")
