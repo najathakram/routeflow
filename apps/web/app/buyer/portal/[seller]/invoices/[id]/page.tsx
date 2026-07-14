@@ -39,6 +39,37 @@ function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutra
   return "neutral";
 }
 
+/**
+ * P5-12: lifecycle badge for a CHECK payment row. Only checks get a badge.
+ * A manually-voided (never-bounced) check has no checkStatus and status
+ * VOID — that's a plain void, not a lifecycle event, so no badge.
+ * A missing checkStatus on a non-void check is legacy data recorded before
+ * the lifecycle existed — treat it as RECORDED.
+ */
+function checkBadgeFor(p: {
+  method: string;
+  status?: string;
+  checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
+}): { label: string; variant: "success" | "warning" | "danger" | "neutral" | "info" } | null {
+  if (p.method !== "CHECK") return null;
+  if (!p.checkStatus) {
+    if (p.status === "VOID") return null;
+    return { label: "Recorded", variant: "neutral" };
+  }
+  switch (p.checkStatus) {
+    case "RECORDED":
+      return { label: "Recorded", variant: "neutral" };
+    case "DEPOSITED":
+      return { label: "Deposited", variant: "info" };
+    case "CLEARED":
+      return { label: "Cleared", variant: "success" };
+    case "BOUNCED":
+      return { label: "Bounced", variant: "danger" };
+    default:
+      return null;
+  }
+}
+
 export default function BuyerInvoiceDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -112,7 +143,12 @@ export default function BuyerInvoiceDetailPage() {
     );
   }
 
-  const totalPaid = invoice.payments?.reduce((s, p) => s + Number(p.amount), 0) ?? 0;
+  // P5-12: VOID payments (manually voided OR bounced checks) must not count
+  // toward the paid amount — a bounce re-opens the balance shown here.
+  const totalPaid =
+    invoice.payments
+      ?.filter((p) => p.status !== "VOID")
+      .reduce((s, p) => s + Number(p.amount), 0) ?? 0;
   const balanceDue = Number(invoice.total) - totalPaid;
 
   return (
@@ -220,19 +256,35 @@ export default function BuyerInvoiceDetailPage() {
               <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
                 <th className="px-4 py-2.5 text-left">Date</th>
                 <th className="px-4 py-2.5 text-left">Method</th>
+                <th className="px-4 py-2.5 text-left">Status</th>
                 <th className="px-4 py-2.5 text-right">Amount</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-border">
-              {invoice.payments.map((p) => (
-                <tr key={p.id} className="hover:bg-surface-raised/50">
-                  <td className="px-4 py-3 text-sm text-navy">{formatDate(p.recordedAt)}</td>
-                  <td className="px-4 py-3 text-sm text-navy/70">{p.method.replace(/_/g, " ")}</td>
-                  <td className="px-4 py-3 text-right text-sm font-medium text-success">
-                    {fmt(Number(p.amount))}
-                  </td>
-                </tr>
-              ))}
+              {invoice.payments.map((p) => {
+                const badge = checkBadgeFor(p);
+                const voided = p.status === "VOID";
+                return (
+                  <tr key={p.id} className="hover:bg-surface-raised/50">
+                    <td className="px-4 py-3 text-sm text-navy">
+                      {formatDate(p.paidAt ?? p.createdAt ?? null)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-navy/70">
+                      {p.method.replace(/_/g, " ")}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {badge && <Badge variant={badge.variant}>{badge.label}</Badge>}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right text-sm font-medium ${
+                        voided ? "text-danger line-through" : "text-success"
+                      }`}
+                    >
+                      {fmt(Number(p.amount))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

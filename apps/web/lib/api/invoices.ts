@@ -16,6 +16,9 @@ export type InvoiceStatus =
 
 export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
 
+/** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
+export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
+
 export interface InvoiceItem {
   id: string;
   productId?: string;
@@ -46,11 +49,20 @@ export interface InvoiceItem {
 export interface InvoicePayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE";
+  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
   notes?: string;
+  paymentNumber?: string;
   paidAt?: string;
   createdAt: string;
+  /** P5-12 check lifecycle — only ever set when method = CHECK. */
+  checkStatus?: CheckStatus | null;
+  depositedAt?: string | null;
+  clearedAt?: string | null;
+  bouncedAt?: string | null;
+  /** NSF fee billed to the customer when checkStatus = BOUNCED (0/absent = no fee). */
+  nsfFeeAmount?: number | null;
 }
 
 export interface Invoice {
@@ -504,6 +516,34 @@ export function useVoidPayment() {
       apiClient.patch(`/invoices/${invoiceId}/payments/${paymentId}/void`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
+    },
+  });
+}
+
+export interface SetCheckStatusDto {
+  invoiceId: string;
+  paymentId: string;
+  status: CheckStatus;
+  /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
+  nsfFeeAmount?: number;
+}
+
+/**
+ * P5-12: advance a CHECK payment through Recorded→Deposited→Cleared→Bounced.
+ * BOUNCED re-opens the invoice balance server-side, so this invalidates the
+ * invoice list, the invoice detail (badge/balance), and the payments list.
+ */
+export function useSetCheckStatus() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; checkStatus: CheckStatus }, Error, SetCheckStatusDto>({
+    mutationFn: ({ invoiceId, paymentId, ...data }) =>
+      apiClient
+        .patch(`/invoices/${invoiceId}/payments/${paymentId}/check-status`, data)
+        .then((r) => r.data),
+    onSuccess: (_, { invoiceId }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });

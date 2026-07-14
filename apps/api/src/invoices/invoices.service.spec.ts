@@ -22,7 +22,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
-import { InvoiceStatus } from "@prisma/client";
+import { CheckStatus, InvoiceStatus } from "@prisma/client";
 
 describe("InvoicesService", () => {
   let service: InvoicesService;
@@ -1139,6 +1139,267 @@ describe("InvoicesService", () => {
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: "oi-1" }, data: { invoicedQty: 4 } }),
       );
+    });
+  });
+
+  // ─── P5-12: check lifecycle (Recorded→Deposited→Cleared→Bounced) ───────────
+
+  describe("P5-12 — setCheckStatus", () => {
+    const basePayment = {
+      id: "pay-1",
+      invoiceId: "inv-1",
+      method: "CHECK",
+      status: "PAID",
+      checkStatus: CheckStatus.RECORDED,
+      amount: 100,
+      paymentNumber: "PAY-0001",
+      reference: null,
+    };
+
+    it("DEPOSITED stamps checkStatus+depositedAt, keeps status PAID, no invoice.update", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
+      prisma.invoice.findUnique.mockResolvedValue({
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        total: 100,
+      });
+
+      const result = await service.setCheckStatus("inv-1", "pay-1", {
+        status: CheckStatus.DEPOSITED,
+      });
+
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-1" },
+        data: { checkStatus: CheckStatus.DEPOSITED, depositedAt: expect.any(Date) },
+      });
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true, checkStatus: CheckStatus.DEPOSITED });
+    });
+
+    it("CLEARED (from DEPOSITED) stamps clearedAt, no invoice change", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.DEPOSITED,
+      });
+      prisma.invoice.findUnique.mockResolvedValue({
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        total: 100,
+      });
+
+      const result = await service.setCheckStatus("inv-1", "pay-1", {
+        status: CheckStatus.CLEARED,
+      });
+
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-1" },
+        data: { checkStatus: CheckStatus.CLEARED, clearedAt: expect.any(Date) },
+      });
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: true, checkStatus: CheckStatus.CLEARED });
+    });
+
+    it("BOUNCED with fee=25 flips status VOID, creates a non-taxable NSF line, bumps subtotal/total", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.DEPOSITED,
+      });
+      prisma.invoicePayment.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        subtotal: 100,
+        total: 100,
+        dueDate: null,
+        payments: [], // no other surviving (non-VOID) payments
+      });
+
+      const result = await service.setCheckStatus("inv-1", "pay-1", {
+        status: CheckStatus.BOUNCED,
+        nsfFeeAmount: 25,
+      });
+
+      expect(prisma.invoicePayment.updateMany).toHaveBeenCalledWith({
+        where: { id: "pay-1", status: { not: "VOID" } },
+        data: {
+          checkStatus: CheckStatus.BOUNCED,
+          bouncedAt: expect.any(Date),
+          nsfFeeAmount: 25,
+          status: "VOID",
+        },
+      });
+      expect(prisma.invoiceItem.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          invoiceId: "inv-1",
+          qty: 1,
+          unitPrice: 25,
+          discount: 0,
+          taxRate: 0,
+          subtotal: 25,
+        }),
+      });
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: "inv-1" },
+        data: {
+          status: InvoiceStatus.SENT,
+          paidAt: null,
+          subtotal: 125,
+          total: 125,
+        },
+      });
+      expect(result).toEqual({ success: true, checkStatus: "BOUNCED" });
+    });
+
+    it("BOUNCED without a fee: no NSF line, survivors of 40 -> PARTIAL, no subtotal/total bump", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.RECORDED,
+      });
+      prisma.invoicePayment.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        subtotal: 140,
+        total: 140,
+        dueDate: null,
+        payments: [{ id: "pay-2", amount: 40 }],
+      });
+
+      const result = await service.setCheckStatus("inv-1", "pay-1", {
+        status: CheckStatus.BOUNCED,
+      });
+
+      expect(prisma.invoiceItem.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: "inv-1" },
+        data: {
+          status: InvoiceStatus.PARTIAL,
+          paidAt: null,
+        },
+      });
+      expect(result).toEqual({ success: true, checkStatus: "BOUNCED" });
+    });
+
+    it("aborts a concurrent double-bounce without re-billing the NSF fee (CAS matches 0 rows)", async () => {
+      // findFirst reads a stale PAID snapshot, but a racing request already
+      // voided the payment, so the conditional updateMany matches 0 rows.
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.DEPOSITED,
+      });
+      prisma.invoicePayment.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.setCheckStatus("inv-1", "pay-1", {
+          status: CheckStatus.BOUNCED,
+          nsfFeeAmount: 25,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.invoiceItem.create).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects illegal transition CLEARED -> DEPOSITED", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.CLEARED,
+      });
+
+      await expect(
+        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects illegal transition RECORDED -> CLEARED (must go through DEPOSITED)", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        ...basePayment,
+        checkStatus: CheckStatus.RECORDED,
+      });
+
+      await expect(
+        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects check-status changes on a non-CHECK payment", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, method: "CASH" });
+
+      await expect(
+        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects check-status changes on an already-voided payment", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, status: "VOID" });
+
+      await expect(
+        service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.DEPOSITED }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("treats a legacy null checkStatus as RECORDED (RECORDED -> DEPOSITED is legal)", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, checkStatus: null });
+      prisma.invoice.findUnique.mockResolvedValue({
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        status: InvoiceStatus.PAID,
+        total: 100,
+      });
+
+      const result = await service.setCheckStatus("inv-1", "pay-1", {
+        status: CheckStatus.DEPOSITED,
+      });
+
+      expect(result).toEqual({ success: true, checkStatus: CheckStatus.DEPOSITED });
+    });
+  });
+
+  describe("P5-12 — recordPayment stamps checkStatus", () => {
+    const baseInvoice = {
+      id: "inv-1",
+      status: InvoiceStatus.SENT,
+      total: 100,
+      dueDate: null,
+      payments: [],
+    };
+
+    beforeEach(() => {
+      prisma.invoice.findUnique.mockResolvedValue(baseInvoice);
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 2 });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        total: 100,
+        payments: [],
+      });
+    });
+
+    it("stamps checkStatus RECORDED when method is CHECK", async () => {
+      await service.recordPayment("inv-1", { amount: 100, method: "CHECK" } as any);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ checkStatus: CheckStatus.RECORDED }),
+      });
+    });
+
+    it("leaves checkStatus null when method is not CHECK", async () => {
+      await service.recordPayment("inv-1", { amount: 100, method: "CASH" } as any);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ checkStatus: null }),
+      });
     });
   });
 });

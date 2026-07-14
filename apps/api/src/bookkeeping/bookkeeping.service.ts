@@ -1,7 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
-import { InvoiceStatus, TxnStatus, PaymentStatus, CreditNoteStatus } from "@prisma/client";
+import {
+  CheckStatus,
+  InvoiceStatus,
+  TxnStatus,
+  PaymentStatus,
+  CreditNoteStatus,
+} from "@prisma/client";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { InvoiceService } from "./invoice.service";
@@ -154,6 +160,7 @@ export class BookkeepingService implements OnModuleInit {
           notes: dto.notes,
           status: PaymentStatus.PAID,
           paidAt: new Date(),
+          checkStatus: dto.method === "CHECK" ? CheckStatus.RECORDED : null,
         },
       });
 

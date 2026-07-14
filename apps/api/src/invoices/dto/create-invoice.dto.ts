@@ -15,7 +15,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
-import { PaymentMethod } from "@prisma/client";
+import { CheckStatus, PaymentMethod } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 
 export class CreateInvoiceItemDto {
@@ -95,4 +95,11 @@ export class StandalonePaymentDto {
 
 export class WriteOffDto {
   @IsString() @IsNotEmpty() reason: string;
+}
+
+/** P5-12: advance a CHECK payment through its lifecycle. */
+export class SetCheckStatusDto {
+  @IsEnum(CheckStatus) status: CheckStatus;
+  /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
+  @IsOptional() @IsNumber() @Min(0) nsfFeeAmount?: number;
 }

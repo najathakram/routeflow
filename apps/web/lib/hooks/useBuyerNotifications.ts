@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket } from "../socket";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ function saveToStorage(notifications: BuyerNotification[]) {
 
 export function useBuyerNotifications() {
   const [notifications, setNotifications] = React.useState<BuyerNotification[]>([]);
+  const qc = useQueryClient();
 
   React.useEffect(() => {
     setNotifications(loadFromStorage());
@@ -88,12 +90,16 @@ export function useBuyerNotifications() {
       });
     };
 
-    const onInvoiceUpdated = (data: { invoiceNumber?: string }) =>
+    const onInvoiceUpdated = (data: { invoiceNumber?: string }) => {
       push({
         type: "invoice",
         title: "Invoice updated",
         description: `Invoice ${data.invoiceNumber ?? ""} has been updated`,
       });
+      // P5-12: keep the invoice-detail badge/balance live (e.g. a check
+      // lifecycle change) instead of only surfacing a notification toast.
+      qc.invalidateQueries({ queryKey: ["buyer", "invoice"] });
+    };
 
     const onCreditNoteCreated = (data: { creditNoteNumber?: string }) =>
       push({
@@ -120,7 +126,7 @@ export function useBuyerNotifications() {
       socket.off("creditNote.created", onCreditNoteCreated);
       socket.off("route.stop.completed", onStopCompleted);
     };
-  }, [push]);
+  }, [push, qc]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 

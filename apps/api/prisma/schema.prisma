@@ -145,6 +145,14 @@ enum PaymentStatus {
   VOID
 }
 
+// P5-12: lifecycle of a CHECK InvoicePayment. Always null on non-check payments.
+enum CheckStatus {
+  RECORDED
+  DEPOSITED
+  CLEARED
+  BOUNCED
+}
+
 enum FulfillPath {
   ROUTE
   SHIP
@@ -1777,6 +1785,15 @@ model InvoicePayment {
   status           PaymentStatus @default(PAID)
   paymentGroupId   String?
   tenantId         String?
+
+  // P5-12 check lifecycle — only ever set when method = CHECK. BOUNCED (NSF)
+  // also flips `status` to VOID so every existing non-VOID paid-sum /
+  // status:PAID aggregation excludes the bounced check automatically.
+  checkStatus      CheckStatus?
+  depositedAt      DateTime?
+  clearedAt        DateTime?
+  bouncedAt        DateTime?
+  nsfFeeAmount     Decimal?      @db.Decimal(10, 2)
 
   invoice        Invoice         @relation(fields: [invoiceId], references: [id])
   tenant         Tenant?         @relation(fields: [tenantId], references: [id])
