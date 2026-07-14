@@ -85,3 +85,16 @@ export function isQuietHours(now: Date, settings: QuietHoursSettings): boolean {
   const t = now.getHours() * 60 + now.getMinutes();
   return start > end ? t >= start || t < end : t >= start && t < end;
 }
+
+/**
+ * Distinct `{{var}}` names in a body, first-appearance order — same grammar as
+ * renderTemplate. Pure. P6-6 re-derives MessageTemplate.variables on every edit
+ * + at seed time; P6-5 reads the consts below for the vars each trigger passes.
+ */
+export function extractVariables(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(/\{\{\s*([\w.]+)\s*\}\}/g)) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
