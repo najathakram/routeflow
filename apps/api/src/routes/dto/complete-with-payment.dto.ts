@@ -3,7 +3,11 @@ import { Type } from "class-transformer";
 import { CompleteStopDto } from "./complete-stop.dto";
 
 export class StopPaymentDto {
-  @IsString() invoiceId: string;
+  // The invoice is resolved SERVER-side from the delivered orders — clients no
+  // longer send this (Order has no invoiceId scalar, so it was always undefined
+  // and every at-door payment silently vanished). Kept optional for backward
+  // compatibility; the server ignores it.
+  @IsOptional() @IsString() invoiceId?: string;
   @IsNumber() amount: number;
   @IsString() method: string;
 }
