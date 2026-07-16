@@ -18,6 +18,7 @@ import { useAdminCustomers } from "../../../../lib/api/admin";
 import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
+import { incrementLine } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
@@ -294,13 +295,9 @@ function InvoiceComposer({
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
     setItems((m) => {
-      const prev = m[id] ?? { qty: 0 };
-      if (isBoxed) {
-        const boxes = (prev.boxes ?? 0) + 1;
-        const pieces = prev.pieces ?? 0;
-        return { ...m, [id]: { qty: boxes * upb + pieces, boxes, pieces } };
-      }
-      return { ...m, [id]: { qty: (prev.qty ?? 0) + 1 } };
+      const prev: LineState = m[id] ?? { qty: 0 };
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice + note.
+      return { ...m, [id]: incrementLine(prev, isBoxed, upb) };
     });
     // Always retain the snapshot (see NewOrderScreen): the empty-search query
     // can be GC'd while a search is held, so setSearch("") after a local scan

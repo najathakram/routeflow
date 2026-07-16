@@ -5,18 +5,25 @@
  *
  * Rules:
  * - A code different from the last-seen one is accepted immediately (operator
- *   moved to the next item).
+ *   moved to the next item — this is the A→B→A "re-scan the same item" case).
  * - The same code is rejected while it keeps re-appearing within the cooldown
- *   window. The window SLIDES: every rejected detection refreshes `lastAt`,
- *   so holding the camera on one item never re-adds it — the code must leave
- *   the frame for a full cooldown before a repeat scan is accepted.
+ *   window. The window SLIDES: every rejected detection refreshes `lastAt`, so
+ *   holding the camera on one item never re-adds it (frame-spam protection) — the
+ *   code must leave the frame for a full `SCAN_COOLDOWN_MS` before a repeat scan
+ *   of the SAME item is accepted and increments its qty.
+ *
+ * The cooldown is the "how long must the barcode be ABSENT to count as an
+ * intentional re-present". 1500ms was too long — an operator re-presenting the same
+ * item at a natural pace saw the qty NOT go up (desktop's keyboard-wedge scanner has
+ * discrete events with no such gap). 700ms is still comfortably above any per-frame
+ * decode interval (so a held item can't spam-add) but responsive to a real rescan.
  */
 export interface ScanGateState {
   lastCode: string;
   lastAt: number;
 }
 
-export const SCAN_COOLDOWN_MS = 1500;
+export const SCAN_COOLDOWN_MS = 700;
 
 export function gateScan(
   code: string,
