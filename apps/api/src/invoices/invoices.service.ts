@@ -730,12 +730,21 @@ export class InvoicesService {
    * tax-exempt-aware), and RESETS each OrderItem.invoicedQty to exactly the qty
    * this draft now bills (0 for unbilled lines) — the draft is the order's sole
    * consumer, so set-not-increment stays correct on repeat.
+   *
+   * SIBLING-AWARE for splits: a regulated SEPARATE_INVOICE order has base + -R# open
+   * drafts. `reconcileSplitOrderDrafts` rebuilds each from its OWN category group so the
+   * base never folds in a sibling's line (which would double-bill). It only handles a
+   * clean split; a single-group order (or any unclean case) falls through to the legacy
+   * single-draft rebuild below, byte-identical to before.
    */
   async reconcileOrderDraftInvoice(
     orderId: string,
     opts: { basis: "order" | "delivered"; tx?: any },
   ) {
     const db = opts.tx ?? this.prisma.forTenant();
+    const split = await this.reconcileSplitOrderDrafts(orderId, opts.basis, db);
+    if (split) return split;
+
     const draft = await this.findOpenOrderDraft(orderId, db);
     if (!draft) return null;
 
@@ -901,6 +910,36 @@ export class InvoicesService {
     });
     if (!order) return null;
 
+    // Partition the order's lines by WHICH draft already bills them (the invoice item's
+    // orderItemId == the createSplitInvoices grouping — clean because the guard above
+    // proved no line is shared across drafts or with a finalized invoice), then rebuild
+    // each draft from its own lines on the delivered basis.
+    const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
+    const pairs = drafts.map((d: any) => {
+      const memberIds = [
+        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
+      ] as string[];
+      return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
+    });
+    return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
+  }
+
+  /**
+   * Shared sibling-aware rebuild core for reconcileOrderDeliveredInvoices and
+   * reconcileOrderDraftInvoice's split path. Rebuilds each (draft, lines) pair from ONLY
+   * its own lines at `billQty` (basis "order" → li.qty, "delivered" → li.deliveredQty),
+   * allocates the order's regular tax across the drafts by subtotal (rounding remainder
+   * to the largest, mirroring createSplitInvoices → Σ == the single-invoice tax), keeps
+   * each DRAFT, and SETs each line's invoicedQty to what its one draft now bills (each
+   * line belongs to exactly one draft). Callers guarantee the pairs are a CLEAN per-line
+   * partition of the order (no line on two drafts, none also on a finalized invoice).
+   */
+  private async rebuildSiblingDrafts(
+    order: any,
+    pairs: Array<{ draft: any; lines: any[] }>,
+    basis: "order" | "delivered",
+    db: any,
+  ): Promise<any[]> {
     const tenantId = this.prisma.getTenantId();
     const customer = await db.customer.findUnique({
       where: { id: order.customerId },
@@ -909,30 +948,20 @@ export class InvoicesService {
     const isTaxExempt = !!customer?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
-    const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
+    const billQtyOf = (li: any) =>
+      basis === "delivered" ? Number(li.deliveredQty ?? 0) : Number(li.qty);
 
-    // Partition the order's lines by WHICH draft already bills them (the invoice
-    // item's orderItemId == the createSplitInvoices grouping). Each line belongs to
-    // exactly one draft, so per-line invoicedQty stays a plain SET, never a sum.
-    const perDraft = drafts.map((d: any) => {
-      const memberIds = [
-        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
-      ] as string[];
-      const billable = memberIds
-        .map((id) => lineById.get(id))
-        .filter(Boolean)
-        .map((li: any) => ({ li, billQty: Number(li.deliveredQty ?? 0) }))
+    const perDraft = pairs.map(({ draft, lines }) => {
+      const billable = lines
+        .map((li: any) => ({ li, billQty: billQtyOf(li) }))
         .filter((x: any) => x.billQty > 0.001);
       const itemsData = billable.map(({ li, billQty }: any) =>
         this.buildInvoiceItemData(li, billQty, tenantId),
       );
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
-      return { draft: d, memberIds, billable, itemsData, subtotal, taxAmount: 0, total: 0 };
+      return { draft, lines, billable, itemsData, subtotal, taxAmount: 0, total: 0 };
     });
 
-    // Allocate the order's regular tax across siblings by delivered subtotal, with the
-    // rounding remainder to the largest — Σ(sibling tax) == the single-invoice tax, so
-    // a clean full delivery keeps Σ(sibling total) == order total to the cent.
     if (!isTaxExempt && orderTax !== 0) {
       const totalSubtotal = roundMoney(perDraft.reduce((s, pd) => s + pd.subtotal, 0));
       const totalTax = roundMoney(orderTax * (totalSubtotal / orderSubtotal));
@@ -974,19 +1003,104 @@ export class InvoicesService {
         include: { items: true },
       });
       updated.push(inv);
-      // Reset invoicedQty on this draft's member lines to exactly what it now bills
-      // (0 for a refused line). Each line is a member of one draft → SET, not add.
+      // SET each of this draft's lines' invoicedQty to what it now bills (0 for a
+      // line billed 0 — refused/short). Each line belongs to one draft → SET, not add.
       const billMap = new Map<string, number>(
         pd.billable.map(({ li, billQty }: any) => [li.id, billQty]),
       );
-      for (const id of pd.memberIds) {
+      for (const li of pd.lines) {
         await db.orderItem.update({
-          where: { id },
-          data: { invoicedQty: billMap.get(id) ?? 0 },
+          where: { id: li.id },
+          data: { invoicedQty: billMap.get(li.id) ?? 0 },
         });
       }
     }
     return updated;
+  }
+
+  /**
+   * Sibling-aware "order"/"delivered"-basis rebuild for a regulated SEPARATE_INVOICE
+   * order whose createSplitInvoices left it with base + -R# open DRAFTs. Partitions the
+   * CURRENT (non-cancelled) order lines by category (groupOrderLinesForInvoicing — so an
+   * edit that added/removed lines still rebuilds each sibling from its own CURRENT lines,
+   * which provenance can't) and rebuilds each draft from only its group. Returns the
+   * updated invoices, or NULL when this isn't a clean split it can safely handle (a
+   * single draft, a finalized invoice already billing part of the order, a group/draft
+   * count mismatch, or an ambiguous category match) — the caller then falls back to the
+   * legacy single-draft rebuild.
+   */
+  private async reconcileSplitOrderDrafts(
+    orderId: string,
+    basis: "order" | "delivered",
+    db: any,
+  ): Promise<any[] | null> {
+    const invoices = await db.invoice.findMany({
+      where: { orderId, status: { not: InvoiceStatus.VOID } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        status: true,
+        deliveryBatchId: true,
+        discount: true,
+        shippingFee: true,
+        items: { select: { orderItemId: true, trackedCategoryId: true } },
+      },
+    });
+    const drafts = invoices.filter(
+      (i: any) => i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null,
+    );
+    if (drafts.length <= 1) return null; // single-group → legacy path (byte-identical)
+    // A finalized / delivery-batch invoice already bills part of the order; a full
+    // rebuild across the drafts would double-count it. Bail to the legacy path.
+    if (invoices.length !== drafts.length) return null;
+
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
+        },
+      },
+    });
+    if (!order) return null;
+
+    // Partition CURRENT lines by category (mirrors createSplitInvoices) — each line lands
+    // in exactly one group.
+    const groups = await this.groupOrderLinesForInvoicing(
+      order.lineItems.map((li: any) => ({ li, remainingQty: 1 })),
+      db,
+    );
+    if (groups.length !== drafts.length) return null;
+
+    // Match each group to its draft by the SEPARATE_INVOICE category snapshot on the
+    // draft's items (standard group → the base draft with no such category).
+    const sepCatIds = new Set(groups.map((g) => g.trackedCategoryId).filter(Boolean));
+    const draftCategory = (d: any): string | null | undefined => {
+      const cats = new Set<string>(
+        (d.items ?? [])
+          .map((it: any) => it.trackedCategoryId)
+          .filter((c: any) => c && sepCatIds.has(c)),
+      );
+      if (cats.size > 1) return undefined; // ambiguous — a draft with two SEPARATE cats
+      return cats.size === 1 ? [...cats][0] : null; // null → standard/base draft
+    };
+    const draftByCat = new Map<string | null, any>();
+    for (const d of drafts) {
+      const c = draftCategory(d);
+      if (c === undefined || draftByCat.has(c)) return null; // ambiguous / duplicate
+      draftByCat.set(c, d);
+    }
+    const pairs: Array<{ draft: any; lines: any[] }> = [];
+    for (const g of groups) {
+      const d = draftByCat.get(g.trackedCategoryId ?? null);
+      if (!d) return null; // a group with no matching draft
+      pairs.push({ draft: d, lines: g.items.map((x: any) => x.li) });
+    }
+
+    return this.rebuildSiblingDrafts(order, pairs, basis, db);
   }
 
   /**
