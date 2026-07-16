@@ -211,7 +211,12 @@ async function run() {
         const detailRes = await get(`/api/v1/invoices/${inv.id}`, token);
         if (detailRes.ok) {
           const detail = await detailRes.json();
-          const { subtotal = 0, taxAmount = 0, total = 0 } = detail;
+          // Prisma serializes Decimal money fields as STRINGS — coerce before any
+          // arithmetic, else `subtotal + taxAmount` string-concatenates ("25"+"0"
+          // → "250") and the spot-check reports a false divergence.
+          const subtotal = Number(detail.subtotal ?? 0);
+          const taxAmount = Number(detail.taxAmount ?? 0);
+          const total = Number(detail.total ?? 0);
           const expected = Math.round((subtotal + taxAmount) * 100) / 100;
           const diff = Math.abs(expected - total);
           if (diff <= 0.01) {
