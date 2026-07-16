@@ -154,6 +154,31 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ).rejects.toThrow(/exceeds invoice line subtotal/);
   });
 
+  it("REJECTS a credit that exceeds a line's subtotal CUMULATIVELY across separate notes", async () => {
+    // Two-line, $200 invoice: ii-1 already fully credited ($100) by an earlier note, ii-2
+    // untouched. A new $100 credit of ii-1 passes the header cap ($100 prior + $100 = $200
+    // ≤ $200, since ii-2's slack absorbs it) but must be rejected by the per-line cumulative
+    // cap — otherwise ii-1 is credited $200 against a $100 subtotal (over-refund/over-reverse).
+    prisma.invoice.findUnique.mockResolvedValue({
+      total: 200,
+      customerId: "c1",
+      items: [
+        { id: "ii-1", subtotal: 100, qty: 10, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
+        { id: "ii-2", subtotal: 100, qty: 10, trackedCategoryId: null, categoryTaxAmount: 0 },
+      ],
+    });
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 100 } }); // header cap still has $100 headroom
+    prisma.creditNoteItem.findMany.mockResolvedValue([{ invoiceItemId: "ii-1", amount: 100 }]); // ii-1 already fully credited
+    await expect(
+      service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 100,
+        items: [{ invoiceItemId: "ii-1", amount: 100 }],
+      }),
+    ).rejects.toThrow(/plus prior credits.*would exceed invoice line subtotal/);
+  });
+
   it("merges duplicate line references into a single CreditNoteItem when within the line", async () => {
     prisma.invoice.findUnique.mockResolvedValue(
       invoiceWith([
