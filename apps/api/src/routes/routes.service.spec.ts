@@ -550,11 +550,79 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
+      // 5th arg = the orders delivered in THIS completion (empty here — no
+      // deliveries were sent — so nothing is reconciled to the delivered basis).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
         ["ord-1"],
         50,
         "CASH",
+        [],
+      );
+    });
+
+    it("passes only the orders delivered in THIS completion as the reconcile subset", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        // Two orders on the stop; only ord-1 is delivered here (ord-2 was already
+        // delivered by the office and carries no delivery line in this payload).
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+          {
+            id: "ord-2",
+            status: "DELIVERED",
+            customerId: "cust-1",
+            orderNumber: "SO-2",
+            total: 30,
+          },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findUnique: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 3 }],
+          payment: { amount: 50, method: "CASH" },
+        },
+        operatorPayload,
+      );
+
+      // Bill/collect across BOTH non-cancelled orders, but reconcile-to-delivered
+      // ONLY ord-1 — ord-2 (not delivered here) must keep its invoice, not be zeroed.
+      expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1", "ord-2"],
+        50,
+        "CASH",
+        ["ord-1"],
       );
     });
 

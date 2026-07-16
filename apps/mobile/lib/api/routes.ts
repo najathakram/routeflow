@@ -227,49 +227,6 @@ export interface CompleteStopDto {
   identityType?: string | null;
 }
 
-export function useCompleteStop() {
-  const qc = useQueryClient();
-  return useMutation<RouteRunStop, Error, CompleteStopDto>({
-    mutationFn: ({
-      runId,
-      stopId,
-      driverNote,
-      items,
-      podPhotoUrls,
-      signatureUrl,
-      safeDropEnabled,
-      ageVerified,
-      identityVerified,
-      identityType,
-    }) => {
-      const deliveries = items
-        .filter((i) => i.orderItemId) // API requires orderItemId; skip ADD_ON items without one
-        .map((i) => ({
-          orderItemId: i.orderItemId!,
-          type: i.type,
-          quantityDelivered: Math.round(i.qty),
-          note: i.driverNote,
-        }));
-      return apiClient
-        .post(`/route-runs/${runId}/stops/${stopId}/complete`, {
-          driverNote,
-          deliveries,
-          podPhotoUrls,
-          signatureUrl,
-          safeDropEnabled,
-          ageVerified,
-          identityVerified,
-          identityType,
-        })
-        .then((r) => r.data);
-    },
-    onSuccess: (_, { runId }) => {
-      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
-      qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
-    },
-  });
-}
-
 // RF-005: Atomic complete + payment hook
 export interface CompleteWithPaymentDto {
   runId: string;

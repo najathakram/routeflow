@@ -1373,7 +1373,12 @@ export class RoutesService {
         },
       });
 
-      // 2. Record delivery mutations
+      // 2. Record delivery mutations. Track which orders were actually delivered
+      // in THIS completion — only they may be reconciled to the delivered basis
+      // below. An order merely linked to the stop but not delivered here (e.g. one
+      // the office already marked DELIVERED) keeps its existing invoice; reconciling
+      // it against a deliveredQty of 0 would wrongly zero its open draft.
+      const deliveredOrderIdSet = new Set<string>();
       if (dto.deliveries && dto.deliveries.length > 0) {
         for (const d of dto.deliveries) {
           const item = await tx.orderItem.findUnique({
@@ -1381,6 +1386,7 @@ export class RoutesService {
             select: { orderId: true },
           });
           if (!item) continue;
+          deliveredOrderIdSet.add(item.orderId);
           await tx.deliveryMutation.create({
             data: {
               orderId: item.orderId,
@@ -1390,6 +1396,13 @@ export class RoutesService {
               type: (d.type as any) ?? "DELIVERED",
               quantityDelivered: d.quantityDelivered,
             },
+          });
+          // Record the delivered qty so a payment-path invoice bills what was
+          // actually delivered (short/refused lines don't over-bill). Consumed by
+          // recordDeliveryPaymentInTx → reconcileOrderDraftInvoice(basis:"delivered").
+          await tx.orderItem.update({
+            where: { id: d.orderItemId },
+            data: { deliveredQty: (d.type as any) === "REFUSED" ? 0 : d.quantityDelivered },
           });
         }
       }
@@ -1421,6 +1434,7 @@ export class RoutesService {
           deliveredOrderIds,
           dto.payment.amount,
           dto.payment.method,
+          Array.from(deliveredOrderIdSet),
         );
         if (applied + 0.005 < dto.payment.amount) {
           this.logger.warn(
