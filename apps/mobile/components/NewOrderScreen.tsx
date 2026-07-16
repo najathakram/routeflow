@@ -58,6 +58,7 @@ import { useAuthStore } from "../lib/auth-store";
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { BarcodeFab } from "./BarcodeFab";
+import { incrementLine } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
@@ -495,15 +496,10 @@ function ProductPickView({
         : undefined;
     setItems((m) => {
       const isNew = !m[id];
-      const prev = m[id] ?? { qty: 0 };
-      if (isBoxed) {
-        const boxes = (prev.boxes ?? 0) + 1;
-        const pieces = prev.pieces ?? 0;
-        const line: LineState = { qty: boxes * upb + pieces, boxes, pieces };
-        if (isNew && prefill != null) line.unitPrice = prefill;
-        return { ...m, [id]: line };
-      }
-      const line: LineState = { qty: (prev.qty ?? 0) + 1 };
+      const prev: LineState = m[id] ?? { qty: 0 };
+      // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
+      // unitPrice override + note (previously wiped on every increment).
+      const line = incrementLine(prev, isBoxed, upb);
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
