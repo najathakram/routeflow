@@ -295,6 +295,22 @@ export function useSendInvoice() {
 /** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
 export type InvoicePdfVariant = "draft" | "final";
 
+/**
+ * Default PDF stage when the operator hasn't forced one: FINAL once the invoice is
+ * issued (status beyond DRAFT) or its order is delivered, else DRAFT (the pre-delivery
+ * proforma). Hand-mirrored across `apps/api/src/invoices/invoice-pdf-variant.ts` and
+ * `apps/mobile/lib/invoice-pdf-variant.ts` — keep the three in sync (pricing.ts-style
+ * triple mirror). The operator can always override and print/download/email either.
+ */
+export function deriveInvoiceVariant(inv: {
+  status: string;
+  order?: { status?: string | null } | null;
+}): InvoicePdfVariant {
+  if (inv.status !== "DRAFT") return "final";
+  if (inv.order?.status === "DELIVERED") return "final";
+  return "draft";
+}
+
 export function useSendInvoiceEmail() {
   const qc = useQueryClient();
   return useMutation<

@@ -42,6 +42,7 @@ import {
   useDeleteInvoicePayment,
   useDownloadInvoicePdf,
   type InvoicePdfVariant,
+  deriveInvoiceVariant,
   useRevertInvoiceToDraft,
   useUnvoidInvoice,
   useAdjustInvoicePrices,
@@ -1138,8 +1139,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   // pre-delivery proforma; FINAL once the order is delivered or the invoice is
   // issued. The operator can flip it and print/download/email either version
   // at any time (`pdfVariantOverride`).
-  const defaultPdfVariant: InvoicePdfVariant =
-    invoice.status !== "DRAFT" || invoice.order?.status === "DELIVERED" ? "final" : "draft";
+  const defaultPdfVariant: InvoicePdfVariant = deriveInvoiceVariant(invoice);
   const pdfVariant: InvoicePdfVariant = pdfVariantOverride ?? defaultPdfVariant;
   const balanceDue =
     status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);

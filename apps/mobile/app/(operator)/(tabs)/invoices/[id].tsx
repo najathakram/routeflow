@@ -13,7 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
+import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
@@ -24,6 +24,7 @@ import {
   useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
+import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { canWriteOff, isPaymentEditable } from "../../../../lib/invoices-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
@@ -95,6 +96,8 @@ export default function InvoiceDetailScreen() {
   const [dueDateModal, setDueDateModal] = useState(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
+  // Draft/Final PDF stage — null means follow the smart default (deriveInvoiceVariant).
+  const [pdfVariantOverride, setPdfVariantOverride] = useState<InvoicePdfVariant | null>(null);
 
   if (isLoading || !invoice) {
     return (
@@ -113,6 +116,10 @@ export default function InvoiceDetailScreen() {
   const isVoid = invoice.status === "VOID";
   const canSend = invoice.status === "DRAFT";
   const canRecord = !isPaid && !isVoid;
+  // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
+  // via the toggle. Governs BOTH Share and Send.
+  const defaultPdfVariant = deriveInvoiceVariant(invoice);
+  const pdfVariant: InvoicePdfVariant = pdfVariantOverride ?? defaultPdfVariant;
 
   const handleSend = () => {
     if (!id) return;
@@ -138,17 +145,21 @@ export default function InvoiceDetailScreen() {
                 },
               ),
           },
-          { label: "Share final PDF", style: "default", onPress: () => handlePdf("final") },
+          {
+            label: `Share ${pdfVariant} PDF`,
+            style: "default",
+            onPress: () => handlePdf(pdfVariant),
+          },
           { label: "Cancel", style: "cancel" },
         ],
       );
       return;
     }
     sendMut.mutate(
-      { id, email: customerEmail },
+      { id, email: customerEmail, variant: pdfVariant },
       {
         onSuccess: () => {
-          showToast("Invoice sent");
+          showToast(`${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`);
           refetch();
         },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
@@ -305,6 +316,19 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
+          {/* Draft/Final PDF stage — one toggle governs both Share and Send
+              (mirrors the web invoice-detail). Smart-defaults per stage. */}
+          <View style={styles.variantRow}>
+            <Text style={styles.variantLabel}>PDF STAGE</Text>
+            <View style={{ flex: 1 }}>
+              <SegmentedControl
+                items={["Draft", "Final"]}
+                value={pdfVariant === "draft" ? "Draft" : "Final"}
+                onChange={(v) => setPdfVariantOverride(v === "Draft" ? "draft" : "final")}
+              />
+            </View>
+          </View>
+
           {/* Action grid */}
           <View style={styles.actionsGrid}>
             {canRecord ? (
@@ -322,14 +346,13 @@ export default function InvoiceDetailScreen() {
               />
             ) : null}
             <ActionTile
-              icon="document-outline"
-              label={pdfMut.isPending ? "Loading…" : "Share draft"}
-              onPress={() => handlePdf("draft")}
-            />
-            <ActionTile
               icon="share-outline"
-              label={pdfMut.isPending ? "Loading…" : "Share final"}
-              onPress={() => handlePdf("final")}
+              label={
+                pdfMut.isPending
+                  ? "Loading…"
+                  : `Share ${pdfVariant === "draft" ? "draft" : "final"}`
+              }
+              onPress={() => handlePdf(pdfVariant)}
             />
             {canWriteOff(invoice.status) ? (
               <ActionTile
@@ -628,6 +651,13 @@ const styles = StyleSheet.create({
   },
   modalBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  variantRow: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
+  variantLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.8,
+  },
   tile: {
     flexBasis: "47%",
     flexGrow: 1,

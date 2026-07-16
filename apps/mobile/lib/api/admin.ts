@@ -272,6 +272,9 @@ export interface AdminInvoice {
    *  (findOne/findAll use Prisma `include`, not a restrictive `select`) — was
    *  simply untyped on mobile until P10-REG-C. */
   orderId?: string | null;
+  /** The linked order's status — drives the draft/final PDF default
+   *  (deriveInvoiceVariant). Already returned by findOne's `include`, was untyped. */
+  order?: { status?: string | null; orderNumber?: string | null } | null;
   /** Set when this invoice was created as part of a regulated sale split;
    *  sibling invoices from the same split share this id. Same "already
    *  returned, just untyped" situation as orderId (P10-REG-C). */
