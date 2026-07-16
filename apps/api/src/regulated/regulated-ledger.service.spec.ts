@@ -57,6 +57,40 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    it("RF-3: passes trackedSubcategoryId through onto the SALE row (null when absent)", async () => {
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date("2026-07-15T00:00:00Z"),
+        lines: [
+          {
+            invoiceItemId: "ii-1",
+            orderItemId: null,
+            trackedCategoryId: "cat-tob",
+            trackedSubcategoryId: "sub-cig",
+            qty: 3,
+            netSales: 30,
+            categoryTax: 0,
+          },
+          {
+            invoiceItemId: "ii-2",
+            orderItemId: null,
+            trackedCategoryId: "cat-tob",
+            // no trackedSubcategoryId → null on the row
+            qty: 1,
+            netSales: 10,
+            categoryTax: 0,
+          },
+        ],
+        db: prisma,
+      });
+      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+      expect(data).toHaveLength(2);
+      expect(data[0]).toMatchObject({ invoiceItemId: "ii-1", trackedSubcategoryId: "sub-cig" });
+      expect(data[1]).toMatchObject({ invoiceItemId: "ii-2", trackedSubcategoryId: null });
+    });
+
     it("no-ops with no regulated lines and for a null tenant", async () => {
       await service.writeSaleEntries({
         tenantId: "t1",
@@ -282,6 +316,18 @@ describe("RegulatedLedgerService", () => {
       expect(netQty).toBe(1);
     });
 
+    it("RF-3: carries the SALE's trackedSubcategoryId onto the REVERSAL row", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50, categoryTax: 0, trackedSubcategoryId: "sub-cig" }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        trackedSubcategoryId: "sub-cig",
+        qty: -10,
+      });
+    });
+
     it("no-ops when the invoice has no ledger rows", async () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([]);
       await service.reverseInvoiceEntries({ invoiceId: "inv-x", db: prisma });
@@ -339,6 +385,24 @@ describe("RegulatedLedgerService", () => {
         qty: -3,
         netSales: -30,
         categoryTax: -6,
+      });
+    });
+
+    it("RF-3: carries the SALE's trackedSubcategoryId onto the return REVERSAL row", async () => {
+      arrange({
+        sales: [saleRow({ trackedSubcategoryId: "sub-cig" })],
+        items: [{ id: "ii-1", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 3]]),
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        returnId: "ret-1",
+        trackedSubcategoryId: "sub-cig",
       });
     });
 
@@ -758,6 +822,49 @@ describe("RegulatedLedgerService", () => {
         qty: -1.5,
         netSales: -15,
         categoryTax: -3,
+      });
+    });
+
+    it("RF-3: carries the live SALE's trackedSubcategoryId onto the credit-note REVERSAL", async () => {
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-1",
+            netSales: 30,
+            qty: 3,
+            categoryTax: 0,
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            invoiceId: "inv-1",
+            trackedSubcategoryId: "sub-cig", // reporting breakdown on the live SALE
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 30,
+            qty: 3,
+            categoryTax: 0,
+          },
+        ]);
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-1",
+          amount: 15,
+          qty: 1.5,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0]).toMatchObject({
+        entryType: "REVERSAL",
+        creditNoteId: "cn-1",
+        trackedSubcategoryId: "sub-cig", // copied from the SALE row, not the credit item
       });
     });
 

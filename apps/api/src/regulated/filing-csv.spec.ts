@@ -68,4 +68,72 @@ describe("buildFilingCsv", () => {
       "Period,Units (unit),Net Sales,Excise Tax Due",
     );
   });
+
+  // ─── RF-3: optional Subcategory column ────────────────────────────────────
+  it("withSubcategory injects a Subcategory column after Period (GENERIC)", () => {
+    const csv = buildFilingCsv("GENERIC", {
+      ...base,
+      withSubcategory: true,
+      rows: [
+        {
+          periodBucket: "2026-07",
+          subcategoryName: "Cigarettes",
+          qty: 10,
+          unitBasisQty: 20,
+          netSales: 100,
+          categoryTax: 5,
+        },
+      ],
+    });
+    const lines = csv.split("\n");
+    expect(lines[1]).toBe("Period,Subcategory,Qty,Unit Basis Qty,Net Sales,Category Tax");
+    expect(lines[2]).toBe("2026-07,Cigarettes,10.000,20.000,100.00,5.00");
+    expect(lines[3]).toBe("TOTALS,,10.000,20.000,100.00,5.00"); // blank subcategory cell
+  });
+
+  it("withSubcategory leaves the cell blank for a null subcategory and escapes commas", () => {
+    const csv = buildFilingCsv("CA_CDTFA", {
+      ...base,
+      withSubcategory: true,
+      rows: [
+        {
+          periodBucket: "2026-07",
+          subcategoryName: null,
+          qty: 10,
+          unitBasisQty: 20,
+          netSales: 100,
+          categoryTax: 5,
+        },
+        {
+          periodBucket: "2026-07",
+          subcategoryName: "Wine, sparkling",
+          qty: 1,
+          unitBasisQty: 2,
+          netSales: 10,
+          categoryTax: 1,
+        },
+      ],
+    });
+    const lines = csv.split("\n");
+    expect(lines[1]).toBe("Period,Subcategory,Units (pack),Net Sales,Excise Tax Due");
+    expect(lines[2]).toBe("2026-07,,20.000,100.00,5.00"); // null → blank cell
+    expect(lines[3]).toBe('2026-07,"Wine, sparkling",2.000,10.00,1.00'); // comma escaped
+  });
+
+  it("without withSubcategory the CSV is unchanged (no Subcategory column)", () => {
+    const csv = buildFilingCsv("GENERIC", {
+      ...base,
+      rows: [
+        {
+          periodBucket: "2026-07",
+          subcategoryName: "Cigarettes", // present on the row but flag is off
+          qty: 10,
+          unitBasisQty: 20,
+          netSales: 100,
+          categoryTax: 5,
+        },
+      ],
+    });
+    expect(csv.split("\n")[1]).toBe("Period,Qty,Unit Basis Qty,Net Sales,Category Tax");
+  });
 });

@@ -11,6 +11,9 @@ export interface SaleLedgerLine {
   invoiceItemId: string;
   orderItemId: string | null;
   trackedCategoryId: string | null;
+  // RF-3: reporting-only classification child of the section. Passed through onto the
+  // SALE row for the filing breakdown; never affects the regulated filter or any math.
+  trackedSubcategoryId?: string | null;
   qty: number;
   netSales: number; // the line's post-discount subtotal
   categoryTax: number; // computed category tax (0 today — tobacco is rate=0)
@@ -63,6 +66,8 @@ export class RegulatedLedgerService {
       .map((l) => ({
         tenantId,
         trackedCategoryId: l.trackedCategoryId as string,
+        // RF-3: reporting breakdown passthrough (null = section-only). Never gates.
+        trackedSubcategoryId: l.trackedSubcategoryId ?? null,
         entryType: "SALE" as const,
         orderId,
         orderItemId: l.orderItemId,
@@ -157,6 +162,8 @@ export class RegulatedLedgerService {
       rows.push({
         tenantId: s.tenantId,
         trackedCategoryId: s.trackedCategoryId,
+        // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
+        trackedSubcategoryId: s.trackedSubcategoryId ?? null,
         entryType: "REVERSAL" as const,
         orderId: s.orderId,
         orderItemId: s.orderItemId,
@@ -335,6 +342,8 @@ export class RegulatedLedgerService {
         rows.push({
           tenantId: s.tenantId,
           trackedCategoryId: s.trackedCategoryId,
+          // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
+          trackedSubcategoryId: s.trackedSubcategoryId ?? null,
           entryType: "REVERSAL" as const,
           orderId: s.orderId,
           orderItemId: s.orderItemId,
@@ -416,6 +425,8 @@ export class RegulatedLedgerService {
         orderId: true,
         orderItemId: true,
         invoiceId: true,
+        // RF-3: reporting breakdown carried onto the REVERSAL rows below.
+        trackedSubcategoryId: true,
       },
     });
     const liveSaleByItem = new Map<
@@ -425,6 +436,7 @@ export class RegulatedLedgerService {
         orderId: string | null;
         orderItemId: string | null;
         invoiceId: string | null;
+        trackedSubcategoryId: string | null;
       }
     >();
     for (const s of liveSaleRows) {
@@ -434,6 +446,7 @@ export class RegulatedLedgerService {
         orderId: s.orderId ?? null,
         orderItemId: s.orderItemId ?? null,
         invoiceId: s.invoiceId ?? null,
+        trackedSubcategoryId: s.trackedSubcategoryId ?? null,
       };
       cur.net += Number(s.netSales);
       liveSaleByItem.set(k, cur);
@@ -535,6 +548,8 @@ export class RegulatedLedgerService {
       rows.push({
         tenantId: it.tenantId,
         trackedCategoryId: it.trackedCategoryId,
+        // RF-3: carry the SALE's reporting breakdown onto the REVERSAL (pure passthrough).
+        trackedSubcategoryId: live.trackedSubcategoryId ?? null,
         entryType: "REVERSAL" as const,
         orderId: live.orderId,
         orderItemId: live.orderItemId,

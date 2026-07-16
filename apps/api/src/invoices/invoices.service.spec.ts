@@ -334,6 +334,7 @@ describe("InvoicesService", () => {
           {
             id: "ii-1",
             trackedCategoryId: "cat-tob",
+            trackedSubcategoryId: "sub-1",
             orderItemId: null,
             qty: 3,
             subtotal: 30,
@@ -356,7 +357,8 @@ describe("InvoicesService", () => {
         trackedCategoryId: "cat-tob",
         trackedSubcategoryId: "sub-1",
       });
-      // A SALE row is written from the created items with orderId null (manual sale).
+      // A SALE row is written from the created items with orderId null (manual sale) —
+      // RF-3: the ledger line carries the subcategory breakdown through.
       expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
         expect.objectContaining({
           orderId: null,
@@ -365,6 +367,7 @@ describe("InvoicesService", () => {
             expect.objectContaining({
               invoiceItemId: "ii-1",
               trackedCategoryId: "cat-tob",
+              trackedSubcategoryId: "sub-1",
               qty: 3,
               netSales: 30,
             }),

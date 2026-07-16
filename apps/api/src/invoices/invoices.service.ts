@@ -286,6 +286,7 @@ export class InvoicesService {
               invoiceItemId: it.id,
               orderItemId: it.orderItemId ?? null,
               trackedCategoryId: it.trackedCategoryId ?? null,
+              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
               qty: Number(it.qty),
               netSales: Number(it.subtotal),
               categoryTax: Number(it.categoryTaxAmount ?? 0),
@@ -329,7 +330,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -499,6 +507,9 @@ export class InvoicesService {
       // OrderItem sale-time snapshot; fall back to the live product category for
       // orders created before the snapshot shipped (best-effort — see resolveLineCategoryId).
       trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
+      // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId — prefer
+      // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
+      trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
       categoryTaxAmount: Number(li.categoryTaxAmount ?? 0),
       ...(tenantId ? { tenantId } : {}),
     };
@@ -716,6 +727,7 @@ export class InvoicesService {
             invoiceItemId: it.id,
             orderItemId: it.orderItemId ?? null,
             trackedCategoryId: it.trackedCategoryId ?? null,
+            trackedSubcategoryId: it.trackedSubcategoryId ?? null,
             qty: Number(it.qty),
             netSales: Number(it.subtotal),
             categoryTax: Number(it.categoryTaxAmount ?? 0),
@@ -788,7 +800,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -942,7 +961,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1000,6 +1026,7 @@ export class InvoicesService {
         invoiceItemId: it.id,
         orderItemId: it.orderItemId ?? null,
         trackedCategoryId: it.trackedCategoryId ?? null,
+        trackedSubcategoryId: it.trackedSubcategoryId ?? null,
         qty: Number(it.qty),
         netSales: Number(it.subtotal),
         categoryTax: Number(it.categoryTaxAmount ?? 0),
@@ -1146,7 +1173,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1351,7 +1385,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1449,7 +1490,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },

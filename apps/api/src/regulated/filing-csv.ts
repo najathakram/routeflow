@@ -13,6 +13,9 @@ export interface FilingCsvRow {
   unitBasisQty: number;
   netSales: number;
   categoryTax: number;
+  // RF-3: reporting subcategory label for this row. Rendered as an extra column only
+  // when the caller sets `withSubcategory`; blank when the row has no subcategory.
+  subcategoryName?: string | null;
 }
 
 export interface FilingCsvTotals {
@@ -28,6 +31,9 @@ export interface FilingCsvData {
   periodKey: string;
   rows: FilingCsvRow[];
   totals: FilingCsvTotals;
+  // RF-3: when true, inject a "Subcategory" column (after Period) for the per-subcategory
+  // breakdown. Absent/false → byte-identical to the pre-RF-3 section-level CSV.
+  withSubcategory?: boolean;
 }
 
 // Coverage disclosure: the ledger only captures the order→invoice path today
@@ -47,6 +53,27 @@ const qty = (n: number) => n.toFixed(3);
 export function buildFilingCsv(template: string, data: FilingCsvData): string {
   const { categoryName, unitBasis, periodKey, rows, totals } = data;
   const unit = unitBasis || "unit";
+  // RF-3: additive "Subcategory" column, spliced in right after the Period column so the
+  // existing per-template columns keep their order. Only active when the caller opts in.
+  const withSub = !!data.withSubcategory;
+  const injectHeader = (h: string): string => {
+    if (!withSub) return h;
+    const parts = h.split(",");
+    parts.splice(1, 0, "Subcategory");
+    return parts.join(",");
+  };
+  const injectRow = (cols: string[], r: FilingCsvRow): string[] => {
+    if (!withSub) return cols;
+    const c = [...cols];
+    c.splice(1, 0, esc(r.subcategoryName ?? ""));
+    return c;
+  };
+  const injectTotals = (cols: string[]): string[] => {
+    if (!withSub) return cols;
+    const c = [...cols];
+    c.splice(1, 0, "");
+    return c;
+  };
 
   let title: string;
   let header: string;
@@ -125,9 +152,9 @@ export function buildFilingCsv(template: string, data: FilingCsvData): string {
 
   const lines = [
     `${title},${esc(categoryName)},${periodKey}`,
-    header,
-    ...rows.map((r) => rowCols(r).join(",")),
-    totalCols.join(","),
+    injectHeader(header),
+    ...rows.map((r) => injectRow(rowCols(r), r).join(",")),
+    injectTotals(totalCols).join(","),
     `Note,${esc(DISCLOSURE)}`,
   ];
   return lines.join("\n") + "\n";
