@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { InvoicePdfVariant } from "../invoice-pdf-variant";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,10 +162,16 @@ export function useCreateInvoice() {
 
 export function useSendInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string; email?: string }>({
-    mutationFn: ({ id, email }) =>
+  return useMutation<Invoice, Error, { id: string; email?: string; variant?: InvoicePdfVariant }>({
+    // Two branches: send-email (attaches the PDF at the chosen stage) vs `/send`
+    // mark-as-sent (no email). `variant` rides ONLY on the send-email body — the
+    // mark-as-sent call must stay bodyless.
+    mutationFn: ({ id, email, variant }) =>
       apiClient
-        .post(email ? `/invoices/${id}/send-email` : `/invoices/${id}/send`, email ? { email } : {})
+        .post(
+          email ? `/invoices/${id}/send-email` : `/invoices/${id}/send`,
+          email ? { email, ...(variant ? { variant } : {}) } : {},
+        )
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -334,7 +341,9 @@ export function useCreateInvoiceFromOrder() {
 }
 
 /** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
-export type InvoicePdfVariant = "draft" | "final";
+// Canonical type + smart-default live in ../invoice-pdf-variant (triple mirror with
+// apps/api + apps/web); re-exported here so existing importers keep their path.
+export type { InvoicePdfVariant };
 
 export function useInvoicePdf() {
   return useMutation<
