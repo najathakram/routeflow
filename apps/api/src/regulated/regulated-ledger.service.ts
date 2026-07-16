@@ -179,17 +179,20 @@ export class RegulatedLedgerService {
    * ORDER (not an invoice) and carries only productId + qty, so we bridge: SALE
    * rows (by orderId) → InvoiceItem (by invoiceItemId) → productId. Partial returns
    * are PRO-RATED off each SALE row's snapshot (never re-read the live Product
-   * category, which may have drifted). Idempotent per `returnId`; qty already
-   * reversed on the order (from earlier returns OR an invoice void) is subtracted so
-   * cumulative reversed qty can never exceed the sold qty. Reversal books into the
-   * CURRENT period. `restock` is a stock concern and is intentionally ignored — a
-   * returned regulated sale reverses the ledger even if the goods are scrapped.
+   * category, which may have drifted). Idempotent per `returnId`; everything already
+   * reversed on the ORDER LINE (earlier returns, invoice voids, credit notes AND
+   * reconcile re-syncs) is subtracted so cumulative reversed qty/net can never exceed
+   * the sold amount — and the cap is keyed on `orderItemId` (not the invoice item), so
+   * it survives a delivered-basis reconcile that recreates the line under a fresh
+   * invoiceItemId. Reversal books into the CURRENT period. `restock` is a stock concern
+   * and is intentionally ignored — a returned regulated sale reverses the ledger even
+   * if the goods are scrapped.
    *
    * Known limitation: ReturnItem carries only productId (no order/invoice line id),
    * so returned units are matched to the order's regulated SALE rows for that product
    * (FIFO) and pooled by productId. If one product sits on BOTH a regulated and a
    * non-regulated line of the same order, returning the non-regulated units still
-   * reverses the regulated row — the row-remaining cap prevents OVER-reversal, but
+   * reverses the regulated row — the per-line remaining cap prevents OVER-reversal, but
    * attribution is approximate. Fixing this needs a ReturnItem→line linkage.
    */
   async reverseReturnEntries(params: {
@@ -227,27 +230,63 @@ export class RegulatedLedgerService {
         : [];
     const productByItem = new Map<string, string>(items.map((i: any) => [i.id, i.productId]));
 
-    // Qty + money already reversed per invoiceItemId (across earlier returns AND
-    // invoice voids), so cumulative reversals can never exceed the original sold
-    // qty, and the chunk that CLOSES a row can absorb rounding drift (below).
-    // Everything already reversed on THESE LINES — by earlier returns, invoice
-    // voids AND credit notes — keyed by invoiceItemId (not orderId) so a credit
-    // note that already reversed a line is seen here and can never be double-reversed.
+    // The cumulative-reversal cap is keyed on the ORDER LINE, not the invoice item.
+    // A delivered-basis reconcile DELETES an open draft's InvoiceItems and recreates
+    // them under fresh ids (rotating invoiceItemId) while re-booking the SALE under
+    // the SAME orderItemId. Keying on invoiceItemId would let a 2nd full return after
+    // a reconcile read a 0 cap for the new id and over-reverse (category SUM goes
+    // negative). orderItemId is stable across recreation; fall back to invoiceItemId
+    // for freeform invoice lines (no order line — those never get reconciled).
+    const lineKeyOfSale = (s: any): string => s.orderItemId ?? s.invoiceItemId ?? "";
+    const orderLineByInvoiceItem = new Map<string, string>();
+    for (const s of sales) {
+      if (s.invoiceItemId) {
+        orderLineByInvoiceItem.set(s.invoiceItemId, s.orderItemId ?? s.invoiceItemId);
+      }
+    }
+    const lineKeyOfReversal = (r: any): string =>
+      r.orderItemId ??
+      (r.invoiceItemId ? (orderLineByInvoiceItem.get(r.invoiceItemId) ?? r.invoiceItemId) : "");
+
+    // Per-ORDER-LINE remaining un-reversed balance = Σ(SALE) + Σ(REVERSAL, signed)
+    // across EVERY row of the line — including rows booked under a now-deleted
+    // invoice item before a reconcile. This nets a void to 0, a reconcile to
+    // (delivered − alreadyReturned), and a fully returned/credited line to 0, so a
+    // return can never drive the category SUM below 0. Seed each line with its total
+    // SALE, then fold in every prior REVERSAL (qty/net/tax are stored negative).
+    const remQtyByLine = new Map<string, number>();
+    const remNetByLine = new Map<string, number>(); // remaining net (>= 0 normally)
+    const remTaxByLine = new Map<string, number>();
+    for (const s of sales) {
+      const lk = lineKeyOfSale(s);
+      remQtyByLine.set(lk, (remQtyByLine.get(lk) ?? 0) + Number(s.qty));
+      remNetByLine.set(lk, (remNetByLine.get(lk) ?? 0) + Number(s.netSales));
+      remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(s.categoryTax));
+    }
+    // Everything already reversed on these lines — earlier returns, invoice voids,
+    // credit notes AND reconcile re-syncs — folded into the per-line remaining so
+    // cumulative reversal can never exceed the sold amount regardless of which path
+    // (or which since-rotated invoice item) booked the earlier reversal.
     const priorReversals = await db.regulatedSalesLedger.findMany({
       where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
-      select: { invoiceItemId: true, qty: true, netSales: true, categoryTax: true },
+      select: {
+        invoiceItemId: true,
+        orderItemId: true,
+        qty: true,
+        netSales: true,
+        categoryTax: true,
+      },
     });
-    const reversedByItem = new Map<string, number>();
-    const netReversedByItem = new Map<string, number>(); // signed (negative)
-    const taxReversedByItem = new Map<string, number>();
     for (const r of priorReversals) {
-      const k = r.invoiceItemId ?? "";
-      reversedByItem.set(k, (reversedByItem.get(k) ?? 0) + -Number(r.qty));
-      netReversedByItem.set(k, (netReversedByItem.get(k) ?? 0) + Number(r.netSales));
-      taxReversedByItem.set(k, (taxReversedByItem.get(k) ?? 0) + Number(r.categoryTax));
+      const lk = lineKeyOfReversal(r);
+      remQtyByLine.set(lk, (remQtyByLine.get(lk) ?? 0) + Number(r.qty)); // r.qty <= 0
+      remNetByLine.set(lk, (remNetByLine.get(lk) ?? 0) + Number(r.netSales));
+      remTaxByLine.set(lk, (remTaxByLine.get(lk) ?? 0) + Number(r.categoryTax));
     }
 
-    // SALE rows grouped by product (FIFO within a product).
+    // SALE rows grouped by product (FIFO within a product). Only LIVE sale rows
+    // (invoice item still present) are reversal targets; the per-line remaining
+    // above already accounts for the pre-reconcile rows on the deleted items.
     const salesByProduct = new Map<string, any[]>();
     for (const s of sales) {
       const pid = productByItem.get(s.invoiceItemId);
@@ -267,21 +306,32 @@ export class RegulatedLedgerService {
         if (remaining <= 0) break;
         const saleQty = Number(s.qty);
         if (saleQty <= 0) continue;
-        const itemKey = s.invoiceItemId ?? "";
-        const rowRemaining = saleQty - (reversedByItem.get(itemKey) ?? 0);
+        const lk = lineKeyOfSale(s);
+        // Cap this chunk at the ORDER LINE's remaining un-reversed qty (survives a
+        // reconcile that rotated the invoice item), not just this row's own qty.
+        const rowRemaining = remQtyByLine.get(lk) ?? 0;
         if (rowRemaining <= 0) continue;
-        // This chunk CLOSES the row when it consumes all of the remaining qty.
+        // This chunk CLOSES the line when it consumes all of its remaining qty.
         const closesRow = remaining >= rowRemaining;
         const r = Math.min(remaining, rowRemaining);
         remaining -= r;
-        reversedByItem.set(itemKey, (reversedByItem.get(itemKey) ?? 0) + r);
-        const frac = r / saleQty; // pro-rate off the ORIGINAL row (no drift)
-        // Money: the closing chunk books the EXACT remaining balance (original net
-        // minus what's already reversed) so a fully-reversed row nets to 0 across
-        // any number of partial returns — no accumulated per-chunk rounding drift.
-        // Non-closing chunks book the pro-rated share.
-        const netAlready = netReversedByItem.get(itemKey) ?? 0; // signed (negative)
-        const taxAlready = taxReversedByItem.get(itemKey) ?? 0;
+        const frac = r / saleQty; // pro-rate off the LIVE row's per-unit snapshot
+        const netRem = remNetByLine.get(lk) ?? 0; // remaining line net (>= 0)
+        const taxRem = remTaxByLine.get(lk) ?? 0;
+        // Money: the chunk that CLOSES the line books its EXACT remaining balance so a
+        // fully-reversed line nets to 0 across any number of partial returns. A
+        // non-closing chunk books the pro-rated share, but clamped to the line's
+        // remaining — the LIVE row's per-unit can exceed the remaining per-unit after a
+        // reconcile RE-PRICED the line (old rows folded in at a different price), and a
+        // fractional partial just under the full remaining qty could otherwise
+        // over-reverse the net/tax dimensions past 0.
+        let bookedNet = closesRow ? roundMoney(-netRem) : roundMoney(-Number(s.netSales) * frac);
+        let bookedTax = closesRow ? roundMoney(-taxRem) : roundMoney(-Number(s.categoryTax) * frac);
+        if (bookedNet < -netRem) bookedNet = roundMoney(-netRem);
+        if (bookedTax < -taxRem) bookedTax = roundMoney(-taxRem);
+        remQtyByLine.set(lk, rowRemaining - r);
+        remNetByLine.set(lk, netRem + bookedNet);
+        remTaxByLine.set(lk, taxRem + bookedTax);
         rows.push({
           tenantId: s.tenantId,
           trackedCategoryId: s.trackedCategoryId,
@@ -293,12 +343,8 @@ export class RegulatedLedgerService {
           returnId,
           qty: -round3(r),
           unitBasisQty: -round3(Number(s.unitBasisQty) * frac),
-          netSales: closesRow
-            ? roundMoney(-Number(s.netSales) - netAlready)
-            : roundMoney(-Number(s.netSales) * frac),
-          categoryTax: closesRow
-            ? roundMoney(-Number(s.categoryTax) - taxAlready)
-            : roundMoney(-Number(s.categoryTax) * frac),
+          netSales: bookedNet,
+          categoryTax: bookedTax,
           soldAt: now,
           periodBucket: bucket,
         });
@@ -328,10 +374,11 @@ export class RegulatedLedgerService {
    * it was AT SALE. Safety invariants (each independently regression-tested):
    *  - SALE-existence: a REVERSAL is booked ONLY against a line that actually recorded
    *    a regulated SALE — never "naked" (pre-W5 / non-split invoices have no SALE rows).
-   *  - Over-reversal clamp: cumulative reversed net/qty per line can never exceed the
-   *    SALE's remaining un-reversed balance, counting credit-note, return AND void
-   *    reversals together (keyed by invoiceItemId), so credit-then-return can't
-   *    double-reverse.
+   *  - Over-reversal clamp: cumulative reversed net/qty per ORDER LINE can never exceed
+   *    the SALE's remaining un-reversed balance, counting credit-note, return, void AND
+   *    reconcile re-sync reversals together (keyed by orderItemId so it survives a
+   *    reconcile that recreates the line under a fresh invoiceItemId), so
+   *    credit-then-return — or a 2nd credit after a reconcile — can't double-reverse.
    *  - Closing balance: the credit that CLOSES a line books the EXACT remaining balance
    *    (not the independently-rounded share), so a fully-credited line nets to exactly 0
    *    across any number of partial credits.
@@ -358,72 +405,110 @@ export class RegulatedLedgerService {
     ] as string[];
     if (invoiceItemIds.length === 0) return;
 
-    // The credited lines' SALE rows (with the source ids to stamp onto reversals).
-    const saleRows = await db.regulatedSalesLedger.findMany({
+    // The credited lines' LIVE SALE rows — the source ids stamped onto reversals and
+    // the SALE-existence guard (only a line that recorded a live regulated SALE can be
+    // credited). Keyed by the credited invoice item.
+    const liveSaleRows = await db.regulatedSalesLedger.findMany({
       where: { invoiceItemId: { in: invoiceItemIds }, entryType: "SALE" },
       select: {
         invoiceItemId: true,
         netSales: true,
-        qty: true,
-        categoryTax: true,
         orderId: true,
         orderItemId: true,
         invoiceId: true,
       },
     });
-    const saleByItem = new Map<
+    const liveSaleByItem = new Map<
       string,
       {
         net: number;
-        qty: number;
-        tax: number;
         orderId: string | null;
         orderItemId: string | null;
         invoiceId: string | null;
       }
     >();
-    for (const s of saleRows) {
+    for (const s of liveSaleRows) {
       const k = s.invoiceItemId ?? "";
-      const cur = saleByItem.get(k) ?? {
+      const cur = liveSaleByItem.get(k) ?? {
         net: 0,
-        qty: 0,
-        tax: 0,
         orderId: s.orderId ?? null,
         orderItemId: s.orderItemId ?? null,
         invoiceId: s.invoiceId ?? null,
       };
       cur.net += Number(s.netSales);
-      cur.qty += Number(s.qty);
-      cur.tax += Number(s.categoryTax);
-      saleByItem.set(k, cur);
+      liveSaleByItem.set(k, cur);
     }
 
-    // Everything already reversed on these lines (credit-note + return + void
-    // reversals), so cumulative reversal can never exceed the sold amount regardless
-    // of which path booked the earlier reversal. Signed (negative).
-    const revRows = await db.regulatedSalesLedger.findMany({
-      where: { invoiceItemId: { in: invoiceItemIds }, entryType: "REVERSAL" },
-      select: { invoiceItemId: true, netSales: true, qty: true, categoryTax: true },
+    // The cumulative-reversal cap is keyed on the ORDER LINE, not the invoice item.
+    // A delivered-basis reconcile DELETES an open draft's InvoiceItems and recreates
+    // them under fresh ids (rotating invoiceItemId) while re-booking the SALE under
+    // the SAME orderItemId. Keying on invoiceItemId would let a 2nd full credit after
+    // a reconcile read a 0 cap for the new id and over-reverse (category SUM goes
+    // negative). orderItemId is stable; fall back to invoiceItemId for freeform lines
+    // (no order line — never reconciled). Pull EVERY SALE/REVERSAL row of the credited
+    // order lines (incl. rows booked under a now-deleted invoice item pre-reconcile).
+    const orderLineIds = [
+      ...new Set(liveSaleRows.map((s: any) => s.orderItemId).filter(Boolean)),
+    ] as string[];
+    const lineRows = await db.regulatedSalesLedger.findMany({
+      where: {
+        entryType: { in: ["SALE", "REVERSAL"] },
+        OR: [
+          ...(orderLineIds.length > 0 ? [{ orderItemId: { in: orderLineIds } }] : []),
+          { invoiceItemId: { in: invoiceItemIds } },
+        ],
+      },
+      select: {
+        entryType: true,
+        invoiceItemId: true,
+        orderItemId: true,
+        netSales: true,
+        qty: true,
+        categoryTax: true,
+      },
     });
-    const revByItem = new Map<string, { net: number; qty: number; tax: number }>();
-    for (const r of revRows) {
-      const k = r.invoiceItemId ?? "";
-      const cur = revByItem.get(k) ?? { net: 0, qty: 0, tax: 0 };
+    // invoiceItemId → order line, so legacy REVERSAL rows with a null orderItemId can
+    // still be attributed to their line (bridge through a matching SALE row).
+    const orderLineByInvoiceItem = new Map<string, string>();
+    for (const r of lineRows) {
+      if (r.entryType === "SALE" && r.invoiceItemId) {
+        orderLineByInvoiceItem.set(r.invoiceItemId, r.orderItemId ?? r.invoiceItemId);
+      }
+    }
+    const lineKeyOf = (r: any): string =>
+      r.orderItemId ??
+      (r.invoiceItemId ? (orderLineByInvoiceItem.get(r.invoiceItemId) ?? r.invoiceItemId) : "");
+
+    // Per-ORDER-LINE totals: SALE (positive) and everything already reversed —
+    // credit-note, return, void AND reconcile re-sync reversals (signed negative) —
+    // so cumulative reversal can never exceed the sold amount no matter which path or
+    // since-rotated invoice item booked the earlier reversal.
+    const saleByLine = new Map<string, { net: number; qty: number; tax: number }>();
+    const revByLine = new Map<string, { net: number; qty: number; tax: number }>();
+    for (const r of lineRows) {
+      const lk = lineKeyOf(r);
+      const bag = r.entryType === "SALE" ? saleByLine : revByLine;
+      const cur = bag.get(lk) ?? { net: 0, qty: 0, tax: 0 };
       cur.net += Number(r.netSales);
       cur.qty += Number(r.qty);
       cur.tax += Number(r.categoryTax);
-      revByItem.set(k, cur);
+      bag.set(lk, cur);
     }
 
     const now = new Date();
     const bucket = periodBucketOf(now);
     const rows: any[] = [];
     for (const it of items) {
-      const key = it.invoiceItemId ?? "";
-      const sale = saleByItem.get(key);
-      if (!sale || sale.net <= 0) continue; // SALE-existence guard — no naked reversal.
-      const already = revByItem.get(key) ?? { net: 0, qty: 0, tax: 0 };
-      // Remaining capacity to reverse (signed, negative). `already.*` is <= 0.
+      const live = liveSaleByItem.get(it.invoiceItemId ?? "");
+      if (!live || live.net <= 0) continue; // SALE-existence guard — no naked reversal.
+      const lk = live.orderItemId ?? it.invoiceItemId ?? "";
+      const sale = saleByLine.get(lk) ?? { net: 0, qty: 0, tax: 0 };
+      if (sale.net <= 0) continue;
+      const already = revByLine.get(lk) ?? { net: 0, qty: 0, tax: 0 };
+      // Remaining capacity to reverse for the ORDER LINE (signed, negative). `sale.*`
+      // is the line's gross SALE, `already.*` (<= 0) folds in the reconcile re-sync
+      // reversals that offset the pre-reconcile SALE rows, so this nets to the current
+      // un-reversed balance.
       const remNet = -sale.net - already.net;
       const remQty = -sale.qty - already.qty;
       const remTax = -sale.tax - already.tax;
@@ -451,9 +536,9 @@ export class RegulatedLedgerService {
         tenantId: it.tenantId,
         trackedCategoryId: it.trackedCategoryId,
         entryType: "REVERSAL" as const,
-        orderId: sale.orderId,
-        orderItemId: sale.orderItemId,
-        invoiceId: sale.invoiceId,
+        orderId: live.orderId,
+        orderItemId: live.orderItemId,
+        invoiceId: live.invoiceId,
         invoiceItemId: it.invoiceItemId,
         creditNoteId,
         qty: bookedQty,
@@ -463,10 +548,9 @@ export class RegulatedLedgerService {
         soldAt: now,
         periodBucket: bucket,
       });
-      // Accumulate what we just booked so a second CreditNoteItem on the SAME line
-      // (a duplicate invoiceItemId within this one credit note) sees the reduced
-      // remaining capacity and can never re-consume the SALE.
-      revByItem.set(key, {
+      // Accumulate onto the ORDER LINE so a second CreditNoteItem on the same line
+      // (within this credit note) sees the reduced remaining and can't re-consume.
+      revByLine.set(lk, {
         net: already.net + bookedNet,
         qty: already.qty + bookedQty,
         tax: already.tax + bookedTax,

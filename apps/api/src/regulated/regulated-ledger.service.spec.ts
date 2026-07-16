@@ -469,6 +469,236 @@ describe("RegulatedLedgerService", () => {
       });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
     });
+
+    // A delivered-basis reconcile DELETES the open draft's InvoiceItems and re-books
+    // the SALE under fresh ids (ii-1 → ii-2) on the SAME order line (oi-1). The
+    // cumulative-reversal cap keys on orderItemId, so it survives the rotation.
+    it("caps a 2nd full return after a reconcile — SUM floors at 0, not negative", async () => {
+      // Ledger: SALE ii-1(+10) → return ret-1(-10) → resync(-10) → SALE ii-2(+10) = net 0.
+      // A 2nd full return must reverse NOTHING (order line already fully returned).
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -100, categoryTax: 0 },
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -100, categoryTax: 0 },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }], // ii-1 was deleted by the reconcile
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        db: prisma,
+      });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("still books a VALID partial return after a reconcile (cap survives item recreation)", async () => {
+      // SALE ii-1(+10) → return ret-1 of 3(-3) → resync(-10) → SALE ii-2(+10): net 7 / $70.
+      // A 2nd return of 2 (total 5 ≤ 10) is valid and books -2 / -20 against the live row.
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -3, netSales: -30, categoryTax: 0 },
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -100, categoryTax: 0 },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 2]]),
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({ qty: -2, netSales: -20 });
+    });
+
+    it("floors a 2nd over-return after a reconcile at the line's remaining (never negative)", async () => {
+      // After a partial return of 3 + reconcile, 7 remain. A 2nd return of 10 books only
+      // -7 / -70 (closing the line to exactly 0), not -10.
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -3, netSales: -30, categoryTax: 0 },
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -100, categoryTax: 0 },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 10]]),
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({ qty: -7, netSales: -70 });
+    });
+
+    it("clamps a fractional partial after a RE-PRICED reconcile so net can't over-reverse", async () => {
+      // Reconcile re-priced the line DOWN: dead ii-1 was $12/u, live ii-2 is $10/u, and a
+      // pre-reconcile return of 2 (-$24) is preserved. Line remaining = 8 qty / $76. A
+      // fractional return of 7.7 pro-rates off the live row's $10/u = $77 > $76 remaining —
+      // it must CLAMP to -$76 (net floors at 0), not book -$77 (SUM would go negative).
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 120,
+            categoryTax: 0,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -2, netSales: -24, categoryTax: 0 },
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -120, categoryTax: 0 },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 7.7]]),
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: -7.7, netSales: -76 });
+    });
+
+    it("a non-closing partial return can NEVER drive the line net below 0 (reprice-to-zero)", async () => {
+      // Canonical counterexample: SALE ii-1(+10/$100) → return 5(-$50) → reprice to $5/u
+      // → resync(-$100) → SALE ii-2(+10/$50). Line net is already $0 (delivered $50 −
+      // returned $50) with 5 qty remaining. A 2nd non-closing return of 4 pro-rates off
+      // the live $5/u row = -$20 — it MUST clamp to $0 so the category SUM stays 0.
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 0,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 50,
+            categoryTax: 0,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -5, netSales: -50, categoryTax: 0 },
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -10, netSales: -100, categoryTax: 0 },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 4]]),
+        db: prisma,
+      });
+      const row = written()[0];
+      expect(row.qty).toBe(-4);
+      expect(row.netSales).toBeGreaterThanOrEqual(0); // clamped: never a negative-SUM over-reversal
+    });
+
+    it("clamps the categoryTax dimension too after a RE-PRICED reconcile", async () => {
+      // Same reprice-down shape but with a NON-ZERO tax rate, guarding the taxRem clamp
+      // (every other test carries categoryTax 0). Dead ii-1 $12/u + $2.40/u tax, live ii-2
+      // $10/u + $2/u tax, pre-reconcile return of 2 preserved. Line remaining = 8 qty /
+      // $76 net / $15.20 tax. A 7.7 return pro-rates tax off the live $2/u = $15.40 > the
+      // $15.20 remaining — it must CLAMP to -$15.20, not book -$15.40 (tax SUM would go < 0).
+      arrange({
+        sales: [
+          saleRow({
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 120,
+            categoryTax: 24,
+          }),
+          saleRow({
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            qty: 10,
+            netSales: 100,
+            categoryTax: 20,
+          }),
+        ],
+        priorReversals: [
+          { invoiceItemId: "ii-1", orderItemId: "oi-1", qty: -2, netSales: -24, categoryTax: -4.8 },
+          {
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            qty: -10,
+            netSales: -120,
+            categoryTax: -24,
+          },
+        ],
+        items: [{ id: "ii-2", productId: "p1" }],
+      });
+      await service.reverseReturnEntries({
+        returnId: "ret-2",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 7.7]]),
+        db: prisma,
+      });
+      expect(written()[0]).toMatchObject({ qty: -7.7, netSales: -76, categoryTax: -15.2 });
+    });
   });
 
   describe("unreverseReturnEntries", () => {
@@ -494,8 +724,17 @@ describe("RegulatedLedgerService", () => {
             orderItemId: "oi-1",
             invoiceId: "inv-1",
           },
-        ]) // SALE rows
-        .mockResolvedValueOnce([]); // prior REVERSAL rows: none
+        ]) // live SALE rows (meta + existence)
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 30,
+            qty: 3,
+            categoryTax: 6,
+          },
+        ]); // all order-line rows (SALE + REVERSAL) for the cap
       prisma.creditNoteItem.findMany.mockResolvedValue([
         {
           tenantId: "t1",
@@ -547,8 +786,25 @@ describe("RegulatedLedgerService", () => {
       // A $30 credit of the same line must reverse NOTHING (already fully reversed).
       prisma.regulatedSalesLedger.findMany
         .mockResolvedValueOnce([]) // idempotency
-        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 30, qty: 3, categoryTax: 0 }]) // SALE
-        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: -30, qty: -3, categoryTax: 0 }]); // prior REVERSAL
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 30, orderItemId: "oi-1" }]) // live SALE
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 30,
+            qty: 3,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -30,
+            qty: -3,
+            categoryTax: 0,
+          },
+        ]); // all order-line rows: SALE fully reversed by a prior return
       prisma.creditNoteItem.findMany.mockResolvedValue([
         {
           tenantId: "t1",
@@ -568,8 +824,17 @@ describe("RegulatedLedgerService", () => {
       // CreditNoteItems reference the same line, cumulative reversal is capped at the SALE.
       prisma.regulatedSalesLedger.findMany
         .mockResolvedValueOnce([]) // idempotency
-        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 100, qty: 10, categoryTax: 0 }]) // SALE
-        .mockResolvedValueOnce([]); // prior reversals: none
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 100, orderItemId: "oi-1" }]) // live SALE
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+        ]); // all order-line rows: SALE, no prior reversals
       prisma.creditNoteItem.findMany.mockResolvedValue([
         {
           tenantId: "t1",
@@ -614,11 +879,33 @@ describe("RegulatedLedgerService", () => {
       // is -30 nominal but must CLOSE to -29.99 so the line nets to exactly 0.
       prisma.regulatedSalesLedger.findMany
         .mockResolvedValueOnce([]) // idempotency: none for this creditNoteId
-        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 90, qty: 3, categoryTax: 0 }]) // SALE
+        .mockResolvedValueOnce([{ invoiceItemId: "ii-1", netSales: 90, orderItemId: "oi-1" }]) // live SALE
         .mockResolvedValueOnce([
-          { invoiceItemId: "ii-1", netSales: -30.01, qty: -1, categoryTax: 0 },
-          { invoiceItemId: "ii-1", netSales: -30.0, qty: -1, categoryTax: 0 },
-        ]); // prior REVERSAL rows
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 90,
+            qty: 3,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -30.01,
+            qty: -1,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -30.0,
+            qty: -1,
+            categoryTax: 0,
+          },
+        ]); // all order-line rows: SALE + two prior partial credits
       prisma.creditNoteItem.findMany.mockResolvedValue([
         {
           tenantId: "t1",
@@ -632,6 +919,197 @@ describe("RegulatedLedgerService", () => {
       await service.reverseCreditNoteEntries({ creditNoteId: "cn-3", db: prisma });
       const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
       expect(row.netSales).toBe(-29.99); // -90 - (-60.01); total across the 3 credits = -90.00
+    });
+
+    // A delivered-basis reconcile re-books the credited line's SALE under a fresh
+    // invoiceItemId (ii-1 → ii-2) on the same order line (oi-1). The cap keys on
+    // orderItemId so a 2nd credit after the reconcile can't re-consume the SALE.
+    it("caps a 2nd full credit after a reconcile — SUM floors at 0, not negative", async () => {
+      // Ledger: SALE ii-1(+100) → credit cn-1(-100) → resync(-100) → SALE ii-2(+100) = net 0.
+      // cn-2 credits the LIVE line (ii-2) in full; it must reverse NOTHING.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency: none for cn-2
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-2",
+            netSales: 100,
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            invoiceId: "inv-1",
+          },
+        ]) // live SALE
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -100,
+            qty: -10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -100,
+            qty: -10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+        ]); // all order-line rows
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-2",
+          amount: 100,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-2", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("still books a VALID partial credit after a reconcile (cap survives item recreation)", async () => {
+      // SALE ii-1(+100) → credit cn-1 of 3(-30) → resync(-100) → SALE ii-2(+100): net 7 / $70.
+      // cn-2 credits 4 units / $40 (total 70 ≤ 100) — valid, books -40 / -4 on the live line.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-2",
+            netSales: 100,
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            invoiceId: "inv-1",
+          },
+        ]) // live SALE
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -30,
+            qty: -3,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -100,
+            qty: -10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+        ]);
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-2",
+          amount: 40,
+          qty: 4,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-2", db: prisma });
+      const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
+      expect(row).toMatchObject({ netSales: -40, qty: -4 });
+    });
+
+    it("floors a 2nd over-credit after a reconcile at the line's remaining (never negative)", async () => {
+      // After a partial credit of $30 + reconcile, $70 remains. A 2nd credit of $100 books
+      // only -70 / -7 (closing the line to exactly 0), not -100.
+      prisma.regulatedSalesLedger.findMany
+        .mockResolvedValueOnce([]) // idempotency
+        .mockResolvedValueOnce([
+          {
+            invoiceItemId: "ii-2",
+            netSales: 100,
+            orderId: "ord-1",
+            orderItemId: "oi-1",
+            invoiceId: "inv-1",
+          },
+        ]) // live SALE
+        .mockResolvedValueOnce([
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -30,
+            qty: -3,
+            categoryTax: 0,
+          },
+          {
+            entryType: "REVERSAL",
+            invoiceItemId: "ii-1",
+            orderItemId: "oi-1",
+            netSales: -100,
+            qty: -10,
+            categoryTax: 0,
+          },
+          {
+            entryType: "SALE",
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            netSales: 100,
+            qty: 10,
+            categoryTax: 0,
+          },
+        ]);
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        {
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          invoiceItemId: "ii-2",
+          amount: 100,
+          qty: 10,
+          categoryTax: 0,
+        },
+      ]);
+      await service.reverseCreditNoteEntries({ creditNoteId: "cn-2", db: prisma });
+      const row = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data[0];
+      expect(row).toMatchObject({ netSales: -70, qty: -7 });
     });
 
     it("unreverseCreditNoteEntries deletes the credit note's REVERSAL rows", async () => {

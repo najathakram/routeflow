@@ -159,6 +159,35 @@ export class CreditNotesService {
                 });
               }
             }
+            // Cumulative per-LINE cap: credits already booked against each of these
+            // invoice lines by OTHER non-void credit notes. Repeated credits of the same
+            // line across separate notes must not exceed that line's subtotal even when
+            // the invoice-total cap above still has headroom — on a multi-line invoice an
+            // under-credited line's slack would otherwise let another line be over-credited
+            // (over-refunding AR and over-reversing the regulated ledger for that line).
+            // NOTE: this cap keys on invoiceItemId, which a delivered-basis reconcile
+            // ROTATES (it recreates the invoice's items under fresh ids). CreditNoteItem
+            // snapshots only invoiceItemId (no orderItemId) and the pre-reconcile item is
+            // deleted, so a credit issued AFTER a reconcile can't see a prior credit booked
+            // under the old id — this per-line cap is BEST-EFFORT there. The authoritative
+            // guards still hold: the header invoice-total cap above (keyed on the stable
+            // CreditNote.invoiceId) bounds total AR, and the regulated ledger's own
+            // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
+            // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
+            // line-attribution quirk, never a net over-refund or a negative filing.
+            const priorLineItems = await tx.creditNoteItem.findMany({
+              where: {
+                invoiceItemId: { in: [...mergedByLine.keys()] },
+                creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" } },
+              },
+              select: { invoiceItemId: true, amount: true },
+            });
+            const creditedByLine = new Map<string, number>();
+            for (const it of priorLineItems) {
+              const k = it.invoiceItemId ?? "";
+              creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
+            }
+
             let sum = 0;
             cnItemsData = [...mergedByLine.values()].map((li) => {
               const line: any = lineById.get(li.invoiceItemId);
@@ -170,9 +199,12 @@ export class CreditNotesService {
               if (!(amt > 0))
                 throw new BadRequestException("Credit line amount must be greater than 0");
               const lineSubtotal = Number(line.subtotal);
-              if (amt > lineSubtotal + 0.001)
+              const priorForLine = creditedByLine.get(li.invoiceItemId) ?? 0;
+              if (priorForLine + amt > lineSubtotal + 0.001)
                 throw new BadRequestException(
-                  `Credit line amount (${amt}) exceeds invoice line subtotal (${lineSubtotal})`,
+                  priorForLine > 0
+                    ? `Credit line amount (${amt}) plus prior credits (${roundMoney(priorForLine)}) would exceed invoice line subtotal (${lineSubtotal})`
+                    : `Credit line amount (${amt}) exceeds invoice line subtotal (${lineSubtotal})`,
                 );
               sum += amt;
               const frac = lineSubtotal > 0 ? Math.min(1, amt / lineSubtotal) : 0;
