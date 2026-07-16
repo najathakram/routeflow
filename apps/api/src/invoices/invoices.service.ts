@@ -941,12 +941,13 @@ export class InvoicesService {
    * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
    * which would double-count a folded regulated line against its live sibling SALE.
    *
-   * In practice these reconciles run at/before delivery (edit-window + delivered gates),
-   * i.e. BEFORE any return/credit-note reversal exists. `reverseInvoiceEntries` keys its
-   * idempotency on "invoiceItemId already has a reversal", so if a PARTIAL return had
-   * reversed a still-open draft's line first, the reconcile would skip reversing the
-   * original SALE and over-report — a narrow, pre-existing `reverseInvoiceEntries`
-   * limitation (also affects void-after-partial-return), tracked as a follow-up.
+   * `reverseInvoiceEntries` is NET-AWARE (reverses each line's remaining un-reversed
+   * net), so it is correct even when a prior RETURN already partly reversed a line.
+   * RESIDUAL (narrow, tracked as a follow-up): in the rare order-edit case where a
+   * return is RECEIVED against a still-open draft BEFORE a re-reconcile, the reverse +
+   * fresh full-qty SALE nets to the delivered qty, dropping the return's reduction
+   * (delivered, not delivered − returned). Not reachable on the delivered path, which
+   * runs at delivery before any return exists.
    */
   private async resyncInvoiceLedger(
     invoiceId: string,

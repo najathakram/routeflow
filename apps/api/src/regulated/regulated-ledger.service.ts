@@ -81,42 +81,77 @@ export class RegulatedLedgerService {
   }
 
   /**
-   * Reverse every SALE row for an invoice (on void/delete): write a negated
-   * REVERSAL row per prior SALE, booked into the CURRENT period (standard ledger
-   * practice — never backdate). Idempotent: skips lines already reversed, so a
-   * double void/delete can't double-reverse. Keyed on `invoiceItemId` (never a
-   * join through a possibly-deleted row).
+   * Reverse an invoice's outstanding regulated SALE (on void/delete, or a reconcile
+   * re-sync): write a negated REVERSAL row per line for its REMAINING un-reversed net,
+   * booked into the CURRENT period (standard ledger practice — never backdate).
+   *
+   * NET-AWARE. Each line's remaining = Σ of ALL its signed rows (SALE positive + any
+   * existing REVERSAL negative). So a line already partly reversed by a RETURN or credit
+   * note reverses only the un-returned remainder (not the full sale, and not skipped
+   * entirely) — the earlier "any reversal ⇒ skip" heuristic over-reported a
+   * partially-returned sale on void/reconcile. Fully-reversed lines net to ~0 and are
+   * skipped, so a double void/delete (or a full prior return) is a no-op. Keyed on
+   * `invoiceItemId` (never a join through a possibly-deleted invoice row).
    */
   async reverseInvoiceEntries(params: { invoiceId: string; db: any }): Promise<void> {
     const { invoiceId, db } = params;
-    const sales = await db.regulatedSalesLedger.findMany({
-      where: { invoiceId, entryType: "SALE" },
-    });
-    if (sales.length === 0) return;
-    const priorReversals = await db.regulatedSalesLedger.findMany({
-      where: { invoiceId, entryType: "REVERSAL" },
-      select: { invoiceItemId: true },
-    });
-    const alreadyReversed = new Set(priorReversals.map((r: any) => r.invoiceItemId));
+    const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
+    if (all.length === 0) return;
+
+    // Aggregate the remaining net per invoice line; keep a SALE row for its metadata.
+    const byItem = new Map<
+      string,
+      { sale: any; qty: number; unitBasisQty: number; netSales: number; categoryTax: number }
+    >();
+    for (const r of all) {
+      const key = r.invoiceItemId as string | null;
+      if (key == null) continue;
+      const cur = byItem.get(key) ?? {
+        sale: null,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 0,
+        categoryTax: 0,
+      };
+      if (r.entryType === "SALE" && !cur.sale) cur.sale = r;
+      cur.qty += Number(r.qty);
+      cur.unitBasisQty += Number(r.unitBasisQty);
+      cur.netSales += Number(r.netSales);
+      cur.categoryTax += Number(r.categoryTax);
+      byItem.set(key, cur);
+    }
+
     const now = new Date();
     const bucket = periodBucketOf(now);
-    const rows = sales
-      .filter((s: any) => !alreadyReversed.has(s.invoiceItemId))
-      .map((s: any) => ({
+    const EPS = 0.0005;
+    const rows: any[] = [];
+    for (const [invoiceItemId, agg] of byItem) {
+      if (!agg.sale) continue; // no SALE for this line — nothing of ours to reverse
+      // Skip a line whose sale is already fully reversed (net ~0 in every dimension).
+      if (
+        Math.abs(agg.qty) < EPS &&
+        Math.abs(agg.netSales) < EPS &&
+        Math.abs(agg.categoryTax) < EPS
+      ) {
+        continue;
+      }
+      const s = agg.sale;
+      rows.push({
         tenantId: s.tenantId,
         trackedCategoryId: s.trackedCategoryId,
         entryType: "REVERSAL" as const,
         orderId: s.orderId,
         orderItemId: s.orderItemId,
         invoiceId: s.invoiceId,
-        invoiceItemId: s.invoiceItemId,
-        qty: -Number(s.qty),
-        unitBasisQty: -Number(s.unitBasisQty),
-        netSales: roundMoney(-Number(s.netSales)),
-        categoryTax: roundMoney(-Number(s.categoryTax)),
+        invoiceItemId,
+        qty: -agg.qty,
+        unitBasisQty: -agg.unitBasisQty,
+        netSales: roundMoney(-agg.netSales),
+        categoryTax: roundMoney(-agg.categoryTax),
         soldAt: now,
         periodBucket: bucket,
-      }));
+      });
+    }
     if (rows.length === 0) return;
     await db.regulatedSalesLedger.createMany({ data: rows });
   }

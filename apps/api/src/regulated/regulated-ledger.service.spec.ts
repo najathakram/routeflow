@@ -96,43 +96,60 @@ describe("RegulatedLedgerService", () => {
     });
   });
 
-  describe("reverseInvoiceEntries", () => {
-    it("negates prior SALE rows and skips already-reversed lines", async () => {
-      prisma.regulatedSalesLedger.findMany
-        .mockResolvedValueOnce([
-          {
-            tenantId: "t1",
-            trackedCategoryId: "cat",
-            invoiceId: "inv-1",
-            invoiceItemId: "ii-1",
-            orderId: "ord-1",
-            orderItemId: null,
-            qty: 3,
-            unitBasisQty: 3,
-            netSales: 30,
-            categoryTax: 2,
-          },
-          {
-            tenantId: "t1",
-            trackedCategoryId: "cat",
-            invoiceId: "inv-1",
-            invoiceItemId: "ii-2",
-            orderId: "ord-1",
-            orderItemId: null,
-            qty: 1,
-            unitBasisQty: 1,
-            netSales: 10,
-            categoryTax: 0,
-          },
-        ])
-        .mockResolvedValueOnce([{ invoiceItemId: "ii-2" }]); // ii-2 already reversed
+  describe("reverseInvoiceEntries (net-aware)", () => {
+    // Ledger-row factories (the shape findMany returns).
+    const sale = (over: any = {}) => ({
+      tenantId: "t1",
+      trackedCategoryId: "cat",
+      entryType: "SALE",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      invoiceId: "inv-1",
+      invoiceItemId: "ii-1",
+      qty: 10,
+      unitBasisQty: 10,
+      netSales: 50,
+      categoryTax: 0,
+      ...over,
+    });
+    const reversal = (over: any = {}) =>
+      sale({
+        entryType: "REVERSAL",
+        qty: -3,
+        unitBasisQty: -3,
+        netSales: -15,
+        categoryTax: 0,
+        ...over,
+      });
+    const written = (call = 0) => prisma.regulatedSalesLedger.createMany.mock.calls[call][0].data;
 
+    it("plain void — reverses the full sale (no prior reversal)", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50, categoryTax: 2 }),
+      ]);
       await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
-      expect(prisma.regulatedSalesLedger.createMany).toHaveBeenCalledTimes(1);
-      const data = prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
-      expect(data).toHaveLength(1); // only ii-1 (ii-2 already reversed)
+      const data = written();
+      expect(data).toHaveLength(1);
       expect(data[0]).toMatchObject({
         entryType: "REVERSAL",
+        invoiceItemId: "ii-1",
+        qty: -10,
+        netSales: -50,
+        categoryTax: -2,
+      });
+    });
+
+    it("reverses only each line's REMAINING net; a fully-reversed line is skipped", async () => {
+      // ii-1: SALE 3, no reversal → reverse -3. ii-2: SALE 1 + REVERSAL -1 → net 0 → skip.
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ invoiceItemId: "ii-1", qty: 3, netSales: 30, categoryTax: 2 }),
+        sale({ invoiceItemId: "ii-2", qty: 1, netSales: 10, categoryTax: 0 }),
+        reversal({ invoiceItemId: "ii-2", qty: -1, netSales: -10, categoryTax: 0 }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      const data = written();
+      expect(data).toHaveLength(1);
+      expect(data[0]).toMatchObject({
         invoiceItemId: "ii-1",
         qty: -3,
         netSales: -30,
@@ -140,7 +157,86 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
-    it("no-ops when the invoice has no SALE rows", async () => {
+    it("PARTIAL return then void reverses ONLY the un-returned remainder (no over-report)", async () => {
+      // SALE(+10) with a prior return REVERSAL(-3) → remaining 7 → reverse -7 (NOT skipped,
+      // NOT the full -10). Ledger nets to 0 (voided): 10 − 3 − 7 = 0.
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50 }),
+        reversal({ qty: -3, netSales: -15 }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      const data = written();
+      expect(data).toHaveLength(1);
+      expect(data[0]).toMatchObject({ invoiceItemId: "ii-1", qty: -7, netSales: -35 });
+    });
+
+    it("FULL return then void nets to 0 — writes nothing", async () => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50 }),
+        reversal({ qty: -10, netSales: -50 }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("double void is a no-op (line already fully reversed)", async () => {
+      // First void already wrote REVERSAL(-10); a second call finds net 0.
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50 }),
+        reversal({ qty: -10, netSales: -50 }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma });
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("reconcile after a partial return: reverse remainder + new SALE nets to the delivered qty", async () => {
+      // Models InvoicesService#resyncInvoiceLedger's two calls. Pre-existing ledger:
+      // SALE(+10) + return REVERSAL(−3). The OLD code left the SALE stranded and wrote a
+      // fresh +delivered → +17 over-count; net-aware reverses the remaining −7 first.
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        sale({ qty: 10, netSales: 50 }),
+        reversal({ qty: -3, netSales: -15 }),
+      ]);
+      await service.reverseInvoiceEntries({ invoiceId: "inv-1", db: prisma }); // resync step 1
+      const reverse = written(0);
+      expect(reverse[0]).toMatchObject({ qty: -7, netSales: -35 });
+
+      await service.writeSaleEntries({
+        tenantId: "t1",
+        orderId: "ord-1",
+        invoiceId: "inv-1",
+        soldAt: new Date(),
+        lines: [
+          {
+            invoiceItemId: "ii-2",
+            orderItemId: "oi-1",
+            trackedCategoryId: "cat",
+            qty: 4,
+            netSales: 20,
+            categoryTax: 0,
+          },
+        ],
+        db: prisma,
+      }); // resync step 2 — delivered 4
+      const newSale = written(1);
+      expect(newSale[0]).toMatchObject({ entryType: "SALE", qty: 4, netSales: 20 });
+
+      // Ledger net = original SALE(+10) + return(−3) + reverse(−7) + new SALE(+4) = +4.
+      const netQty = [
+        10,
+        -3,
+        ...reverse.map((r: any) => r.qty),
+        ...newSale.map((r: any) => r.qty),
+      ].reduce((a, b) => a + b, 0);
+      // Nets to the DELIVERED qty (4) — the +17 over-count the old stranded-SALE code
+      // produced is gone. RESIDUAL (tracked follow-up): the reverse+rebook drops the
+      // return's −3 reduction, so the true net (delivered − returned = 1) is still
+      // over-reported by the returned qty; preserving returns across a re-reconcile needs
+      // order-line-keyed return tracking, out of scope for this net-aware pass.
+      expect(netQty).toBe(4);
+    });
+
+    it("no-ops when the invoice has no ledger rows", async () => {
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([]);
       await service.reverseInvoiceEntries({ invoiceId: "inv-x", db: prisma });
       expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
