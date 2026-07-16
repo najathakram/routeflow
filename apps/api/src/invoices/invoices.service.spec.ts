@@ -1544,7 +1544,7 @@ describe("InvoicesService", () => {
     beforeEach(() => {
       // Isolate the method's own logic: stub the ensure-invoice helpers.
       jest.spyOn(service, "findOpenOrderDraft").mockResolvedValue(null as any);
-      jest.spyOn(service, "reconcileOrderDraftInvoice").mockResolvedValue(undefined as any);
+      jest.spyOn(service, "reconcileOrderDeliveredInvoices").mockResolvedValue(undefined as any);
       jest.spyOn(service, "createInvoiceFromOrder").mockResolvedValue([] as any);
       prisma.paymentCounter.upsert.mockResolvedValue({ next: 2 } as any);
       prisma.invoice.update.mockResolvedValue({} as any);
@@ -1596,40 +1596,31 @@ describe("InvoicesService", () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValue({ id: "inv-1" });
       prisma.invoice.findFirst.mockResolvedValue(null); // no live invoice at all
-      prisma.invoice.count.mockResolvedValue(1); // single-invoice order
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
       await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
 
       expect(service.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", prisma);
-      // Delivered-basis reconcile is what makes a short-pick bill what was delivered.
-      expect(service.reconcileOrderDraftInvoice).toHaveBeenCalledWith(
-        "ord-1",
-        expect.objectContaining({ basis: "delivered" }),
-      );
+      // Sibling-aware delivered reconcile is what makes a short-pick bill delivered.
+      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
     });
 
     it("reconciles an EXISTING draft on the delivered basis (no re-create)", async () => {
       (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.count.mockResolvedValue(1); // single-invoice order
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
       await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
 
-      expect(service.reconcileOrderDraftInvoice).toHaveBeenCalledWith(
-        "ord-1",
-        expect.objectContaining({ basis: "delivered" }),
-      );
+      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
       expect(service.createInvoiceFromOrder).not.toHaveBeenCalled(); // a draft already existed
     });
 
-    it("does NOT reconcile a split-invoice order (regulated siblings) — avoids a group-unaware double-bill", async () => {
+    it("reconciles a SPLIT-invoice order too (sibling-aware — no gate, no double-bill)", async () => {
       // A SEPARATE_INVOICE regulated order has base + -R# sibling drafts. The
-      // delivered-basis reconcile rebuilds the base from EVERY line, so folding the
-      // regulated line onto the base while -R1 still bills it would double-bill.
+      // sibling-aware reconcile rebuilds each from ITS OWN lines, so it now runs
+      // (the old invoiceCount<=1 skip is gone) without folding lines onto the base.
       (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-base" });
-      prisma.invoice.count.mockResolvedValue(2); // base + -R1 siblings
       prisma.invoice.findMany.mockResolvedValue([
         inv({ id: "inv-base", invoiceNumber: "INV-9", total: 60 }),
         inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
@@ -1637,8 +1628,8 @@ describe("InvoicesService", () => {
 
       const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
 
-      expect(service.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
-      // Both siblings still get paid — each billed once at full qty (no double).
+      expect(service.reconcileOrderDeliveredInvoices).toHaveBeenCalledWith("ord-1", prisma);
+      // Both siblings still get paid — each billed once (no double).
       expect(res.applied).toBe(100);
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(2);
     });
@@ -1648,12 +1639,11 @@ describe("InvoicesService", () => {
       // 0; reconciling it would zero its open draft. It must still be PAID, just not
       // reconciled.
       (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
-      prisma.invoice.count.mockResolvedValue(1);
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
       await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH", []);
 
-      expect(service.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(service.reconcileOrderDeliveredInvoices).not.toHaveBeenCalled();
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1); // still paid
     });
 
@@ -1740,6 +1730,240 @@ describe("InvoicesService", () => {
       expect(a.applied).toBe(0);
       expect(b.applied).toBe(0);
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // reconcileOrderDeliveredInvoices rebuilds EACH open draft from ONLY its own lines
+  // (orderItemId provenance) on the delivered qty — sibling-aware, so a regulated
+  // SEPARATE_INVOICE order never double-bills its -R# line onto the base.
+  describe("reconcileOrderDeliveredInvoices (sibling-aware delivered basis)", () => {
+    // A non-boxed order line; subtotal = qty * unitPrice, delivered subtotal prorates.
+    const line = (over: any = {}) => ({
+      id: "oi-std",
+      productId: "p-std",
+      qty: 10,
+      deliveredQty: 10,
+      unitPrice: 5,
+      subtotal: 50,
+      unitsPerBox: null,
+      boxes: null,
+      originalPrice: null,
+      priceType: "STANDARD",
+      notes: null,
+      categoryTaxAmount: 0,
+      trackedCategoryId: null,
+      product: { name: "Std", unitsPerBox: null, trackedCategoryId: null },
+      ...over,
+    });
+    const regLine = (over: any = {}) =>
+      line({
+        id: "oi-reg",
+        productId: "p-reg",
+        trackedCategoryId: "cat-reg",
+        product: { name: "Cigarettes", unitsPerBox: null, trackedCategoryId: "cat-reg" },
+        ...over,
+      });
+    // A split order: base draft owns the standard line, -R1 owns the regulated line.
+    // Shape mirrors the `invoice.findMany({status: not VOID})` select the method runs.
+    const draft = (over: any = {}) => ({
+      status: InvoiceStatus.DRAFT,
+      deliveryBatchId: null,
+      discount: 0,
+      shippingFee: 0,
+      ...over,
+    });
+    const splitDrafts = () => [
+      draft({ id: "d-base", items: [{ orderItemId: "oi-std" }] }),
+      draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }] }),
+    ];
+    const mockOrder = (lines: any[], over: any = {}) => ({
+      id: "ord-1",
+      customerId: "cust-1",
+      subtotal: 100,
+      tax: 0,
+      lineItems: lines,
+      ...over,
+    });
+    // Pull the invoice.update payload for a given draft id.
+    const updOf = (id: string) =>
+      prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
+    const oiUpdOf = (id: string) =>
+      prisma.orderItem.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoiceItem.deleteMany.mockResolvedValue({ count: 1 } as any);
+      prisma.invoice.update.mockResolvedValue({} as any);
+      prisma.orderItem.update.mockResolvedValue({} as any);
+    });
+
+    it("split clean delivery — base + R1 each billed ONCE at delivered qty (no double-bill)", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // Base bills ONLY the standard line; R1 bills ONLY the regulated line.
+      const base = updOf("d-base");
+      const r1 = updOf("d-r1");
+      expect(base.data.subtotal).toBe(50);
+      expect(base.data.items.create).toHaveLength(1);
+      expect(base.data.items.create[0].orderItemId).toBe("oi-std");
+      expect(r1.data.subtotal).toBe(50);
+      expect(r1.data.items.create).toHaveLength(1);
+      expect(r1.data.items.create[0].orderItemId).toBe("oi-reg");
+      // The regulated line appears on exactly ONE invoice (no fold onto the base).
+      expect(base.data.items.create.some((i: any) => i.orderItemId === "oi-reg")).toBe(false);
+      // invoicedQty reset to delivered on each line's own sibling.
+      expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
+      expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(10);
+    });
+
+    it("split short-picked regulated line — R1 bills the DELIVERED qty, not full", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line({ deliveredQty: 10 }), regLine({ deliveredQty: 4 })]) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // R1: delivered 4 of 10 @ stored subtotal 50 → round(50*4/10) = 20.
+      expect(updOf("d-r1").data.subtotal).toBe(20);
+      expect(updOf("d-r1").data.items.create).toHaveLength(1);
+      expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
+      // Base (fully delivered) unchanged.
+      expect(updOf("d-base").data.subtotal).toBe(50);
+      expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
+    });
+
+    it("split refused regulated line — R1 → 0 (no items, invoicedQty 0)", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line({ deliveredQty: 10 }), regLine({ deliveredQty: 0 })]) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(updOf("d-r1").data.subtotal).toBe(0);
+      expect(updOf("d-r1").data.items.create).toHaveLength(0); // refused → no line
+      expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(0);
+      // Base still bills its delivered standard line.
+      expect(updOf("d-base").data.subtotal).toBe(50);
+    });
+
+    it("split clean delivery WITH tax — Σ(sibling total) == order total to the cent", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), regLine()], { subtotal: 100, tax: 10 }) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      const base = updOf("d-base");
+      const r1 = updOf("d-r1");
+      // tax 10 allocated by subtotal (50/100 each) → 5 + 5; totals 55 + 55 = 110 = order total.
+      expect(base.data.taxAmount + r1.data.taxAmount).toBe(10);
+      expect(base.data.total + r1.data.total).toBe(110);
+    });
+
+    it("single-group order — one draft billed at the delivered qty", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        draft({ id: "d-1", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line({ deliveredQty: 6 })]) as any);
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // delivered 6 of 10 @ subtotal 50 → 30; invoicedQty 6.
+      expect(updOf("d-1").data.subtotal).toBe(30);
+      expect(oiUpdOf("oi-std").data.invoicedQty).toBe(6);
+    });
+
+    it("no open draft — returns null, writes nothing", async () => {
+      prisma.invoice.findMany.mockResolvedValue([] as any);
+
+      const res = await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    it("BAILS when a line is shared across two open drafts (operator partials) — no double-bill", async () => {
+      // Two partial DRAFTs bill the SAME line (createPartialFromOrder ×2). Provenance
+      // is not a clean partition; rebuilding each from prior 0 would double-bill.
+      prisma.invoice.findMany.mockResolvedValue([
+        draft({ id: "d-a", items: [{ orderItemId: "oi-std" }] }),
+        draft({ id: "d-b", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+
+      const res = await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled(); // left as created
+      expect(prisma.order.findUnique).not.toHaveBeenCalled(); // bailed before loading
+    });
+
+    it("BAILS when a draft line is also billed by a finalized invoice — no over-bill", async () => {
+      // A SENT invoice already bills oi-std; an open DRAFT bills it again. Rebuilding
+      // the draft from prior 0 would ignore the SENT portion and over-bill.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d-sent",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          items: [{ orderItemId: "oi-std" }],
+        },
+        draft({ id: "d-draft", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+
+      const res = await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("BAILS when a finalized invoice bills a line with NO orderItemId provenance (legacy/manual)", async () => {
+      // A SENT invoice has a hand-added / legacy line (orderItemId null) that can't be
+      // matched to an order line — provenance can't be proven clean → bail.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d-sent",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          items: [{ orderItemId: null }],
+        },
+        draft({ id: "d-draft", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+
+      const res = await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("reconciles a -R# sibling even when the BASE is already SENT (different lines, clean)", async () => {
+      // base SENT bills the standard line; -R1 DRAFT bills the regulated line. No line
+      // is shared, so provenance is clean → the sibling is still reconciled to delivered.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "d-base",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          items: [{ orderItemId: "oi-std" }],
+        },
+        draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }] }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line({ deliveredQty: 10 }), regLine({ deliveredQty: 4 })]) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // Only the DRAFT sibling is rebuilt (base SENT is untouched), on delivered qty.
+      expect(updOf("d-base")).toBeUndefined();
+      expect(updOf("d-r1").data.subtotal).toBe(20); // 4/10 of 50
+      expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
     });
   });
 });

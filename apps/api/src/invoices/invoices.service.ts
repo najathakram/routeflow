@@ -810,6 +810,186 @@ export class InvoicesService {
   }
 
   /**
+   * Delivered-basis reconcile that is SIBLING-AWARE. Where reconcileOrderDraftInvoice
+   * rebuilds a SINGLE draft from EVERY order line (group-unaware — unsafe for a split
+   * order), this rebuilds EACH of the order's open DRAFT invoices from ONLY its own
+   * order lines: the partition createSplitInvoices established, read back via each
+   * InvoiceItem.orderItemId provenance. So a regulated SEPARATE_INVOICE order (base +
+   * -R# siblings) bills every line on exactly ONE invoice at its delivered qty — no
+   * line folds onto the base while a sibling still bills it (no double-bill), and a
+   * refused line (deliveredQty 0) bills 0.
+   *
+   * SAFE only when the open DRAFTs are a CLEAN per-line partition (createSplitInvoices
+   * siblings / a lone pending-mirror). It BAILS (returns null, leaving the invoices as
+   * created) the moment provenance is not clean — a line shared by two open drafts, or
+   * a line also billed by a finalized / delivery-batch invoice. Both are reachable
+   * (createPartialFromOrder, or a prior group-unaware basis:"order" reconcile);
+   * rebuilding those from a prior of 0 would double- or over-bill, so we prefer the
+   * conservative full-qty bill there — NEVER a double.
+   *
+   * For a single-group order (one draft owning every line) this is byte-identical to
+   * reconcileOrderDraftInvoice(basis:"delivered"). Order tax is allocated across the
+   * siblings proportionally by delivered subtotal with the largest-subtotal sibling
+   * absorbing the rounding remainder (mirrors createSplitInvoices), so on a CLEAN full
+   * delivery Σ(sibling total) == order total to the cent. Each line's invoicedQty is
+   * reset to what its one sibling now bills (0 for refused) — a plain SET since a line
+   * belongs to a single sibling. No-op (null) when the order has no open draft.
+   *
+   * Does NOT touch the regulated-sales ledger (writeSaleEntries) — the same deferred
+   * sync noted for reconcileOrderDraftInvoice; the ledger still reflects the full-qty
+   * entries createSplitInvoices wrote. Tracked as a follow-up.
+   */
+  async reconcileOrderDeliveredInvoices(orderId: string, tx?: any) {
+    const db = tx ?? this.prisma.forTenant();
+    // All the order's live invoices — so we can tell the open pending/sibling DRAFTs
+    // (status DRAFT, deliveryBatchId null) apart from finalized or delivery-batch
+    // invoices that already bill some of the lines.
+    const invoices = await db.invoice.findMany({
+      where: { orderId, status: { not: InvoiceStatus.VOID } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        status: true,
+        deliveryBatchId: true,
+        discount: true,
+        shippingFee: true,
+        items: { select: { orderItemId: true } },
+      },
+    });
+    const drafts = invoices.filter(
+      (i: any) => i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null,
+    );
+    if (drafts.length === 0) return null;
+
+    // Provenance is a clean per-line partition only for createSplitInvoices siblings /
+    // a lone mirror. BAIL if a member line is also billed by a finalized (non-open-
+    // draft) invoice, or is shared across two open drafts — rebuilding those from a
+    // prior of 0 would double- or over-bill. Conservative: leave them as created.
+    const finalized = invoices.filter(
+      (i: any) => !(i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null),
+    );
+    // A finalized OR draft line with no orderItemId provenance (legacy pre-provenance
+    // rows, or a manually added / freeform invoice line) can't be matched to an order
+    // line, so we can't prove the partition is clean — bail rather than risk an
+    // over-bill (finalized) or an under-bill (dropping an untracked draft line).
+    const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
+    if (finalized.some(hasUntracked) || drafts.some(hasUntracked)) return null;
+    const finalizedLineIds = new Set<string>(
+      finalized
+        .flatMap((i: any) => (i.items ?? []).map((it: any) => it.orderItemId))
+        .filter(Boolean),
+    );
+    const seen = new Set<string>();
+    for (const d of drafts) {
+      for (const it of d.items ?? []) {
+        const id = it.orderItemId as string;
+        if (seen.has(id) || finalizedLineIds.has(id)) return null; // not a clean partition
+        seen.add(id);
+      }
+    }
+
+    const order = await db.order.findUnique({
+      where: { id: orderId },
+      include: {
+        lineItems: {
+          where: { status: { not: "CANCELLED" } },
+          include: {
+            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+          },
+        },
+      },
+    });
+    if (!order) return null;
+
+    const tenantId = this.prisma.getTenantId();
+    const customer = await db.customer.findUnique({
+      where: { id: order.customerId },
+      select: { isTaxExempt: true },
+    });
+    const isTaxExempt = !!customer?.isTaxExempt;
+    const orderSubtotal = Number(order.subtotal) || 1;
+    const orderTax = Number(order.tax) || 0;
+    const lineById = new Map<string, any>(order.lineItems.map((li: any) => [li.id, li]));
+
+    // Partition the order's lines by WHICH draft already bills them (the invoice
+    // item's orderItemId == the createSplitInvoices grouping). Each line belongs to
+    // exactly one draft, so per-line invoicedQty stays a plain SET, never a sum.
+    const perDraft = drafts.map((d: any) => {
+      const memberIds = [
+        ...new Set((d.items ?? []).map((it: any) => it.orderItemId).filter(Boolean)),
+      ] as string[];
+      const billable = memberIds
+        .map((id) => lineById.get(id))
+        .filter(Boolean)
+        .map((li: any) => ({ li, billQty: Number(li.deliveredQty ?? 0) }))
+        .filter((x: any) => x.billQty > 0.001);
+      const itemsData = billable.map(({ li, billQty }: any) =>
+        this.buildInvoiceItemData(li, billQty, tenantId),
+      );
+      const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
+      return { draft: d, memberIds, billable, itemsData, subtotal, taxAmount: 0, total: 0 };
+    });
+
+    // Allocate the order's regular tax across siblings by delivered subtotal, with the
+    // rounding remainder to the largest — Σ(sibling tax) == the single-invoice tax, so
+    // a clean full delivery keeps Σ(sibling total) == order total to the cent.
+    if (!isTaxExempt && orderTax !== 0) {
+      const totalSubtotal = roundMoney(perDraft.reduce((s, pd) => s + pd.subtotal, 0));
+      const totalTax = roundMoney(orderTax * (totalSubtotal / orderSubtotal));
+      let allocated = 0;
+      perDraft.forEach((pd) => {
+        pd.taxAmount = roundMoney(orderTax * (pd.subtotal / orderSubtotal));
+        allocated = roundMoney(allocated + pd.taxAmount);
+      });
+      const remainder = roundMoney(totalTax - allocated);
+      if (remainder !== 0 && perDraft.length > 0) {
+        let maxIdx = 0;
+        for (let i = 1; i < perDraft.length; i++)
+          if (perDraft[i].subtotal > perDraft[maxIdx].subtotal) maxIdx = i;
+        perDraft[maxIdx].taxAmount = roundMoney(perDraft[maxIdx].taxAmount + remainder);
+      }
+    }
+    perDraft.forEach((pd) => {
+      pd.total = roundMoney(
+        pd.subtotal -
+          Number(pd.draft.discount ?? 0) +
+          Number(pd.draft.shippingFee ?? 0) +
+          pd.taxAmount,
+      );
+    });
+
+    const updated: any[] = [];
+    for (const pd of perDraft) {
+      await db.invoiceItem.deleteMany({ where: { invoiceId: pd.draft.id } });
+      const inv = await db.invoice.update({
+        where: { id: pd.draft.id },
+        data: {
+          subtotal: pd.subtotal,
+          taxAmount: pd.taxAmount,
+          total: pd.total,
+          status: InvoiceStatus.DRAFT,
+          pdfUrl: null,
+          items: { create: pd.itemsData },
+        },
+        include: { items: true },
+      });
+      updated.push(inv);
+      // Reset invoicedQty on this draft's member lines to exactly what it now bills
+      // (0 for a refused line). Each line is a member of one draft → SET, not add.
+      const billMap = new Map<string, number>(
+        pd.billable.map(({ li, billQty }: any) => [li.id, billQty]),
+      );
+      for (const id of pd.memberIds) {
+        await db.orderItem.update({
+          where: { id },
+          data: { invoicedQty: billMap.get(id) ?? 0 },
+        });
+      }
+    }
+    return updated;
+  }
+
+  /**
    * BACKWARD SYNC (inverse of reconcileOrderDraftInvoice): rebuild a linked
    * order's line items + totals from the SUM of ALL its non-void invoices, so
    * editing an invoice keeps the order in step with what was actually billed.
@@ -2346,18 +2526,14 @@ export class InvoicesService {
         }
       }
       if (draft && reconcileSet.has(orderId)) {
-        // The delivered-basis reconcile is group-UNAWARE — it rebuilds the draft
-        // from EVERY non-cancelled order line — so it is only safe when the order
-        // has a single invoice. A regulated SEPARATE_INVOICE order has sibling
-        // drafts (base + -R#); folding every line onto the base while a sibling
-        // still bills the regulated line would double-bill it. Such orders keep
-        // billing the full ordered qty (unchanged prior behavior — never a double).
-        const invoiceCount = await tx.invoice.count({
-          where: { orderId, status: { not: InvoiceStatus.VOID } },
-        });
-        if (invoiceCount <= 1) {
-          await this.reconcileOrderDraftInvoice(orderId, { basis: "delivered", tx });
-        }
+        // Rebuild the order's open DRAFT(s) on the delivered qty, SIBLING-AWARE: a
+        // regulated SEPARATE_INVOICE order (base + -R#) has each draft rebuilt from
+        // ONLY its own lines, so a short/refused line bills its delivered qty on its
+        // own sibling and is never folded onto the base (no double-bill). A
+        // single-group order is byte-identical to the group-unaware delivered
+        // reconcile. (Replaces the old invoiceCount<=1 skip that left split orders
+        // billing the full ordered qty.)
+        await this.reconcileOrderDeliveredInvoices(orderId, tx);
       }
     }
 
