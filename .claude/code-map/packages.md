@@ -32,7 +32,9 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
 Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./tokens`.
 
 - **Web** (`src/web/`, Tailwind + Radix): `Button` (Ledger: 6px `rounded-ctl`, surface-aware
-  `bg-accent-strong`), `Input`, `PasswordInput`, `Textarea`, `Select`, `Modal`, `Table`, `Avatar`,
+  `bg-accent-strong`), `Input`, `PasswordInput`, `Textarea`, `Select`, `Modal` (optional
+  `onEscapeKeyDown` forwarded to `Dialog.Content` — the only place a consumer can `preventDefault` to
+  scope Escape to an inner sub-flow), `Table`, `Avatar`,
   `Card`, `Badge` (uppercase 11px pill; BadgeStatus covers 30+ statuses), `PageHeader`, `EmptyState`
   (Instrument-Serif title), `Toast` (ToastProvider; `useToast()` → `{toast→id, dismiss(id)}`; white
   card + colored icon tile; optional `action` slot — drives web `useUndo()` 8s Undo),

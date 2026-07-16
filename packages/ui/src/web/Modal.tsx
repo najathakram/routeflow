@@ -13,6 +13,14 @@ export interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   className?: string;
+  /**
+   * Radix's Escape interception point. Its Escape listener is a document-level,
+   * capture-phase native listener that runs BEFORE any React handler, so
+   * `stopPropagation` on a descendant can't cancel it — this prop is the only place
+   * a consumer can `event.preventDefault()` to keep the dialog open (e.g. to scope
+   * Escape to an inner sub-flow). Optional/opt-in — omit for the default dismiss.
+   */
+  onEscapeKeyDown?: (event: KeyboardEvent) => void;
 }
 
 export const Modal = ({
@@ -23,11 +31,13 @@ export const Modal = ({
   children,
   footer,
   className,
+  onEscapeKeyDown,
 }: ModalProps) => (
   <Dialog.Root open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
     <Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
       <Dialog.Content
+        onEscapeKeyDown={onEscapeKeyDown}
         className={cn(
           "fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-modal",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",

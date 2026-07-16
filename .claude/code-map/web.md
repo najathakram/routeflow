@@ -96,6 +96,15 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   parks/hydrates/autosaves (debounced, bound to a draft only after Minimize/Resume) + auto-adds a
   scanned barcode on open + deletes the draft on successful submit. `orders/page.tsx` reads
   `?resumeDraft`/`?scan`/`?action=new` reactively to open the builder. Backend: `api/src/drafts/`.
+  **WP-1 (Escape no longer discards the order):** `Modal` (packages/ui) now forwards Radix's
+  `onEscapeKeyDown` (the ONLY interception point — Radix's Escape is a document-level capture-phase
+  listener that runs before React handlers). `CreateOrderModal` uses it: `handleEscape` swallows Escape
+  and clears ONLY the add-item sub-flow (`addItemFlowActive = !!productSearch || customFormOpen` → reset
+  search / close+reset the custom-item form + refocus), keeping the order intact; when NOT mid-add,
+  Escape falls through to dismiss. `parkDraft()` was extracted from `handleMinimize`; `handleDismiss`
+  (wired to the Modal-level `onClose` + the Cancel button — success/merge paths keep the RAW `onClose`)
+  auto-parks the in-progress order to a draft on Cancel/backdrop/X/non-sub-flow-Escape (empty session
+  closes instantly; a save failure keeps the modal open). Spec: `e2e/08-create-order-escape.spec.ts`.
 - **`lib/product-display.ts`** — `displayProductName(product, allProducts?)` composes `"<Parent> - <Variant>"` for variant rows (parent relation → allProducts lookup → bare variant name) + exported `PRODUCT_NAME_SEPARATOR = " - "` (the ONE separator; no hand-composed `·` anywhere). Hand-synced mirror: `apps/mobile/lib/product-display.ts`. **`lib/image-focal.ts`** — product focal-point crop (4:5), image fit.
 - **`lib/change-requests.ts`** — shared web ChangeRequest type (`ChangeRequestType`/`Status`/`Resolution`/`ResolveAction`, `ChangeRequest`) + `describeChangeRequest`/`describeResolution` display helpers (pure, no HTTP client; consumed by both operator `orders/[id]/page.tsx` and buyer `orders/[id]/page.tsx`). CR 409 codes (`CHANGE_REQUEST_ALREADY_RESOLVED`, `STOP_ALREADY_COMPLETED`, `LINE_ALREADY_DELIVERED`, `CHANGE_WINDOW_CLOSED`, `EDIT_WINDOW_OPEN`) added to `providers.tsx` `HANDLED_CODES` so the generic mutation toast doesn't double-fire over the components' guided handling.
 - **`lib/barcode-resolve.ts`** — `BarcodeResolveHit<T>`/`Miss` types.

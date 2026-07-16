@@ -648,10 +648,9 @@ export function CreateOrderModal({
   const canMinimize = !!selectedCustomer || lineItems.length > 0;
   const savingDraft = createDraft.isPending || updateDraft.isPending;
 
-  // Park the current builder state into the dock, then close. Reuses the bound
-  // draft when resuming, otherwise creates a new one.
-  const handleMinimize = async () => {
-    if (!canMinimize || savingDraft) return;
+  // Park the current builder state into the local Draft (the dock). Returns whether
+  // the save succeeded. Reuses the bound draft when resuming, else creates a new one.
+  const parkDraft = async (): Promise<boolean> => {
     const dto = buildDraftDto(draftPayload);
     try {
       if (activeDraftId) {
@@ -660,10 +659,64 @@ export function CreateOrderModal({
         await createDraft.mutateAsync(dto);
       }
       lastSavedRef.current = draftPayloadJson;
-      toast({ title: "Draft parked", variant: "success" });
-      onClose();
+      return true;
     } catch {
-      toast({ title: "Could not park the draft", variant: "error" });
+      return false;
+    }
+  };
+
+  // Explicit Minimize button: park then close.
+  const handleMinimize = async () => {
+    if (!canMinimize || savingDraft) return;
+    const ok = await parkDraft();
+    toast(
+      ok
+        ? { title: "Draft parked", variant: "success" }
+        : { title: "Could not park the draft", variant: "error" },
+    );
+    if (ok) onClose();
+  };
+
+  // The "add an item" sub-flow is active while the product search/scan field has
+  // text OR the inline custom-item form is open. Escape while it's active cancels
+  // ONLY the sub-flow (never the order); otherwise Escape falls through to dismiss.
+  const addItemFlowActive = !!productSearch || customFormOpen;
+
+  // Radix's Escape interception (see Modal.onEscapeKeyDown). While mid-add, swallow
+  // the Escape and clear just the sub-flow state, keeping the order builder open.
+  const handleEscape = (event: KeyboardEvent) => {
+    if (!addItemFlowActive) return; // fall through → Radix dismiss → handleDismiss
+    event.preventDefault();
+    setProductSearch("");
+    setDebouncedProductSearch("");
+    if (customFormOpen) {
+      setCustomFormOpen(false);
+      setCustomName("");
+      setCustomPrice("");
+      setCustomQty("1");
+      setCustomError("");
+    }
+    setTimeout(() => productSearchRef.current?.focus(), 0);
+  };
+
+  // User-initiated dismiss (Cancel button, backdrop, X, or Escape when NOT mid-add):
+  // never lose an in-progress order — auto-park it to a draft first. An empty session
+  // (nothing worth parking) closes instantly with no spurious network call/toast; a
+  // save failure keeps the modal open so the work isn't lost.
+  const handleDismiss = async () => {
+    if (!canMinimize || savingDraft) {
+      onClose();
+      return;
+    }
+    const ok = await parkDraft();
+    if (ok) {
+      toast({ title: "Order saved as draft", variant: "success" });
+      onClose();
+    } else {
+      toast({
+        title: "Couldn't save your progress — the order is still open.",
+        variant: "error",
+      });
     }
   };
 
@@ -889,7 +942,8 @@ export function CreateOrderModal({
   return (
     <Modal
       open={isOpen}
-      onClose={onClose}
+      onClose={handleDismiss}
+      onEscapeKeyDown={handleEscape}
       title={resumeDraftId ? "Resume draft" : "Create Order"}
       description="Create a new order on behalf of a customer."
       className="max-w-2xl"
@@ -911,7 +965,7 @@ export function CreateOrderModal({
           {/* Three-tier hierarchy: ghost (dismiss) < secondary (alt save) <
               primary (main action). Save-as-Draft was an amber button that
               competed with the primary blue and misused a warning colour. */}
-          <Button variant="ghost" type="button" onClick={onClose}>
+          <Button variant="ghost" type="button" onClick={handleDismiss}>
             Cancel
           </Button>
           <Button
