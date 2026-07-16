@@ -92,9 +92,21 @@ export class RegulatedLedgerService {
    * partially-returned sale on void/reconcile. Fully-reversed lines net to ~0 and are
    * skipped, so a double void/delete (or a full prior return) is a no-op. Keyed on
    * `invoiceItemId` (never a join through a possibly-deleted invoice row).
+   *
+   * `preserveReturns` (reconcile re-sync only): EXCLUDE return / credit-note REVERSALs
+   * (those carrying a `returnId`/`creditNoteId`) from each line's remaining, so the
+   * re-sync cancels ONLY the sale-record and LEAVES the return's reduction standing. The
+   * re-book then nets to (delivered − alreadyReturned), not delivered. Still idempotent:
+   * a prior re-sync's own REVERSAL (no returnId/creditNoteId) IS counted, so a repeat
+   * re-sync finds 0 remaining and skips. Void/delete leave this false → reverse the full
+   * net to 0.
    */
-  async reverseInvoiceEntries(params: { invoiceId: string; db: any }): Promise<void> {
-    const { invoiceId, db } = params;
+  async reverseInvoiceEntries(params: {
+    invoiceId: string;
+    db: any;
+    preserveReturns?: boolean;
+  }): Promise<void> {
+    const { invoiceId, db, preserveReturns = false } = params;
     const all = await db.regulatedSalesLedger.findMany({ where: { invoiceId } });
     if (all.length === 0) return;
 
@@ -114,10 +126,16 @@ export class RegulatedLedgerService {
         categoryTax: 0,
       };
       if (r.entryType === "SALE" && !cur.sale) cur.sale = r;
-      cur.qty += Number(r.qty);
-      cur.unitBasisQty += Number(r.unitBasisQty);
-      cur.netSales += Number(r.netSales);
-      cur.categoryTax += Number(r.categoryTax);
+      // On a preserve-returns re-sync, a return / credit-note reversal is left standing
+      // (not counted toward the remaining to reverse) so its reduction survives.
+      const isReturnOrCredit =
+        r.entryType === "REVERSAL" && (r.returnId != null || r.creditNoteId != null);
+      if (!(preserveReturns && isReturnOrCredit)) {
+        cur.qty += Number(r.qty);
+        cur.unitBasisQty += Number(r.unitBasisQty);
+        cur.netSales += Number(r.netSales);
+        cur.categoryTax += Number(r.categoryTax);
+      }
       byItem.set(key, cur);
     }
 

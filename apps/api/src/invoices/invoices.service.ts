@@ -941,13 +941,12 @@ export class InvoicesService {
    * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
    * which would double-count a folded regulated line against its live sibling SALE.
    *
-   * `reverseInvoiceEntries` is NET-AWARE (reverses each line's remaining un-reversed
-   * net), so it is correct even when a prior RETURN already partly reversed a line.
-   * RESIDUAL (narrow, tracked as a follow-up): in the rare order-edit case where a
-   * return is RECEIVED against a still-open draft BEFORE a re-reconcile, the reverse +
-   * fresh full-qty SALE nets to the delivered qty, dropping the return's reduction
-   * (delivered, not delivered − returned). Not reachable on the delivered path, which
-   * runs at delivery before any return exists.
+   * Uses `reverseInvoiceEntries({preserveReturns: true})` — it cancels only the
+   * sale-record and LEAVES any prior RETURN / credit-note reversal standing, so a
+   * re-reconcile after a received return nets to (delivered − returned), not delivered.
+   * Idempotent across repeat re-syncs (a prior re-sync reversal has no returnId, so it's
+   * counted; the old line finds 0 remaining and is skipped). The delivered-payment path
+   * runs at delivery before any return exists, so it's unaffected either way.
    */
   private async resyncInvoiceLedger(
     invoiceId: string,
@@ -955,7 +954,9 @@ export class InvoicesService {
     items: any[],
     db: any,
   ): Promise<void> {
-    await this.ledger.reverseInvoiceEntries({ invoiceId, db });
+    // preserveReturns: cancel only the sale-record, leave any return/credit-note reversal
+    // standing, so a re-reconcile after a return nets to (delivered − returned).
+    await this.ledger.reverseInvoiceEntries({ invoiceId, db, preserveReturns: true });
     await this.ledger.writeSaleEntries({
       tenantId: this.prisma.getTenantId(),
       orderId,
