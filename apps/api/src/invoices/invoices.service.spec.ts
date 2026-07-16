@@ -1819,6 +1819,44 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(10);
     });
 
+    it("re-syncs the regulated-sales ledger to the DELIVERED qty (reverse old SALE + write new)", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      // R1's regulated line is short-picked: delivered 4 of 10.
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line({ deliveredQty: 10 }), regLine({ deliveredQty: 4 })]) as any,
+      );
+      // Echo the created items back with ids so the ledger sync sees real invoice lines.
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({
+          id: args.where.id,
+          items: (args.data.items?.create ?? []).map((it: any, i: number) => ({
+            ...it,
+            id: `${args.where.id}-item-${i}`,
+          })),
+        }),
+      );
+      const ledger = (service as any).ledger;
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // Prior SALE rows reversed for BOTH drafts (nets the full-qty entries to 0).
+      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: "d-base" }),
+      );
+      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: "d-r1" }),
+      );
+      // Fresh SALE rows written; the regulated line (R1) now reports the DELIVERED qty (4)
+      // and its prorated netSales (20 = 4/10 of 50), not the full 10 / 50.
+      const r1Write = ledger.writeSaleEntries.mock.calls.find(
+        (c: any) => c[0].invoiceId === "d-r1",
+      )?.[0];
+      expect(r1Write).toBeDefined();
+      const regLedgerLine = r1Write.lines.find((l: any) => l.trackedCategoryId === "cat-reg");
+      expect(regLedgerLine.qty).toBe(4);
+      expect(regLedgerLine.netSales).toBe(20);
+    });
+
     it("split short-picked regulated line — R1 bills the DELIVERED qty, not full", async () => {
       prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
       prisma.order.findUnique.mockResolvedValue(
@@ -2060,6 +2098,9 @@ describe("InvoicesService", () => {
       expect(r1.data.subtotal).toBe(40);
       expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
+      // The regulated-sales ledger is re-synced on the order basis too.
+      expect((service as any).ledger.reverseInvoiceEntries).toHaveBeenCalled();
+      expect((service as any).ledger.writeSaleEntries).toHaveBeenCalled();
     });
 
     it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {
@@ -2131,6 +2172,9 @@ describe("InvoicesService", () => {
       // the two-sibling rebuild.
       expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
       expect(updOf("d-base")).toBeDefined();
+      // The legacy group-unaware path must NOT touch the ledger (folding the regulated
+      // line onto the base + writing a SALE would double-count vs the live -R1 SALE).
+      expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });
 });

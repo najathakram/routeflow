@@ -29,10 +29,12 @@ export interface SaleLedgerLine {
  * a later-period reversal (that reversal is that later period's credit).
  *
  * Coverage (W5a): the order→invoice path (createSplitInvoices) writes SALE rows,
- * and voidInvoice/deleteInvoice reverse them. NOT yet wired (deferred follow-ups,
- * tracked in SESSION-HANDOFF): the manual `create`, `createPartialFromOrder`, the
- * DRAFT `update`, and `reconcileOrderDraftInvoice` paths — a regulated invoice
- * created/edited via those writes no ledger rows today.
+ * voidInvoice/deleteInvoice reverse them, and the reconcile paths
+ * (reconcileOrderDraftInvoice / reconcileOrderDeliveredInvoices, via
+ * InvoicesService#resyncInvoiceLedger) re-sync them to the rebuilt qty by
+ * reversing the prior SALE rows and writing fresh ones. STILL NOT wired (deferred):
+ * the manual `create` and `createPartialFromOrder` paths — a regulated invoice
+ * created via those writes no ledger rows today.
  */
 @Injectable()
 export class RegulatedLedgerService {

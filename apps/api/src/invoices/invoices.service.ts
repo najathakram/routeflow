@@ -803,6 +803,11 @@ export class InvoicesService {
       },
     });
 
+    // NOTE: the ledger is re-synced ONLY on the sibling-aware paths (rebuildSiblingDrafts).
+    // This legacy single-draft rebuild is group-UNAWARE — for a bailed split it folds the
+    // regulated line onto the base while the -R# sibling's SALE row stays live, so writing
+    // a SALE here would double-count. Leave the ledger untouched (pre-existing behavior).
+
     // Reset invoicedQty on every order line to exactly what this draft bills.
     const billMap = new Map<string, number>(
       billable.map(({ li, billQty }: any) => [li.id, billQty]),
@@ -844,9 +849,9 @@ export class InvoicesService {
    * reset to what its one sibling now bills (0 for refused) — a plain SET since a line
    * belongs to a single sibling. No-op (null) when the order has no open draft.
    *
-   * Does NOT touch the regulated-sales ledger (writeSaleEntries) — the same deferred
-   * sync noted for reconcileOrderDraftInvoice; the ledger still reflects the full-qty
-   * entries createSplitInvoices wrote. Tracked as a follow-up.
+   * Re-syncs the regulated-sales ledger to the rebuilt qty via `resyncInvoiceLedger`
+   * (in the shared rebuildSiblingDrafts core) — a short/refused regulated line now
+   * reports its delivered qty, not the full-order qty createSplitInvoices first wrote.
    */
   async reconcileOrderDeliveredInvoices(orderId: string, tx?: any) {
     const db = tx ?? this.prisma.forTenant();
@@ -922,6 +927,49 @@ export class InvoicesService {
       return { draft: d, lines: memberIds.map((id) => lineById.get(id)).filter(Boolean) };
     });
     return this.rebuildSiblingDrafts(order, pairs, "delivered", db);
+  }
+
+  /**
+   * Re-sync the regulated-sales ledger after a reconcile rebuilt ONE draft's items:
+   * REVERSE the invoice's prior SALE rows (nets the old qty to 0, booked in the current
+   * period per the ledger's never-backdate rule), then write fresh SALE rows from the new
+   * items — so a short-picked / edited regulated line reports its RECONCILED qty, not the
+   * full-order qty createSplitInvoices first wrote. A no-op for a non-regulated invoice
+   * (the ledger service early-returns when there are no SALE rows / no regulated lines).
+   *
+   * Called ONLY from rebuildSiblingDrafts (the sibling-aware clean-partition paths), where
+   * each draft owns a disjoint set of lines — never from the group-unaware legacy rebuild,
+   * which would double-count a folded regulated line against its live sibling SALE.
+   *
+   * In practice these reconciles run at/before delivery (edit-window + delivered gates),
+   * i.e. BEFORE any return/credit-note reversal exists. `reverseInvoiceEntries` keys its
+   * idempotency on "invoiceItemId already has a reversal", so if a PARTIAL return had
+   * reversed a still-open draft's line first, the reconcile would skip reversing the
+   * original SALE and over-report — a narrow, pre-existing `reverseInvoiceEntries`
+   * limitation (also affects void-after-partial-return), tracked as a follow-up.
+   */
+  private async resyncInvoiceLedger(
+    invoiceId: string,
+    orderId: string | null,
+    items: any[],
+    db: any,
+  ): Promise<void> {
+    await this.ledger.reverseInvoiceEntries({ invoiceId, db });
+    await this.ledger.writeSaleEntries({
+      tenantId: this.prisma.getTenantId(),
+      orderId,
+      invoiceId,
+      soldAt: new Date(),
+      lines: (items ?? []).map((it: any) => ({
+        invoiceItemId: it.id,
+        orderItemId: it.orderItemId ?? null,
+        trackedCategoryId: it.trackedCategoryId ?? null,
+        qty: Number(it.qty),
+        netSales: Number(it.subtotal),
+        categoryTax: Number(it.categoryTaxAmount ?? 0),
+      })),
+      db,
+    });
   }
 
   /**
@@ -1003,6 +1051,8 @@ export class InvoicesService {
         include: { items: true },
       });
       updated.push(inv);
+      // Re-sync the regulated-sales ledger to the rebuilt qty (no-op for non-regulated).
+      await this.resyncInvoiceLedger(pd.draft.id, order.id, inv.items ?? [], db);
       // SET each of this draft's lines' invoicedQty to what it now bills (0 for a
       // line billed 0 — refused/short). Each line belongs to one draft → SET, not add.
       const billMap = new Map<string, number>(
