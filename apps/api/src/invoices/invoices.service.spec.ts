@@ -2326,4 +2326,40 @@ describe("InvoicesService", () => {
       expect((service as any).ledger.writeSaleEntries).not.toHaveBeenCalled();
     });
   });
+
+  // ─── RF-2-lite: regulated category/subcategory NAME on the invoice payload ──
+  describe("findOne — regulated category name on items", () => {
+    it("returns items[].trackedCategory.name and requests the category/subcategory include", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [],
+        items: [
+          {
+            id: "item-1",
+            trackedCategoryId: "cat-1",
+            trackedCategory: {
+              id: "cat-1",
+              name: "Tobacco",
+              invoiceTreatment: "SEPARATE_INVOICE",
+            },
+            trackedSubcategoryId: "sub-1",
+            trackedSubcategory: { id: "sub-1", name: "Cigarettes" },
+          },
+        ],
+      });
+
+      const res = await service.findOne("inv-1");
+
+      // findOne now pulls the regulated category + subcategory into the items include.
+      const includeArg = (prisma.invoice.findUnique as jest.Mock).mock.calls[0][0].include;
+      expect(includeArg.items.include.trackedCategory).toBeDefined();
+      expect(includeArg.items.include.trackedSubcategory).toBeDefined();
+      // …and the NAME flows straight through onto the returned payload.
+      expect((res.items as any[])[0].trackedCategory.name).toBe("Tobacco");
+      expect((res.items as any[])[0].trackedSubcategory.name).toBe("Cigarettes");
+    });
+  });
 });
