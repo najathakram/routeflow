@@ -1966,4 +1966,171 @@ describe("InvoicesService", () => {
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
     });
   });
+
+  // reconcileOrderDraftInvoice(basis:"order") is now sibling-aware for a regulated
+  // SEPARATE_INVOICE split (base + -R# drafts) via CATEGORY grouping of the CURRENT
+  // lines (so an edit that added a line still bills it), falling back to the legacy
+  // single-draft rebuild for single-group / unclean cases.
+  describe("reconcileOrderDraftInvoice — split order (basis:order) sibling-aware", () => {
+    const line = (over: any = {}) => ({
+      id: "oi-std",
+      productId: "p-std",
+      qty: 10,
+      deliveredQty: 10,
+      unitPrice: 5,
+      subtotal: 50,
+      unitsPerBox: null,
+      boxes: null,
+      originalPrice: null,
+      priceType: "STANDARD",
+      notes: null,
+      categoryTaxAmount: 0,
+      trackedCategoryId: null,
+      product: { name: "Std", unitsPerBox: null, trackedCategoryId: null },
+      ...over,
+    });
+    const regLine = (over: any = {}) =>
+      line({
+        id: "oi-reg",
+        productId: "p-reg",
+        qty: 4,
+        subtotal: 40,
+        unitPrice: 10,
+        trackedCategoryId: "cat-reg",
+        product: { name: "Cigarettes", unitsPerBox: null, trackedCategoryId: "cat-reg" },
+        ...over,
+      });
+    const draft = (over: any = {}) => ({
+      status: InvoiceStatus.DRAFT,
+      deliveryBatchId: null,
+      discount: 0,
+      shippingFee: 0,
+      ...over,
+    });
+    // items here carry trackedCategoryId (the select the split path reads).
+    const splitDrafts = () => [
+      draft({ id: "d-base", items: [{ orderItemId: "oi-std", trackedCategoryId: null }] }),
+      draft({ id: "d-r1", items: [{ orderItemId: "oi-reg", trackedCategoryId: "cat-reg" }] }),
+    ];
+    const mockOrder = (lines: any[], over: any = {}) => ({
+      id: "ord-1",
+      customerId: "cust-1",
+      subtotal: 90,
+      tax: 0,
+      lineItems: lines,
+      ...over,
+    });
+    const updOf = (id: string) =>
+      prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
+    const oiUpdOf = (id: string) =>
+      prisma.orderItem.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoiceItem.deleteMany.mockResolvedValue({ count: 1 } as any);
+      prisma.invoice.update.mockResolvedValue({} as any);
+      prisma.orderItem.update.mockResolvedValue({} as any);
+      // groupOrderLinesForInvoicing resolves cat-reg as a SEPARATE_INVOICE category.
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-reg",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ] as any);
+    });
+
+    it("rebuilds base + R1 EACH from its own category group at full qty (no double-bill)", async () => {
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
+
+      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+
+      const base = updOf("d-base");
+      const r1 = updOf("d-r1");
+      expect(base.data.items.create).toHaveLength(1);
+      expect(base.data.items.create[0].orderItemId).toBe("oi-std");
+      expect(base.data.subtotal).toBe(50);
+      // The regulated line is NOT folded onto the base (the double-bill this fixes).
+      expect(base.data.items.create.some((i: any) => i.orderItemId === "oi-reg")).toBe(false);
+      expect(r1.data.items.create).toHaveLength(1);
+      expect(r1.data.items.create[0].orderItemId).toBe("oi-reg");
+      expect(r1.data.subtotal).toBe(40);
+      expect(oiUpdOf("oi-std").data.invoicedQty).toBe(10);
+      expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
+    });
+
+    it("an edit that ADDED a standard line bills it on the base (grouping, not provenance)", async () => {
+      // oi-std2 is on the CURRENT order but not yet on any draft's items — provenance
+      // would drop it; category grouping bills it on the base.
+      const added = line({
+        id: "oi-std2",
+        productId: "p-std2",
+        qty: 2,
+        subtotal: 10,
+        product: { name: "Std2", unitsPerBox: null, trackedCategoryId: null },
+      });
+      prisma.invoice.findMany.mockResolvedValue(splitDrafts() as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), added, regLine()], { subtotal: 100 }) as any,
+      );
+
+      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+
+      const baseIds = updOf("d-base")
+        .data.items.create.map((i: any) => i.orderItemId)
+        .sort();
+      expect(baseIds).toEqual(["oi-std", "oi-std2"]);
+      expect(updOf("d-base").data.subtotal).toBe(60); // 50 + 10
+      expect(oiUpdOf("oi-std2").data.invoicedQty).toBe(2);
+    });
+
+    it("single-group order → falls through to the legacy single-draft rebuild", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        draft({ id: "d-only", items: [{ orderItemId: "oi-std", trackedCategoryId: null }] }),
+      ] as any);
+      prisma.invoice.findFirst.mockResolvedValue({
+        id: "d-only",
+        discount: 0,
+        shippingFee: 0,
+      } as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }] as any);
+
+      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+
+      expect(updOf("d-only").data.items.create).toHaveLength(1);
+      expect(updOf("d-only").data.subtotal).toBe(50);
+    });
+
+    it("bails to legacy when a finalized invoice already bills part of the order", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        ...splitDrafts(),
+        {
+          id: "d-sent",
+          status: InvoiceStatus.SENT,
+          deliveryBatchId: null,
+          discount: 0,
+          shippingFee: 0,
+          items: [{ orderItemId: "oi-x", trackedCategoryId: null }],
+        },
+      ] as any);
+      prisma.invoice.findFirst.mockResolvedValue({
+        id: "d-base",
+        discount: 0,
+        shippingFee: 0,
+      } as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line(), regLine()]) as any);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-reg" }] as any);
+
+      await service.reconcileOrderDraftInvoice("ord-1", { basis: "order", tx: prisma as any });
+
+      // Legacy single-draft path took over → exactly ONE invoice.update (the base), not
+      // the two-sibling rebuild.
+      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+      expect(updOf("d-base")).toBeDefined();
+    });
+  });
 });
