@@ -10,9 +10,10 @@ import { BadRequestException } from "@nestjs/common";
  *   - an identity check must record which kind of ID was inspected.
  *
  * Pure functions so the enforcement is unit-testable in isolation and can be
- * shared by every stop-completion path (orders.service.completeStop —
- * the live POST /complete handler — plus routes.service.completeStop /
- * completeWithPayment). The DB derivation helpers take a tenant-scoped Prisma
+ * shared by the live stop-completion paths — `routes.service.completeStop`
+ * (`POST /route-runs/:id/stops/:stopId/complete`) and
+ * `routes.service.completeWithPayment` (`.../complete-with-payment`). The DB
+ * derivation helpers take a tenant-scoped Prisma
  * client (`prisma.forTenant()` or a transaction client) so the same code works
  * inside and outside a transaction.
  */
@@ -66,9 +67,7 @@ export interface RegulatedDeliveryDb {
     ): Promise<Array<{ id: string; requiresAgeCheck: boolean; requiresIdCheck: boolean }>>;
   };
   orderItem: {
-    findMany(
-      args: unknown,
-    ): Promise<
+    findMany(args: unknown): Promise<
       Array<{
         trackedCategoryId: string | null;
         product: { trackedCategoryId: string | null } | null;

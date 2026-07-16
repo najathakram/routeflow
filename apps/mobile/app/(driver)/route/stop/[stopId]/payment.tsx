@@ -15,13 +15,11 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
   useActiveRouteRun,
-  useCompleteStop,
   useCompleteWithPayment,
   useRouteRun,
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
 import { useOrder } from "../../../../../lib/api/orders";
-import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
@@ -118,14 +116,11 @@ export default function PaymentScreen() {
   const receivedNum = Number(received);
   const change = Math.max(0, receivedNum - invoiceTotal);
 
-  const completeMut = useCompleteStop();
   const completeWithPaymentMut = useCompleteWithPayment();
-  const paymentMut = useRecordInvoicePayment();
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
 
-  const submitting =
-    completeMut.isPending || completeWithPaymentMut.isPending || paymentMut.isPending;
+  const submitting = completeWithPaymentMut.isPending;
 
   const closeStop = async () => {
     if (!stopId || !runId || !stop) return;
@@ -164,7 +159,11 @@ export default function PaymentScreen() {
             orderItemId: li.id,
             productId: li.productId,
             type: "DELIVERED" as const,
-            quantityDelivered: Math.round(Number(li.qty ?? 0)),
+            // Send the EXACT ordered qty (server accepts decimals). Since the
+            // payment path now bills on deliveredQty (reconcile basis:"delivered"),
+            // rounding here would over/under-bill a fractional line (loose/weight
+            // units); the short-pick path above is already exact.
+            quantityDelivered: Number(li.qty ?? 0),
           })),
     );
 

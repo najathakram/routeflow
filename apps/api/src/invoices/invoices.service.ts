@@ -279,7 +279,7 @@ export class InvoicesService {
   /**
    * Auto-generate an Invoice from a delivered Order.
    * Accepts an optional Prisma transaction client so it can run
-   * inside completeStop()'s $transaction.
+   * inside completeWithPayment()'s $transaction (via recordDeliveryPaymentInTx).
    *
    * RF-147: tenantId is now explicitly set on the Invoice record.  Previously
    * the create call omitted it, leaving invoices with tenantId=null which
@@ -2288,6 +2288,9 @@ export class InvoicesService {
    * the non-VOID payment sum, NEVER the (non-existent) `balance` scalar the old
    * completeWithPayment code tried to decrement.
    *
+   * @param reconcileOrderIds the subset of `orderIds` actually delivered in this
+   *          completion — only these have their DRAFT rebuilt on the delivered
+   *          quantity (and only when single-invoice). Defaults to all `orderIds`.
    * @returns the amount actually applied (< amount only when the orders'
    *          invoices were already covered — the caller should log any residual).
    */
@@ -2296,6 +2299,7 @@ export class InvoicesService {
     orderIds: string[],
     amount: number,
     method: string,
+    reconcileOrderIds?: string[],
   ): Promise<{ applied: number; invoiceIds: string[] }> {
     if (!(amount > 0) || orderIds.length === 0) return { applied: 0, invoiceIds: [] };
     // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
@@ -2313,17 +2317,47 @@ export class InvoicesService {
       InvoiceStatus.OVERDUE,
     ];
 
-    // 1. Ensure each delivered order has an invoice (tx-safe helpers).
+    // Only orders actually delivered in THIS completion may be rebuilt on the
+    // delivered basis. Default to all orderIds for callers that don't distinguish
+    // (there are none today) — but the driver path passes the real subset so an
+    // order merely linked to the stop yet not delivered here (deliveredQty 0) is
+    // never zeroed.
+    const reconcileSet = new Set(reconcileOrderIds ?? orderIds);
+
+    // 1. Ensure each delivered order has a DRAFT invoice, then reconcile it to the
+    //    DELIVERED quantities so short/refused lines bill what was delivered, not
+    //    the full order. createInvoiceFromOrder makes a DRAFT when the order has no
+    //    live invoice yet; reconcileOrderDraftInvoice(basis:"delivered") rebuilds it
+    //    on OrderItem.deliveredQty and telescopes invoicedQty (idempotent with the
+    //    office from-order flow — a later re-delivery bills only the remainder).
     for (const orderId of orderIds) {
-      const draft = await this.findOpenOrderDraft(orderId, tx);
-      if (draft) {
-        await this.reconcileOrderDraftInvoice(orderId, { basis: "order", tx });
-      } else {
+      let draft = await this.findOpenOrderDraft(orderId, tx);
+      if (!draft) {
         const existing = await tx.invoice.findFirst({
           where: { orderId, status: { in: PAYABLE } },
           select: { id: true },
         });
-        if (!existing) await this.createInvoiceFromOrder(orderId, tx);
+        // Create a fresh DRAFT only when the order has no live invoice at all; if a
+        // non-DRAFT invoice already exists (e.g. the office already sent one), leave
+        // it and just pay it below.
+        if (!existing) {
+          await this.createInvoiceFromOrder(orderId, tx);
+          draft = await this.findOpenOrderDraft(orderId, tx);
+        }
+      }
+      if (draft && reconcileSet.has(orderId)) {
+        // The delivered-basis reconcile is group-UNAWARE — it rebuilds the draft
+        // from EVERY non-cancelled order line — so it is only safe when the order
+        // has a single invoice. A regulated SEPARATE_INVOICE order has sibling
+        // drafts (base + -R#); folding every line onto the base while a sibling
+        // still bills the regulated line would double-bill it. Such orders keep
+        // billing the full ordered qty (unchanged prior behavior — never a double).
+        const invoiceCount = await tx.invoice.count({
+          where: { orderId, status: { not: InvoiceStatus.VOID } },
+        });
+        if (invoiceCount <= 1) {
+          await this.reconcileOrderDraftInvoice(orderId, { basis: "delivered", tx });
+        }
       }
     }
 

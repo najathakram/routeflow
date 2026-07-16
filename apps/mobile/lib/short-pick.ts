@@ -35,7 +35,7 @@ export interface PlannedDelivery {
 }
 
 /**
- * Build the `deliveries` array for useCompleteStop/useCompleteWithPayment.
+ * Build the `deliveries` array for useCompleteWithPayment.
  * `deliveredQtyById` holds only the lines the driver actually changed from
  * the default (full ordered qty) — matches the diff-only convention the rest
  * of the app uses (buildOrderItemDiff, buildAtDoorChangeRequests). Unlisted

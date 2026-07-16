@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { BullModule } from "@nestjs/bull";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
-import { OrdersController, RouteRunDeliveryController } from "./orders.controller";
+import { OrdersController } from "./orders.controller";
 import { AuthModule } from "../auth/auth.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { NotificationsModule } from "../notifications/notifications.module";
@@ -26,7 +26,7 @@ import { MessagingModule } from "../messaging/messaging.module";
     PromotionsModule,
     MessagingModule,
   ],
-  controllers: [OrdersController, RouteRunDeliveryController],
+  controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],
   exports: [OrdersService, ChangeRequestsService],
 })

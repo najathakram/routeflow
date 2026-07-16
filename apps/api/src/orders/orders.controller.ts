@@ -25,7 +25,6 @@ import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
-import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 
@@ -292,23 +291,5 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR)
   remove(@Param("id") id: string) {
     return this.ordersService.deleteOrder(id);
-  }
-}
-
-@ApiTags("route-runs")
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
-@Controller("route-runs")
-export class RouteRunDeliveryController {
-  constructor(private readonly ordersService: OrdersService) {}
-
-  @Post(":runId/stops/:stopId/complete")
-  completeStop(
-    @Param("runId") runId: string,
-    @Param("stopId") stopId: string,
-    @Body() dto: CompleteStopDto,
-    @CurrentUser() user: JwtPayload,
-  ) {
-    return this.ordersService.completeStop(runId, stopId, dto, user);
   }
 }

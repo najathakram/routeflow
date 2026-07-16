@@ -1589,15 +1589,72 @@ describe("InvoicesService", () => {
       expect(upd.data.sentAt).toBeInstanceOf(Date); // DRAFT was finalized
     });
 
-    it("creates an invoice when the order has none, then records the payment", async () => {
-      prisma.invoice.findFirst.mockResolvedValue(null); // no existing invoice
-      // After createInvoiceFromOrder, findMany surfaces the freshly-created invoice.
+    it("creates a DRAFT when the order has none, then reconciles it on the DELIVERED basis", async () => {
+      // No draft initially; one exists after createInvoiceFromOrder.
+      (service.findOpenOrderDraft as jest.Mock)
+        .mockReset()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findFirst.mockResolvedValue(null); // no live invoice at all
+      prisma.invoice.count.mockResolvedValue(1); // single-invoice order
       prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
 
       await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
 
       expect(service.createInvoiceFromOrder).toHaveBeenCalledWith("ord-1", prisma);
+      // Delivered-basis reconcile is what makes a short-pick bill what was delivered.
+      expect(service.reconcileOrderDraftInvoice).toHaveBeenCalledWith(
+        "ord-1",
+        expect.objectContaining({ basis: "delivered" }),
+      );
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("reconciles an EXISTING draft on the delivered basis (no re-create)", async () => {
+      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.count.mockResolvedValue(1); // single-invoice order
+      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(service.reconcileOrderDraftInvoice).toHaveBeenCalledWith(
+        "ord-1",
+        expect.objectContaining({ basis: "delivered" }),
+      );
+      expect(service.createInvoiceFromOrder).not.toHaveBeenCalled(); // a draft already existed
+    });
+
+    it("does NOT reconcile a split-invoice order (regulated siblings) — avoids a group-unaware double-bill", async () => {
+      // A SEPARATE_INVOICE regulated order has base + -R# sibling drafts. The
+      // delivered-basis reconcile rebuilds the base from EVERY line, so folding the
+      // regulated line onto the base while -R1 still bills it would double-bill.
+      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-base" });
+      prisma.invoice.count.mockResolvedValue(2); // base + -R1 siblings
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-base", invoiceNumber: "INV-9", total: 60 }),
+        inv({ id: "inv-r1", invoiceNumber: "INV-9-R1", total: 40 }),
+      ]);
+
+      const res = await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH");
+
+      expect(service.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      // Both siblings still get paid — each billed once at full qty (no double).
+      expect(res.applied).toBe(100);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(2);
+    });
+
+    it("does NOT reconcile an order absent from reconcileOrderIds (not delivered this completion)", async () => {
+      // An order merely linked to the stop but delivered elsewhere has deliveredQty
+      // 0; reconciling it would zero its open draft. It must still be PAID, just not
+      // reconciled.
+      (service.findOpenOrderDraft as jest.Mock).mockReset().mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.count.mockResolvedValue(1);
+      prisma.invoice.findMany.mockResolvedValue([inv({ status: InvoiceStatus.DRAFT })]);
+
+      await service.recordDeliveryPaymentInTx(prisma as any, ["ord-1"], 100, "CASH", []);
+
+      expect(service.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1); // still paid
     });
 
     it("spreads a lump-sum oldest-first across regulated split siblings, capped at each remaining", async () => {
