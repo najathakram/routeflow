@@ -314,6 +314,152 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ─── RF-1: manual-create / draft-update reach the regulated sales ledger ───
+
+  describe("RF-1 — manual regulated invoice ledger sync", () => {
+    it("create() snapshots the category and writes W5 SALE rows (orderId null)", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-tob",
+          unitsPerBox: null,
+          trackedCategoryId: "cat-tob",
+          trackedSubcategoryId: "sub-1",
+        },
+      ]);
+      prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-new",
+        items: [
+          {
+            id: "ii-1",
+            trackedCategoryId: "cat-tob",
+            orderItemId: null,
+            qty: 3,
+            subtotal: 30,
+            categoryTaxAmount: 0,
+          },
+        ],
+        customer: {},
+        payments: [],
+      });
+      const ledger = (service as any).ledger;
+
+      await service.create({
+        customerId: "cust-1",
+        items: [{ productId: "prod-tob", description: "Cigs", qty: 3, unitPrice: 10 }],
+      });
+
+      // The regulated category/subcategory snapshot flows onto the created line.
+      const createData = prisma.invoice.create.mock.calls[0][0].data;
+      expect(createData.items.create[0]).toMatchObject({
+        trackedCategoryId: "cat-tob",
+        trackedSubcategoryId: "sub-1",
+      });
+      // A SALE row is written from the created items with orderId null (manual sale).
+      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderId: null,
+          invoiceId: "inv-new",
+          lines: [
+            expect.objectContaining({
+              invoiceItemId: "ii-1",
+              trackedCategoryId: "cat-tob",
+              qty: 3,
+              netSales: 30,
+            }),
+          ],
+        }),
+      );
+    });
+
+    it("create() does NOT touch the ledger for a purely non-regulated invoice", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt: false });
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-plain",
+          unitsPerBox: null,
+          trackedCategoryId: null,
+          trackedSubcategoryId: null,
+        },
+      ]);
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      prisma.invoice.create.mockResolvedValue({
+        id: "inv-2",
+        items: [],
+        customer: {},
+        payments: [],
+      });
+      const ledger = (service as any).ledger;
+
+      await service.create({
+        customerId: "cust-1",
+        items: [{ productId: "prod-plain", description: "Soda", qty: 2, unitPrice: 3 }],
+      });
+      expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
+    });
+
+    it("update() re-syncs the ledger on a draft edit (reverse prior SALE + write new)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-e",
+        orderId: null,
+        deliveryBatchId: null,
+        customerId: "cust-1",
+        status: InvoiceStatus.DRAFT,
+        discount: 0,
+        shippingFee: 0,
+        issueDate: new Date(),
+      });
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-tob",
+          unitsPerBox: null,
+          trackedCategoryId: "cat-tob",
+          trackedSubcategoryId: null,
+        },
+      ]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-e",
+        items: [
+          {
+            id: "ii-new",
+            trackedCategoryId: "cat-tob",
+            orderItemId: null,
+            qty: 5,
+            subtotal: 50,
+            categoryTaxAmount: 0,
+          },
+        ],
+        customer: {},
+        payments: [],
+      });
+      const ledger = (service as any).ledger;
+
+      await service.update("inv-e", {
+        items: [{ productId: "prod-tob", description: "Cigs", qty: 5, unitPrice: 10 }],
+      });
+
+      // Prior SALE reversed (preserveReturns), then a fresh SALE written from new items.
+      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: "inv-e", preserveReturns: true }),
+      );
+      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: "inv-e",
+          lines: [
+            expect.objectContaining({
+              invoiceItemId: "ii-new",
+              trackedCategoryId: "cat-tob",
+              qty: 5,
+              netSales: 50,
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
   // ─── RF-079: tax-exempt customer → invoice tax = 0 ────────────────────────
 
   describe("RF-079 — tax-exempt customer", () => {
