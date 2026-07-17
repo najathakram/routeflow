@@ -5,11 +5,9 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
-import type { PortalInviteDto } from "./dto/portal-invite.dto";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
 
 @Injectable()
@@ -229,105 +227,6 @@ export class BuyerService {
       message: "Connected! You can now view your orders and invoices from this seller.",
       linkId: link.id,
     };
-  }
-
-  // ─── Operator: send portal invite ─────────────────────────────────────────────
-
-  async sendPortalInvite(customerId: string, dto: PortalInviteDto, tenantId: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, tenantId },
-    });
-    if (!customer) throw new NotFoundException("Customer not found");
-
-    const toEmail = dto.overrideEmail ?? customer.email;
-    if (!toEmail) {
-      throw new ConflictException(
-        "Customer has no email address. Add an email or provide an override.",
-      );
-    }
-
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-
-    // Upsert the link — allows re-invite after expiry/disconnect
-    // buyerAccountId is null until the invite is accepted
-    await this.prisma.customerLink.upsert({
-      where: { customerId },
-      create: {
-        customerId,
-        tenantId,
-        buyerAccountId: null,
-        status: "INVITED",
-        inviteToken: token,
-        inviteExpiresAt: expiresAt,
-        inviteMethod: dto.method,
-      },
-      update: {
-        buyerAccountId: null,
-        status: "INVITED",
-        inviteToken: token,
-        inviteExpiresAt: expiresAt,
-        inviteMethod: dto.method,
-        disconnectedAt: null,
-        disconnectedBy: null,
-        linkedAt: null,
-      },
-    });
-
-    // Get seller name for email
-    const tenantConfig = await this.prisma.tenantConfig.findFirst({
-      where: { tenantId },
-      select: { businessName: true },
-    });
-    const sellerName = tenantConfig?.businessName ?? "Your supplier";
-    const webUrl = this.config.get<string>("WEB_URL") ?? "http://localhost:3001";
-    const inviteUrl = `${webUrl}/buyer/invite/${token}`;
-
-    // Send invite email
-    await this.emailService.send({
-      to: toEmail,
-      subject: `${sellerName} has invited you to the RouteFlow buyer portal`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #1a1a2e;">${sellerName} has invited you to RouteFlow</h2>
-          <p>Hi ${customer.contactName || customer.businessName},</p>
-          <p>${sellerName} has invited you to manage your orders, invoices, and deliveries through the RouteFlow buyer portal.</p>
-          <p>Click the button below to create your account or sign in and connect:</p>
-          <div style="text-align: center; margin: 32px 0;">
-            <a href="${inviteUrl}" style="background: #4f46e5; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold;">
-              Accept Invitation
-            </a>
-          </div>
-          <p style="color: #666; font-size: 14px;">This invite link expires in 7 days. If you have any questions, contact ${sellerName} directly.</p>
-          <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
-          <p style="color: #999; font-size: 12px;">Powered by RouteFlow</p>
-        </div>
-      `,
-    });
-
-    this.logger.log(`Portal invite sent to ${toEmail} for customer ${customerId}`);
-
-    return {
-      message: `Invite sent to ${toEmail}`,
-      expiresAt,
-      inviteMethod: dto.method,
-    };
-  }
-
-  // ─── Operator: resend portal invite ───────────────────────────────────────────
-
-  async resendPortalInvite(customerId: string, tenantId: string) {
-    const link = await this.prisma.customerLink.findFirst({
-      where: { customerId, tenantId },
-    });
-    if (!link) throw new NotFoundException("No pending invite found for this customer");
-    if (link.status === "ACTIVE") {
-      throw new ConflictException("Customer is already connected to the buyer portal");
-    }
-
-    // Re-use the same invite DTO with same method
-    const dto: PortalInviteDto = { method: link.inviteMethod ?? "EMAIL" };
-    return this.sendPortalInvite(customerId, dto, tenantId);
   }
 
   // ─── Operator: disconnect customer from buyer portal ──────────────────────────
