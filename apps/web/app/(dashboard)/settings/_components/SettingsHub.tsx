@@ -254,23 +254,52 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
       {groups.length === 0 ? (
         <Card className="text-sm text-navy/60">No settings match “{query}”.</Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {groups.map((g) => (
-            <Card key={g.key} className="flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <GroupIcon icon={g.icon} />
-                <div className="min-w-0">
-                  <div className="text-[15px] font-semibold text-navy">{g.title}</div>
-                  <div className="truncate text-xs text-navy/50">{g.blurb}</div>
+        // Masonry columns so each card is only as tall as its content (no empty
+        // stretch to match a taller neighbour) — keeps the grid balanced whatever the
+        // per-group link count.
+        <div className="gap-4 md:columns-2 xl:columns-3">
+          {groups.map((g) => {
+            const cardClass =
+              "block rounded-lg bg-white p-5 shadow-card transition-all hover:-translate-y-0.5 hover:shadow-dropdown";
+            // A single-purpose group is ONE clean clickable card (no redundant repeated
+            // link); a multi-item group shows its header + a list of links.
+            const content =
+              g.items.length === 1 ? (
+                <Link
+                  href={g.items[0].href}
+                  className={cn(cardClass, "group flex items-start gap-3")}
+                >
+                  <GroupIcon icon={g.icon} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[15px] font-semibold text-navy group-hover:text-brand-700">
+                      {g.title}
+                    </div>
+                    <div className="mt-0.5 text-xs text-navy/55">{g.items[0].desc}</div>
+                  </div>
+                  <ChevronRight className="mt-1 h-4 w-4 flex-none text-navy/30 group-hover:text-brand-500" />
+                </Link>
+              ) : (
+                <div className={cn(cardClass, "flex flex-col gap-3")}>
+                  <div className="flex items-center gap-3">
+                    <GroupIcon icon={g.icon} />
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-semibold text-navy">{g.title}</div>
+                      <div className="text-xs text-navy/50">{g.blurb}</div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col">
+                    {g.items.map((it) => (
+                      <HubLink key={it.href + it.label} item={it} />
+                    ))}
+                  </div>
                 </div>
+              );
+            return (
+              <div key={g.key} className="mb-4 break-inside-avoid">
+                {content}
               </div>
-              <div className="flex flex-col">
-                {g.items.map((it) => (
-                  <HubLink key={it.href + it.label} item={it} />
-                ))}
-              </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
