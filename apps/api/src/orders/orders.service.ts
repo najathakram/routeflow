@@ -256,7 +256,8 @@ export class OrdersService implements OnApplicationBootstrap {
         revisions: { orderBy: { revisionNumber: "asc" } },
         // P5-09: post-dispatch change requests, newest first.
         changeRequests: { orderBy: { createdAt: "desc" } },
-        routeRun: { select: { status: true, startedAt: true } },
+        // `driverId` feeds the F2-005 driver-ownership gate below.
+        routeRun: { select: { status: true, startedAt: true, driverId: true } },
       },
     });
     if (!order) throw new NotFoundException("Order not found");
@@ -268,6 +269,16 @@ export class OrdersService implements OnApplicationBootstrap {
       if (!customer || customer.id !== order.customerId) throw new ForbiddenException();
       // A customer must never see an upsell's base price / that they were upsold.
       redactUpsellForCustomer(order);
+    }
+
+    // F2-005: a DRIVER may only read an order that is on a run they are the
+    // driver of — otherwise they could enumerate any order's full detail.
+    // Orders not yet on a run (routeRun null) are never driver-readable.
+    if (user.role === UserRole.DRIVER) {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver || order.routeRun?.driverId !== driver.id) throw new ForbiddenException();
     }
 
     // P5-08 edit window (G7): free editing is open until the order's run dispatches.
@@ -2268,11 +2279,13 @@ export class OrdersService implements OnApplicationBootstrap {
         }
 
         // Revert CONFIRMED (or later) orders back to PENDING when items are edited
-        // so the operator must re-confirm the updated pick list before dispatch.
+        // so the office must re-confirm the updated pick list before dispatch.
+        // F10-002: a CUSTOMER editing their own CONFIRMED order MUST also force
+        // re-confirmation — otherwise a buyer could silently mutate the items and
+        // totals of an already-confirmed order. DRIVER edits still don't revert
+        // (drivers don't own the pick list; their change-request flow is separate).
         const shouldRevert =
-          !["DRAFT", "PENDING"].includes(order.status) &&
-          user?.role !== UserRole.CUSTOMER &&
-          user?.role !== UserRole.DRIVER;
+          !["DRAFT", "PENDING"].includes(order.status) && user?.role !== UserRole.DRIVER;
         const revertNote = shouldRevert
           ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
           : undefined;

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { roundMoney } from "../common/pricing";
@@ -6,6 +6,14 @@ import { parse } from "csv-parse/sync";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
+
+/**
+ * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
+ * interceptors bound the raw payload, but a densely-packed file can still expand
+ * into a huge in-memory record array + per-row DB work. Reject past this so a
+ * single upload can't exhaust memory / stall the worker.
+ */
+const MAX_IMPORT_ROWS = 20_000;
 
 /** Category name substrings (lower-cased) that map to the INVENTORY_PURCHASE system code */
 const INVENTORY_PURCHASE_KEYWORDS = [
@@ -27,8 +35,9 @@ export class ImportService {
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
+    let records: any[];
     try {
-      return parse(buffer.toString("utf8"), {
+      records = parse(buffer.toString("utf8"), {
         columns: true,
         skip_empty_lines: true,
         relax_column_count: true,
@@ -39,6 +48,25 @@ export class ImportService {
       this.logger.error("CSV parse error", e);
       return [];
     }
+    // F9-008: enforce the row cap OUTSIDE the try so it surfaces as a clear 400
+    // instead of being swallowed into the empty-result path.
+    if (records.length > MAX_IMPORT_ROWS) {
+      throw new BadRequestException(
+        `This file has ${records.length} rows, above the ${MAX_IMPORT_ROWS}-row import limit. Split it into smaller files.`,
+      );
+    }
+    return records;
+  }
+
+  /**
+   * F8-003: record a per-row import failure without leaking DB/exception
+   * internals (Prisma error text discloses table/column names). The real error
+   * is logged server-side; the client sees a generic, row-scoped message.
+   */
+  private pushRowError(errors: string[], label: string, e: unknown): void {
+    const detail = e instanceof Error ? e.message : String(e);
+    this.logger.warn(`Import row failed [${label}]: ${detail}`);
+    errors.push(`${label}: import failed`);
   }
 
   private generateTempPassword(): string {
@@ -343,7 +371,7 @@ export class ImportService {
 
           updated++;
         } catch (e: any) {
-          errors.push(`${name} (update): ${e.message}`);
+          this.pushRowError(errors, `${name} (update)`, e);
         }
         continue;
       }
@@ -460,7 +488,7 @@ export class ImportService {
         if (e?.code === "P2002") {
           skipped++;
         } else {
-          errors.push(`${name}: ${e.message}`);
+          this.pushRowError(errors, name, e);
           skipped++;
         }
       }
@@ -562,7 +590,7 @@ export class ImportService {
           });
         } catch (e: any) {
           skipped++;
-          errors.push(`${customerName}: ${e.message}`);
+          this.pushRowError(errors, customerName, e);
           continue;
         }
       }
@@ -747,7 +775,7 @@ export class ImportService {
 
         imported++;
       } catch (e: any) {
-        errors.push(`${invoiceNumber}: ${e.message}`);
+        this.pushRowError(errors, invoiceNumber, e);
         skipped++;
       }
     }
@@ -824,7 +852,7 @@ export class ImportService {
         });
         imported++;
       } catch (e: any) {
-        errors.push(`Payment for ${invoiceNumber}: ${e.message}`);
+        this.pushRowError(errors, `Payment for ${invoiceNumber}`, e);
         skipped++;
       }
     }
@@ -995,7 +1023,7 @@ export class ImportService {
           suppliersCreated++;
         }
       } catch (e: any) {
-        errors.push(`Supplier "${name}": ${e.message}`);
+        this.pushRowError(errors, `Supplier "${name}"`, e);
       }
     }
 
@@ -1109,7 +1137,7 @@ export class ImportService {
 
         imported++;
       } catch (e: any) {
-        errors.push(e.message);
+        this.pushRowError(errors, "Row", e);
         skipped++;
       }
     }
@@ -1361,7 +1389,7 @@ export class ImportService {
         });
         imported++;
       } catch (e: any) {
-        errors.push(`${name}: ${e.message}`);
+        this.pushRowError(errors, name, e);
         skipped++;
       }
     }
@@ -1471,7 +1499,7 @@ export class ImportService {
           created++;
         }
       } catch (e: any) {
-        errors.push(`${name}: ${e.message}`);
+        this.pushRowError(errors, name, e);
         skipped++;
       }
     }
@@ -1531,7 +1559,7 @@ export class ImportService {
           created++;
         }
       } catch (e: any) {
-        errors.push(`${name}: ${e.message}`);
+        this.pushRowError(errors, name, e);
         skipped++;
       }
     }

@@ -24,6 +24,7 @@ import { UpdateProductDto } from "./dto/update-product.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
+import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -91,7 +92,7 @@ export class ProductsController {
   // Must be declared before :id to avoid route collision
   @Delete("bulk")
   @Roles(UserRole.OPERATOR)
-  bulkDelete(@Body() dto: { ids: string[] }) {
+  bulkDelete(@Body() dto: BulkDeleteProductsDto) {
     return this.productsService.bulkDelete(dto.ids);
   }
 

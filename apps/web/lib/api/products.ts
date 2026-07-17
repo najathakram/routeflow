@@ -161,11 +161,24 @@ export function useClearAllProducts() {
   });
 }
 
+/** Matches the server's @ArrayMaxSize on DELETE /products/bulk (F9-009). */
+const BULK_DELETE_CHUNK = 500;
+
 export function useBulkDeleteProducts() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (ids: string[]): Promise<{ deleted: number }> =>
-      apiClient.delete("/products/bulk", { data: { ids } }).then((r) => r.data),
+    // The server caps each request at 500 ids (F9-009 DTO). Chunk large selections
+    // ("Show all → Select all → Delete" on a >500-product tenant) into sequential
+    // batches so a wholesale delete still succeeds instead of 400-ing on the cap.
+    mutationFn: async (ids: string[]): Promise<{ deleted: number }> => {
+      let deleted = 0;
+      for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
+        const r = await apiClient.delete("/products/bulk", { data: { ids: chunk } });
+        deleted += Number(r.data?.deleted ?? 0);
+      }
+      return { deleted };
+    },
     onSuccess: () => invalidateProductSet(qc),
   });
 }

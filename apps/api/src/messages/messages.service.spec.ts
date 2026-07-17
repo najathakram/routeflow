@@ -24,6 +24,9 @@ describe("MessagesService (run-chat)", () => {
   });
 
   it("creates a run-chat message WITHOUT setting channel/threadId (both default)", async () => {
+    // F2-006 participant gate: the DRIVER must be assigned to the run to write it.
+    prisma.driver.findFirst.mockResolvedValue({ id: "drv-9" });
+    prisma.routeRun.findUnique.mockResolvedValue({ driverId: "drv-9" });
     await service.create({ runId: "run-1", text: "on my way" }, "user-9", "DRIVER");
 
     expect(prisma.message.create).toHaveBeenCalledTimes(1);
@@ -48,7 +51,7 @@ describe("MessagesService (run-chat)", () => {
   });
 
   it("reads a run's messages scoped to the INTERNAL channel", async () => {
-    await service.findByRun({ runId: "run-1" });
+    await service.findByRun({ runId: "run-1" }, { sub: "op-1", role: "OPERATOR" });
     expect(prisma.message.findMany).toHaveBeenCalledWith({
       where: { channel: "INTERNAL", runId: "run-1" },
       orderBy: { createdAt: "asc" },
@@ -57,7 +60,7 @@ describe("MessagesService (run-chat)", () => {
   });
 
   it("scopes the no-runId list to INTERNAL so engine messages never leak in", async () => {
-    await service.findByRun({});
+    await service.findByRun({}, { sub: "op-1", role: "OPERATOR" });
     expect(prisma.message.findMany.mock.calls[0][0].where).toEqual({ channel: "INTERNAL" });
   });
 });

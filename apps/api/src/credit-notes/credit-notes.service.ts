@@ -339,6 +339,10 @@ export class CreditNotesService {
   }
 
   async findOneForUser(id: string, user: JwtPayload) {
+    // F10-003: mirror findAllForUser's DRIVER denial — drivers have no business
+    // reading credit notes, and the single-item read must not fall through to a
+    // full credit note the way it did before this guard.
+    if (user.role === "DRIVER") throw new ForbiddenException();
     const cn = await this.findOne(id);
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma

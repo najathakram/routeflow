@@ -26,7 +26,10 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { Reflector } from "@nestjs/core";
 import { OrdersService } from "./orders.service";
+import { OrdersController } from "./orders.controller";
+import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -274,6 +277,138 @@ describe("OrdersService", () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-other" });
 
       await expect(service.findOne("ord-1", customerPayload)).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ─── Security: F2-005 (driver order-detail scope + urgent) / F10-002 ────────
+  describe("security — F2-005 / F10-002", () => {
+    const driverPayload = {
+      sub: "user-drv",
+      username: "driver1",
+      role: "DRIVER" as const,
+      status: "ACTIVE" as const,
+      forcePasswordChange: false,
+    };
+
+    // ── F2-005: findOne driver-ownership gate ──────────────────────────────
+    it("F2-005: DRIVER cannot read an order on another driver's run (403)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        routeRun: { status: "SCHEDULED", startedAt: null, driverId: "drv-2" },
+        revisions: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+      await expect(service.findOne("ord-1", driverPayload)).rejects.toThrow(ForbiddenException);
+    });
+
+    it("F2-005: DRIVER cannot read an order that is not on any run (403)", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, routeRun: null, revisions: [] });
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+      await expect(service.findOne("ord-1", driverPayload)).rejects.toThrow(ForbiddenException);
+    });
+
+    it("F2-005: DRIVER CAN read an order on a run they are assigned to (200)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        routeRun: { status: "SCHEDULED", startedAt: null, driverId: "drv-1" },
+        revisions: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+      const result = await service.findOne("ord-1", driverPayload);
+      expect(result.id).toBe("ord-1");
+    });
+
+    it("F2-005: OPERATOR still reads any order without a driver lookup", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, revisions: [] });
+      const result = await service.findOne("ord-1", operatorPayload);
+      expect(result.id).toBe("ord-1");
+      expect(prisma.driver.findFirst).not.toHaveBeenCalled();
+    });
+
+    // ── F2-005: DRIVER denied on PATCH /:id/urgent at the controller guard ──
+    it("F2-005: toggleUrgent @Roles excludes DRIVER (OPERATOR + CUSTOMER only)", () => {
+      const roles = new Reflector().get(ROLES_KEY, OrdersController.prototype.toggleUrgent);
+      expect(roles).toEqual([UserRole.OPERATOR, UserRole.CUSTOMER]);
+      expect(roles).not.toContain(UserRole.DRIVER);
+    });
+
+    // ── F10-002: a CUSTOMER edit of a CONFIRMED order forces re-confirmation ─
+    const confirmedForEdit = () => ({
+      ...MOCK_ORDER,
+      status: "CONFIRMED" as const,
+      routeRun: null,
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ],
+    });
+
+    const editDto = { items: [{ id: "li-1", action: "UPDATE" as const, qty: 3, unitPrice: 5 }] };
+
+    function primeEditMocks() {
+      prisma.order.findUnique.mockResolvedValue(confirmedForEdit());
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+      // The CUSTOMER edit path re-checks order ownership inside the tx; make the
+      // signed-in customer own MOCK_ORDER (customerId "cust-1"). Ignored by the
+      // OPERATOR/DRIVER paths.
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-1",
+          name: "Tomatoes",
+          pricePerUnit: 5,
+          unit: "punnet",
+          trackedCategoryId: null,
+        },
+      ]);
+    }
+
+    it("F10-002: CUSTOMER editing a CONFIRMED order reverts it to PENDING", async () => {
+      primeEditMocks();
+
+      await service.updateOrderItems("ord-1", editDto, customerPayload);
+
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "ord-1" },
+          data: expect.objectContaining({ status: "PENDING" }),
+        }),
+      );
+    });
+
+    it("F10-002: OPERATOR editing a CONFIRMED order still reverts it to PENDING", async () => {
+      primeEditMocks();
+
+      await service.updateOrderItems("ord-1", editDto, operatorPayload);
+
+      const lastUpdate = prisma.order.update.mock.calls.at(-1)?.[0];
+      expect(lastUpdate.data.status).toBe("PENDING");
+    });
+
+    it("F10-002: a DRIVER edit does NOT silently revert the order", async () => {
+      primeEditMocks();
+
+      await service.updateOrderItems("ord-1", editDto, driverPayload);
+
+      const lastUpdate = prisma.order.update.mock.calls.at(-1)?.[0];
+      expect(lastUpdate.data.status).toBeUndefined();
     });
   });
 

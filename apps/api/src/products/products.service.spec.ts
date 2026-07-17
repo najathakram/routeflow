@@ -435,13 +435,18 @@ describe("ProductsService", () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it("isolates per-item failures — one bad row doesn't abort the rest", async () => {
+    it("isolates per-item failures — surfaces validation messages, masks raw errors (F8-003)", async () => {
       prisma.product.findUnique.mockResolvedValue({ id: "parent-1", parentProductId: null });
       const update = jest
         .spyOn(service, "update")
         .mockResolvedValueOnce({} as any)
+        // Intentional app validation (HttpException) → the user-facing message is kept.
         .mockRejectedValueOnce(
-          new Error('A variant named "Grape" already exists for this product'),
+          new BadRequestException('A variant named "Grape" already exists for this product'),
+        )
+        // A raw/unknown error (e.g. a Prisma constraint) → GENERIC reason, no disclosure.
+        .mockRejectedValueOnce(
+          new Error('Unique constraint failed on the fields: ("tenantId","sku")'),
         );
 
       const result = await service.bulkAssignParent({
@@ -449,6 +454,7 @@ describe("ProductsService", () => {
         assignments: [
           { id: "prod-a", variantName: "Strawberry" },
           { id: "prod-b", variantName: "Grape" },
+          { id: "prod-c", variantName: "Apple" },
         ],
       } as any);
 
@@ -456,6 +462,7 @@ describe("ProductsService", () => {
         succeeded: ["prod-a"],
         failed: [
           { id: "prod-b", reason: 'A variant named "Grape" already exists for this product' },
+          { id: "prod-c", reason: "Update failed" }, // raw Prisma text NOT disclosed
         ],
       });
       // Each row goes through the full update() path, variant name doubling as `name`.

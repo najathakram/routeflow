@@ -825,6 +825,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
+    // F10-004: reject non-positive amounts. A negative/zero payment would reduce
+    // totalPaid and could flip the bill's status, corrupting AP balances. The
+    // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
+    if (!(Number(dto.amount) > 0)) {
+      throw new BadRequestException("Payment amount must be greater than zero.");
+    }
     return this.prisma.tenantTransaction(async (tx) => {
       const bill = await tx.vendorBill.findUnique({ where: { id }, include: { payments: true } });
       if (!bill) throw new NotFoundException("Bill not found");

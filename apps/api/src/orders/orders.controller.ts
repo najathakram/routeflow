@@ -256,7 +256,11 @@ export class OrdersController {
     return this.ordersService.updateShipment(id, dto, user);
   }
 
+  // F2-005: drivers have no business flipping order urgency — restrict to the
+  // office and the owning customer (service still enforces CUSTOMER own-order).
   @Patch(":id/urgent")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   toggleUrgent(
     @Param("id") id: string,
     @Body() body: { urgent?: boolean },

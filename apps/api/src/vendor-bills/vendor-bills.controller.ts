@@ -19,6 +19,9 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { VendorBillsService } from "./vendor-bills.service";
+import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
+import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
+import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -26,7 +29,7 @@ import { VendorBillsService } from "./vendor-bills.service";
 export class VendorBillsController {
   constructor(private readonly vendorBillsService: VendorBillsService) {}
 
-  @Post() create(@Body() dto: any) {
+  @Post() create(@Body() dto: CreateVendorBillDto) {
     return this.vendorBillsService.create(dto);
   }
 
@@ -114,7 +117,7 @@ export class VendorBillsController {
     return this.vendorBillsService.findOne(id);
   }
 
-  @Patch(":id") updateBill(@Param("id") id: string, @Body() dto: any) {
+  @Patch(":id") updateBill(@Param("id") id: string, @Body() dto: UpdateVendorBillDto) {
     return this.vendorBillsService.update(id, dto);
   }
 
@@ -134,7 +137,10 @@ export class VendorBillsController {
     return this.vendorBillsService.voidBill(id, user.id);
   }
 
-  @Post(":id/payments") recordPayment(@Param("id") id: string, @Body() dto: any) {
+  @Post(":id/payments") recordPayment(
+    @Param("id") id: string,
+    @Body() dto: RecordVendorBillPaymentDto,
+  ) {
     return this.vendorBillsService.recordPayment(id, dto);
   }
 
