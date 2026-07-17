@@ -35,9 +35,10 @@ export interface SaleLedgerLine {
  * voidInvoice/deleteInvoice reverse them, and the reconcile paths
  * (reconcileOrderDraftInvoice / reconcileOrderDeliveredInvoices, via
  * InvoicesService#resyncInvoiceLedger) re-sync them to the rebuilt qty by
- * reversing the prior SALE rows and writing fresh ones. STILL NOT wired (deferred):
- * the manual `create` and `createPartialFromOrder` paths — a regulated invoice
- * created via those writes no ledger rows today.
+ * reversing the prior SALE rows and writing fresh ones. RF-1: the manual `create`
+ * path now writes SALE rows too (orderId null) and the DRAFT `update` path re-syncs
+ * them. STILL NOT wired (deferred): `createPartialFromOrder` — a regulated PARTIAL
+ * invoice writes no ledger rows until a later delivered-basis reconcile rewrites it.
  */
 @Injectable()
 export class RegulatedLedgerService {
