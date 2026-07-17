@@ -258,10 +258,10 @@ export default function OrderDetailScreen() {
 
   const s = statusPill(order.status);
   const actions = statusActions(order.status);
-  // Mirror the API guard (updateOrderItems allows DRAFT/PENDING/CONFIRMED).
-  // DRAFT was previously omitted, so draft orders showed no Edit option at all.
-  const canEdit =
-    order.status === "DRAFT" || order.status === "PENDING" || order.status === "CONFIRMED";
+  // R1: trust the server edit-window — items are now editable at every live stage
+  // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
+  // non-cancelled check for older API responses that don't send editWindow.
+  const canEdit = order.editWindow?.editable ?? order.status !== "CANCELLED";
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const toastError = (e: unknown, fallback = "Try again.") => {
@@ -294,6 +294,23 @@ export default function OrderDetailScreen() {
     });
   };
 
+  /**
+   * R4: after confirming an order, jump straight to its (draft) invoice for
+   * convenience — the operator can tap back to return to the order. from-order is
+   * idempotent get-or-create; `push` (not `replace`) keeps the order underneath so
+   * the invoice screen's back button returns here.
+   */
+  const openInvoiceForOrder = () => {
+    createInvoiceMut.mutate(order.id, {
+      onSuccess: (invoices) => {
+        const inv = invoices[0];
+        if (inv) router.push(`/(operator)/invoices/${inv.id}` as any);
+        else showToast("Invoice ready — open it from the Invoices tab.");
+      },
+      onError: (e) => toastError(e, "Order confirmed. Open the invoice from the Invoices tab."),
+    });
+  };
+
   const handleStatusChange = (action: StatusAction) => {
     const onDone = (msg: string) => ({
       onSuccess: () => {
@@ -315,6 +332,8 @@ export default function OrderDetailScreen() {
             refetch();
             // Post-delivery: offer to send the invoice (any path into DELIVERED).
             if (action.toStatus === "DELIVERED") openSendForOrder();
+            // R4: on confirm, auto-open the (draft) invoice for convenience.
+            else if (action.toStatus === "CONFIRMED") openInvoiceForOrder();
           },
           onError: (e: unknown) => toastError(e),
         },
@@ -618,6 +637,55 @@ export default function OrderDetailScreen() {
             </View>
           </View>
 
+          {/* R3: Invoice — mirror web's Invoice card. A CONFIRMED (or later) order
+              can already have a draft invoice; surface it so mobile can open it, or
+              generate one on demand. Hidden on DRAFT/CANCELLED (nothing to bill). */}
+          {order.status !== "DRAFT" && order.status !== "CANCELLED" ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>
+                {(order.invoices?.length ?? 0) > 1 ? "Invoices" : "Invoice"}
+              </Text>
+              {(order.invoices?.length ?? 0) > 0 ? (
+                order.invoices!.map((inv, i) => (
+                  <Pressable
+                    key={inv.id}
+                    style={[
+                      styles.invoiceRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                    onPress={() => router.push(`/(operator)/invoices/${inv.id}` as any)}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.invoiceNumber} numberOfLines={1}>
+                        {inv.invoiceNumber}
+                      </Text>
+                      <Text style={styles.itemSub}>{inv.status.toLowerCase()}</Text>
+                    </View>
+                    <Text style={styles.itemTotal}>{formatCurrency(inv.total)}</Text>
+                    <Ionicons name="chevron-forward" size={16} color={ios.label2} />
+                  </Pressable>
+                ))
+              ) : (
+                <>
+                  <Text style={styles.empty}>No invoice yet.</Text>
+                  <Pressable
+                    style={[styles.actionBtn, styles.secondaryAction]}
+                    onPress={openInvoiceForOrder}
+                    disabled={createInvoiceMut.isPending}
+                  >
+                    <Ionicons name="document-text-outline" size={18} color={ios.brand} />
+                    <Text style={styles.actionBtnText}>
+                      {createInvoiceMut.isPending ? "Preparing…" : "Generate invoice"}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          ) : null}
+
           {/* Carrier shipment */}
           <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
 
@@ -804,6 +872,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  invoiceRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
+  invoiceNumber: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

@@ -183,9 +183,20 @@ export class RecurringInvoicesService {
       })),
     });
 
-    // If autoSend, send the invoice
+    // If autoSend, actually EMAIL the invoice to the customer. R5: this previously used
+    // the mark-as-sent-only path (`send`), so the invoice flipped to SENT without any
+    // email going out — despite the "Auto-send generated invoices to customer" setting.
+    // Failures (no email on file, email not configured, send error) are logged and leave
+    // the invoice as a DRAFT for the operator to send manually — never a dishonest SENT.
     if (ri.autoSend) {
-      await this.invoicesService.send(invoice.id);
+      try {
+        await this.invoicesService.sendEmail(invoice.id);
+      } catch (err: any) {
+        const reason = err?.response?.code ?? err?.message ?? "unknown error";
+        this.logger.warn(
+          `Recurring invoice ${invoice.id} generated but auto-send email failed (${reason}) — left as DRAFT.`,
+        );
+      }
     }
 
     // Update recurringInvoice.recurringInvoiceId on the new invoice

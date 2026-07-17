@@ -1458,8 +1458,10 @@ function CartModal({
   onAddUnlisted: () => void;
   onSave: () => void;
 }) {
-  // Stable iteration order: name asc, so the cart doesn't reshuffle as the
-  // operator edits a row.
+  // R2: preserve SCAN order. `items` is a UUID-keyed Record whose insertion order
+  // is first-scan order (a repeat scan updates the existing key in place, a new
+  // scan appends), so iterate Object.entries as-is — no alphabetical re-sort, which
+  // previously made scanned lines hard to verify against the (scan-ordered) invoice.
   const rows = useMemo(() => {
     const list: { id: string; product: Product; line: LineState }[] = [];
     for (const [id, line] of Object.entries(items)) {
@@ -1467,7 +1469,6 @@ function CartModal({
       if (!product) continue;
       list.push({ id, product, line });
     }
-    list.sort((a, b) => displayName(a.product).localeCompare(displayName(b.product)));
     return list;
   }, [items, productById]);
 

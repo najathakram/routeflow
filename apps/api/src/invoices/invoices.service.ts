@@ -1118,6 +1118,7 @@ export class InvoicesService {
     pairs: Array<{ draft: any; lines: any[] }>,
     basis: "order" | "delivered",
     db: any,
+    opts?: { preserveStatus?: boolean },
   ): Promise<any[]> {
     const tenantId = this.prisma.getTenantId();
     const customer = await db.customer.findUnique({
@@ -1182,6 +1183,25 @@ export class InvoicesService {
 
     const updated: any[] = [];
     for (const pd of perDraft) {
+      // Status: the sibling-draft callers force DRAFT (open pending mirrors). R1's
+      // post-delivery edit resync passes preserveStatus so a finalized/paid invoice
+      // KEEPS its lifecycle — recompute it from its retained payments against the new
+      // total (recomputeStatus leaves DRAFT/VOID/WRITTEN_OFF terminal, so an open draft
+      // still stays DRAFT). This is what surfaces the "new balance" on a paid edit.
+      let nextStatus: InvoiceStatus = InvoiceStatus.DRAFT;
+      if (opts?.preserveStatus) {
+        // Exclude VOID payments (a bounced check reverses to VOID) — mirrors the
+        // balanceDue math in findAll/findOne so the recomputed status agrees.
+        const paid = (pd.draft.payments ?? [])
+          .filter((p: any) => p.status !== "VOID")
+          .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+        nextStatus = this.recomputeStatus(
+          paid,
+          pd.total,
+          pd.draft.dueDate ?? null,
+          pd.draft.status,
+        );
+      }
       await db.invoiceItem.deleteMany({ where: { invoiceId: pd.draft.id } });
       const inv = await db.invoice.update({
         where: { id: pd.draft.id },
@@ -1189,7 +1209,9 @@ export class InvoicesService {
           subtotal: pd.subtotal,
           taxAmount: pd.taxAmount,
           total: pd.total,
-          status: InvoiceStatus.DRAFT,
+          status: nextStatus,
+          // Invalidate a cached PDF only when the invoice is (re)opened as a DRAFT; a
+          // preserved finalized invoice keeps regenerating on demand anyway.
           pdfUrl: null,
           items: { create: pd.itemsData },
         },
@@ -1211,6 +1233,148 @@ export class InvoicesService {
       }
     }
     return updated;
+  }
+
+  /**
+   * R1 — re-sync an order's linked invoice(s) after a POST-DELIVERY edit. Where
+   * reconcileOrderDraftInvoice only touches the open pending-mirror DRAFT, this also
+   * rebuilds SENT / PAID / OVERDUE / delivery-batch invoices IN PLACE:
+   *   • each invoice is rebuilt from its OWN order lines at the edited order qty
+   *     (basis "order"), via the shared rebuildSiblingDrafts core;
+   *   • the regulated-sales ledger re-syncs to the new qty (resyncInvoiceLedger);
+   *   • payments are KEPT and status/balance recompute from them (preserveStatus) —
+   *     a paid invoice simply shows the new balance (owes more, or is over-paid);
+   *   • a NEW line added during the edit (no invoice provenance yet) attaches to the
+   *     invoice that already bills its regulated category (its -R# sibling; the base
+   *     for standard lines) so a SEPARATE_INVOICE split keeps one-invoice-per-category,
+   *     falling back to the order's primary invoice — so it is billed + ledgered rather
+   *     than dropped.
+   *
+   * Returns the updated invoices, or NULL when the order has no linked non-void
+   * invoice, or when the partition is not clean/provable (a line shared across two
+   * invoices, or an invoice line with no orderItemId provenance) — in which case it
+   * BAILS rather than risk a double-bill, leaving the invoices as-is. Runs in its own
+   * transaction when none is supplied (mirrors the post-commit reconcile call site).
+   *
+   * PRECONDITION (caller-enforced): the order must be either wholly un-invoiced OR
+   * wholly invoiced (EVERY billable line's cumulative invoicedQty == its qty) — never
+   * partially invoiced, whether that's a line billed for only part of its qty OR a
+   * subset of lines billed at full qty while others are un-invoiced. `updateOrderItems`
+   * gates this on the pre-edit invoicedQty (`anyInvoiced && !allFullyInvoiced` → skip),
+   * because this method rebuilds each invoice at the full current line qty and would
+   * otherwise expand an already-issued invoice to cover units/lines it never billed.
+   */
+  async resyncOrderInvoicesForEdit(orderId: string, tx?: any): Promise<any[] | null> {
+    const run = async (db: any): Promise<any[] | null> => {
+      const invoices = await db.invoice.findMany({
+        where: { orderId, status: { not: InvoiceStatus.VOID } },
+        // invoiceNumber tiebreak: split siblings share a createdAt (one tx timestamp),
+        // so createdAt alone is non-deterministic for picking the primary/base.
+        orderBy: [{ createdAt: "asc" }, { invoiceNumber: "asc" }],
+        select: {
+          id: true,
+          status: true,
+          deliveryBatchId: true,
+          discount: true,
+          shippingFee: true,
+          dueDate: true,
+          items: { select: { orderItemId: true } },
+          payments: { select: { amount: true, status: true } },
+        },
+      });
+      if (invoices.length === 0) return null;
+
+      // Can't prove which order line a provenance-less (manual/freeform) invoice line
+      // bills → can't safely rebuild it. Bail conservatively.
+      const hasUntracked = (i: any) => (i.items ?? []).some((it: any) => !it.orderItemId);
+      if (invoices.some(hasUntracked)) return null;
+
+      // Map each order line → the ONE invoice that already bills it. A line shared by
+      // two invoices is an unclean partition (double-bill risk) → bail.
+      const invoiceByLine = new Map<string, string>();
+      for (const inv of invoices) {
+        for (const it of inv.items ?? []) {
+          const oid = it.orderItemId as string;
+          if (invoiceByLine.has(oid)) return null; // shared → unclean
+          invoiceByLine.set(oid, inv.id);
+        }
+      }
+
+      const order = await db.order.findUnique({
+        where: { id: orderId },
+        include: {
+          lineItems: {
+            where: { status: { not: "CANCELLED" } },
+            include: {
+              product: {
+                select: {
+                  name: true,
+                  unitsPerBox: true,
+                  trackedCategoryId: true,
+                  trackedSubcategoryId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!order) return null;
+
+      // Primary invoice new (unprovenanced) lines fall back to: the sole open pending
+      // mirror if present, else the earliest invoice. For a single-invoice order this
+      // is simply that one invoice, so it bills every current line.
+      const primaryId =
+        invoices.find((i: any) => i.status === InvoiceStatus.DRAFT && i.deliveryBatchId == null)
+          ?.id ?? invoices[0].id;
+
+      // Category → the invoice that already bills that regulated category (built from
+      // each invoice's provenance-owned lines; "" = standard/non-regulated). A NEW line
+      // attaches to its category's invoice so a SEPARATE_INVOICE split keeps regulated
+      // lines on their -R# sibling instead of co-mingling onto the base. A category
+      // billed by two invoices is ambiguous → its new lines fall back to primary.
+      const categoryOwner = new Map<string, string>();
+      const categoryAmbiguous = new Set<string>();
+      for (const li of order.lineItems) {
+        const owner = invoiceByLine.get(li.id);
+        if (!owner) continue; // unprovenanced line — nothing to map from yet
+        const cat = li.trackedCategoryId ?? "";
+        const prev = categoryOwner.get(cat);
+        if (prev === undefined) categoryOwner.set(cat, owner);
+        else if (prev !== owner) categoryAmbiguous.add(cat);
+      }
+
+      const linesByInvoice = new Map<string, any[]>();
+      for (const inv of invoices) linesByInvoice.set(inv.id, []);
+      for (const li of order.lineItems) {
+        const cat = li.trackedCategoryId ?? "";
+        const invId =
+          invoiceByLine.get(li.id) ??
+          (categoryAmbiguous.has(cat) ? undefined : categoryOwner.get(cat)) ??
+          primaryId;
+        linesByInvoice.get(invId)!.push(li);
+      }
+      const pairs = invoices.map((inv: any) => ({
+        draft: inv,
+        lines: linesByInvoice.get(inv.id) ?? [],
+      }));
+
+      const updated = await this.rebuildSiblingDrafts(order, pairs, "order", db, {
+        preserveStatus: true,
+      });
+
+      // Clear invoicedQty on any order line NO LONGER billed (removed / soft-cancelled
+      // during the edit) — rebuildSiblingDrafts only re-sets the lines it rebuilt.
+      const billedIds = new Set<string>(order.lineItems.map((li: any) => li.id));
+      const allLines = await db.orderItem.findMany({ where: { orderId }, select: { id: true } });
+      for (const ol of allLines) {
+        if (!billedIds.has(ol.id)) {
+          await db.orderItem.update({ where: { id: ol.id }, data: { invoicedQty: 0 } });
+        }
+      }
+      return updated;
+    };
+
+    return tx ? run(tx) : this.prisma.tenantTransaction(run);
   }
 
   /**
@@ -2245,6 +2409,18 @@ export class InvoicesService {
         "No email address on file for this customer. Provide an email address.",
       );
 
+    // R5: fail FAST when no email transport is configured — don't generate a PDF, don't
+    // mark the invoice SENT, and (critically) don't tell the operator it was emailed when
+    // it wasn't. Guide them to configure it. The "configured but the send failed" case is
+    // caught after the attempt below.
+    if (!(await this.emailService.isEmailConfigured())) {
+      throw new BadRequestException({
+        code: "EMAIL_NOT_CONFIGURED",
+        message:
+          "Email isn't set up yet, so the invoice wasn't emailed. Configure your email/SMTP settings under Settings → Email, then try again.",
+      });
+    }
+
     // Get PDF URL (non-blocking — include in email if available). `variant`
     // controls whether the DRAFT proforma or the FINAL invoice is attached.
     let pdfUrl: string | undefined;
@@ -2256,7 +2432,7 @@ export class InvoicesService {
       );
     }
 
-    await this.emailService.sendInvoice({
+    const sendResult = await this.emailService.sendInvoice({
       to: recipientEmail,
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
@@ -2285,6 +2461,17 @@ export class InvoicesService {
       pdfUrl,
       isReminder: false,
     });
+
+    // R5: the email server was configured but the actual send did NOT succeed
+    // (bad SMTP credentials, Resend rejected the domain/key, etc.). Do NOT mark the
+    // invoice SENT or return success — surface the real failure so the operator can fix
+    // it in Settings → Email rather than believing the customer received the invoice.
+    if (!sendResult.delivered) {
+      throw new BadRequestException({
+        code: "EMAIL_SEND_FAILED",
+        message: `The invoice couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
+      });
+    }
 
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx.
@@ -2348,6 +2535,15 @@ export class InvoicesService {
         "No email address on file for this customer. Provide an email address.",
       );
 
+    // R5: don't claim a reminder was sent when email isn't set up.
+    if (!(await this.emailService.isEmailConfigured())) {
+      throw new BadRequestException({
+        code: "EMAIL_NOT_CONFIGURED",
+        message:
+          "Email isn't set up yet, so the reminder wasn't sent. Configure your email/SMTP settings under Settings → Email, then try again.",
+      });
+    }
+
     let pdfUrl: string | undefined;
     try {
       pdfUrl = await this.pdfService.getOrGenerate(id);
@@ -2355,7 +2551,7 @@ export class InvoicesService {
       /* non-critical */
     }
 
-    await this.emailService.sendInvoice({
+    const sendResult = await this.emailService.sendInvoice({
       to: recipientEmail,
       customerName: inv.customer?.businessName ?? "Customer",
       invoiceNumber: inv.invoiceNumber,
@@ -2384,6 +2580,13 @@ export class InvoicesService {
       pdfUrl,
       isReminder: true,
     });
+
+    if (!sendResult.delivered) {
+      throw new BadRequestException({
+        code: "EMAIL_SEND_FAILED",
+        message: `The reminder couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
+      });
+    }
 
     return { success: true, sentTo: recipientEmail };
   }

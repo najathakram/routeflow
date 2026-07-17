@@ -82,11 +82,27 @@ export class BuyerMergeService {
     const appUrl = process.env.WEB_APP_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3001";
     const verifyUrl = `${appUrl}/buyer/verify-merge?token=${token}`;
 
-    await this.emailService.sendMergeVerificationEmail({
+    const sendResult = await this.emailService.sendMergeVerificationEmail({
       to: secondary.email,
       primaryEmail: primary.email,
       verifyUrl,
     });
+
+    // R5: the whole flow hinges on the secondary account receiving the verify link. If
+    // the email didn't actually go out, DON'T tell the buyer it "has been sent" — roll
+    // back the (now unverifiable) pending request and surface an honest error.
+    if (!sendResult.delivered) {
+      await this.prisma.buyerMergeRequest
+        .delete({ where: { id: mergeRequest.id } })
+        .catch(() => {});
+      throw new BadRequestException({
+        code: sendResult.transport === "none" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_SEND_FAILED",
+        message:
+          sendResult.transport === "none"
+            ? "Email isn't set up, so the verification email couldn't be sent. Ask the seller to configure email under Settings → Email, then try again."
+            : "The verification email couldn't be sent right now. Please try again later.",
+      });
+    }
 
     return {
       id: mergeRequest.id,

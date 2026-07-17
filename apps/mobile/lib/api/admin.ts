@@ -169,6 +169,18 @@ export interface AdminOrder {
       pricePerUnit?: number | string;
     };
   }>;
+  /**
+   * Invoices linked to this order (present on non-DRAFT orders — the API returns
+   * them from GET /orders/:id). Mirrors web's Invoice card: a CONFIRMED order can
+   * already have a draft invoice, which mobile now surfaces + can open.
+   */
+  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
+  /**
+   * P5-08 edit-window descriptor (server-computed). `editable` is the single source
+   * of truth for whether items can be edited — mobile trusts it instead of
+   * re-deriving from status, so it tracks the API gate (incl. post-delivery edits).
+   */
+  editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null };
 }
 
 export function useAdminOrders(params?: {

@@ -57,3 +57,67 @@ describe("RecurringInvoicesService (pause/resume)", () => {
     expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
   });
 });
+
+// R5 — auto-send must ACTUALLY email the customer (was mark-as-sent-only, which flipped
+// the invoice to SENT without any email despite the "Auto-send to customer" setting).
+describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = (autoSend: boolean) => ({
+    id: "ri-1",
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: invoices },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+  });
+
+  it("auto-send EMAILS the invoice (sendEmail), not the mark-as-sent-only path", async () => {
+    await (service as any).generateInvoiceFromTemplate(template(true));
+    expect(invoices.sendEmail).toHaveBeenCalledWith("inv-1");
+    expect(invoices.send).not.toHaveBeenCalled();
+  });
+
+  it("does NOT send anything when autoSend is off", async () => {
+    await (service as any).generateInvoiceFromTemplate(template(false));
+    expect(invoices.sendEmail).not.toHaveBeenCalled();
+    expect(invoices.send).not.toHaveBeenCalled();
+  });
+
+  it("still completes generation (no throw) and advances the schedule when the email fails", async () => {
+    invoices.sendEmail.mockRejectedValueOnce({ response: { code: "EMAIL_NOT_CONFIGURED" } });
+    await expect(
+      (service as any).generateInvoiceFromTemplate(template(true)),
+    ).resolves.toBeDefined();
+    // The invoice is left generated (DRAFT) and the template's nextRunAt still advances.
+    expect(prisma.recurringInvoice.update).toHaveBeenCalled();
+  });
+});
