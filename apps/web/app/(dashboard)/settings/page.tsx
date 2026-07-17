@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import * as Tabs from "@radix-ui/react-tabs";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -41,6 +40,7 @@ import {
   Truck,
   ShieldCheck,
   Landmark,
+  ArrowLeft,
 } from "lucide-react";
 import {
   Input,
@@ -67,7 +67,6 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { useImportProducts, type ZohoImportItem } from "@/lib/api/products";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 import { useTenant } from "@/components/tenant-provider";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
@@ -80,32 +79,9 @@ import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function TabTrigger({
-  value,
-  icon,
-  children,
-}: {
-  value: string;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Tabs.Trigger
-      value={value}
-      className={cn(
-        "-mb-px flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors",
-        "border-transparent text-navy/70 hover:text-navy",
-        "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
-      )}
-    >
-      {icon && <span className="shrink-0">{icon}</span>}
-      {children}
-    </Tabs.Trigger>
-  );
-}
+import { SettingsHub } from "./_components/SettingsHub";
+import NextLink from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -852,633 +828,6 @@ function UserManagementTab() {
         onClose={() => setEditingUser(null)}
         user={editingUser}
       />
-    </div>
-  );
-}
-
-// ─── TAB 4: Import ────────────────────────────────────────────────────────────
-
-// ── Zoho CSV parser (products) ──────────────────────────────────────────────
-
-function splitCsvRows(text: string): string[] {
-  const rows: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') {
-      if (inQuotes && text[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-        current += ch;
-      }
-    } else if ((ch === "\r" || ch === "\n") && !inQuotes) {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      if (current.trim()) rows.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  if (current.trim()) rows.push(current);
-  return rows;
-}
-
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === "," && !inQuotes) {
-      result.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
-  }
-  result.push(current);
-  return result;
-}
-
-function parseZohoCsv(text: string): ZohoImportItem[] {
-  const rows = splitCsvRows(text);
-  if (rows.length < 2) return [];
-  const headers = parseCSVLine(rows[0].replace(/^\uFEFF/, ""));
-  const colAlt = (row: string[], ...keys: string[]): string => {
-    for (const key of keys) {
-      const idx = headers.indexOf(key);
-      if (idx >= 0) return (row[idx] ?? "").trim();
-    }
-    return "";
-  };
-  const parsePrice = (raw: string): string | undefined => {
-    const cleaned = raw
-      .replace(/^USD\s*/i, "")
-      .replace(/,/g, "")
-      .trim();
-    const num = parseFloat(cleaned);
-    return isNaN(num) ? undefined : num.toFixed(2);
-  };
-  const items: ZohoImportItem[] = [];
-  for (let i = 1; i < rows.length; i++) {
-    const row = parseCSVLine(rows[i]);
-    if (row.every((c) => c === "")) continue;
-    const name = colAlt(row, "Item Name");
-    if (!name) continue;
-    const pricePerUnit = parsePrice(colAlt(row, "Selling Price", "Rate"));
-    if (!pricePerUnit) continue;
-    const unit = colAlt(row, "Unit Name", "Unit", "Usage unit") || "pcs";
-    const rawSku = colAlt(row, "SKU");
-    const sku = rawSku || undefined;
-    const upc = colAlt(row, "UPC");
-    const ean = colAlt(row, "EAN");
-    const skuLooksLikeBarcode = !!rawSku && /^\d{8,14}$/.test(rawSku);
-    const barcode = upc || ean || (skuLooksLikeBarcode ? rawSku : undefined) || undefined;
-    const description = colAlt(row, "Sales Description", "Description") || undefined;
-    const category = colAlt(row, "Category Name") || undefined;
-    const statusRaw = colAlt(row, "Status");
-    const isActive = statusRaw === "" ? true : statusRaw.toLowerCase() === "active";
-    const stockRaw = colAlt(row, "Stock On Hand", "Opening Stock");
-    const stockNum = parseFloat(stockRaw.replace(/,/g, ""));
-    const currentStock = !isNaN(stockNum) ? stockNum.toFixed(3) : undefined;
-    const averageCost = parsePrice(colAlt(row, "Purchase Price"));
-    const reorderNum = parseInt(colAlt(row, "Reorder Level"), 10);
-    const reorderPoint = !isNaN(reorderNum) ? reorderNum : undefined;
-    items.push({
-      name,
-      sku,
-      barcode,
-      unit,
-      pricePerUnit,
-      category,
-      description,
-      isActive,
-      currentStock,
-      averageCost,
-      reorderPoint,
-    });
-  }
-  return items;
-}
-
-// ── Products import card ────────────────────────────────────────────────────
-
-type ProductImportRow = { row: number; name: string; reason: string };
-
-function ProductsImportCard() {
-  const importProducts = useImportProducts();
-  const { toast } = useToast();
-  const [parsedItems, setParsedItems] = React.useState<ZohoImportItem[]>([]);
-  const [parseError, setParseError] = React.useState<string | null>(null);
-  const [fileName, setFileName] = React.useState<string>("");
-  const [result, setResult] = React.useState<{
-    created: number;
-    skipped: number;
-    errors: ProductImportRow[];
-  } | null>(null);
-  const [showErrors, setShowErrors] = React.useState(false);
-  const fileRef = React.useRef<HTMLInputElement>(null);
-
-  const handleFile = (file: File) => {
-    if (!file.name.endsWith(".csv")) {
-      setParseError("Please upload a .csv file exported from Zoho.");
-      return;
-    }
-    setParseError(null);
-    setResult(null);
-    setParsedItems([]);
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const items = parseZohoCsv(e.target?.result as string);
-        if (items.length === 0) {
-          setParseError("No valid items found. Make sure you exported Items from Zoho Inventory.");
-          return;
-        }
-        setParsedItems(items);
-      } catch {
-        setParseError("Failed to parse CSV. Please check the file format.");
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const handleImport = async () => {
-    try {
-      const res = await importProducts.mutateAsync(parsedItems);
-      setResult(res);
-      toast({
-        title: "Products imported",
-        description: `${res.created} created, ${res.skipped} skipped`,
-        variant: "success",
-      });
-    } catch (err: unknown) {
-      toast({
-        title: "Import failed",
-        description: (err as { message?: string })?.message ?? "Please try again",
-        variant: "error",
-      });
-    }
-  };
-
-  return (
-    <div className="col-span-2 rounded-xl border border-surface-border bg-white overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-surface-border p-4">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-brand-500 bg-brand-50">
-          <Package className="h-5 w-5" />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-navy">Products (Items)</p>
-          <p className="text-xs text-navy/70">
-            Import products and pricing from Zoho Inventory Items CSV export
-          </p>
-        </div>
-        {result && (
-          <div className="flex items-center gap-1.5 text-xs shrink-0">
-            <span className="flex items-center gap-1 text-success">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              {result.created} created
-            </span>
-            {result.skipped > 0 && (
-              <span className="flex items-center gap-1 text-warning ml-2">
-                <Bell className="h-3.5 w-3.5" />
-                {result.skipped} skipped
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="p-4 space-y-3">
-        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
-          <Bell className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
-          <span>
-            <strong className="text-navy/70">How to export:</strong> Zoho Inventory → Items → ☰ →
-            Export Items → CSV
-          </span>
-        </div>
-        <div
-          onDrop={(e) => {
-            e.preventDefault();
-            const f = e.dataTransfer.files[0];
-            if (f) handleFile(f);
-          }}
-          onDragOver={(e) => e.preventDefault()}
-          onClick={() => fileRef.current?.click()}
-          className={cn(
-            "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors",
-            parsedItems.length > 0
-              ? "border-brand-300 bg-brand-50"
-              : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-          )}
-        >
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
-            }}
-          />
-          <Upload
-            className={cn("h-6 w-6", parsedItems.length > 0 ? "text-brand-500" : "text-navy/30")}
-          />
-          {parsedItems.length > 0 ? (
-            <div className="text-center">
-              <p className="text-sm font-medium text-brand-600">{fileName}</p>
-              <p className="text-xs text-navy/70">
-                {parsedItems.length} items parsed · Click to change file
-              </p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-sm text-navy/70">
-                Drop Zoho Items CSV here or <span className="text-brand-500">browse</span>
-              </p>
-              <p className="text-xs text-navy/70 mt-0.5">Zoho Inventory CSV export format</p>
-            </div>
-          )}
-        </div>
-        {parseError && (
-          <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-bg p-3 text-sm text-danger">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            {parseError}
-          </div>
-        )}
-        {parsedItems.length > 0 && !result && (
-          <div className="rounded-lg border border-surface-border overflow-hidden">
-            <div className="border-b border-surface-border px-3 py-2 bg-surface-raised">
-              <p className="text-xs font-medium text-navy/70">
-                {parsedItems.length} items ready — preview:
-              </p>
-            </div>
-            <div className="overflow-auto max-h-48">
-              <table className="min-w-full text-xs">
-                <thead className="sticky top-0 bg-surface-raised border-b border-surface-border">
-                  <tr>
-                    {["Name", "SKU", "Barcode", "Unit", "Price", "Category", "Stock"].map((h) => (
-                      <th
-                        key={h}
-                        className="px-3 py-2 text-left font-semibold text-navy/70 whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {parsedItems.map((item, i) => (
-                    <tr key={i} className="border-b border-surface-border hover:bg-surface-raised">
-                      <td
-                        className="px-3 py-2 font-medium text-navy max-w-[200px] truncate"
-                        title={item.name}
-                      >
-                        {item.name}
-                      </td>
-                      <td className="px-3 py-2 text-navy/70">{item.sku ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/70">{item.barcode ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/70">{item.unit}</td>
-                      <td className="px-3 py-2 text-navy/70">${item.pricePerUnit}</td>
-                      <td className="px-3 py-2 text-navy/70">{item.category ?? "—"}</td>
-                      <td className="px-3 py-2 text-navy/70">{item.currentStock ?? "0"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-        <button
-          onClick={handleImport}
-          disabled={parsedItems.length === 0 || importProducts.isPending || !!result}
-          className="w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-        >
-          {importProducts.isPending ? (
-            <span className="flex items-center justify-center gap-2">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Importing...
-            </span>
-          ) : result ? (
-            "Import complete ✓"
-          ) : parsedItems.length > 0 ? (
-            `Import ${parsedItems.length} Items`
-          ) : (
-            "Import Products (Items)"
-          )}
-        </button>
-        {result && result.errors.length > 0 && (
-          <div className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2">
-            <button
-              onClick={() => setShowErrors((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-medium text-warning"
-            >
-              <span>
-                {result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import
-              </span>
-              {showErrors ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            </button>
-            {showErrors && (
-              <ul className="mt-2 space-y-0.5 text-xs text-navy/70 max-h-32 overflow-y-auto">
-                {result.errors.slice(0, 20).map((e, i) => (
-                  <li key={i} className="truncate">
-                    • Row {e.row}: {e.name} — {e.reason}
-                  </li>
-                ))}
-                {result.errors.length > 20 && (
-                  <li className="text-navy/70">...and {result.errors.length - 20} more</li>
-                )}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const IMPORT_SECTIONS = [
-  {
-    id: "contacts",
-    label: "Customers (Contacts)",
-    description: "Import customers from Zoho Contacts CSV export",
-    endpoint: "/import/contacts",
-    icon: UsersIcon,
-    color: "text-brand-500 bg-brand-50",
-    zohoExportPath: "Zoho Invoices → Contacts → ⋮ → Export Contacts",
-  },
-  {
-    id: "inventory",
-    label: "Inventory Stock Levels",
-    description:
-      "Sync current stock quantities from Zoho Stock Summary Report (Item Name, SKU, Closing Stock)",
-    endpoint: "/import/inventory",
-    icon: BarChart3,
-    color: "text-teal-500 bg-teal-50",
-    zohoExportPath: "Zoho Inventory → Reports → Stock Summary → Export as CSV",
-  },
-  {
-    id: "invoices",
-    label: "Invoices",
-    description: "Import invoices and line items from Zoho Invoice CSV export",
-    endpoint: "/import/invoices",
-    icon: Upload,
-    color: "text-orange-500 bg-orange-50",
-    zohoExportPath: "Zoho Invoices → Invoices → ⋮ → Export Invoices",
-  },
-  {
-    id: "payments",
-    label: "Customer Payments",
-    description: "Import payment history from Zoho Customer Payments CSV",
-    endpoint: "/import/payments",
-    icon: CheckCircle2,
-    color: "text-success bg-success-bg",
-    zohoExportPath: "Zoho Invoices → Customer Payments → ⋮ → Export",
-  },
-  {
-    id: "expenses",
-    label: "Expenses",
-    description: "Import expense records from Zoho Expense CSV export",
-    endpoint: "/import/expenses",
-    icon: Building2,
-    color: "text-danger bg-danger-bg",
-    zohoExportPath: "Zoho Expense → My Expenses → Export",
-  },
-] as const;
-
-interface ImportResult {
-  imported?: number;
-  updated?: number;
-  created?: number;
-  skipped: number;
-  errors: string[];
-}
-
-function ImportCard({ section }: { section: (typeof IMPORT_SECTIONS)[number] }) {
-  const { toast } = useToast();
-  const [file, setFile] = React.useState<File | null>(null);
-  const [result, setResult] = React.useState<ImportResult | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [showErrors, setShowErrors] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const Icon = section.icon;
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) {
-      setFile(f);
-      setResult(null);
-      setShowErrors(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && f.name.endsWith(".csv")) {
-      setFile(f);
-      setResult(null);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await apiClient.post(section.endpoint, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300_000,
-      });
-      setResult(res.data);
-      // Endpoints return one of: { imported, skipped }, { updated, created, skipped },
-      // or (invoices) { imported, updated, skipped } where imported = newly-created.
-      const created = res.data.created ?? res.data.imported ?? 0;
-      const total = (res.data.updated ?? 0) + created;
-      const detail =
-        res.data.updated !== undefined
-          ? `${res.data.updated} updated, ${created} new, ${res.data.skipped} skipped`
-          : `${total} imported, ${res.data.skipped} skipped`;
-      toast({ title: `${section.label} imported`, description: detail, variant: "success" });
-    } catch (err: any) {
-      toast({
-        title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
-      <div className="flex items-center gap-3 border-b border-surface-border p-4">
-        <span
-          className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
-            section.color,
-          )}
-        >
-          <Icon className="h-5 w-5" />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-navy">{section.label}</p>
-          <p className="text-xs text-navy/70">{section.description}</p>
-        </div>
-        {result && (
-          <div className="flex items-center gap-1.5 text-xs shrink-0">
-            {result.updated !== undefined ? (
-              <>
-                <span className="flex items-center gap-1 text-success">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  {result.updated} updated
-                </span>
-                {(result.created ?? result.imported ?? 0) > 0 && (
-                  <span className="flex items-center gap-1 text-brand-500 ml-1">
-                    +{result.created ?? result.imported} new
-                  </span>
-                )}
-              </>
-            ) : (
-              <span className="flex items-center gap-1 text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                {result.imported ?? 0} imported
-              </span>
-            )}
-            {result.skipped > 0 && (
-              <span className="flex items-center gap-1 text-warning ml-2">
-                <Bell className="h-3.5 w-3.5" />
-                {result.skipped} skipped
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="p-4 space-y-3">
-        <div className="flex items-start gap-2 rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
-          <Bell className="h-3.5 w-3.5 mt-0.5 shrink-0 text-navy/70" />
-          <span>
-            <strong className="text-navy/70">How to export:</strong> {section.zohoExportPath}
-          </span>
-        </div>
-        <div
-          onDrop={handleDrop}
-          onDragOver={(e) => e.preventDefault()}
-          onClick={() => inputRef.current?.click()}
-          className={cn(
-            "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors",
-            file
-              ? "border-brand-300 bg-brand-50"
-              : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-          )}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
-          {file ? (
-            <div className="text-center">
-              <p className="text-sm font-medium text-brand-600">{file.name}</p>
-              <p className="text-xs text-navy/70">
-                {(file.size / 1024).toFixed(1)} KB · Click to change
-              </p>
-            </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-sm text-navy/70">
-                Drop CSV file here or <span className="text-brand-500">browse</span>
-              </p>
-              <p className="text-xs text-navy/70 mt-0.5">Zoho CSV export format</p>
-            </div>
-          )}
-        </div>
-        <button
-          onClick={handleImport}
-          disabled={!file || loading}
-          className="w-full rounded-lg bg-brand-500 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-        >
-          {loading ? (
-            <span className="flex items-center justify-center gap-2">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Importing... (this may take a moment)
-            </span>
-          ) : (
-            `Import ${section.label}`
-          )}
-        </button>
-        {result && result.errors.length > 0 && (
-          <div className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2">
-            <button
-              onClick={() => setShowErrors((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-medium text-warning"
-            >
-              <span>
-                {result.errors.length} error{result.errors.length > 1 ? "s" : ""} during import
-              </span>
-              {showErrors ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            </button>
-            {showErrors && (
-              <ul className="mt-2 space-y-0.5 text-xs text-navy/70 max-h-32 overflow-y-auto">
-                {result.errors.slice(0, 20).map((e, i) => (
-                  <li key={i} className="truncate">
-                    • {e}
-                  </li>
-                ))}
-                {result.errors.length > 20 && (
-                  <li className="text-navy/70">...and {result.errors.length - 20} more</li>
-                )}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ImportTab() {
-  return (
-    <div className="space-y-6 py-6">
-      <div>
-        <h2 className="text-lg font-semibold text-navy">Import from Zoho</h2>
-        <p className="mt-1 text-sm text-navy/70">
-          Import your data from Zoho exports. Follow the order below for best results:{" "}
-          <strong className="text-navy">
-            Customers → Inventory → Invoices → Payments → Expenses
-          </strong>
-        </p>
-      </div>
-      <div className="flex items-center gap-3 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3">
-        <Bell className="h-4 w-4 text-brand-500 shrink-0" />
-        <p className="text-sm text-brand-700">
-          <strong>Recommended import order:</strong> Products → Customers → Inventory → Invoices →
-          Payments → Expenses. Payments require matching invoices; Invoices require customers to
-          exist first.
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-5">
-        <ProductsImportCard />
-        {IMPORT_SECTIONS.map((section) => (
-          <ImportCard key={section.id} section={section} />
-        ))}
-      </div>
     </div>
   );
 }
@@ -2917,7 +2266,7 @@ function InvoicingTab() {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function SettingsPage() {
+function SettingsPageInner() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const { user } = useAuth();
@@ -2945,103 +2294,84 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Determine default tab from URL (e.g., /settings?tab=account)
-  const defaultTab = React.useMemo(() => {
-    if (typeof window === "undefined") return "profile";
-    return new URLSearchParams(window.location.search).get("tab") ?? "profile";
-  }, []);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const activeTab = searchParams.get("tab");
+
+  // The in-tab importer was retired in favor of the richer standalone page — keep
+  // the old `?tab=import` deep-link working by redirecting to it.
+  React.useEffect(() => {
+    if (activeTab === "import") router.replace("/settings/import");
+  }, [activeTab, router]);
+
+  // Full-hub model: no `?tab=` → the grouped-card hub; a tab → that ONE screen with a
+  // "← All settings" back link (the old tab strip is retired). Every screen component
+  // is reused unchanged, so the individual settings behave exactly as before, and the
+  // existing deep-links (?tab=email from invoices, ?tab=regulated from compliance)
+  // still land directly on their screen. Regulated stays admin-only.
+  const SECTIONS: Record<string, { title: string; node: React.ReactNode; width?: string }> = {
+    profile: { title: "Business profile", node: <BusinessProfileTab />, width: "max-w-3xl" },
+    notifications: {
+      title: "Notifications",
+      node: <NotificationsSettingsTab />,
+      width: "max-w-4xl",
+    },
+    users: { title: "User management", node: <UserManagementTab /> },
+    email: { title: "Email (SMTP)", node: <EmailSettingsTab />, width: "max-w-3xl" },
+    invoicing: { title: "Invoicing", node: <InvoicingTab />, width: "max-w-3xl" },
+    costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
+    remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
+    integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
+    ...(isAdmin
+      ? {
+          regulated: {
+            title: "Regulated sections",
+            node: <RegulatedSettingsTab />,
+            width: "max-w-3xl",
+          },
+        }
+      : {}),
+  };
+
+  const section = activeTab ? SECTIONS[activeTab] : undefined;
 
   return (
     // Centred, width-capped column so settings forms don't strand the whole
     // right half of wide screens empty.
-    <div className="mx-auto max-w-5xl space-y-0 p-6">
-      <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
-
-      <Tabs.Root defaultValue={defaultTab} className="flex flex-col">
-        <Tabs.List className="flex border-b border-surface-border">
-          <TabTrigger value="profile" icon={<Building2 className="h-4 w-4" />}>
-            Business Profile
-          </TabTrigger>
-          <TabTrigger value="notifications" icon={<Bell className="h-4 w-4" />}>
-            Notifications
-          </TabTrigger>
-          <TabTrigger value="users" icon={<UsersIcon className="h-4 w-4" />}>
-            User Management
-          </TabTrigger>
-          <TabTrigger value="import" icon={<Download className="h-4 w-4" />}>
-            Import
-          </TabTrigger>
-          <TabTrigger value="email" icon={<Mail className="h-4 w-4" />}>
-            Email
-          </TabTrigger>
-          <TabTrigger value="invoicing" icon={<FileText className="h-4 w-4" />}>
-            Invoicing
-          </TabTrigger>
-          <TabTrigger value="costing" icon={<BarChart3 className="h-4 w-4" />}>
-            Costing
-          </TabTrigger>
-          <TabTrigger value="remittance" icon={<Landmark className="h-4 w-4" />}>
-            How to Pay
-          </TabTrigger>
-          {isAdmin && (
-            <TabTrigger value="regulated" icon={<ShieldCheck className="h-4 w-4" />}>
-              Regulated
-            </TabTrigger>
-          )}
-          <TabTrigger value="integrations" icon={<Sparkles className="h-4 w-4" />}>
-            Integrations
-          </TabTrigger>
-          <TabTrigger value="account" icon={<UserCircle className="h-4 w-4" />}>
-            My Account
-          </TabTrigger>
-        </Tabs.List>
-
-        <Tabs.Content value="profile" className="mt-6 max-w-3xl focus:outline-none">
-          <BusinessProfileTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="notifications" className="mt-6 max-w-4xl focus:outline-none">
-          <NotificationsSettingsTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="users" className="mt-6 focus:outline-none">
-          <UserManagementTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="import" className="mt-0 focus:outline-none">
-          <ImportTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="email" className="mt-6 max-w-3xl focus:outline-none">
-          <EmailSettingsTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="invoicing" className="mt-6 max-w-3xl focus:outline-none">
-          <InvoicingTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="costing" className="mt-6 max-w-3xl focus:outline-none">
-          <CostingTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="remittance" className="mt-6 max-w-3xl focus:outline-none">
-          <RemittanceTab />
-        </Tabs.Content>
-
-        {isAdmin && (
-          <Tabs.Content value="regulated" className="mt-6 max-w-3xl focus:outline-none">
-            <RegulatedSettingsTab />
-          </Tabs.Content>
-        )}
-
-        <Tabs.Content value="integrations" className="mt-6 max-w-3xl focus:outline-none">
-          <AIIntegrationsTab />
-        </Tabs.Content>
-
-        <Tabs.Content value="account" className="mt-6 max-w-3xl focus:outline-none">
-          <MyAccountTab />
-        </Tabs.Content>
-      </Tabs.Root>
+    <div className="mx-auto max-w-5xl p-6">
+      {!section ? (
+        <>
+          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+          <SettingsHub isAdmin={isAdmin} />
+        </>
+      ) : (
+        <>
+          <NextLink
+            href="/settings"
+            className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-navy/60 transition-colors hover:text-brand-600"
+          >
+            <ArrowLeft className="h-4 w-4" /> All settings
+          </NextLink>
+          <h1 className="mb-5 text-2xl font-bold text-navy">{section.title}</h1>
+          <div className={section.width ?? ""}>{section.node}</div>
+        </>
+      )}
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  // useSearchParams requires a Suspense boundary during prerender (Next 14 App Router).
+  return (
+    <React.Suspense
+      fallback={
+        <div className="mx-auto max-w-5xl p-6">
+          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+        </div>
+      }
+    >
+      <SettingsPageInner />
+    </React.Suspense>
   );
 }
