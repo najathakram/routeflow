@@ -142,6 +142,8 @@ export interface AdminOrder {
      * had to cast through `any`, which masked stale-cache bugs.
      */
     invoicedQty?: number;
+    /** RF-4: regulated category tax the server folded into order.total. */
+    categoryTaxAmount?: number;
     /**
      * When the operator split a boxed product, `boxes` + `pieces` are stored
      * alongside the total `qty`. The line subtotal uses BOX-price proration

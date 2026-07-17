@@ -53,14 +53,17 @@ export default function GoogleCallbackScreen() {
       const storedState = isWebForState
         ? window.localStorage.getItem(OAUTH_STATE_KEY)
         : await SecureStoreForState.getItemAsync(OAUTH_STATE_KEY);
-      // Clear the one-time nonce regardless of outcome.
-      if (isWebForState) window.localStorage.removeItem(OAUTH_STATE_KEY);
-      else await SecureStoreForState.deleteItemAsync(OAUTH_STATE_KEY);
 
       if (!isValidReturnedState(storedState, params.state)) {
+        // Reject WITHOUT clearing the nonce: an unsolicited deep link (no/bad state)
+        // must not be able to wipe a genuinely-pending login's one-time nonce and
+        // DoS it — leave it for the real callback to consume.
         router.replace(type === "BUYER" ? "/(auth)/customer-login" : "/(auth)/login");
         return;
       }
+      // Matched → consume the one-time nonce now.
+      if (isWebForState) window.localStorage.removeItem(OAUTH_STATE_KEY);
+      else await SecureStoreForState.deleteItemAsync(OAUTH_STATE_KEY);
 
       const [, payloadPart] = accessToken.split(".");
       let payload: Record<string, unknown> | null = null;

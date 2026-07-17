@@ -163,10 +163,17 @@ export class OrdersService implements OnApplicationBootstrap {
    * stays approximate (pieces, not true volume) until a `Product.volumePerUnit`
    * field lands — see computeCategoryTax's contract.
    */
-  private linePieceQty(li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown }): number {
+  private linePieceQty(
+    li: { qty: unknown; boxes: unknown; unitsPerBox?: unknown },
+    unitsPerBoxFallback?: number,
+  ): number {
     const qty = Number(li.qty) || 0;
     if (li.boxes != null) return qty; // already pieces
-    const upb = Number(li.unitsPerBox ?? 0);
+    // A boxed product ordered as SELLING UNITS stores unitsPerBox:null on the line
+    // (create only snapshots it for box-split lines), so fall back to the product's
+    // unitsPerBox — otherwise a per-unit levy collapses by a factor of unitsPerBox on
+    // any later edit (create expanded qty→pieces but the recompute couldn't).
+    const upb = Number(li.unitsPerBox ?? unitsPerBoxFallback ?? 0);
     return upb > 1 ? qty * upb : qty;
   }
 
@@ -188,6 +195,22 @@ export class OrdersService implements OnApplicationBootstrap {
       ? await tx.trackedCategory.findMany({ where: { id: { in: catIds } } })
       : [];
     const catMap = new Map<string, any>(cats.map((c: any) => [c.id, c]));
+    // Fetch each regulated line's product unitsPerBox so linePieceQty can expand a
+    // selling-unit boxed line (which didn't snapshot unitsPerBox) to real pieces.
+    const prodIds = [
+      ...new Set(
+        lines.filter((li) => li.trackedCategoryId && li.productId).map((li) => li.productId),
+      ),
+    ] as string[];
+    const prods = prodIds.length
+      ? await tx.product.findMany({
+          where: { id: { in: prodIds } },
+          select: { id: true, unitsPerBox: true },
+        })
+      : [];
+    const upbMap = new Map<string, number>(
+      prods.map((p: any) => [p.id, Number(p.unitsPerBox ?? 0)]),
+    );
     let sum = 0;
     for (const li of lines) {
       const cat = li.trackedCategoryId ? catMap.get(li.trackedCategoryId) : null;
@@ -195,7 +218,7 @@ export class OrdersService implements OnApplicationBootstrap {
         ? computeCategoryTax({
             taxType: cat.taxType as CategoryTaxType,
             rate: Number(cat.rate),
-            unitBasisQty: this.linePieceQty(li),
+            unitBasisQty: this.linePieceQty(li, upbMap.get(li.productId)),
             lineSubtotal: Number(li.subtotal),
             priceIncludesTax: cat.priceIncludesTax,
           })

@@ -3068,4 +3068,27 @@ describe("OrdersService", () => {
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });
   });
+
+  describe("RF-4 linePieceQty — per-unit tax basis survives an edit (recompute drift)", () => {
+    const pieceQty = (li: any, fallback?: number) => (service as any).linePieceQty(li, fallback);
+
+    it("a box-split line (boxes != null) is already in pieces — returns qty as-is", () => {
+      expect(pieceQty({ qty: 27, boxes: 2, unitsPerBox: 12 })).toBe(27);
+    });
+
+    it("a selling-unit line WITH a snapshotted unitsPerBox expands qty → pieces", () => {
+      expect(pieceQty({ qty: 5, boxes: null, unitsPerBox: 6 })).toBe(30);
+    });
+
+    it("a selling-unit boxed line stores unitsPerBox:null — falls back to the PRODUCT box size (no 6x under-charge on edit)", () => {
+      // create() computed 5*6=30 pieces but stored unitsPerBox:null; without the
+      // product fallback the recompute would collapse to 5 → a 6x category-tax drop.
+      expect(pieceQty({ qty: 5, boxes: null, unitsPerBox: null }, 6)).toBe(30);
+    });
+
+    it("a genuinely loose line (no box size anywhere) stays qty", () => {
+      expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null }, 0)).toBe(8);
+      expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null })).toBe(8);
+    });
+  });
 });

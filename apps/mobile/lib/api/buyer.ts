@@ -92,6 +92,7 @@ export interface BuyerOrder {
     pieces?: number | null;
     status?: string;
     deliveredQty?: number;
+    categoryTaxAmount?: number; // RF-4: regulated category tax folded into order.total
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
