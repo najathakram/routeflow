@@ -303,6 +303,72 @@ describe("AuthService", () => {
     });
   });
 
+  // ─── F5-003: refresh-token realm discriminator ─────────────────────────────
+
+  describe("refresh — F5-003 realm discriminator", () => {
+    function primeValidStoredToken() {
+      prisma.refreshToken.findUnique.mockResolvedValue({
+        userId: "user-1",
+        tokenHash: "h",
+        expiresAt: new Date(Date.now() + 60_000),
+        userAgent: null,
+        ipAddress: null,
+        deviceName: null,
+      } as any);
+      prisma.user.findUnique.mockResolvedValue({ ...MOCK_USER, tenantId: "tenant-1" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "test-tenant" } as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+    }
+
+    it("rejects a buyer-typed refresh token on the staff refresh path", async () => {
+      // A buyer refresh token would verify against the shared secret, but its
+      // realm claim must bar it from the staff endpoint — before any DB lookup.
+      jwtService.verify.mockReturnValue({ sub: "user-1", type: "buyer" });
+
+      await expect(service.refresh("buyer-token")).rejects.toThrow(UnauthorizedException);
+      expect(prisma.refreshToken.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("allows a legacy (no-type) refresh token — grace so live sessions survive", async () => {
+      jwtService.verify.mockReturnValue({ sub: "user-1" }); // no `type` claim
+      primeValidStoredToken();
+
+      const result = await service.refresh("legacy-token");
+
+      expect(result).toHaveProperty("accessToken");
+      expect(result).toHaveProperty("refreshToken");
+    });
+
+    it("allows a staff-typed refresh token and mints a staff-typed replacement", async () => {
+      jwtService.verify.mockReturnValue({ sub: "user-1", type: "staff" });
+      primeValidStoredToken();
+
+      const result = await service.refresh("staff-token");
+
+      expect(result).toHaveProperty("accessToken");
+      // calls[0] = access payload, calls[1] = rotated refresh payload
+      expect(jwtService.sign.mock.calls[1]![0]).toMatchObject({ sub: "user-1", type: "staff" });
+    });
+
+    it("stamps type:staff on the refresh token minted at login", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ slug: "test-tenant" } as any);
+      prisma.refreshToken.upsert.mockResolvedValue({} as any);
+
+      await service.login({
+        id: "user-1",
+        username: "admin",
+        role: "OPERATOR",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId: "tenant-1",
+        isAdmin: false,
+        canActAsDriver: false,
+      } as any);
+
+      expect(jwtService.sign.mock.calls[1]![0]).toMatchObject({ sub: "user-1", type: "staff" });
+    });
+  });
+
   // ─── logout ───────────────────────────────────────────────────────────────
 
   describe("logout", () => {

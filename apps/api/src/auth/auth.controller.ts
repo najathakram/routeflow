@@ -31,6 +31,13 @@ import { RequestPasswordResetDto } from "./dto/request-password-reset.dto";
 import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 
+// SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
+// to the auth routes so it is never sent to unrelated API endpoints. Kept in
+// sync with the global prefix (`api/v1`) + this controller's base path (`auth`).
+const REFRESH_COOKIE = "rf_refresh";
+const REFRESH_COOKIE_PATH = "/api/v1/auth";
+const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30d fallback (matches refresh TTL)
+
 @ApiTags("auth")
 @Controller("auth")
 export class AuthController {
@@ -58,18 +65,38 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Throttle({ default: { ttl: 300_000, limit: 10 } }) // RF-160: 10 attempts per 5 min per IP to block brute-force
   @ApiOperation({ summary: "Login with username and password" })
-  login(@CurrentUser() user: any, @Body() _dto: LoginDto, @Req() req: any) {
+  async login(
+    @CurrentUser() user: any,
+    @Body() _dto: LoginDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const deviceInfo = this.extractDeviceInfo(req);
-    return this.authService.login(user, deviceInfo);
+    const result = await this.authService.login(user, deviceInfo);
+    // SEC-4 / F11-002: ALSO set the refresh token as an httpOnly cookie. Purely
+    // additive — the body still carries the token, so mobile and the current web
+    // client are unaffected; web can later stop persisting it in localStorage.
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
   }
 
   @Post("refresh")
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: "Refresh access token" })
-  refresh(@Body() dto: RefreshDto, @Req() req: any) {
+  async refresh(
+    @Body() dto: RefreshDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const deviceInfo = this.extractDeviceInfo(req);
-    return this.authService.refresh(dto.refreshToken, deviceInfo);
+    // SEC-4 / F11-002: prefer the httpOnly cookie, fall back to the request body
+    // (mobile can't use cookies, so its body token keeps working unchanged).
+    const token = this.readRefreshCookie(req) ?? dto.refreshToken;
+    if (!token) throw new UnauthorizedException("Invalid or expired refresh token");
+    const result = await this.authService.refresh(token, deviceInfo);
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
   }
 
   @Post("logout")
@@ -77,7 +104,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Logout and revoke all refresh tokens" })
-  logout(@CurrentUser() user: { id: string }) {
+  async logout(@CurrentUser() user: { id: string }, @Res({ passthrough: true }) res: Response) {
+    // SEC-4 / F11-002: drop the httpOnly refresh cookie alongside server-side revocation.
+    this.clearRefreshCookie(res);
     return this.authService.logout(user.id);
   }
 
@@ -175,6 +204,7 @@ export class AuthController {
     @Query("context") context: "portal" | "staff" | "buyer-standalone" = "staff",
     @Query("invite_token") inviteToken: string | undefined,
     @Query("mobile") mobileFlag: string | undefined,
+    @Query("device_state") deviceState: string | undefined,
     @Res({ passthrough: true }) res: any,
   ) {
     if (!this.googleOAuth.isConfigured()) {
@@ -193,6 +223,8 @@ export class AuthController {
       inviteToken,
       context,
       mobile,
+      // F12-005: only meaningful on the mobile deep-link flow; echoed back to the app.
+      mobile ? deviceState : undefined,
     );
     return { url };
   }
@@ -285,9 +317,13 @@ export class AuthController {
         };
       }
 
-      // Mobile deep-link path is unchanged: the native app reads tokens from the
-      // routeflow:// deep link (not exposed to web CDN/proxy logs or Referer).
+      // Mobile deep-link path: the native app reads tokens from the routeflow://
+      // deep link (not exposed to web CDN/proxy logs or Referer).
       if (profile.mobile) {
+        // F12-005: echo the device-generated state nonce back so the app can
+        // reject unsolicited deep links (session fixation). Absent for older app
+        // builds that don't send `device_state` — additive, nothing breaks.
+        if (profile.deviceState) bundle.state = profile.deviceState;
         const q = new URLSearchParams(bundle).toString();
         return res.redirect(`${callbackBase}?${q}`);
       }
@@ -361,6 +397,62 @@ export class AuthController {
     res.redirect(
       `${this.webUrl}/auth/callback?accessToken=${tokens.accessToken}&refreshToken=${tokens.refreshToken}&role=${tokens.user.role}&tenantSlug=${slug}`,
     );
+  }
+
+  // ─── Refresh-cookie helpers (SEC-4 / F11-002) ──────────────────────────────
+  //
+  // A minimal, dependency-free httpOnly-cookie carrier for the refresh token.
+  // cookie-parser is intentionally NOT wired globally — reading is done by hand
+  // for just this one cookie to keep the change small and reversible.
+
+  /** Set the refresh token as an httpOnly, Secure, SameSite=Lax cookie. */
+  private setRefreshCookie(res: Response, token: string) {
+    res.cookie(REFRESH_COOKIE, token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: REFRESH_COOKIE_PATH,
+      maxAge: this.refreshCookieMaxAge(token),
+    });
+  }
+
+  /** Clear the refresh cookie — options must match those used when setting it. */
+  private clearRefreshCookie(res: Response) {
+    res.clearCookie(REFRESH_COOKIE, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: REFRESH_COOKIE_PATH,
+    });
+  }
+
+  /** Read the `rf_refresh` cookie from the raw Cookie header (no cookie-parser). */
+  private readRefreshCookie(req: any): string | undefined {
+    const raw = req?.headers?.cookie;
+    if (!raw || typeof raw !== "string") return undefined;
+    for (const part of raw.split(";")) {
+      const idx = part.indexOf("=");
+      if (idx === -1) continue;
+      if (part.slice(0, idx).trim() === REFRESH_COOKIE) {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      }
+    }
+    return undefined;
+  }
+
+  /** Align the cookie lifetime with the refresh token's own `exp` when decodable. */
+  private refreshCookieMaxAge(token: string): number {
+    try {
+      const seg = token.split(".")[1];
+      const decoded = JSON.parse(Buffer.from(seg, "base64url").toString("utf-8"));
+      if (typeof decoded?.exp === "number") {
+        const ms = decoded.exp * 1000 - Date.now();
+        if (ms > 0) return ms;
+      }
+    } catch {
+      // fall through to the default
+    }
+    return REFRESH_COOKIE_MAX_AGE_MS;
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import axios from "axios";
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { BUYER_KEYS } from "./auth-keys";
+import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -348,8 +349,13 @@ export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; seller
     return new Promise<{ buyer: BuyerUser; sellerCount: number }>(() => {});
   }
 
+  // F12-005: bind this flow to the device with a state nonce (session-fixation
+  // guard). Store it before opening the browser and pass it through the flow.
+  const deviceState = generateOAuthState();
+  await storage.set(OAUTH_STATE_KEY, deviceState);
+
   const { data } = await axios.get<{ url: string }>(`${BASE_URL}/api/v1/auth/google`, {
-    params: { context: "buyer-standalone", mobile: 1 },
+    params: { context: "buyer-standalone", mobile: 1, device_state: deviceState },
   });
   if (!data?.url) throw new Error("google_unavailable");
 
@@ -361,6 +367,14 @@ export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; seller
 
   const params = parseQueryFromUrl(result.url);
   if (params.error) throw new Error(params.error);
+  // F12-005: reject a callback whose state doesn't match the flow we started
+  // (defense-in-depth; the inline URL is already session-bound). Only enforce
+  // when the API echoed a state back, and always clear the stored nonce.
+  const storedState = await storage.get(OAUTH_STATE_KEY);
+  await storage.del(OAUTH_STATE_KEY);
+  if (params.state && !isValidReturnedState(storedState, params.state)) {
+    throw new Error("state_invalid");
+  }
   const { accessToken, refreshToken, type } = params;
   if (!accessToken || !refreshToken || type !== "BUYER") throw new Error("google_token_invalid");
 
