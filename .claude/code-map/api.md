@@ -347,3 +347,7 @@ Authz + input-validation batch from the security audit (each fix has a `*.securi
 - **F9-008** — `import.service.parseCsv` rejects `>MAX_IMPORT_ROWS` (20 000) with a 400 thrown outside the swallowing try.
 - **F9-009** — `DELETE /products/bulk` body is a DTO (`@IsArray @ArrayNotEmpty @ArrayMaxSize(500) @IsString({each})`).
 - **F3-005** — `buyer-auth.service` login returns a CONSTANT "Invalid credentials" for not-found/deleted/**suspended** (removed the suspended enumeration oracle; mirrors staff `validateUser`). Register-side "email exists" Conflict left as a documented UX tradeoff.
+
+## Security hardening — SEC-3 (audit-IP, 2026-07-16)
+
+- **F9-006** — `audit.interceptor.ts` now records `req.ip` (Express trust-proxy-aware; `trust proxy = 2` set in main.ts) instead of the LEFTMOST `X-Forwarded-For` entry, which a client could spoof by prepending a fake value → poisoning the audit trail's source IP. Spec `audit.interceptor.security.spec.ts`. (F5-003 refresh-token type-claim + F12-005 mobile-deep-link deferred — see the security backlog note.)
