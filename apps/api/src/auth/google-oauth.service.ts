@@ -32,6 +32,13 @@ interface OAuthState {
   linkUserId?: string;
   /** When true, the callback redirects to a mobile deep link (routeflow://) instead of the web URL. */
   mobile?: boolean;
+  /**
+   * F12-005: device-generated state nonce for the mobile deep-link flow. Echoed
+   * back to the app in the routeflow:// callback so the app can prove the flow
+   * originated on this device (session-fixation guard). Optional — older app
+   * builds don't send it.
+   */
+  deviceState?: string;
 }
 
 export interface GoogleProfile {
@@ -47,6 +54,8 @@ export interface GoogleProfile {
   linkUserId?: string;
   /** When true, the callback should redirect to a mobile deep link. */
   mobile?: boolean;
+  /** F12-005: device-generated state nonce to echo back in the mobile deep link. */
+  deviceState?: string;
 }
 
 interface TokenPair {
@@ -159,6 +168,7 @@ export class GoogleOAuthService {
     inviteToken?: string,
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
+    deviceState?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -168,6 +178,8 @@ export class GoogleOAuthService {
       ...(inviteToken && { inviteToken }),
       ...(context && { context }),
       ...(mobile && { mobile: true }),
+      // F12-005: carry the device state nonce through Google (opaque round-trip).
+      ...(deviceState && { deviceState }),
     };
     const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
 
@@ -323,6 +335,7 @@ export class GoogleOAuthService {
       context: stateObj.context,
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
+      deviceState: stateObj.deviceState,
     };
   }
 
@@ -605,7 +618,7 @@ export class GoogleOAuthService {
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
-      { sub: user.id },
+      { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
     await this.storeUserRefreshToken(user.id, refreshToken);
@@ -636,7 +649,7 @@ export class GoogleOAuthService {
       expiresIn: jwtConfig.expiresIn as any,
     });
     const refreshToken = this.jwtService.sign(
-      { sub: buyerAccountId },
+      { sub: buyerAccountId, type: "buyer" }, // F5-003: realm discriminator (Google buyer login)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
     const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");

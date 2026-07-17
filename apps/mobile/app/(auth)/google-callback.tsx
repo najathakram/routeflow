@@ -5,6 +5,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../../lib/auth-store";
 import { useBuyerSessionStore } from "../../lib/buyer-session-store";
 import { BUYER_KEYS, OP_KEYS, DRIVER_KEYS } from "../../lib/auth-keys";
+import { isValidReturnedState, OAUTH_STATE_KEY } from "../../lib/oauth-state";
 
 /**
  * Safety-net deep-link handler for the Google OAuth callback.
@@ -25,6 +26,7 @@ export default function GoogleCallbackScreen() {
     refreshToken?: string;
     type?: string;
     error?: string;
+    state?: string;
   }>();
   const setUser = useAuthStore((s) => s.setUser);
   const { setBuyer } = useBuyerSessionStore();
@@ -38,6 +40,25 @@ export default function GoogleCallbackScreen() {
       const { accessToken, refreshToken, type } = params;
       if (!accessToken || !refreshToken) {
         router.replace("/(auth)/login");
+        return;
+      }
+
+      const { default: SecureStoreForState } = await import("expo-secure-store");
+      const isWebForState = typeof window !== "undefined" && !!window.localStorage;
+
+      // F12-005: this route is the session-fixation surface — any app or web page
+      // can fire routeflow://…?accessToken=…. Only persist tokens when the returned
+      // `state` matches the nonce THIS app stored before starting the flow. An
+      // unsolicited deep link (no pending flow → no stored state) is rejected.
+      const storedState = isWebForState
+        ? window.localStorage.getItem(OAUTH_STATE_KEY)
+        : await SecureStoreForState.getItemAsync(OAUTH_STATE_KEY);
+      // Clear the one-time nonce regardless of outcome.
+      if (isWebForState) window.localStorage.removeItem(OAUTH_STATE_KEY);
+      else await SecureStoreForState.deleteItemAsync(OAUTH_STATE_KEY);
+
+      if (!isValidReturnedState(storedState, params.state)) {
+        router.replace(type === "BUYER" ? "/(auth)/customer-login" : "/(auth)/login");
         return;
       }
 

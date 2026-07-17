@@ -5,6 +5,7 @@ import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { setLastUsername } from "./last-username";
+import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
@@ -221,9 +222,15 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
   }
 
   // Native (installed iOS/Android app) — deep-link flow.
+  // F12-005: bind this flow to the device with a state nonce so an unsolicited
+  // routeflow:// deep link can't fixate a session. Store it before opening the
+  // browser and pass it through the OAuth flow (the API echoes it back).
+  const deviceState = generateOAuthState();
+  await storage.set(OAUTH_STATE_KEY, deviceState);
+
   // Step 1 — get consent URL from API (no auth required; tenant slug scopes the flow)
   const { data } = await apiClient.get<{ url: string }>("/auth/google", {
-    params: { tenant: tenantSlug, context: "staff", mobile: 1 },
+    params: { tenant: tenantSlug, context: "staff", mobile: 1, device_state: deviceState },
   });
   if (!data?.url) throw new Error("google_unavailable");
 
@@ -237,6 +244,15 @@ export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse>
   // Step 3 — parse tokens out of the callback URL (routeflow://auth/callback?accessToken=…)
   const params = parseQueryFromUrl(result.url);
   if (params.error) throw new Error(params.error);
+  // F12-005: reject a callback whose state doesn't match the flow we started.
+  // The inline result URL is already session-bound by openAuthSessionAsync, so
+  // this is defense-in-depth; only enforce when the API echoed a state back
+  // (older APIs won't), and always clear the stored nonce afterwards.
+  const storedState = await storage.get(OAUTH_STATE_KEY);
+  await storage.del(OAUTH_STATE_KEY);
+  if (params.state && !isValidReturnedState(storedState, params.state)) {
+    throw new Error("state_invalid");
+  }
   const { accessToken, refreshToken, role, tenantSlug: resolvedTenantSlug } = params;
   if (!accessToken || !refreshToken) throw new Error("google_token_invalid");
 
