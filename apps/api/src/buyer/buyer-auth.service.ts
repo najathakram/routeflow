@@ -79,13 +79,11 @@ export class BuyerAuthService {
       where: { email: dto.email.toLowerCase() },
     });
 
-    if (!account || account.deletedAt) {
-      throw new UnauthorizedException("Invalid credentials");
-    }
-    if (account.status === "SUSPENDED") {
-      throw new UnauthorizedException("This account has been suspended");
-    }
-    if (account.status === "DELETED") {
+    // F3-005: return a CONSTANT "Invalid credentials" for not-found, deleted,
+    // AND suspended accounts. A distinct "suspended" message was an enumeration
+    // oracle — it confirmed the email belongs to a real (suspended) account.
+    // Mirrors staff validateUser, which returns null for any non-ACTIVE status.
+    if (!account || account.deletedAt || account.status !== "ACTIVE") {
       throw new UnauthorizedException("Invalid credentials");
     }
 

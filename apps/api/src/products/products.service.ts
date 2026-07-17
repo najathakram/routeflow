@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { CostingMethod, StockAlertStatus } from "@prisma/client";
@@ -44,6 +46,8 @@ const TENANT_COSTING_TO_PRODUCT: Record<string, CostingMethod> = {
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
@@ -537,10 +541,18 @@ export class ProductsService {
         } as UpdateProductDto);
         succeeded.push(assignment.id);
       } catch (err) {
-        failed.push({
-          id: assignment.id,
-          reason: err instanceof Error ? err.message : "Update failed",
-        });
+        // F8-003: surface the app's OWN validation messages (HttpException — intentional
+        // and user-facing, e.g. "A variant named X already exists"), but genericize any
+        // raw/unknown error (e.g. a Prisma constraint) so internal schema text isn't
+        // disclosed. Always log the real error server-side.
+        if (err instanceof HttpException) {
+          failed.push({ id: assignment.id, reason: err.message });
+        } else {
+          this.logger.warn(
+            `bulkAssignParent failed for ${assignment.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          failed.push({ id: assignment.id, reason: "Update failed" });
+        }
       }
     }
     return { succeeded, failed };
@@ -658,7 +670,13 @@ export class ProductsService {
 
         created++;
       } catch (err: any) {
-        errors.push({ row: rowNum, name: item.name, reason: err?.message ?? "Unknown error" });
+        // F8-003: never echo the raw Prisma/exception text (it discloses table
+        // and column names). Log the real error server-side; return a generic
+        // per-row reason to the client.
+        this.logger.warn(
+          `Bulk product import row ${rowNum} ("${item.name}") failed: ${err?.message}`,
+        );
+        errors.push({ row: rowNum, name: item.name, reason: "Import failed" });
       }
     }
 

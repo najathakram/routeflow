@@ -29,7 +29,7 @@ export class MessagesController {
   }
 
   @Get()
-  findAll(@Query() query: ListMessagesDto) {
-    return this.messagesService.findByRun(query);
+  findAll(@Query() query: ListMessagesDto, @CurrentUser() user: { sub: string; role: string }) {
+    return this.messagesService.findByRun(query, user);
   }
 }

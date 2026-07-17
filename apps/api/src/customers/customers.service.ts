@@ -116,12 +116,29 @@ export class CustomersService {
       };
     }
 
-    // Build orderBy
-    let orderBy: any = { createdAt: "desc" };
-    if (query.sortBy) {
-      const dir = query.sortDir === "asc" ? "asc" : "desc";
-      orderBy = { [query.sortBy]: dir };
-    }
+    // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
+    // allowlisted scalar column — a free-form field name lets a caller inject an
+    // unknown/relation field (Prisma 500 → DoS) or probe relation ordering.
+    // Non-scalar UI columns (e.g. "receivables", computed post-query) and any
+    // unknown value fall back to the safe default instead of hitting Prisma.
+    const validSortFields: Record<string, string> = {
+      businessName: "businessName",
+      contactName: "contactName",
+      displayName: "displayName",
+      customerType: "customerType",
+      pricingTier: "pricingTier",
+      createdAt: "createdAt",
+      updatedAt: "updatedAt",
+    };
+    // Object.hasOwn (not a bare index) so prototype keys — __proto__, constructor,
+    // toString, valueOf… — can't resolve to a truthy inherited value and reach Prisma
+    // as a malformed orderBy (→ 500). Unknown OR inherited → safe createdAt-desc default.
+    const orderField =
+      query.sortBy && Object.hasOwn(validSortFields, query.sortBy)
+        ? validSortFields[query.sortBy]
+        : undefined;
+    const dir = query.sortDir === "asc" ? "asc" : "desc";
+    const orderBy: any = orderField ? { [orderField]: dir } : { createdAt: "desc" };
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().customer.findMany({
