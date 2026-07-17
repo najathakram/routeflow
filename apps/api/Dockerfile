@@ -38,6 +38,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# su-exec lets the root entrypoint drop to the non-root `node` user after fixing
+# the mounted uploads-volume perms (F12-003).
+RUN apk add --no-cache su-exec
+
 # Root node_modules contains workspace-hoisted runtime deps.
 COPY --from=builder /app/node_modules  ./node_modules
 
@@ -60,8 +64,13 @@ COPY --from=builder /app/apps/api/package.json    ./apps/api/
 COPY --from=builder /app/apps/api/prisma.config.ts ./apps/api/
 COPY --from=builder /app/package.json              ./
 
+# Entrypoint fixes the uploads-volume ownership then drops to `node` (F12-003).
+COPY apps/api/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 WORKDIR /app/apps/api
 
 EXPOSE 3000
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "dist/main.js"]
