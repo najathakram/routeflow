@@ -158,7 +158,9 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: user.id },
+      // F5-003: tag staff refresh tokens with a realm discriminator so a
+      // buyer refresh token can never be replayed on the staff refresh path.
+      { sub: user.id, type: "staff" },
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
@@ -214,12 +216,21 @@ export class AuthService {
   async refresh(incomingToken: string, deviceInfo?: DeviceInfo) {
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 
-    let payload: { sub: string };
+    let payload: { sub: string; type?: string };
     try {
       payload = this.jwtService.verify(incomingToken, {
         secret: jwtConfig.refreshSecret,
       });
     } catch {
+      throw new UnauthorizedException("Invalid or expired refresh token");
+    }
+
+    // F5-003: enforce the realm discriminator when present. A token explicitly
+    // typed for another realm (e.g. a buyer refresh token) is rejected here.
+    // Legacy tokens issued before this change carry no `type` — allow them
+    // (grace) so live sessions are never force-logged-out. Defense-in-depth on
+    // top of the per-table hash lookup below.
+    if (payload.type && payload.type !== "staff") {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
 
@@ -270,7 +281,7 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: user.id },
+      { sub: user.id, type: "staff" }, // F5-003: realm discriminator (rotated token)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
@@ -586,7 +597,7 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: user.id },
+      { sub: user.id, type: "staff" }, // F5-003: realm discriminator (force-refresh)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 

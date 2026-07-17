@@ -55,11 +55,32 @@ export class TrackedCategoriesService {
     return this.serialize(cat);
   }
 
+  /**
+   * RF-4: tax-inclusive category pricing (`priceIncludesTax=true`) is NOT yet
+   * supported for the per-category tax fold — computeCategoryTax returns the tax
+   * ALREADY EMBEDDED in the price, which must not be added on top of the total (it
+   * would over-charge). Reject the config so no order/invoice ever books it; the
+   * common add-on case (priceIncludesTax=false) is fully supported. Remove this once
+   * the totals subtract the embedded portion.
+   */
+  private assertSupportedTaxConfig(
+    taxType: string | null | undefined,
+    rate: unknown,
+    priceIncludesTax: boolean | null | undefined,
+  ): void {
+    if (priceIncludesTax && taxType && taxType !== "NONE" && Number(rate) > 0) {
+      throw new BadRequestException(
+        "Tax-inclusive category pricing (priceIncludesTax) is not yet supported for per-category tax. Set priceIncludesTax to false.",
+      );
+    }
+  }
+
   async create(dto: CreateTrackedCategoryDto) {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a category.");
     }
+    this.assertSupportedTaxConfig(dto.taxType, dto.rate, dto.priceIncludesTax);
     try {
       const row = await this.prisma
         .forTenant()
@@ -74,7 +95,14 @@ export class TrackedCategoriesService {
   }
 
   async update(id: string, dto: UpdateTrackedCategoryDto) {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
+    // Validate the MERGED config so a partial update (e.g. flipping only
+    // priceIncludesTax) is checked against the row's existing taxType/rate.
+    this.assertSupportedTaxConfig(
+      dto.taxType ?? (existing as any).taxType,
+      dto.rate ?? (existing as any).rate,
+      dto.priceIncludesTax ?? (existing as any).priceIncludesTax,
+    );
     try {
       const row = await this.prisma
         .forTenant()

@@ -103,6 +103,14 @@ export interface OrderItem {
   unitsPerBox?: number | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
+  /**
+   * RF-4: server-stored per-line regulated (category) tax, already folded into the
+   * order total. Sum the non-cancelled lines to render the "Regulated tax" line so
+   * the displayed Subtotal + Tax + Regulated tax reconciles to `order.total`.
+   */
+  categoryTaxAmount?: number;
+  /** Sale-time regulated section id (null for non-regulated lines). */
+  trackedCategoryId?: string | null;
   status: string;
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */

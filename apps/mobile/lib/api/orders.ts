@@ -26,6 +26,11 @@ export interface OrderItem {
   priceType?: string;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
+  /**
+   * RF-4: server-stored per-line regulated (category) tax, already folded into the
+   * order total. Sum the non-cancelled lines to render the "Regulated tax" line.
+   */
+  categoryTaxAmount?: number;
   /** Boxed split persisted server-side; boxes==null means qty is in selling units. */
   boxes?: number | null;
   pieces?: number | null;

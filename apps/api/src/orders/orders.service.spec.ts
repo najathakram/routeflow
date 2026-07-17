@@ -760,6 +760,162 @@ describe("OrdersService", () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    // ── RF-4: per-category regulated tax folded into the order total ──────────
+    describe("RF-4 — per-category regulated tax", () => {
+      const REG_PRODUCT = {
+        id: "prod-1",
+        name: "Cabernet",
+        pricePerUnit: 10,
+        unit: "bottle",
+        unitsPerBox: 0,
+        trackedCategoryId: "cat-alc",
+        trackedSubcategoryId: null,
+      };
+      const setup = (category: any, taxRate = "0") => {
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "cust-1",
+          pricingTier: 1,
+          user: { status: "ACTIVE" },
+        });
+        prisma.customerPrice.findMany.mockResolvedValue([]);
+        prisma.product.findMany.mockResolvedValue([REG_PRODUCT]);
+        prisma.trackedCategory.findMany.mockResolvedValue([category]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockImplementation((k: string) =>
+          k === "settings.taxRate" ? taxRate : null,
+        );
+      };
+
+      it("PERCENT_OF_SALE 5% → per-line categoryTaxAmount + folded order total", async () => {
+        setup({
+          id: "cat-alc",
+          name: "Alcohol",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.05,
+          unitBasis: null,
+          priceIncludesTax: false,
+        });
+
+        // qty 2 × $10 = $20 subtotal; category tax 5% × 20 = $1.00; tax 0; total $21.
+        await service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 2 }] } as any,
+          operatorPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 20,
+              tax: 0,
+              total: 21,
+              hasRegulated: true,
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({
+                    productId: "prod-1",
+                    subtotal: 20,
+                    categoryTaxAmount: 1,
+                    trackedCategoryId: "cat-alc",
+                  }),
+                ]),
+              },
+            }),
+          }),
+        );
+      });
+
+      it("PERCENT_OF_SALE 5% composes with a 10% regular sales tax", async () => {
+        setup(
+          {
+            id: "cat-alc",
+            name: "Alcohol",
+            taxType: "PERCENT_OF_SALE",
+            rate: 0.05,
+            unitBasis: null,
+            priceIncludesTax: false,
+          },
+          "0.1",
+        );
+
+        // subtotal 20; regular tax 10% = 2; category tax 5% = 1; total 20+2+1 = 23.
+        await service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 2 }] } as any,
+          operatorPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ subtotal: 20, tax: 2, total: 23 }),
+          }),
+        );
+      });
+
+      it("EXCISE_PER_UNIT $0.10/piece × N pieces (per-unit basis, not the subtotal)", async () => {
+        setup({
+          id: "cat-alc",
+          name: "Cigarettes",
+          taxType: "EXCISE_PER_UNIT",
+          rate: 0.1,
+          unitBasis: "pack",
+          priceIncludesTax: false,
+        });
+
+        // qty 5 pieces × $10 = $50 subtotal; excise $0.10 × 5 = $0.50; total $50.50.
+        await service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 5 }] } as any,
+          operatorPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 50,
+              tax: 0,
+              total: 50.5,
+              lineItems: {
+                create: expect.arrayContaining([
+                  expect.objectContaining({ categoryTaxAmount: 0.5 }),
+                ]),
+              },
+            }),
+          }),
+        );
+      });
+
+      it("non-regulated line stays categoryTaxAmount 0 (total unchanged)", async () => {
+        prisma.customer.findUnique.mockResolvedValue({
+          id: "cust-1",
+          pricingTier: 1,
+          user: { status: "ACTIVE" },
+        });
+        prisma.customerPrice.findMany.mockResolvedValue([]);
+        prisma.product.findMany.mockResolvedValue([
+          { id: "prod-1", name: "Widget", pricePerUnit: 10, unit: "ea", trackedCategoryId: null },
+        ]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockImplementation((k: string) =>
+          k === "settings.taxRate" ? "0" : null,
+        );
+
+        await service.create(
+          { customerId: "cust-1", items: [{ productId: "prod-1", qty: 2 }] } as any,
+          operatorPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 20,
+              total: 20,
+              lineItems: {
+                create: expect.arrayContaining([expect.objectContaining({ categoryTaxAmount: 0 })]),
+              },
+            }),
+          }),
+        );
+      });
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -2910,6 +3066,29 @@ describe("OrdersService", () => {
       });
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
       expect(prisma.orderItem.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("RF-4 linePieceQty — per-unit tax basis survives an edit (recompute drift)", () => {
+    const pieceQty = (li: any, fallback?: number) => (service as any).linePieceQty(li, fallback);
+
+    it("a box-split line (boxes != null) is already in pieces — returns qty as-is", () => {
+      expect(pieceQty({ qty: 27, boxes: 2, unitsPerBox: 12 })).toBe(27);
+    });
+
+    it("a selling-unit line WITH a snapshotted unitsPerBox expands qty → pieces", () => {
+      expect(pieceQty({ qty: 5, boxes: null, unitsPerBox: 6 })).toBe(30);
+    });
+
+    it("a selling-unit boxed line stores unitsPerBox:null — falls back to the PRODUCT box size (no 6x under-charge on edit)", () => {
+      // create() computed 5*6=30 pieces but stored unitsPerBox:null; without the
+      // product fallback the recompute would collapse to 5 → a 6x category-tax drop.
+      expect(pieceQty({ qty: 5, boxes: null, unitsPerBox: null }, 6)).toBe(30);
+    });
+
+    it("a genuinely loose line (no box size anywhere) stays qty", () => {
+      expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null }, 0)).toBe(8);
+      expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null })).toBe(8);
     });
   });
 });

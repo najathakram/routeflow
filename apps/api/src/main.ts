@@ -100,7 +100,14 @@ async function runStartupMigration() {
 }
 
 async function bootstrap() {
-  await runStartupMigration();
+  // F12-002: the raw boot-time ALTER TABLE DDL contradicts the never-auto-migrate
+  // deploy policy, but is the current safety net for columns not yet backfilled by a
+  // Prisma migration. Gate it behind an env flag that DEFAULTS ON (prod behavior is
+  // unchanged) so it can be turned OFF — set RUN_STARTUP_DDL=false — once proper
+  // migrations cover these columns, with no code change or redeploy of logic.
+  if (process.env.RUN_STARTUP_DDL !== "false") {
+    await runStartupMigration();
+  }
   assertSecrets();
   const app = await NestFactory.create(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification

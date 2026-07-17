@@ -80,5 +80,10 @@ ENV HOSTNAME="0.0.0.0"
 # automatically. Do NOT hardcode PORT here — it would conflict with Railway's
 # dynamic port assignment, causing the healthcheck to target the wrong port.
 
+# F12-003: run as the non-root `node` user (uid 1000). The Next.js standalone
+# server has NO writable volume — it only reads world-readable bundled assets and
+# binds Railway's high (>1024) PORT — so a non-root user needs no perm fix-ups.
+USER node
+
 # The standalone entry point mirrors the monorepo path (apps/web/server.js)
 CMD ["node", "apps/web/server.js"]

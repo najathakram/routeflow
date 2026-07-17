@@ -72,6 +72,34 @@ describe("TrackedCategoriesService", () => {
       prisma.getTenantId.mockReturnValue(null);
       await expect(service.create({ name: "Alcohol" })).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    it("RF-4: rejects a tax-inclusive category with a non-zero rate (not yet supported)", async () => {
+      await expect(
+        service.create({
+          name: "Beverage CRV",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.05,
+          priceIncludesTax: true,
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+    });
+
+    it("RF-4: ALLOWS a tax-inclusive category when the rate is 0 (nothing to double-count)", async () => {
+      prisma.trackedCategory.create.mockResolvedValue({
+        id: "c9",
+        name: "Deposit",
+        _count: { products: 0 },
+      });
+      await expect(
+        service.create({
+          name: "Deposit",
+          taxType: "NONE",
+          rate: 0,
+          priceIncludesTax: true,
+        } as any),
+      ).resolves.toBeDefined();
+    });
   });
 
   describe("toggle", () => {

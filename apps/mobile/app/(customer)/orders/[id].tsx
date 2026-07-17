@@ -200,6 +200,15 @@ export default function CustomerOrderDetailScreen() {
             <View style={{ marginTop: 4 }}>
               <Text style={styles.totalLine}>Subtotal: ${Number(order.subtotal).toFixed(2)}</Text>
               <Text style={styles.totalLine}>GST (10%): ${Number(order.tax).toFixed(2)}</Text>
+              {/* RF-4: regulated (category) tax the server folded into order.total. */}
+              {(() => {
+                const catTax = (order.lineItems ?? [])
+                  .filter((li) => li.status !== "CANCELLED")
+                  .reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0);
+                return catTax > 0 ? (
+                  <Text style={styles.totalLine}>Regulated tax: ${catTax.toFixed(2)}</Text>
+                ) : null;
+              })()}
             </View>
           ) : null}
           <Text style={styles.total}>${total.toFixed(2)}</Text>

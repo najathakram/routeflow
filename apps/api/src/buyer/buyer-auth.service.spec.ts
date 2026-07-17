@@ -140,3 +140,80 @@ describe("BuyerAuthService — account lockout", () => {
     });
   });
 });
+
+describe("BuyerAuthService — F5-003 refresh realm discriminator", () => {
+  let service: BuyerAuthService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let jwtService: { sign: jest.Mock; verify: jest.Mock; decode: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    jwtService = {
+      sign: jest.fn().mockReturnValue("mock-token"),
+      verify: jest.fn(),
+      decode: jest.fn().mockReturnValue({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BuyerAuthService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: JwtService, useValue: jwtService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
+        { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = module.get(BuyerAuthService);
+  });
+
+  function primeValidStoredToken() {
+    prisma.buyerRefreshToken.findUnique.mockResolvedValue({
+      buyerAccountId: "buyer-1",
+      tokenHash: "h",
+      expiresAt: new Date(Date.now() + 60_000),
+      userAgent: null,
+      ipAddress: null,
+      deviceName: null,
+    } as any);
+    prisma.buyerRefreshToken.deleteMany.mockResolvedValue({ count: 1 } as any);
+    prisma.buyerAccount.findUnique.mockResolvedValue({ ...MOCK_ACCOUNT } as any);
+    prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+  }
+
+  it("rejects a staff-typed refresh token on the buyer refresh path", async () => {
+    jwtService.verify.mockReturnValue({ sub: "buyer-1", type: "staff" });
+
+    await expect(service.refresh("staff-token", undefined)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.buyerRefreshToken.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("allows a legacy (no-type) refresh token — grace so live sessions survive", async () => {
+    jwtService.verify.mockReturnValue({ sub: "buyer-1" }); // no `type`
+    primeValidStoredToken();
+
+    const result = await service.refresh("legacy-token", undefined);
+
+    expect(result).toHaveProperty("accessToken");
+    expect(result.buyer.id).toBe("buyer-1");
+  });
+
+  it("allows a buyer-typed token and mints a buyer-typed replacement", async () => {
+    jwtService.verify.mockReturnValue({ sub: "buyer-1", type: "buyer" });
+    primeValidStoredToken();
+
+    const result = await service.refresh("buyer-token", undefined);
+
+    expect(result).toHaveProperty("accessToken");
+    // calls[0] = access payload, calls[1] = rotated refresh payload
+    expect(jwtService.sign.mock.calls[1]![0]).toMatchObject({ sub: "buyer-1", type: "buyer" });
+  });
+
+  it("stamps type:buyer on the refresh token minted at login", async () => {
+    prisma.buyerAccount.findUnique.mockResolvedValue({ ...MOCK_ACCOUNT } as any);
+    (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+
+    await service.login({ email: MOCK_ACCOUNT.email, password: "whatever" }, undefined);
+
+    expect(jwtService.sign.mock.calls[1]![0]).toMatchObject({ sub: "buyer-1", type: "buyer" });
+  });
+});
