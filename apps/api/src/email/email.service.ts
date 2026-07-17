@@ -58,8 +58,11 @@ export class EmailService {
     private readonly encryption: EncryptionService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
+    // Platform verified sending address (must be on a domain verified in Resend).
+    // Per-tenant sends swap the display name for the tenant's business name and set
+    // Reply-To to the tenant's own email (see getResendFrom/getReplyTo).
     this.platformFrom =
-      this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <noreply@routeflow.app>";
+      this.config.get<string>("EMAIL_FROM") ?? "RouteFlow <invoices@send.routeflow.info>";
 
     if (apiKey) {
       this.resend = new Resend(apiKey);
@@ -183,6 +186,243 @@ export class EmailService {
     return cfg?.businessName ?? "RouteFlow";
   }
 
+  // ─── Transactional From-identity (Resend) ──────────────────────────────────
+
+  /** Extract the bare address from a `Name <addr@x>` (or plain `addr@x`) header. */
+  private addressOf(fromHeader: string): string {
+    const m = fromHeader.match(/<([^>]+)>/);
+    return (m ? m[1] : fromHeader).trim();
+  }
+
+  /**
+   * A verified per-tenant OWN-domain from-address, or null. Reads the sending-domain
+   * config that the domain-verification flow persists once Resend reports the domain
+   * `verified` and the operator picked a from-address (SystemConfig `email.sendingDomain`).
+   * Null until a tenant sets up + verifies their own domain — the platform address is
+   * used in that case.
+   */
+  private async getVerifiedOwnDomainFrom(): Promise<string | null> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return null;
+    const row = await this.prisma
+      .forTenant()
+      .systemConfig.findFirst({ where: { key: "email.sendingDomain" } });
+    if (!row?.value) return null;
+    try {
+      const cfg = JSON.parse(row.value) as { status?: string; fromAddress?: string };
+      if (cfg.status === "verified" && cfg.fromAddress) return cfg.fromAddress;
+    } catch {
+      /* corrupt config → fall back to the platform address */
+    }
+    return null;
+  }
+
+  /**
+   * The From header for a tenant's transactional email via Resend:
+   * `"<Business Name>" <verified sending address>`. Uses the tenant's own verified
+   * domain address when set up, else the platform verified address (EMAIL_FROM). The
+   * address MUST be on a domain verified in Resend or the send is rejected — that's
+   * why we never send from a raw tenant mailbox here (deliverability), only set the
+   * display name + Reply-To to identify the business.
+   */
+  private async getResendFrom(): Promise<string> {
+    const businessName = (await this.getTenantBusinessName()).replace(/["<>]/g, "").trim();
+    const address = (await this.getVerifiedOwnDomainFrom()) ?? this.addressOf(this.platformFrom);
+    return businessName ? `${businessName} <${address}>` : address;
+  }
+
+  /**
+   * Reply-To for tenant email — the business's own email, so a customer replying to an
+   * invoice reaches the tenant, not the platform sending domain. Uses the customer-
+   * facing email, falling back to the tenant's configured From email; undefined when
+   * neither is set (replies then go to the sending address).
+   */
+  private async getReplyTo(): Promise<string | undefined> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return undefined;
+    const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
+    return cfg?.customerEmail?.trim() || cfg?.smtpFromEmail?.trim() || undefined;
+  }
+
+  // ─── Per-tenant sending-domain verification (Resend domains API, Phase 2) ────
+  // Lets a tenant send from THEIR OWN domain (any address on it) with proper SPF/DKIM
+  // instead of a shared platform address. Config is stored (non-secret — the DNS
+  // records + from-address are public) under SystemConfig `email.sendingDomain`:
+  //   { domain, resendId, status, records[], fromAddress }
+
+  private static readonly SENDING_DOMAIN_KEY = "email.sendingDomain";
+
+  /** Normalize Resend's domain status to our small enum. */
+  private mapDomainStatus(s: unknown): "pending" | "verified" | "failed" {
+    const v = (typeof s === "string" ? s : "").toLowerCase();
+    if (v === "verified") return "verified";
+    if (v.includes("fail")) return "failed";
+    return "pending";
+  }
+
+  /** Normalize Resend's records array to a stable DNS-record shape for the UI. */
+  private mapDomainRecords(
+    records: any,
+  ): Array<{
+    record: string;
+    type: string;
+    name: string;
+    value: string;
+    priority?: number;
+    status?: string;
+  }> {
+    if (!Array.isArray(records)) return [];
+    return records.map((r: any) => ({
+      record: r.record ?? r.type ?? "",
+      type: r.type ?? "",
+      name: r.name ?? "",
+      value: r.value ?? "",
+      ...(r.priority != null ? { priority: Number(r.priority) } : {}),
+      ...(r.status ? { status: String(r.status) } : {}),
+    }));
+  }
+
+  private async readSendingDomainConfig(): Promise<{
+    domain: string;
+    resendId: string;
+    status: "pending" | "verified" | "failed";
+    records: any[];
+    fromAddress: string | null;
+  } | null> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return null;
+    const row = await this.prisma
+      .forTenant()
+      .systemConfig.findFirst({ where: { key: EmailService.SENDING_DOMAIN_KEY } });
+    if (!row?.value) return null;
+    try {
+      const cfg = JSON.parse(row.value);
+      return cfg && cfg.domain ? cfg : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeSendingDomainConfig(cfg: object | null): Promise<void> {
+    const key = EmailService.SENDING_DOMAIN_KEY;
+    const value = JSON.stringify(cfg);
+    const existing = await this.prisma.forTenant().systemConfig.findFirst({ where: { key } });
+    if (existing) {
+      await this.prisma
+        .forTenant()
+        .systemConfig.update({ where: { id: existing.id }, data: { value } });
+    } else {
+      await (this.prisma.forTenant().systemConfig.create as any)({ data: { key, value } });
+    }
+  }
+
+  /** Current sending-domain state for the settings UI. */
+  async getSendingDomainStatus(): Promise<{
+    platformConfigured: boolean;
+    domain: string | null;
+    status: "none" | "pending" | "verified" | "failed";
+    records: any[];
+    fromAddress: string | null;
+  }> {
+    const cfg = await this.readSendingDomainConfig();
+    return {
+      platformConfigured: !!this.resend,
+      domain: cfg?.domain ?? null,
+      status: cfg?.status ?? "none",
+      records: cfg?.records ?? [],
+      fromAddress: cfg?.fromAddress ?? null,
+    };
+  }
+
+  /** Register the tenant's sending domain with Resend and store the DNS records to add. */
+  async addSendingDomain(domain: string) {
+    if (!this.resend) {
+      throw new BadRequestException(
+        "Platform email isn't set up yet. An admin must set RESEND_API_KEY before verifying a domain.",
+      );
+    }
+    const name = (domain ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(name)) {
+      throw new BadRequestException("Enter a valid domain, e.g. mail.yourbusiness.com");
+    }
+    const res: any = await this.resend.domains.create({ name });
+    if (res?.error) {
+      throw new BadRequestException(res.error?.message ?? "Resend couldn't add this domain.");
+    }
+    const d = res?.data ?? {};
+    await this.writeSendingDomainConfig({
+      domain: name,
+      resendId: d.id ?? "",
+      status: this.mapDomainStatus(d.status),
+      records: this.mapDomainRecords(d.records),
+      fromAddress: null,
+    });
+    return this.getSendingDomainStatus();
+  }
+
+  /** Re-fetch the domain's status + records from Resend (poll after adding DNS). */
+  async refreshSendingDomain() {
+    const cfg = await this.readSendingDomainConfig();
+    if (!cfg?.resendId || !this.resend) return this.getSendingDomainStatus();
+    const res: any = await this.resend.domains.get(cfg.resendId);
+    const d = res?.data;
+    if (d) {
+      cfg.status = this.mapDomainStatus(d.status);
+      const recs = this.mapDomainRecords(d.records);
+      if (recs.length) cfg.records = recs;
+      await this.writeSendingDomainConfig(cfg);
+    }
+    return this.getSendingDomainStatus();
+  }
+
+  /** Ask Resend to verify the domain (checks DNS), then refresh the stored status. */
+  async verifySendingDomain() {
+    const cfg = await this.readSendingDomainConfig();
+    if (!cfg?.resendId || !this.resend) {
+      throw new BadRequestException("Add a sending domain first.");
+    }
+    const res: any = await this.resend.domains.verify(cfg.resendId);
+    if (res?.error) {
+      throw new BadRequestException(res.error?.message ?? "Verification couldn't be started.");
+    }
+    return this.refreshSendingDomain();
+  }
+
+  /** Choose the from-address on the verified domain (any address on it). */
+  async setSendingFromAddress(address: string) {
+    const cfg = await this.readSendingDomainConfig();
+    if (!cfg || cfg.status !== "verified") {
+      throw new BadRequestException("Verify your domain before choosing a From address.");
+    }
+    const addr = (address ?? "").trim().toLowerCase();
+    if (!addr.includes("@") || !addr.endsWith(`@${cfg.domain}`)) {
+      throw new BadRequestException(
+        `The From address must be on ${cfg.domain} — e.g. invoices@${cfg.domain}`,
+      );
+    }
+    cfg.fromAddress = addr;
+    await this.writeSendingDomainConfig(cfg);
+    return this.getSendingDomainStatus();
+  }
+
+  /** Remove the tenant's sending domain (reverts to the platform address). */
+  async removeSendingDomain() {
+    const cfg = await this.readSendingDomainConfig();
+    if (cfg?.resendId && this.resend) {
+      try {
+        await this.resend.domains.remove(cfg.resendId);
+      } catch {
+        /* already gone / transient — clear locally regardless */
+      }
+    }
+    await this.writeSendingDomainConfig(null);
+    return this.getSendingDomainStatus();
+  }
+
   // ─── Send test email ───────────────────────────────────────────────────────
 
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
@@ -239,12 +479,16 @@ export class EmailService {
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
    */
-  async send(params: { to: string; subject: string; html: string }): Promise<{
+  async send(params: { to: string; subject: string; html: string; replyTo?: string }): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
     id?: string;
     error?: string;
   }> {
+    // Reply-To = the business's own email so customer replies reach the tenant, not the
+    // (platform) sending address. Applies to both transports.
+    const replyTo = params.replyTo ?? (await this.getReplyTo());
+
     // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
     const emailCfg = await this.getTenantEmailConfig();
@@ -268,6 +512,7 @@ export class EmailService {
           to: params.to,
           subject: params.subject,
           html: params.html,
+          replyTo,
         });
         this.logger.log(
           `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
@@ -283,11 +528,13 @@ export class EmailService {
     // API-level rejection like an unverified domain / bad key), so inspect `error`.
     if (this.resend) {
       try {
+        const from = await this.getResendFrom();
         const result = await this.resend.emails.send({
-          from: this.platformFrom,
+          from,
           to: params.to,
           subject: params.subject,
           html: params.html,
+          replyTo,
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";

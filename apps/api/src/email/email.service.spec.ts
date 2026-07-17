@@ -8,15 +8,26 @@ import { EmailService } from "./email.service";
  * config-read); real SMTP/Resend delivery is covered by the invoice send-honesty specs.
  */
 function makeService(
-  opts: { resendKey?: string; systemConfigRows?: any[]; tenantConfig?: any } = {},
+  opts: {
+    resendKey?: string;
+    emailFrom?: string;
+    systemConfigRows?: any[];
+    sendingDomainRow?: any;
+    tenantConfig?: any;
+  } = {},
 ): EmailService {
   const config = {
-    get: (k: string) => (k === "RESEND_API_KEY" ? opts.resendKey : undefined),
+    get: (k: string) =>
+      k === "RESEND_API_KEY" ? opts.resendKey : k === "EMAIL_FROM" ? opts.emailFrom : undefined,
   } as any;
   const prisma = {
     getTenantId: () => "t1",
     forTenant: () => ({
-      systemConfig: { findMany: jest.fn().mockResolvedValue(opts.systemConfigRows ?? []) },
+      systemConfig: {
+        findMany: jest.fn().mockResolvedValue(opts.systemConfigRows ?? []),
+        // email.sendingDomain (verified own-domain from-address), Phase 2.
+        findFirst: jest.fn().mockResolvedValue(opts.sendingDomainRow ?? null),
+      },
     }),
     tenantConfig: { findFirst: jest.fn().mockResolvedValue(opts.tenantConfig ?? null) },
   } as any;
@@ -60,5 +71,118 @@ describe("EmailService — honest send (R5)", () => {
       ],
     });
     expect(await svc.isEmailConfigured()).toBe(false);
+  });
+});
+
+describe("EmailService — transactional From identity + reply-to (Phase 1)", () => {
+  it("Resend sends from '<Business name> <platform address>' with the tenant Reply-To", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      tenantConfig: { businessName: "Acme Co", customerEmail: "hello@acme.com" },
+    });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    const res = await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "resend" });
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: "Acme Co <invoices@send.routeflow.info>",
+        replyTo: "hello@acme.com",
+        to: "buyer@x.com",
+      }),
+    );
+  });
+
+  it("uses a VERIFIED own-domain from-address when the tenant has set one up", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      tenantConfig: { businessName: "Acme Co", customerEmail: "hello@acme.com" },
+      sendingDomainRow: {
+        value: JSON.stringify({ status: "verified", fromAddress: "invoices@acme.com" }),
+      },
+    });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_2" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "Acme Co <invoices@acme.com>" }),
+    );
+  });
+
+  it("does NOT use an own-domain address that isn't verified yet", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      tenantConfig: { businessName: "Acme Co" },
+      sendingDomainRow: {
+        value: JSON.stringify({ status: "pending", fromAddress: "invoices@acme.com" }),
+      },
+    });
+    const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_3" }, error: null });
+    (svc as any).resend.emails.send = sendSpy;
+
+    await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+
+    // Pending → falls back to the platform verified address.
+    expect(sendSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ from: "Acme Co <invoices@send.routeflow.info>" }),
+    );
+  });
+});
+
+describe("EmailService — sending-domain management (Phase 2)", () => {
+  const verified = (fromAddress: string | null = null) => ({
+    value: JSON.stringify({
+      domain: "mail.acme.com",
+      resendId: "d1",
+      status: "verified",
+      records: [],
+      fromAddress,
+    }),
+  });
+
+  it("addSendingDomain refuses when platform email (Resend) isn't configured", async () => {
+    await expect(makeService().addSendingDomain("mail.acme.com")).rejects.toThrow(
+      /platform email/i,
+    );
+  });
+
+  it("addSendingDomain rejects an invalid domain", async () => {
+    await expect(
+      makeService({ resendKey: "re_test" }).addSendingDomain("not a domain"),
+    ).rejects.toThrow(/valid domain/i);
+  });
+
+  it("getSendingDomainStatus reflects the stored verified config", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      sendingDomainRow: verified("invoices@mail.acme.com"),
+    });
+    expect(await svc.getSendingDomainStatus()).toMatchObject({
+      platformConfigured: true,
+      domain: "mail.acme.com",
+      status: "verified",
+      fromAddress: "invoices@mail.acme.com",
+    });
+  });
+
+  it("setSendingFromAddress rejects an address not on the verified domain", async () => {
+    const svc = makeService({ resendKey: "re_test", sendingDomainRow: verified() });
+    await expect(svc.setSendingFromAddress("invoices@wrong.com")).rejects.toThrow(
+      /must be on mail\.acme\.com/i,
+    );
+  });
+
+  it("setSendingFromAddress requires the domain to be verified first", async () => {
+    const svc = makeService({
+      resendKey: "re_test",
+      sendingDomainRow: {
+        value: JSON.stringify({ domain: "mail.acme.com", resendId: "d1", status: "pending" }),
+      },
+    });
+    await expect(svc.setSendingFromAddress("invoices@mail.acme.com")).rejects.toThrow(/verify/i);
   });
 });
