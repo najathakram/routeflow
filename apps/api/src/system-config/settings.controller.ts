@@ -261,6 +261,41 @@ export class SettingsController {
     return this.emailService.sendTestEmail(dto.toEmail);
   }
 
+  // ─── Sending domain (Resend, per-tenant own-domain verification) ──────────────
+
+  @Get("email/domain")
+  async getSendingDomain() {
+    return this.emailService.getSendingDomainStatus();
+  }
+
+  @Post("email/domain")
+  async addSendingDomain(@Body() dto: { domain: string }) {
+    return this.emailService.addSendingDomain(dto.domain);
+  }
+
+  @Post("email/domain/refresh")
+  @HttpCode(HttpStatus.OK)
+  async refreshSendingDomain() {
+    return this.emailService.refreshSendingDomain();
+  }
+
+  @Post("email/domain/verify")
+  @HttpCode(HttpStatus.OK)
+  async verifySendingDomain() {
+    return this.emailService.verifySendingDomain();
+  }
+
+  @Post("email/domain/from")
+  @HttpCode(HttpStatus.OK)
+  async setSendingFrom(@Body() dto: { address: string }) {
+    return this.emailService.setSendingFromAddress(dto.address);
+  }
+
+  @Delete("email/domain")
+  async removeSendingDomain() {
+    return this.emailService.removeSendingDomain();
+  }
+
   // ─── Clear Financial Data ────────────────────────────────────────────────────
 
   @Delete("financial-data")

@@ -41,6 +41,7 @@ import {
   ShieldCheck,
   Landmark,
   ArrowLeft,
+  ChevronDown,
 } from "lucide-react";
 import {
   Input,
@@ -80,6 +81,7 @@ import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
 import { SettingsHub } from "./_components/SettingsHub";
+import { SendingDomainCard } from "./_components/SendingDomainCard";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -1175,152 +1177,169 @@ function EmailSettingsTab() {
   };
 
   return (
-    <div className="space-y-6 max-w-xl">
-      {/* Step 1 — Pick provider */}
-      <div className="space-y-2">
-        <p className="text-sm font-semibold text-navy">Step 1 — Choose your email provider</p>
-        <div className="grid grid-cols-2 gap-3">
-          {EMAIL_PROVIDERS.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => setSelectedProvider(p.id)}
-              className={cn(
-                "flex items-center gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-all",
-                selectedProvider === p.id
-                  ? "border-brand-500 bg-brand-50 shadow-sm"
-                  : "border-surface-border bg-white hover:border-brand-300 hover:bg-surface-raised",
-              )}
-            >
-              <span className="shrink-0">{p.logo}</span>
-              <div>
-                <p className="text-sm font-semibold text-navy">{p.label}</p>
-                <p className="text-xs text-navy/70 leading-tight mt-0.5">{p.description}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-6">
+      {/* Recommended path: send from your own domain via the platform (Resend). */}
+      <SendingDomainCard />
 
-      {/* Step 2 — Credentials (only once provider is chosen) */}
-      {provider && (
-        <>
-          <div className="space-y-4">
-            <p className="text-sm font-semibold text-navy">Step 2 — Enter your credentials</p>
-
-            {/* Display name */}
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-navy">
-                Your name / business name
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Acme Foods"
-                value={fromName}
-                onChange={(e) => setFromName(e.target.value)}
-                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-              <p className="text-xs text-navy/70">This is what customers see as the sender name</p>
-            </div>
-
-            {/* Email address */}
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-navy">{provider.userLabel}</label>
-              <input
-                type="email"
-                placeholder={provider.userPlaceholder}
-                value={emailAddress}
-                onChange={(e) => setEmailAddress(e.target.value)}
-                autoComplete="off"
-                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-
-            {/* Password */}
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-navy">
-                {provider.passwordLabel}
-              </label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  placeholder={
-                    savedSettings?.configured
-                      ? "Leave blank to keep current password"
-                      : provider.passwordPlaceholder
-                  }
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
+      {/* Advanced fallback: send through your own SMTP mailbox. Collapsed by default —
+          it only reliably works for a single mailbox that allows SMTP auth. */}
+      <details className="group max-w-xl overflow-hidden rounded-card border border-surface-border bg-white [&_summary]:list-none">
+        <summary className="flex cursor-pointer items-center justify-between gap-2 px-5 py-4 text-sm font-medium text-navy hover:bg-surface-secondary/40">
+          <span>Advanced — send through your own SMTP server</span>
+          <ChevronDown className="h-4 w-4 text-navy/40 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="space-y-6 border-t border-surface-border p-5">
+          {/* Step 1 — Pick provider */}
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-navy">Step 1 — Choose your email provider</p>
+            <div className="grid grid-cols-2 gap-3">
+              {EMAIL_PROVIDERS.map((p) => (
                 <button
+                  key={p.id}
                   type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy"
-                  tabIndex={-1}
+                  onClick={() => setSelectedProvider(p.id)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl border-2 px-4 py-3.5 text-left transition-all",
+                    selectedProvider === p.id
+                      ? "border-brand-500 bg-brand-50 shadow-sm"
+                      : "border-surface-border bg-white hover:border-brand-300 hover:bg-surface-raised",
+                  )}
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  <span className="shrink-0">{p.logo}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-navy">{p.label}</p>
+                    <p className="text-xs text-navy/70 leading-tight mt-0.5">{p.description}</p>
+                  </div>
                 </button>
-              </div>
+              ))}
             </div>
           </div>
 
-          {/* Help box */}
-          <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 space-y-2">
-            <p className="text-sm font-semibold text-blue-900">{provider.helpTitle}</p>
-            <ol className="space-y-1 pl-1">
-              {provider.helpSteps.map((step, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-blue-800">
-                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-200 text-[10px] font-bold text-blue-800">
-                    {i + 1}
-                  </span>
-                  {step}
-                </li>
-              ))}
-            </ol>
-            <a
-              href={provider.helpLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block mt-1 text-xs font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
-            >
-              {provider.helpLinkLabel}
-            </a>
-          </div>
+          {/* Step 2 — Credentials (only once provider is chosen) */}
+          {provider && (
+            <>
+              <div className="space-y-4">
+                <p className="text-sm font-semibold text-navy">Step 2 — Enter your credentials</p>
 
-          {/* Actions */}
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              onClick={handleSave}
-              loading={isSaving}
-              leftIcon={<CheckCircle2 className="h-4 w-4" />}
-            >
-              Save
-            </Button>
-            {savedSettings?.configured && (
-              <Button
-                type="button"
-                variant="secondary"
-                loading={isTesting}
-                leftIcon={<Send className="h-4 w-4" />}
-                onClick={handleTest}
-              >
-                Send Test Email
-              </Button>
-            )}
-          </div>
-        </>
-      )}
+                {/* Display name */}
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-navy">
+                    Your name / business name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Acme Foods"
+                    value={fromName}
+                    onChange={(e) => setFromName(e.target.value)}
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="text-xs text-navy/70">
+                    This is what customers see as the sender name
+                  </p>
+                </div>
 
-      {/* Configured indicator */}
-      {savedSettings?.configured && !provider && (
-        <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-          Email is configured and ready to send
+                {/* Email address */}
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-navy">
+                    {provider.userLabel}
+                  </label>
+                  <input
+                    type="email"
+                    placeholder={provider.userPlaceholder}
+                    value={emailAddress}
+                    onChange={(e) => setEmailAddress(e.target.value)}
+                    autoComplete="off"
+                    className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                {/* Password */}
+                <div className="space-y-1">
+                  <label className="block text-sm font-medium text-navy">
+                    {provider.passwordLabel}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      placeholder={
+                        savedSettings?.configured
+                          ? "Leave blank to keep current password"
+                          : provider.passwordPlaceholder
+                      }
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                      className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 hover:text-navy"
+                      tabIndex={-1}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Help box */}
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 space-y-2">
+                <p className="text-sm font-semibold text-blue-900">{provider.helpTitle}</p>
+                <ol className="space-y-1 pl-1">
+                  {provider.helpSteps.map((step, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-blue-800">
+                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-200 text-[10px] font-bold text-blue-800">
+                        {i + 1}
+                      </span>
+                      {step}
+                    </li>
+                  ))}
+                </ol>
+                <a
+                  href={provider.helpLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block mt-1 text-xs font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                >
+                  {provider.helpLinkLabel}
+                </a>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  onClick={handleSave}
+                  loading={isSaving}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                >
+                  Save
+                </Button>
+                {savedSettings?.configured && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={isTesting}
+                    leftIcon={<Send className="h-4 w-4" />}
+                    onClick={handleTest}
+                  >
+                    Send Test Email
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Configured indicator */}
+          {savedSettings?.configured && !provider && (
+            <div className="flex items-center gap-2 rounded-lg bg-success-bg px-4 py-3 text-sm font-medium text-success">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Email is configured and ready to send
+            </div>
+          )}
         </div>
-      )}
+      </details>
     </div>
   );
 }
