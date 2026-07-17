@@ -351,3 +351,10 @@ Authz + input-validation batch from the security audit (each fix has a `*.securi
 ## Security hardening — SEC-3 (audit-IP, 2026-07-16)
 
 - **F9-006** — `audit.interceptor.ts` now records `req.ip` (Express trust-proxy-aware; `trust proxy = 2` set in main.ts) instead of the LEFTMOST `X-Forwarded-For` entry, which a client could spoof by prepending a fake value → poisoning the audit trail's source IP. Spec `audit.interceptor.security.spec.ts`. (F5-003 refresh-token type-claim + F12-005 mobile-deep-link deferred — see the security backlog note.)
+
+## Infra hardening — SEC-2 (2026-07-16, branch deferred-items-validation)
+
+- **F12-003** — api + web run as non-root `node`. `apps/api/Dockerfile` runner adds `su-exec` + `apps/api/docker-entrypoint.sh` (runs as root, `mkdir -p /data/uploads` + `chown -R node:node /data`, then `exec su-exec node "$@"`) so the mounted uploads volume stays writable; `apps/web/Dockerfile` just sets `USER node` (no writable volume). Both validated by a branch deploy.
+- **F12-002** — `apps/api/src/main.ts` bootstrap gates `runStartupMigration()` (the boot-time `ALTER TABLE … ADD COLUMN IF NOT EXISTS` DDL) behind `RUN_STARTUP_DDL !== "false"` (default ON → prod behavior unchanged; set `RUN_STARTUP_DDL=false` to disable once migrations backfill the columns).
+- **F12-004 (blocked)** — web/mobile Dockerfiles keep `npm install --force`: it masks a Windows-generated-lockfile `@next/swc-win32-x64-msvc` EBADPLATFORM + RN peer conflicts; `npm ci` would fail the build. Needs a Linux-regenerated lockfile.
+- **F12-001 (mostly moot)** — the socket.io stack already resolves patched `ws@8.21.0` (advisory ≤8.20.1); the critical `websocket-driver@0.7.4` is a transitive of `firebase-admin` with NO upstream patched version (not override-fixable).
