@@ -21,10 +21,11 @@ export class AuditInterceptor implements NestInterceptor {
 
     if (MUTATION_METHODS.has(req.method)) {
       const user = (req as any).user as JwtPayload | undefined;
-      const ip =
-        (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
-        req.socket?.remoteAddress ??
-        null;
+      // F9-006: use Express's trust-proxy-aware req.ip (trust proxy = 2 is set in
+      // main.ts) — NOT the raw LEFTMOST X-Forwarded-For entry, which a client can
+      // spoof by prepending a fake value (the leftmost is caller-supplied; Express
+      // strips the 2 trusted proxy hops from the RIGHT to get the real client IP).
+      const ip = req.ip ?? req.socket?.remoteAddress ?? null;
 
       // Derive entity type + id from the full URL path.
       // req.path in NestJS is the raw Express path, which does NOT include
