@@ -92,7 +92,11 @@ describe("OrdersService", () => {
   // P5-08b: captured so the credit-guard tests can assert the post-transaction
   // reconcile never runs on a blocked edit — mirrors how inventoryService is
   // captured below.
-  let invoicesService: { reconcileOrderDraftInvoice: jest.Mock };
+  let invoicesService: {
+    reconcileOrderDraftInvoice: jest.Mock;
+    resyncOrderInvoicesForEdit: jest.Mock;
+    revertLinkedInvoicesForOrderEdit: jest.Mock;
+  };
   // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
   let messagingService: { notify: jest.Mock; notifyEvent: jest.Mock };
   let mockQueue: { add: jest.Mock };
@@ -137,6 +141,7 @@ describe("OrdersService", () => {
             send: jest.fn().mockResolvedValue({ id: "inv-1", status: "SENT" }),
             findOpenOrderDraft: jest.fn().mockResolvedValue(null),
             reconcileOrderDraftInvoice: jest.fn().mockResolvedValue({ id: "inv-1" }),
+            resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
           },
@@ -604,6 +609,20 @@ describe("OrdersService", () => {
                   subtotal: 16,
                 }),
               ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("R2: stamps each line's position from the scan/array order (0-based)", async () => {
+      seedBuyerTierMocks(1);
+      await service.create({ items: [{ productId: "prod-1", qty: 1 }] }, customerPayload);
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([expect.objectContaining({ position: 0 })]),
             },
           }),
         }),
@@ -2165,22 +2184,29 @@ describe("OrdersService", () => {
       ],
     });
 
-    it("blocks a direct edit once the order's run has dispatched (EDIT_WINDOW_CLOSED)", async () => {
+    it("allows a direct edit even after the order's run has dispatched (R1), no PENDING revert", async () => {
       prisma.order.findUnique.mockResolvedValue(
         confirmedOrder({ status: "IN_PROGRESS", startedAt: new Date() }),
       );
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: 1 } });
 
-      await expect(
-        service.updateOrderItems(
-          "ord-1",
-          { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
-          operatorPayload,
-        ),
-      ).rejects.toMatchObject({ response: { code: "EDIT_WINDOW_CLOSED", reason: "DISPATCHED" } });
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
+        operatorPayload,
+      );
 
-      // Nothing was mutated and no revision was appended on a blocked edit.
-      expect(prisma.orderItem.update).not.toHaveBeenCalled();
-      expect(prisma.orderRevision.create).not.toHaveBeenCalled();
+      // R1: dispatch no longer closes the edit window — the edit proceeds and a
+      // revision is recorded (previously this threw EDIT_WINDOW_CLOSED). A dispatched
+      // CONFIRMED order is NOT reverted to PENDING (that would rewind the lifecycle).
+      expect(prisma.orderRevision.create).toHaveBeenCalled();
+      expect(mockGateway.emitOrderStatusChanged).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: "PENDING" }),
+      );
     });
 
     it("allows the edit while the run is still SCHEDULED and appends a revision", async () => {
@@ -2239,14 +2265,178 @@ describe("OrdersService", () => {
       });
     });
 
-    it("findOne reports the edit window closed (DISPATCHED) once the run started", async () => {
+    it("findOne keeps the edit window OPEN even once the run has dispatched (R1)", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         routeRun: { status: "IN_PROGRESS", startedAt: new Date() },
         revisions: [],
       });
       const result: any = await service.findOne("ord-1", operatorPayload);
-      expect(result.editWindow).toMatchObject({ editable: false, closedReason: "DISPATCHED" });
+      expect(result.editWindow).toMatchObject({ editable: true, closedReason: null });
+    });
+
+    it("findOne keeps the edit window OPEN for a DELIVERED order (R1)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DELIVERED",
+        routeRun: { status: "COMPLETED", startedAt: new Date() },
+        revisions: [],
+      });
+      const result: any = await service.findOne("ord-1", operatorPayload);
+      expect(result.editWindow).toMatchObject({ editable: true, closedReason: null });
+    });
+
+    it("findOne reports the edit window CLOSED (STATUS) only for a CANCELLED order (R1)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CANCELLED",
+        routeRun: null,
+        revisions: [],
+      });
+      const result: any = await service.findOne("ord-1", operatorPayload);
+      expect(result.editWindow).toMatchObject({ editable: false, closedReason: "STATUS" });
+    });
+
+    it("reverts a NON-dispatched CONFIRMED order to PENDING on edit (re-confirm the pick list)", async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        confirmedOrder({ status: "SCHEDULED", startedAt: null }),
+      );
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
+        operatorPayload,
+      );
+      expect(mockGateway.emitOrderStatusChanged).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: "PENDING" }),
+      );
+    });
+
+    it("edits a DELIVERED order in place: resyncs invoices, no revert, no throw-on-payment (R1)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
+        status: "DELIVERED",
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 3, unitPrice: 5, subtotal: 15, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 5 }] },
+        operatorPayload,
+      );
+
+      // Post-delivery: the in-place invoice+ledger resync runs (NOT the open-draft
+      // reconcile), and the throw-on-payment pre-mutation revert is skipped.
+      expect(invoicesService.resyncOrderInvoicesForEdit).toHaveBeenCalledWith("ord-1");
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(invoicesService.revertLinkedInvoicesForOrderEdit).not.toHaveBeenCalled();
+      // Delivered orders are edited in place — never reverted to PENDING.
+      expect(mockGateway.emitOrderStatusChanged).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: "PENDING" }),
+      );
+    });
+
+    it("SKIPS the in-place resync when the DELIVERED order is PARTIALLY invoiced (no over-bill)", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
+        status: "DELIVERED",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 10,
+            invoicedQty: 6, // a partial invoice billed 6 of 10 — remainder un-invoiced
+            unitPrice: 5,
+            subtotal: 50,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 10, unitPrice: 6 }] },
+        operatorPayload,
+      );
+
+      // Rebuilding a partially-billed finalized invoice at the full order qty would
+      // inflate an already-issued document → the resync is skipped entirely (the edit
+      // still applies to the order; the operator reconciles the partial invoices).
+      expect(invoicesService.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+      expect(prisma.orderRevision.create).toHaveBeenCalled();
+    });
+
+    it("SKIPS the resync for a CROSS-LINE partial (line A fully invoiced, line B untouched)", async () => {
+      // createPartialFromOrder can bill a SUBSET of LINES at full qty (A) while omitting
+      // others (B): every line is then either fully-invoiced or zero-invoiced, so a
+      // per-line 'invoicedQty<qty' check would miss it — the gate must be cross-line.
+      prisma.order.findUnique.mockResolvedValue({
+        ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
+        status: "DELIVERED",
+        lineItems: [
+          {
+            id: "li-a",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 10,
+            invoicedQty: 10,
+            unitPrice: 5,
+            subtotal: 50,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+          {
+            id: "li-b",
+            orderId: "ord-1",
+            productId: "prod-2",
+            qty: 5,
+            invoicedQty: 0,
+            unitPrice: 20,
+            subtotal: 100,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-a", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-a", action: "UPDATE", qty: 10, unitPrice: 6 }] },
+        operatorPayload,
+      );
+
+      // Some line invoiced but not ALL fully invoiced → partial → resync skipped.
+      expect(invoicesService.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+      expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
     });
   });
 

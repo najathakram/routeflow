@@ -1315,6 +1315,12 @@ model OrderItem {
   trackedCategoryId    String?
   trackedSubcategoryId String?
   categoryTaxAmount    Decimal    @default(0) @db.Decimal(10, 2)
+  // Scan/insertion order within the order (0-based). Set from the client's item
+  // array index at create and preserved/appended on edit, so line display matches
+  // the order items were scanned/added (the invoice already reads in insertion
+  // order). Nullable: legacy rows (pre-migration) and merge/change-request appends
+  // leave it null and sort LAST (Postgres NULLS LAST for ASC).
+  position             Int?
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   tenantId             String?

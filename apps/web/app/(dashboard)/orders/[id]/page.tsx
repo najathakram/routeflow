@@ -1333,9 +1333,10 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   }
 
   const total = Number(order.total);
-  // P5-08: the server's edit window is authoritative — it also closes editing once
-  // the order's run has DISPATCHED (a CONFIRMED order out for delivery is no longer
-  // directly editable). Fall back to the status check when the field isn't present.
+  // P5-08 / R1: the server's edit window is authoritative. Items are now editable at
+  // every live stage (incl. OUT_FOR_DELIVERY / DELIVERED) — only a CANCELLED order
+  // closes it — and post-delivery edits re-sync the linked invoice + ledger server-side.
+  // Fall back to the status check when the field isn't present (older API responses).
   const canEdit =
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");

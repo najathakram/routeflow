@@ -117,10 +117,17 @@ function toNumber(v: number | string | null | undefined): number {
   return 0;
 }
 
-export default function EditOrderItemsScreen() {
+/**
+ * Order item editor. Mounted by BOTH the operator route (default export below,
+ * reading the `[id]` param) and the driver route (R1e — passing `orderId` so a
+ * driver can edit at a stop). The screen already reads `userRole`; driver-specific
+ * behavior (list pricing, back-to-stop navigation) branches off it.
+ */
+export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: order, isLoading } = useAdminOrder(id ?? "");
+  const params = useLocalSearchParams<{ id?: string }>();
+  const id = orderId ?? params.id ?? "";
+  const { data: order, isLoading } = useAdminOrder(id);
   const customerId = (order as any)?.customerId as string | undefined;
   // Remembered per-customer prices — pre-fill a newly added line's price so a
   // prior discount carries forward (operator can still change it).
@@ -139,6 +146,14 @@ export default function EditOrderItemsScreen() {
   // Customer accounts shouldn't reach this screen, but defend anyway —
   // box-splitting is operator/driver-only by product policy.
   const canSplitBoxes = userRole !== "CUSTOMER";
+  // R1e: this screen is also mounted for DRIVERS (via the stop's edit-items route).
+  // Drivers came from the stop detail, so leaving the editor pops back there; the
+  // operator flow lands on the orders LIST (its historical behavior).
+  const isDriver = userRole === "DRIVER";
+  const leaveEditor = () => {
+    if (isDriver) router.back();
+    else router.replace("/(operator)/(tabs)/orders" as any);
+  };
   // Tenant margin config for the live cost/margin hint (P10-POS-1).
   const { data: marginConfig } = useMarginConfig();
   // Lines explicitly acked as "sell anyway" below the margin floor —
@@ -387,7 +402,7 @@ export default function EditOrderItemsScreen() {
 
     if (items.length === 0) {
       // Nothing changed — mirror web: just leave the editor, don't error.
-      router.replace("/(operator)/(tabs)/orders" as any);
+      leaveEditor();
       return;
     }
     updateMut.mutate(
@@ -399,8 +414,8 @@ export default function EditOrderItemsScreen() {
           // popping back to the order detail. The user reported "Back" not
           // taking them to all orders after submit; explicit navigation
           // sidesteps any unstable back-stack state when the screen was
-          // reached via deep link or a fresh tab switch.
-          router.replace("/(operator)/(tabs)/orders" as any);
+          // reached via deep link or a fresh tab switch. (Driver → back to stop.)
+          leaveEditor();
         },
         onError: (e: any) => {
           // Regulated-sale block: open the guard, then replay the save on resolve.
@@ -493,8 +508,11 @@ export default function EditOrderItemsScreen() {
           // router.push (not replace) — the edit screen stays on the stack, so the
           // operator's in-progress draft is intact when they come back and hit
           // Save again after recording the payment. No auto-retry: this screen
-          // never re-sends the exact same request it just watched fail.
-          router.push(`/(operator)/invoices?customerId=${customerId ?? ""}` as any);
+          // never re-sends the exact same request it just watched fail. Drivers
+          // collect payment from the stop, so just close the guard for them.
+          if (!isDriver) {
+            router.push(`/(operator)/invoices?customerId=${customerId ?? ""}` as any);
+          }
         }}
         onCancel={() => setCreditBlock(null)}
       />
@@ -610,7 +628,7 @@ export default function EditOrderItemsScreen() {
                     key={it.productId}
                     item={it}
                     canSplitBoxes={canSplitBoxes}
-                    canEditPrice={["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)}
+                    canEditPrice={!isDriver && order.status !== "CANCELLED"}
                     marginFloor={floorForCategory(marginConfig, it.category)}
                     acked={floorAcked.has(it.lineId ?? it.productId)}
                     onSetToFloor={(price) => setLinePrice(it.productId, price)}
@@ -1644,3 +1662,7 @@ const styles = StyleSheet.create({
   modalBtnDisabled: { opacity: 0.4 },
   modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
 });
+
+// Default export = the operator route (reads the [id] param). The named export
+// above is reused by the driver route (R1e).
+export default EditOrderItemsScreen;

@@ -324,8 +324,11 @@ export class OrdersService implements OnApplicationBootstrap {
               },
             },
           },
-          // Stable creation order so newly scanned items append at the bottom.
-          orderBy: { createdAt: "asc" },
+          // Scan/insertion order (R2): all lines in one create share the same
+          // createdAt (tx clock), so createdAt alone can't order them — `position`
+          // carries the scanned order. Legacy/appended lines have null position and
+          // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
+          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
         transaction: true,
         invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
@@ -367,21 +370,22 @@ export class OrdersService implements OnApplicationBootstrap {
   }
 
   /**
-   * P5-08: derive the non-persisted edit-window descriptor from an order + its run.
-   * editable ⟺ status is DRAFT/PENDING/CONFIRMED AND the order isn't on a dispatched
-   * run. Single source of truth shared by the read and the write gate.
+   * P5-08 / R1: derive the non-persisted edit-window descriptor from an order.
+   * editable ⟺ the order isn't CANCELLED — items can now be edited at every live
+   * stage (incl. OUT_FOR_DELIVERY / DELIVERED, on dispatched runs), with the write
+   * gate re-syncing any linked invoice + ledger. Single source of truth shared by
+   * the read and the write gate. `dispatched` no longer closes the window.
    */
   private computeEditWindow(order: {
     status: string;
     routeRunId?: string | null;
     routeRun?: { status: string } | null;
   }): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
-    const statusEditable = ["DRAFT", "PENDING", "CONFIRMED"].includes(order.status);
-    const dispatched = order.routeRun != null && order.routeRun.status !== "SCHEDULED";
+    const editable = order.status !== "CANCELLED";
     return {
-      editable: statusEditable && !dispatched,
+      editable,
       editableUntil: null,
-      closedReason: dispatched ? "DISPATCHED" : statusEditable ? null : "STATUS",
+      closedReason: editable ? null : "STATUS",
     };
   }
 
@@ -1156,7 +1160,7 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     let subtotal = 0;
-    const lineItemsData = items.map((item) => {
+    const lineItemsData = items.map((item, index) => {
       // Unlisted (ad-hoc) line: no catalog product. The operator supplies a
       // free-text name + unitPrice; we store it as a MANUAL-priced line with no
       // stock impact and no boxed proration.
@@ -1182,6 +1186,8 @@ export class OrdersService implements OnApplicationBootstrap {
           trackedCategoryId: null as string | null,
           trackedSubcategoryId: null as string | null,
           categoryTaxAmount: 0,
+          // R2: preserve scan/insertion order (array index) for read-back.
+          position: index,
           tenantId: this.prisma.getTenantId(),
         };
       }
@@ -1309,6 +1315,8 @@ export class OrdersService implements OnApplicationBootstrap {
         trackedSubcategoryId: (product.trackedSubcategoryId ?? null) as string | null,
         // RF-4: per-line regulated category tax, snapshotted (folded into the order total).
         categoryTaxAmount,
+        // R2: preserve scan/insertion order (array index) for read-back.
+        position: index,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
     });
@@ -1797,30 +1805,31 @@ export class OrdersService implements OnApplicationBootstrap {
       },
     });
     if (!order) throw new NotFoundException("Order not found");
-    if (!["DRAFT", "PENDING", "CONFIRMED"].includes(order.status)) {
-      throw new BadRequestException(
-        "Items can only be edited on DRAFT, PENDING, or CONFIRMED orders",
-      );
-    }
-    // P5-08 edit window (decision G7): free editing closes the moment the order's
-    // stop's RouteRun DISPATCHES (SCHEDULED → IN_PROGRESS, stamped once at
-    // RouteRun.startedAt). Past that, edits become post-dispatch change-requests
-    // (P5-09), not direct edits. Keys off the RUN, not order.status (run-start
-    // never flips the order off CONFIRMED). A CANCELLED run auto-unbinds its orders,
-    // so they revert to the freely-editable null-run state — no special case here.
-    if (order.routeRun != null && order.routeRun.status !== "SCHEDULED") {
-      throw new ConflictException({
-        code: "EDIT_WINDOW_CLOSED",
-        reason: "DISPATCHED",
-        message: "This order is out for delivery and can no longer be edited directly.",
-      });
+    // R1: items are editable at ANY live stage — DRAFT/PENDING/CONFIRMED and now
+    // OUT_FOR_DELIVERY / PARTIALLY_DELIVERED / DELIVERED too (operator + driver). Only
+    // a CANCELLED order is off-limits (nothing to edit). Post-delivery edits re-sync
+    // the linked invoice(s) + regulated ledger and surface the new balance (see the
+    // reconcile routing after the mutation). The former dispatch gate (EDIT_WINDOW_CLOSED
+    // once the RouteRun left SCHEDULED) is removed: dispatched/out-for-delivery orders
+    // now edit directly instead of forcing the post-dispatch change-request flow.
+    if (order.status === "CANCELLED") {
+      throw new BadRequestException("Items can't be edited on a cancelled order");
     }
 
-    // If this order already has a SENT pending-mirror invoice, revert it to DRAFT
-    // first so the edit below re-syncs into it (auto-revert policy). Runs before any
-    // mutation: a paid invoice throws here and the edit is aborted cleanly, so money
-    // never detaches from a sent document. No-op when there's no such invoice.
-    await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+    // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
+    // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
+    // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
+    // the new balance, never blocking. So skip the pre-mutation revert here (which
+    // throws when a SENT invoice has payments). Undelivered edits keep the auto-revert:
+    // a SENT pending-mirror flips to DRAFT so the reconcile below re-syncs into it, and
+    // a paid one throws cleanly before any mutation so money never detaches from a sent
+    // document. No-op when there's no such invoice.
+    const postDeliveryEdit = ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED", "DELIVERED"].includes(
+      order.status,
+    );
+    if (!postDeliveryEdit) {
+      await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId);
+    }
 
     // W6: license guard on edits. A regulated line added on edit (or via a buyer
     // merge into an existing order) must be authorized just like at create — else
@@ -1928,6 +1937,10 @@ export class OrdersService implements OnApplicationBootstrap {
           );
 
           await tx.orderItem.deleteMany({ where: { orderId } });
+          // R2: full replace — the client's item array IS the desired order, so
+          // stamp position from a counter that only advances on a real create
+          // (skipped/invalid items `continue` before it).
+          let pos = 0;
           for (const item of dto.items) {
             if (!item.productId) {
               // Preserve an operator-added unlisted (catalog-free) line carried
@@ -1947,6 +1960,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   status: "PENDING",
                   notes: item.notes,
                   priceType: PriceType.MANUAL,
+                  position: pos++,
                 },
               });
               continue;
@@ -2016,6 +2030,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 trackedCategoryId: product.trackedCategoryId ?? null,
                 // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                 trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                // R2: preserve the client's line order on full replace.
+                position: pos++,
               },
             });
           }
@@ -2038,6 +2054,8 @@ export class OrdersService implements OnApplicationBootstrap {
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
 
             await tx.orderItem.deleteMany({ where: { orderId } });
+            // R2: full replace — stamp position from the client's array order.
+            let pos = 0;
             for (const item of dto.items) {
               if (!item.productId) {
                 // Unlisted (ad-hoc) line — free-text name + unitPrice, no product
@@ -2057,6 +2075,7 @@ export class OrdersService implements OnApplicationBootstrap {
                     status: "PENDING",
                     notes: item.notes,
                     priceType: PriceType.MANUAL,
+                    position: pos++,
                   },
                 });
                 continue;
@@ -2117,11 +2136,18 @@ export class OrdersService implements OnApplicationBootstrap {
                   trackedCategoryId: product.trackedCategoryId ?? null,
                   // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                   trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                  // R2: preserve the client's line order on full replace.
+                  position: pos++,
                 },
               });
             }
           } else {
-            // Individual item updates (dispatcher workflow with explicit item IDs)
+            // Individual item updates (dispatcher workflow with explicit item IDs).
+            // R2: existing lines keep their position (updated by id); NEW lines
+            // append after the current max so an added item lands at the bottom.
+            // Legacy lines with null position count as -1 → new lines start at 0.
+            let nextPos =
+              Math.max(-1, ...(order.lineItems ?? []).map((li) => li.position ?? -1)) + 1;
             for (const item of dto.items) {
               // New unlisted item (no id, no productId, has name + unitPrice).
               if (!item.id && !item.productId && (item.name ?? "").trim() && (item.qty ?? 0) > 0) {
@@ -2140,6 +2166,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     status: "PENDING",
                     notes: item.notes,
                     priceType: PriceType.MANUAL,
+                    // R2: append this newly-added line after the existing lines.
+                    position: nextPos++,
                   },
                 });
                 continue;
@@ -2191,6 +2219,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     trackedCategoryId: product.trackedCategoryId ?? null,
                     // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
                     trackedSubcategoryId: product.trackedSubcategoryId ?? null,
+                    // R2: append this newly-added line after the existing lines.
+                    position: nextPos++,
                   },
                 });
                 continue;
@@ -2404,14 +2434,16 @@ export class OrdersService implements OnApplicationBootstrap {
           );
         }
 
-        // Revert CONFIRMED (or later) orders back to PENDING when items are edited
-        // so the office must re-confirm the updated pick list before dispatch.
-        // F10-002: a CUSTOMER editing their own CONFIRMED order MUST also force
-        // re-confirmation — otherwise a buyer could silently mutate the items and
-        // totals of an already-confirmed order. DRIVER edits still don't revert
-        // (drivers don't own the pick list; their change-request flow is separate).
+        // Revert a CONFIRMED order back to PENDING when items are edited so the office
+        // must re-confirm the updated pick list before dispatch. R1: scope this to a
+        // CONFIRMED order whose run has NOT dispatched — once the run is out (dispatched
+        // / OUT_FOR_DELIVERY / DELIVERED) the edit is an in-place correction and a
+        // revert to PENDING would rewind the delivery lifecycle. F10-002: a CUSTOMER
+        // editing their own (pre-dispatch) CONFIRMED order still forces re-confirmation.
+        // DRIVER edits never revert (drivers don't own the pick list).
+        const runDispatched = order.routeRun != null && order.routeRun.status !== "SCHEDULED";
         const shouldRevert =
-          !["DRAFT", "PENDING"].includes(order.status) && user?.role !== UserRole.DRIVER;
+          order.status === "CONFIRMED" && !runDispatched && user?.role !== UserRole.DRIVER;
         const revertNote = shouldRevert
           ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
           : undefined;
@@ -2439,10 +2471,39 @@ export class OrdersService implements OnApplicationBootstrap {
       { timeout: 15_000 },
     );
 
-    // Keep the order's pending-mirror draft invoice (if any) in lockstep with the
-    // edit. updateOrderItems only runs on undelivered orders, so a basis="order"
-    // re-sync is always appropriate. No-op when the order has no open draft.
-    await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
+    // Keep the order's linked invoice(s) in lockstep with the edit.
+    //  - Undelivered edit: re-sync the open pending-mirror draft at order basis
+    //    (no-op when there's no open draft) — unchanged.
+    //  - Post-delivery edit (R1): the order may carry SENT / PAID / delivery-batch
+    //    invoices, not just an open draft. Rebuild each in place from the edited
+    //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
+    //    the regulated ledger — so the invoice tracks the correction and simply shows
+    //    the new balance. Never blocks (bails on an unclean partition).
+    if (postDeliveryEdit) {
+      // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
+      // be auto-resynced — rebuilding its finalized/paid invoice at the full order qty
+      // would inflate an already-issued document with units/lines it never billed.
+      // "Partial" is CROSS-LINE, not just within a line: it covers both a line billed for
+      // only part of its qty (createPartialFromOrder qty subset) AND a subset of LINES
+      // billed at full qty while sibling lines are entirely un-invoiced (line subset).
+      // So: skip when SOMETHING is invoiced but NOT everything is fully invoiced. The two
+      // safe states still proceed — nothing invoiced yet (pure pending-mirror) and every
+      // line fully invoiced (safe to expand for a qty increase / added line). Read from
+      // the PRE-EDIT snapshot (reliable cumulative invoicedQty — the replace-all edit path
+      // resets it to 0 on recreated rows, so a post-mutation read would miss it). When
+      // partial, skip the in-place resync entirely; the operator reconciles it manually.
+      const billableLines = (order.lineItems ?? []).filter((li) => Number(li.qty ?? 0) > 0.001);
+      const anyInvoiced = billableLines.some((li) => Number(li.invoicedQty ?? 0) > 0.001);
+      const allFullyInvoiced = billableLines.every(
+        (li) => Number(li.invoicedQty ?? 0) >= Number(li.qty ?? 0) - 0.001,
+      );
+      const hasPartialBilling = anyInvoiced && !allFullyInvoiced;
+      if (!hasPartialBilling) {
+        await this.invoicesService.resyncOrderInvoicesForEdit(orderId);
+      }
+    } else {
+      await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
+    }
 
     if (shouldRevert) {
       this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {

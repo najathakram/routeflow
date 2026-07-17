@@ -163,6 +163,9 @@ export default function StopDetailScreen() {
   // effects that depend on `items` to re-run indefinitely.
   const items = useMemo(() => itemsFromStop(stop), [stop]);
   const itemCount = items.length;
+  // R1e: the stop's order for the direct "Edit items" flow. A stop usually has one
+  // order (a delivery); a consolidated multi-order stop edits the first.
+  const editOrderId = stop.orders?.[0]?.id;
   const dollarTotal = (stop.orders ?? []).reduce(
     (sum, o) =>
       sum +
@@ -358,6 +361,15 @@ export default function StopDetailScreen() {
               onPress={() => router.push(`/route/stop/${stopId}/new-order`)}
             />
           </View>
+          {/* R1e: direct order editing at the stop — add / update / remove items
+              (updateOrderItems, list-priced for drivers). Works at every live stage
+              incl. out-for-delivery / delivered; the invoice + ledger re-sync. */}
+          {editOrderId ? (
+            <SecondaryBtn
+              label="Edit items"
+              onPress={() => router.push(`/route/stop/${stopId}/edit-items?orderId=${editOrderId}`)}
+            />
+          ) : null}
           {/* Optional split-invoice flow: lets the driver issue 2+ invoices for the
               stop's order(s), each with its own due date. After splitting, the
               auto-invoice on stop completion sees fully-invoiced items and skips. */}

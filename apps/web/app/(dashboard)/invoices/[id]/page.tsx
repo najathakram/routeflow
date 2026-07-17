@@ -1180,12 +1180,22 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             description: `Sent to ${res.sentTo}`,
             variant: "success",
           }),
-        onError: (e: any) =>
-          toast({
-            title: "Failed to send email",
-            description: e?.response?.data?.message || e.message,
-            variant: "error",
-          }),
+        onError: (e: any) => {
+          // R5: the API now refuses to claim "sent" when email isn't set up / the send
+          // failed. On EMAIL_NOT_CONFIGURED, take the operator straight to Email settings.
+          const code = e?.response?.data?.code;
+          const description = e?.response?.data?.message || e.message;
+          if (code === "EMAIL_NOT_CONFIGURED") {
+            toast({
+              title: "Email isn't set up yet",
+              description: "Opening Email settings so you can configure it…",
+              variant: "error",
+            });
+            router.push("/settings?tab=email");
+            return;
+          }
+          toast({ title: "Failed to send email", description, variant: "error" });
+        },
       },
     );
   };

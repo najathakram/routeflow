@@ -74,25 +74,93 @@ export class EmailService {
 
   // ─── Per-tenant SMTP helpers ───────────────────────────────────────────────
 
-  private async getTenantSmtpTransport(): Promise<nodemailer.Transporter | null> {
+  /** AES-256-GCM storage shape (EncryptionService): IV_HEX:TAG_HEX:CIPHERTEXT_B64. */
+  private static readonly ENCRYPTED_FORMAT = /^[0-9a-f]{32}:[0-9a-f]{32}:[A-Za-z0-9+/=]+$/;
+
+  /** Decrypt a stored secret, passing through legacy plaintext (pre-F5-004 rows). */
+  private decryptStoredSecret(value: string | null | undefined): string | null {
+    if (!value) return null;
+    if (!EmailService.ENCRYPTED_FORMAT.test(value)) return value; // legacy plaintext
+    try {
+      return this.encryption.decrypt(value);
+    } catch {
+      this.logger.error("Failed to decrypt a stored SMTP secret");
+      return null;
+    }
+  }
+
+  /**
+   * Resolve the tenant's SMTP config. Reads the **Settings → Email** store first
+   * (`SystemConfig` `email.*`, which the operator UI writes and its Test button
+   * probes), then falls back to the legacy `TenantConfig` SMTP columns. Returns null
+   * when neither is fully configured (host + user + password). This is the wiring
+   * fix: previously the sender only read `TenantConfig`, so configuring SMTP through
+   * the visible settings tab had zero effect on real delivery.
+   */
+  private async getTenantEmailConfig(): Promise<{
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    pass: string;
+    fromName: string | null;
+    fromEmail: string | null;
+  } | null> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return null;
 
+    // 1. SystemConfig `email.*` (the Settings → Email tab).
+    const rows = await this.prisma
+      .forTenant()
+      .systemConfig.findMany({ where: { key: { startsWith: "email." } } });
+    if (rows.length) {
+      const m = Object.fromEntries(rows.map((r: any) => [r.key, r.value])) as Record<
+        string,
+        string
+      >;
+      const host = m["email.smtpHost"]?.trim();
+      const user = m["email.smtpUser"]?.trim();
+      const pass = this.decryptStoredSecret(m["email.smtpPassword"]);
+      if (host && user && pass) {
+        return {
+          host,
+          user,
+          pass,
+          port: m["email.smtpPort"] ? parseInt(m["email.smtpPort"], 10) : 587,
+          secure: m["email.smtpSecure"] === "true",
+          fromName: m["email.fromName"]?.trim() || null,
+          fromEmail: m["email.fromEmail"]?.trim() || null,
+        };
+      }
+    }
+
+    // 2. Legacy TenantConfig SMTP columns (backward compat).
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
-    if (!cfg?.smtpHost || !cfg.smtpUser || !cfg.smtpPassword) return null;
+    if (cfg?.smtpHost && cfg.smtpUser && cfg.smtpPassword) {
+      const pass = this.decryptStoredSecret(cfg.smtpPassword);
+      if (pass) {
+        return {
+          host: cfg.smtpHost,
+          user: cfg.smtpUser,
+          pass,
+          port: cfg.smtpPort ?? 587,
+          secure: cfg.smtpSecure,
+          fromName: cfg.smtpFromName ?? null,
+          fromEmail: cfg.smtpFromEmail ?? null,
+        };
+      }
+    }
+    return null;
+  }
 
-    const pass = this.encryption.decryptNullable(cfg.smtpPassword);
-    if (!pass) return null;
-
-    const port = cfg.smtpPort ?? 587;
-    assertSafeSmtpEndpoint(cfg.smtpHost, port);
-
-    return nodemailer.createTransport({
-      host: cfg.smtpHost,
-      port,
-      secure: cfg.smtpSecure,
-      auth: { user: cfg.smtpUser, pass },
-    });
+  /**
+   * Is real email delivery available for the current tenant? True when platform
+   * Resend is configured OR the tenant has SMTP set. The invoice send + settings
+   * surfaces use this to warn/guide BEFORE claiming an email went out.
+   */
+  async isEmailConfigured(): Promise<boolean> {
+    if (this.resend) return true;
+    return (await this.getTenantEmailConfig()) != null;
   }
 
   private async getTenantFromAddress(): Promise<string> {
@@ -120,17 +188,19 @@ export class EmailService {
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
     const businessName = await this.getTenantBusinessName();
     const html = `<p>This is a test email from ${businessName}. Your SMTP configuration is working correctly.</p>`;
-    try {
-      await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
+    // send() is honest-by-result and never throws for a delivery/config problem.
+    const result = await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
+    if (result.delivered) {
       return { success: true, message: "Test email sent successfully" };
-    } catch (err: any) {
-      // Return a generic message to avoid leaking SMTP server internals to the caller.
-      // The full error is already logged by the send/transport layer.
-      return {
-        success: false,
-        message: "Failed to send test email. Check your SMTP configuration.",
-      };
     }
+    // Generic messages (don't leak SMTP internals); the full error is logged already.
+    return {
+      success: false,
+      message:
+        result.transport === "none"
+          ? "Email isn't set up yet. Add your SMTP settings below (or ask an admin to configure a platform email key), then test again."
+          : "Failed to send test email. Check your SMTP host, port, username, and password.",
+    };
   }
 
   // ─── Send Invoice ──────────────────────────────────────────────────────────
@@ -158,13 +228,42 @@ export class EmailService {
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
-  async send(params: { to: string; subject: string; html: string }) {
-    // 1. Try per-tenant SMTP if configured
-    const smtpTransport = await this.getTenantSmtpTransport();
-    if (smtpTransport) {
-      const from = await this.getTenantFromAddress();
+  /**
+   * Send an email and return an HONEST result. NEVER throws for a delivery/config
+   * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
+   * (auth password-reset, account-merge) are never turned into a 500 by an
+   * unconfigured or failing mail server, while callers that must confirm delivery
+   * (invoice send, the settings Test button) check `delivered` and surface the truth.
+   * Previously this returned success for THREE non-delivering cases (unconfigured →
+   * mock, tenant-SMTP failure → fallthrough → mock, and Resend API-level rejection
+   * whose `result.error` was never inspected), which is why the UI said "sent" when
+   * nothing went out.
+   */
+  async send(params: { to: string; subject: string; html: string }): Promise<{
+    delivered: boolean;
+    transport: "smtp" | "resend" | "none";
+    id?: string;
+    error?: string;
+  }> {
+    // 1. Try per-tenant SMTP if configured. A config/SSRF error or send failure is
+    // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
+    const emailCfg = await this.getTenantEmailConfig();
+    let smtpError: string | undefined;
+    if (emailCfg) {
       try {
-        const info = await smtpTransport.sendMail({
+        assertSafeSmtpEndpoint(emailCfg.host, emailCfg.port);
+        const from = emailCfg.fromEmail
+          ? emailCfg.fromName
+            ? `${emailCfg.fromName} <${emailCfg.fromEmail}>`
+            : emailCfg.fromEmail
+          : await this.getTenantFromAddress();
+        const transport = nodemailer.createTransport({
+          host: emailCfg.host,
+          port: emailCfg.port,
+          secure: emailCfg.secure,
+          auth: { user: emailCfg.user, pass: emailCfg.pass },
+        });
+        const info = await transport.sendMail({
           from,
           to: params.to,
           subject: params.subject,
@@ -173,13 +272,15 @@ export class EmailService {
         this.logger.log(
           `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
         );
-        return { id: info.messageId };
+        return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
-        this.logger.error(`Tenant SMTP send failed: ${err?.message}. Falling back to Resend.`);
+        smtpError = err?.message ?? "SMTP send failed";
+        this.logger.error(`Tenant SMTP send failed: ${smtpError}. Falling back to Resend.`);
       }
     }
 
-    // 2. Try platform Resend
+    // 2. Try platform Resend. The SDK returns `{data, error}` (it does NOT throw on an
+    // API-level rejection like an unverified domain / bad key), so inspect `error`.
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
@@ -188,17 +289,28 @@ export class EmailService {
           subject: params.subject,
           html: params.html,
         });
+        if ((result as any)?.error) {
+          const msg = (result as any).error?.message ?? "Resend rejected the message";
+          this.logger.error(`Resend rejected email to ${params.to}: ${msg}`);
+          return { delivered: false, transport: "resend", error: msg };
+        }
         this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
-        return result;
+        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
       } catch (err: any) {
         this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
-        throw err;
+        return {
+          delivered: false,
+          transport: "resend",
+          error: err?.message ?? "Resend send failed",
+        };
       }
     }
 
-    // 3. Log only (dev/no keys)
-    this.logger.log(`[EMAIL MOCK] To: ${params.to} | Subject: ${params.subject}`);
-    return { id: "mock" };
+    // 3. No transport configured — NOT delivered (was a silent mock "success").
+    this.logger.warn(
+      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
+    );
+    return { delivered: false, transport: emailCfg ? "smtp" : "none", error: smtpError };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
@@ -324,7 +436,7 @@ export class EmailService {
     to: string; // secondary account's email
     primaryEmail: string; // the primary account requesting the merge
     verifyUrl: string; // one-click verification link
-  }) {
+  }): Promise<{ delivered: boolean; transport: "smtp" | "resend" | "none"; error?: string }> {
     const html = `<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 16px;">
@@ -358,7 +470,9 @@ export class EmailService {
 </td></tr></table>
 </body></html>`;
 
-    await this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
+    // Return the honest send result so the caller can avoid claiming the verification
+    // email "has been sent" when it hasn't (R5).
+    return this.send({ to: params.to, subject: "Confirm account merge — RouteFlow", html });
   }
 
   // ─── Buyer account merge completion email ──────────────────────────────────

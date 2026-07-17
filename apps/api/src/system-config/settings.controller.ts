@@ -223,7 +223,16 @@ export class SettingsController {
       smtpUser: all["email.smtpUser"] ?? "",
       smtpPassword: all["email.smtpPassword"] ? "••••••••" : "", // mask password in response
       smtpSecure: all["email.smtpSecure"] === "true",
-      configured: !!(all["email.smtpHost"] && all["email.smtpUser"] && all["email.smtpPassword"]),
+      // Whether THIS tenant's SMTP is fully entered (drives the SMTP field state).
+      smtpConfigured: !!(
+        all["email.smtpHost"] &&
+        all["email.smtpUser"] &&
+        all["email.smtpPassword"]
+      ),
+      // R5: real deliverability — tenant SMTP OR the platform Resend key OR legacy
+      // TenantConfig — so the "ready" banner + Test button reflect what the SENDER
+      // actually uses (isEmailConfigured), not just SystemConfig SMTP.
+      configured: await this.emailService.isEmailConfigured(),
     };
   }
 

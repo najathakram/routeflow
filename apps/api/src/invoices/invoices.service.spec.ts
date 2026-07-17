@@ -40,7 +40,8 @@ describe("InvoicesService", () => {
   };
 
   const mockEmailService = {
-    sendInvoice: jest.fn().mockResolvedValue(undefined),
+    sendInvoice: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }),
+    isEmailConfigured: jest.fn().mockResolvedValue(true),
   };
 
   const mockSystemConfig = {
@@ -818,6 +819,67 @@ describe("InvoicesService", () => {
       });
       await service.send("i1");
       expect(mockMessaging.notifyEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  // R5 — sendEmail must only claim "sent" when the email ACTUALLY went out.
+  describe("sendEmail — email honesty (R5)", () => {
+    const draftInvoice = () => ({
+      id: "i1",
+      orderId: null, // standalone → assertOrderInvoiceUnlocked skips the order check
+      invoiceNumber: "INV-1",
+      status: InvoiceStatus.DRAFT,
+      deliveryBatchId: null,
+      total: 100,
+      issueDate: new Date("2026-07-01"),
+      dueDate: new Date("2026-07-15"),
+      customer: { id: "c1", businessName: "Acme", email: "buyer@example.com" },
+      items: [],
+    });
+
+    it("throws EMAIL_NOT_CONFIGURED and does NOT mark SENT when email isn't set up", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice() as any);
+      mockEmailService.isEmailConfigured.mockResolvedValueOnce(false);
+
+      await expect(service.sendEmail("i1")).rejects.toMatchObject({
+        response: { code: "EMAIL_NOT_CONFIGURED" },
+      });
+      // No PDF, no send attempt, no SENT flip — nothing pretends it happened.
+      expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("throws EMAIL_SEND_FAILED and does NOT mark SENT when the send fails", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice() as any);
+      mockEmailService.isEmailConfigured.mockResolvedValueOnce(true);
+      mockEmailService.sendInvoice.mockResolvedValueOnce({
+        delivered: false,
+        transport: "smtp",
+        error: "Invalid login",
+      });
+
+      await expect(service.sendEmail("i1")).rejects.toMatchObject({
+        response: { code: "EMAIL_SEND_FAILED" },
+      });
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("marks SENT and returns success ONLY when the email is actually delivered", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice() as any);
+      mockEmailService.isEmailConfigured.mockResolvedValueOnce(true);
+      mockEmailService.sendInvoice.mockResolvedValueOnce({ delivered: true, transport: "resend" });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+      });
+
+      const res = await service.sendEmail("i1");
+      expect(res).toMatchObject({ success: true, sentTo: "buyer@example.com" });
+      expect(prisma.invoice.update).toHaveBeenCalled();
     });
   });
 
@@ -2292,6 +2354,211 @@ describe("InvoicesService", () => {
       expect(updOf("d-base")).toBeUndefined();
       expect(updOf("d-r1").data.subtotal).toBe(20); // 4/10 of 50
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
+    });
+  });
+
+  // R1 — a POST-DELIVERY edit re-syncs the order's FINALIZED / PAID / delivery-batch
+  // invoice(s) IN PLACE at the edited order qty: keep payments, recompute status from
+  // them, re-sync the ledger, bill new lines on the primary invoice, and BAIL on an
+  // unclean partition (never double-bill).
+  describe("resyncOrderInvoicesForEdit (R1 — post-delivery in-place resync)", () => {
+    const line = (over: any = {}) => ({
+      id: "oi-std",
+      productId: "p-std",
+      qty: 10,
+      deliveredQty: 10,
+      unitPrice: 5,
+      subtotal: 50,
+      unitsPerBox: null,
+      boxes: null,
+      originalPrice: null,
+      priceType: "STANDARD",
+      notes: null,
+      categoryTaxAmount: 0,
+      trackedCategoryId: null,
+      product: { name: "Std", unitsPerBox: null, trackedCategoryId: null },
+      ...over,
+    });
+    const mockOrder = (lines: any[], over: any = {}) => ({
+      id: "ord-1",
+      customerId: "cust-1",
+      subtotal: 50,
+      tax: 0,
+      lineItems: lines,
+      ...over,
+    });
+    const inv = (over: any = {}) => ({
+      id: "inv-1",
+      status: InvoiceStatus.SENT,
+      deliveryBatchId: null,
+      discount: 0,
+      shippingFee: 0,
+      dueDate: null,
+      items: [{ orderItemId: "oi-std" }],
+      payments: [],
+      ...over,
+    });
+    const updOf = (id: string) =>
+      prisma.invoice.update.mock.calls.find((c: any) => c[0].where.id === id)?.[0];
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoiceItem.deleteMany.mockResolvedValue({ count: 1 } as any);
+      prisma.invoice.update.mockImplementation((args: any) =>
+        Promise.resolve({
+          id: args.where.id,
+          items: (args.data.items?.create ?? []).map((it: any, i: number) => ({
+            ...it,
+            id: `${args.where.id}-item-${i}`,
+          })),
+        }),
+      );
+      prisma.orderItem.update.mockResolvedValue({} as any);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }] as any);
+    });
+
+    it("no linked invoice — returns null, writes nothing", async () => {
+      prisma.invoice.findMany.mockResolvedValue([] as any);
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("rebuilds a SENT invoice at the edited order qty, keeps the payment, recomputes to PARTIAL", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ payments: [{ amount: 30, status: "COMPLETED" }] }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      const upd = updOf("inv-1");
+      expect(upd.data.subtotal).toBe(50);
+      // paid 30 < total 50 → PARTIAL (never forced to DRAFT; payment is untouched).
+      expect(upd.data.status).toBe(InvoiceStatus.PARTIAL);
+    });
+
+    it("a PAID invoice edited to a lower total stays PAID (over-paid / credit balance)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ status: InvoiceStatus.PAID, payments: [{ amount: 50, status: "COMPLETED" }] }),
+      ] as any);
+      // Edited down: qty 6 @ 5 = 30.
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line({ qty: 6, subtotal: 30 })], { subtotal: 30 }) as any,
+      );
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      const upd = updOf("inv-1");
+      expect(upd.data.subtotal).toBe(30);
+      // paid 50 >= total 30 → PAID (customer over-paid; balance is a credit).
+      expect(upd.data.status).toBe(InvoiceStatus.PAID);
+    });
+
+    it("VOID payments are excluded when recomputing status", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ payments: [{ amount: 50, status: "VOID" }] }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      // The only payment is VOID → paid 0 → SENT (not PAID/PARTIAL).
+      expect(updOf("inv-1").data.status).toBe(InvoiceStatus.SENT);
+    });
+
+    it("bills a NEW (unprovenanced) line on the primary invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()] as any);
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "oi-std" }, { id: "oi-new" }] as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), line({ id: "oi-new", productId: "p-new" })], { subtotal: 100 }) as any,
+      );
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      const upd = updOf("inv-1");
+      expect(upd.data.subtotal).toBe(100);
+      expect(upd.data.items.create).toHaveLength(2);
+      expect(upd.data.items.create.map((i: any) => i.orderItemId).sort()).toEqual([
+        "oi-new",
+        "oi-std",
+      ]);
+    });
+
+    it("re-syncs the regulated ledger for the rebuilt invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()] as any);
+      prisma.order.findUnique.mockResolvedValue(mockOrder([line()]) as any);
+      const ledger = (service as any).ledger;
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(ledger.reverseInvoiceEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: "inv-1", preserveReturns: true }),
+      );
+      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ invoiceId: "inv-1" }),
+      );
+    });
+
+    it("BAILS when a line is billed by two invoices (unclean partition) — writes nothing", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-a", items: [{ orderItemId: "oi-std" }] }),
+        inv({ id: "inv-b", items: [{ orderItemId: "oi-std" }] }),
+      ] as any);
+
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("BAILS when an invoice line has no orderItemId provenance (manual/legacy)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv({ items: [{ orderItemId: null }] })] as any);
+
+      const res = await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      expect(res).toBeNull();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("places a NEW regulated line on its category's -R# sibling, not the base invoice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({ id: "inv-base", items: [{ orderItemId: "oi-std" }] }),
+        inv({ id: "inv-r1", items: [{ orderItemId: "oi-reg" }] }),
+      ] as any);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "oi-std" },
+        { id: "oi-reg" },
+        { id: "oi-newreg" },
+      ] as any);
+      const reg = (id: string, name: string) =>
+        line({
+          id,
+          productId: `p-${id}`,
+          trackedCategoryId: "cat-reg",
+          product: { name, unitsPerBox: null, trackedCategoryId: "cat-reg" },
+        });
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), reg("oi-reg", "Cig"), reg("oi-newreg", "Cig2")], {
+          subtotal: 150,
+        }) as any,
+      );
+
+      await service.resyncOrderInvoicesForEdit("ord-1", prisma);
+
+      // Base keeps only its standard line; the NEW regulated line joins the cat-reg
+      // sibling (inv-r1) instead of co-mingling onto the base.
+      expect(
+        updOf("inv-base")
+          .data.items.create.map((i: any) => i.orderItemId)
+          .sort(),
+      ).toEqual(["oi-std"]);
+      expect(
+        updOf("inv-r1")
+          .data.items.create.map((i: any) => i.orderItemId)
+          .sort(),
+      ).toEqual(["oi-newreg", "oi-reg"]);
     });
   });
 
