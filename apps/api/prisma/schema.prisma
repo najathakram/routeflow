@@ -721,34 +721,34 @@ model Customer {
   deletedAt             DateTime?
   tenantId              String?
 
-  user              User                    @relation(fields: [userId], references: [id])
-  tenant            Tenant?                 @relation(fields: [tenantId], references: [id])
-  messageThreads    MessageThread[]
-  messageOptOuts    MessageOptOut[]
-  addresses         CustomerAddress[]
-  routes            RouteCustomer[]
-  routeStops        RouteStop[]
-  orders            Order[]
-  transactions      Transaction[]
-  routeRunStops     RouteRunStop[]
-  orderTemplates    OrderTemplate[]
-  invoices          Invoice[]
-  estimates         Estimate[]
-  creditNotes       CreditNote[]
-  returns           Return[]
-  advancePayments   AdvancePayment[]
-  recurringInvoices RecurringInvoice[]
-  prices            CustomerPrice[]
-  expenses          Expense[]
-  contactPersons    ContactPerson[]
-  tagAssignments    CustomerTagAssignment[]
-  comments          CustomerComment[]
-  customerLink      CustomerLink?
-  buyerFavorites    BuyerFavorite[]
-  deliveryBatches   DeliveryBatch[]
-  documents         CustomerDocument[]
-  authorizations    CustomerAuthorization[]
-  authOverrides     AuthorizationOverride[]
+  user                 User                    @relation(fields: [userId], references: [id])
+  tenant               Tenant?                 @relation(fields: [tenantId], references: [id])
+  messageThreads       MessageThread[]
+  messageOptOuts       MessageOptOut[]
+  addresses            CustomerAddress[]
+  routes               RouteCustomer[]
+  routeStops           RouteStop[]
+  orders               Order[]
+  transactions         Transaction[]
+  routeRunStops        RouteRunStop[]
+  orderTemplates       OrderTemplate[]
+  invoices             Invoice[]
+  estimates            Estimate[]
+  creditNotes          CreditNote[]
+  returns              Return[]
+  advancePayments      AdvancePayment[]
+  recurringInvoices    RecurringInvoice[]
+  prices               CustomerPrice[]
+  expenses             Expense[]
+  contactPersons       ContactPerson[]
+  tagAssignments       CustomerTagAssignment[]
+  comments             CustomerComment[]
+  customerLink         CustomerLink?
+  buyerFavorites       BuyerFavorite[]
+  deliveryBatches      DeliveryBatch[]
+  documents            CustomerDocument[]
+  authorizations       CustomerAuthorization[]
+  authOverrides        AuthorizationOverride[]
   replenishmentSnoozes ReplenishmentSnooze[]
   stockAlerts          StockAlert[]
 
@@ -1789,11 +1789,11 @@ model InvoicePayment {
   // P5-12 check lifecycle — only ever set when method = CHECK. BOUNCED (NSF)
   // also flips `status` to VOID so every existing non-VOID paid-sum /
   // status:PAID aggregation excludes the bounced check automatically.
-  checkStatus      CheckStatus?
-  depositedAt      DateTime?
-  clearedAt        DateTime?
-  bouncedAt        DateTime?
-  nsfFeeAmount     Decimal?      @db.Decimal(10, 2)
+  checkStatus  CheckStatus?
+  depositedAt  DateTime?
+  clearedAt    DateTime?
+  bouncedAt    DateTime?
+  nsfFeeAmount Decimal?     @db.Decimal(10, 2)
 
   invoice        Invoice         @relation(fields: [invoiceId], references: [id])
   tenant         Tenant?         @relation(fields: [tenantId], references: [id])
@@ -2050,12 +2050,12 @@ model CreditNote {
   // application was automatic. "Expired" is a COMPUTED FILTER in code (excluded from
   // the wallet, never auto-applies) — NEVER a status flip; an expired note keeps its
   // amountUsed / already-issued InvoicePayments untouched.
-  expiresAt          DateTime?
-  appliedAt          DateTime?
-  autoApplied        Boolean          @default(false)
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  tenantId           String?
+  expiresAt   DateTime?
+  appliedAt   DateTime?
+  autoApplied Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenantId    String?
 
   customer        Customer         @relation(fields: [customerId], references: [id])
   tenant          Tenant?          @relation(fields: [tenantId], references: [id])
@@ -2976,11 +2976,12 @@ model TrackedSubcategory {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Cascade)
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedCategory TrackedCategory        @relation(fields: [trackedCategoryId], references: [id], onDelete: Cascade)
   products        Product[]
   orderItems      OrderItem[]
   invoiceItems    InvoiceItem[]
+  ledgerEntries   RegulatedSalesLedger[]
 
   @@unique([tenantId, trackedCategoryId, name])
   @@index([tenantId])
@@ -3061,29 +3062,37 @@ model AuthorizationOverride {
 /// invoice. The order/invoice/creditNote pointers are denormalized scalars
 /// (indexed, no FK) so the ledger stays append-only and self-contained.
 model RegulatedSalesLedger {
-  id                String          @id @default(uuid())
-  tenantId          String
-  trackedCategoryId String
-  entryType         LedgerEntryType @default(SALE)
-  orderId           String?
-  orderItemId       String?
-  invoiceId         String?
-  invoiceItemId     String?
-  creditNoteId      String?
-  returnId          String? // W5c: set on return-driven REVERSAL rows (idempotency key)
-  qty               Decimal         @db.Decimal(12, 3)
-  unitBasisQty      Decimal         @default(0) @db.Decimal(12, 3) // qty expressed in the category's unitBasis
-  netSales          Decimal         @default(0) @db.Decimal(12, 2)
-  categoryTax       Decimal         @default(0) @db.Decimal(12, 2)
-  soldAt            DateTime
-  periodBucket      String // "YYYY-MM" denormalized bucket for fast monthly aggregation
-  createdAt         DateTime        @default(now())
+  id                   String          @id @default(uuid())
+  tenantId             String
+  trackedCategoryId    String
+  // RF-3: additive classification child under the section (trackedCategoryId), for
+  // the reporting/filing breakdown ONLY. Never read by the regulated guards or any
+  // money math — a null is the pre-RF-3 (section-only) case.
+  trackedSubcategoryId String?
+  entryType            LedgerEntryType @default(SALE)
+  orderId              String?
+  orderItemId          String?
+  invoiceId            String?
+  invoiceItemId        String?
+  creditNoteId         String?
+  returnId             String? // W5c: set on return-driven REVERSAL rows (idempotency key)
+  qty                  Decimal         @db.Decimal(12, 3)
+  unitBasisQty         Decimal         @default(0) @db.Decimal(12, 3) // qty expressed in the category's unitBasis
+  netSales             Decimal         @default(0) @db.Decimal(12, 2)
+  categoryTax          Decimal         @default(0) @db.Decimal(12, 2)
+  soldAt               DateTime
+  periodBucket         String // "YYYY-MM" denormalized bucket for fast monthly aggregation
+  createdAt            DateTime        @default(now())
 
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  trackedCategory TrackedCategory @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trackedCategory    TrackedCategory     @relation(fields: [trackedCategoryId], references: [id], onDelete: Restrict)
+  // SetNull (not Restrict): a subcategory delete must never block the append-only
+  // ledger — the row keeps its section attribution, only losing the finer breakdown.
+  trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([trackedCategoryId])
+  @@index([trackedSubcategoryId])
   @@index([tenantId, trackedCategoryId, periodBucket])
   @@index([invoiceId])
   @@index([invoiceItemId])

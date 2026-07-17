@@ -33,8 +33,15 @@ export class RegulatedService {
       }
     }
 
+    // RF-3: optionally add the subcategory as an extra grouping dimension. Default
+    // (bySubcategory unset) keeps the exact section+period grouping — byte-identical.
+    const by: ("trackedCategoryId" | "periodBucket" | "trackedSubcategoryId")[] =
+      query.bySubcategory
+        ? ["trackedCategoryId", "trackedSubcategoryId", "periodBucket"]
+        : ["trackedCategoryId", "periodBucket"];
+
     const grouped = await this.prisma.forTenant().regulatedSalesLedger.groupBy({
-      by: ["trackedCategoryId", "periodBucket"],
+      by,
       where,
       _sum: { qty: true, unitBasisQty: true, netSales: true, categoryTax: true },
       orderBy: [{ periodBucket: "desc" }],
@@ -50,9 +57,32 @@ export class RegulatedService {
         : [];
     const nameById = new Map<string, string>(cats.map((c: any) => [c.id, c.name]));
 
+    // RF-3: resolve subcategory names only when grouping by them (reporting label).
+    const subIds = query.bySubcategory
+      ? ([...new Set(grouped.map((g: any) => g.trackedSubcategoryId).filter(Boolean))] as string[])
+      : [];
+    const subs =
+      subIds.length > 0
+        ? await this.prisma.forTenant().trackedSubcategory.findMany({
+            where: { id: { in: subIds } },
+            select: { id: true, name: true },
+          })
+        : [];
+    const subNameById = new Map<string, string>(subs.map((s: any) => [s.id, s.name]));
+
     const rows = grouped.map((g: any) => ({
       trackedCategoryId: g.trackedCategoryId,
       categoryName: nameById.get(g.trackedCategoryId) ?? "—",
+      // Only surface the subcategory keys when the caller asked to break down by them,
+      // so the default response shape is unchanged.
+      ...(query.bySubcategory
+        ? {
+            trackedSubcategoryId: g.trackedSubcategoryId ?? null,
+            subcategoryName: g.trackedSubcategoryId
+              ? (subNameById.get(g.trackedSubcategoryId) ?? "—")
+              : null,
+          }
+        : {}),
       periodBucket: g.periodBucket,
       qty: Number(g._sum.qty ?? 0),
       unitBasisQty: Number(g._sum.unitBasisQty ?? 0),

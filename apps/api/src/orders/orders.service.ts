@@ -1071,6 +1071,7 @@ export class OrdersService implements OnApplicationBootstrap {
           notes: (item as any).itemNote || item.notes,
           // Phase 4 (W4): unlisted lines are never catalog products → never regulated.
           trackedCategoryId: null as string | null,
+          trackedSubcategoryId: null as string | null,
           categoryTaxAmount: 0,
           tenantId: this.prisma.getTenantId(),
         };
@@ -1179,6 +1180,8 @@ export class OrdersService implements OnApplicationBootstrap {
         // categoryTaxAmount stays 0 until the order-total follow-up lifts the
         // rate>0 invoice guard (tobacco, the only current category, is rate=0).
         trackedCategoryId: (product.trackedCategoryId ?? null) as string | null,
+        // RF-3: reporting-only subcategory snapshot at sale time (mirrors the category).
+        trackedSubcategoryId: (product.trackedSubcategoryId ?? null) as string | null,
         categoryTaxAmount: 0,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
@@ -1879,6 +1882,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 // Snapshot the regulated category so an edited-in line invoices/ledgers
                 // correctly (mirrors orders.service.create; spec §7).
                 trackedCategoryId: product.trackedCategoryId ?? null,
+                // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
+                trackedSubcategoryId: product.trackedSubcategoryId ?? null,
               },
             });
           }
@@ -1978,6 +1983,8 @@ export class OrdersService implements OnApplicationBootstrap {
                   overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
                   // Snapshot the regulated category (spec §7).
                   trackedCategoryId: product.trackedCategoryId ?? null,
+                  // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
+                  trackedSubcategoryId: product.trackedSubcategoryId ?? null,
                 },
               });
             }
@@ -2050,6 +2057,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     overriddenBy: isManualOverride ? (user?.sub ?? null) : null,
                     // Snapshot the regulated category (spec §7).
                     trackedCategoryId: product.trackedCategoryId ?? null,
+                    // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
+                    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
                   },
                 });
                 continue;
@@ -2118,6 +2127,8 @@ export class OrdersService implements OnApplicationBootstrap {
                     // The product changed — re-snapshot the substitute's category so
                     // it doesn't keep the replaced product's (spec §7).
                     trackedCategoryId: product.trackedCategoryId ?? null,
+                    // RF-3: re-snapshot the reporting subcategory alongside the category.
+                    trackedSubcategoryId: product.trackedSubcategoryId ?? null,
                   },
                 });
               } else if (item.qty !== undefined || item.boxes != null || item.pieces != null) {
@@ -2911,6 +2922,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 status: "PENDING",
                 notes: cr.note ?? null,
                 trackedCategoryId: product.trackedCategoryId ?? null,
+                // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
+                trackedSubcategoryId: product.trackedSubcategoryId ?? null,
               },
             });
             mutationRow = {

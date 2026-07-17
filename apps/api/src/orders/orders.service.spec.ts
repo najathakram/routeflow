@@ -1107,6 +1107,7 @@ describe("OrdersService", () => {
         pricePerUnit: 7,
         unitsPerBox: null,
         trackedCategoryId: "cat-tob",
+        trackedSubcategoryId: "sub-cig", // RF-3: reporting breakdown snapshot
       });
       // Post-edit active items include the newly-added regulated line.
       prisma.orderItem.findMany.mockResolvedValue([
@@ -1120,9 +1121,14 @@ describe("OrdersService", () => {
         operatorPayload,
       );
 
+      // RF-3: the OrderItem row snapshots the subcategory alongside the category.
       expect(prisma.orderItem.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ productId: "prod-tob", trackedCategoryId: "cat-tob" }),
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            trackedCategoryId: "cat-tob",
+            trackedSubcategoryId: "sub-cig",
+          }),
         }),
       );
       expect(prisma.order.update).toHaveBeenCalledWith(

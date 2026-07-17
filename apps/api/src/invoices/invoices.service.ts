@@ -138,28 +138,32 @@ export class InvoicesService {
       .customer.findUnique({ where: { id: dto.customerId } });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    // Pre-fetch products for items that specify boxes/pieces so we can resolve qty
-    const productIds = [
-      ...new Set(
-        dto.items
-          .filter((i) => i.productId && (i.boxes != null || i.pieces != null))
-          .map((i) => i.productId!),
-      ),
-    ];
+    // Pre-fetch products for every product-linked line: box size for qty resolution
+    // AND the regulated-category snapshot (so a manual regulated invoice reaches the
+    // W5 sales ledger just like an order-derived one).
+    const productIds = [...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!))];
     const products =
       productIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({ where: { id: { in: productIds } } })
+        ? await this.prisma.forTenant().product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              unitsPerBox: true,
+              trackedCategoryId: true,
+              trackedSubcategoryId: true,
+            },
+          })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     let subtotal = 0;
     const itemsData = dto.items.map((item) => {
+      const product = item.productId ? productMap.get(item.productId) : undefined;
       let qty = item.qty;
       let boxes: number | null = null;
       let pieces: number | null = null;
       let unitsPerBox: number | undefined;
       if (item.productId && (item.boxes != null || item.pieces != null)) {
-        const product = productMap.get(item.productId);
         if (product?.unitsPerBox) {
           unitsPerBox = product.unitsPerBox;
           // Force integer boxes/pieces and roll pieces >= unitsPerBox into boxes.
@@ -195,6 +199,11 @@ export class InvoicesService {
         // Snapshot the box size when this line was priced as a box split, so a later
         // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
         unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+        // Snapshot the regulated category/subcategory AT SALE TIME (never re-read the
+        // live product later — it may drift), so the ledger and filings attribute this
+        // line even if the product is re-classified afterward.
+        trackedCategoryId: product?.trackedCategoryId ?? null,
+        trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
         notes: item.notes ?? null,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
@@ -232,34 +241,60 @@ export class InvoicesService {
     }
 
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
+    const invoiceNumber = await this.nextInvoiceNumber();
+    // A regulated line makes this a filable sale — create the invoice AND its W5 ledger
+    // rows atomically (a ledger write that fails must not leave a committed invoice with
+    // no SALE row). Non-regulated invoices skip the ledger call entirely (no-op anyway).
+    const hasRegulated = itemsData.some((it) => it.trackedCategoryId != null);
     let invoice: any;
     try {
-      invoice = await this.prisma.forTenant().invoice.create({
-        data: {
-          invoiceNumber: await this.nextInvoiceNumber(),
-          customerId: dto.customerId,
-          status: InvoiceStatus.DRAFT,
-          subtotal,
-          taxAmount: taxTotal,
-          discount: invDiscount,
-          shippingFee: shipping,
-          total,
-          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-          issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
-          notes: dto.notes ?? tenantDefaults.notes,
-          terms: dto.terms ?? tenantDefaults.terms,
-          referenceNumber: dto.referenceNumber ?? null,
-          subject: dto.subject ?? null,
-          shippingCarrier: dto.shippingCarrier?.trim() || null,
-          shippingTrackingNumber: dto.shippingTrackingNumber?.trim() || null,
-          shippedAt: dto.shippingTrackingNumber?.trim() ? new Date() : null,
-          items: { create: itemsData },
-        },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          items: true,
-          payments: true,
-        },
+      invoice = await this.prisma.tenantTransaction(async (tx: any) => {
+        const created = await tx.invoice.create({
+          data: {
+            invoiceNumber,
+            customerId: dto.customerId,
+            status: InvoiceStatus.DRAFT,
+            subtotal,
+            taxAmount: taxTotal,
+            discount: invDiscount,
+            shippingFee: shipping,
+            total,
+            dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+            issueDate: dto.issueDate ? new Date(dto.issueDate) : new Date(),
+            notes: dto.notes ?? tenantDefaults.notes,
+            terms: dto.terms ?? tenantDefaults.terms,
+            referenceNumber: dto.referenceNumber ?? null,
+            subject: dto.subject ?? null,
+            shippingCarrier: dto.shippingCarrier?.trim() || null,
+            shippingTrackingNumber: dto.shippingTrackingNumber?.trim() || null,
+            shippedAt: dto.shippingTrackingNumber?.trim() ? new Date() : null,
+            items: { create: itemsData },
+          },
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            items: true,
+            payments: true,
+          },
+        });
+        if (hasRegulated) {
+          await this.ledger.writeSaleEntries({
+            tenantId: this.prisma.getTenantId(),
+            orderId: null,
+            invoiceId: created.id,
+            soldAt: created.issueDate ?? new Date(),
+            lines: (created.items ?? []).map((it: any) => ({
+              invoiceItemId: it.id,
+              orderItemId: it.orderItemId ?? null,
+              trackedCategoryId: it.trackedCategoryId ?? null,
+              trackedSubcategoryId: it.trackedSubcategoryId ?? null,
+              qty: Number(it.qty),
+              netSales: Number(it.subtotal),
+              categoryTax: Number(it.categoryTaxAmount ?? 0),
+            })),
+            db: tx,
+          });
+        }
+        return created;
       });
     } catch (err: any) {
       // RF-050: duplicate invoiceNumber under concurrent requests
@@ -295,7 +330,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -465,6 +507,9 @@ export class InvoicesService {
       // OrderItem sale-time snapshot; fall back to the live product category for
       // orders created before the snapshot shipped (best-effort — see resolveLineCategoryId).
       trackedCategoryId: li.trackedCategoryId ?? li.product?.trackedCategoryId ?? null,
+      // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId — prefer
+      // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
+      trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
       categoryTaxAmount: Number(li.categoryTaxAmount ?? 0),
       ...(tenantId ? { tenantId } : {}),
     };
@@ -682,6 +727,7 @@ export class InvoicesService {
             invoiceItemId: it.id,
             orderItemId: it.orderItemId ?? null,
             trackedCategoryId: it.trackedCategoryId ?? null,
+            trackedSubcategoryId: it.trackedSubcategoryId ?? null,
             qty: Number(it.qty),
             netSales: Number(it.subtotal),
             categoryTax: Number(it.categoryTaxAmount ?? 0),
@@ -754,7 +800,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -908,7 +961,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -966,6 +1026,7 @@ export class InvoicesService {
         invoiceItemId: it.id,
         orderItemId: it.orderItemId ?? null,
         trackedCategoryId: it.trackedCategoryId ?? null,
+        trackedSubcategoryId: it.trackedSubcategoryId ?? null,
         qty: Number(it.qty),
         netSales: Number(it.subtotal),
         categoryTax: Number(it.categoryTaxAmount ?? 0),
@@ -1112,7 +1173,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1317,7 +1385,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1415,7 +1490,14 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
-            product: { select: { name: true, unitsPerBox: true, trackedCategoryId: true } },
+            product: {
+              select: {
+                name: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            },
           },
         },
       },
@@ -1693,7 +1775,13 @@ export class InvoicesService {
           },
         },
         items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+          include: {
+            product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
+            // RF-2-lite: surface the regulated category/subcategory NAME so clients can
+            // label regulated lines (previously only the trackedCategoryId was returned).
+            trackedCategory: { select: { id: true, name: true, invoiceTreatment: true } },
+            trackedSubcategory: { select: { id: true, name: true } },
+          },
         },
         payments: { orderBy: { createdAt: "desc" } },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
@@ -1741,30 +1829,33 @@ export class InvoicesService {
     await this.assertOrderInvoiceUnlocked(inv);
 
     if (dto.items) {
-      await this.prisma.forTenant().invoiceItem.deleteMany({ where: { invoiceId: id } });
-
-      // Pre-fetch products for boxes/pieces resolution
+      // Pre-fetch products for boxes/pieces resolution AND the regulated-category
+      // snapshot (so an edited DRAFT re-attributes its regulated lines).
       const productIds = [
-        ...new Set(
-          dto.items
-            .filter((i) => i.productId && (i.boxes != null || i.pieces != null))
-            .map((i) => i.productId!),
-        ),
+        ...new Set(dto.items.filter((i) => i.productId).map((i) => i.productId!)),
       ];
       const products =
         productIds.length > 0
-          ? await this.prisma.forTenant().product.findMany({ where: { id: { in: productIds } } })
+          ? await this.prisma.forTenant().product.findMany({
+              where: { id: { in: productIds } },
+              select: {
+                id: true,
+                unitsPerBox: true,
+                trackedCategoryId: true,
+                trackedSubcategoryId: true,
+              },
+            })
           : [];
       const productMap = new Map(products.map((p) => [p.id, p]));
 
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
+        const product = item.productId ? productMap.get(item.productId) : undefined;
         let qty = item.qty;
         let boxes: number | null = null;
         let pieces: number | null = null;
         let unitsPerBox: number | undefined;
         if (item.productId && (item.boxes != null || item.pieces != null)) {
-          const product = productMap.get(item.productId);
           if (product?.unitsPerBox) {
             unitsPerBox = product.unitsPerBox;
             const split = normalizeBoxesPieces({
@@ -1798,6 +1889,10 @@ export class InvoicesService {
           pieces,
           // Snapshot the box size for a box-split line so later recompute is stable.
           unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // Re-snapshot the regulated category/subcategory from the (current) product,
+          // consistent with create(); the ledger re-sync below reconciles the change.
+          trackedCategoryId: product?.trackedCategoryId ?? null,
+          trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
           // Preserve per-line notes across the delete-and-recreate edit — dropping
           // this silently wipes notes the order carried onto the invoice.
           notes: item.notes ?? null,
@@ -1815,28 +1910,37 @@ export class InvoicesService {
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
       const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      const updated = await this.prisma.forTenant().invoice.update({
-        where: { id },
-        data: {
-          subtotal,
-          taxAmount: taxTotal,
-          discount: invDiscount,
-          shippingFee: shipping,
-          total,
-          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-          issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
-          notes: dto.notes,
-          terms: dto.terms,
-          ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
-          ...(dto.subject !== undefined && { subject: dto.subject }),
-          pdfUrl: null,
-          items: { create: itemsData },
-        },
-        include: {
-          customer: { select: { id: true, businessName: true } },
-          items: true,
-          payments: true,
-        },
+      // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
+      // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
+      // so the invoice's prior SALE rows must be reversed and re-written from the new
+      // items (a no-op when neither the old nor new invoice carries a regulated line).
+      const updated = await this.prisma.tenantTransaction(async (tx: any) => {
+        await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
+        const u = await tx.invoice.update({
+          where: { id },
+          data: {
+            subtotal,
+            taxAmount: taxTotal,
+            discount: invDiscount,
+            shippingFee: shipping,
+            total,
+            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            issueDate: dto.issueDate ? new Date(dto.issueDate) : undefined,
+            notes: dto.notes,
+            terms: dto.terms,
+            ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber }),
+            ...(dto.subject !== undefined && { subject: dto.subject }),
+            pdfUrl: null,
+            items: { create: itemsData },
+          },
+          include: {
+            customer: { select: { id: true, businessName: true } },
+            items: true,
+            payments: true,
+          },
+        });
+        await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
+        return u;
       });
       // Backward sync: keep the linked order in step with the edited invoice.
       if (inv.orderId) await this.recomputeOrderFromInvoices(inv.orderId);
