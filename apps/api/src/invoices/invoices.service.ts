@@ -8,7 +8,13 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
-import { computeLineSubtotal, roundMoney, normalizeBoxesPieces } from "../common/pricing";
+import {
+  computeLineSubtotal,
+  computeCategoryTax,
+  roundMoney,
+  normalizeBoxesPieces,
+  type CategoryTaxType,
+} from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { clampLimit } from "../common/pagination";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
@@ -155,6 +161,19 @@ export class InvoicesService {
           })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
+    // RF-4: load the regulated section (TrackedCategory) tax config so a manual
+    // invoice's regulated lines carry + owe category tax just like an order-derived one.
+    const manualCatIds = [
+      ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
+    ] as string[];
+    const categoryMap = new Map<string, any>(
+      (manualCatIds.length > 0
+        ? await this.prisma
+            .forTenant()
+            .trackedCategory.findMany({ where: { id: { in: manualCatIds } } })
+        : []
+      ).map((c: any) => [c.id, c]),
+    );
 
     let subtotal = 0;
     const itemsData = dto.items.map((item) => {
@@ -186,6 +205,23 @@ export class InvoicesService {
       });
       const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
       subtotal += lineSub;
+      // RF-4: per-line regulated category tax on the NET (post-discount) sale — the
+      // same basis as the regular line tax. Piece count is the basis for per-unit
+      // levies; a boxed selling-unit line expands via the product's box size.
+      const category = product?.trackedCategoryId
+        ? categoryMap.get(product.trackedCategoryId)
+        : null;
+      const upbForPieces = Number(product?.unitsPerBox ?? 0);
+      const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
+      const categoryTaxAmount = category
+        ? computeCategoryTax({
+            taxType: category.taxType as CategoryTaxType,
+            rate: Number(category.rate),
+            unitBasisQty: pieceQty,
+            lineSubtotal: lineSub,
+            priceIncludesTax: category.priceIncludesTax,
+          })
+        : 0;
       return {
         description: item.description,
         productId: item.productId,
@@ -204,6 +240,8 @@ export class InvoicesService {
         // line even if the product is re-classified afterward.
         trackedCategoryId: product?.trackedCategoryId ?? null,
         trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
+        // RF-4: per-line category tax snapshot (folded into taxTotal below).
+        categoryTaxAmount,
         notes: item.notes ?? null,
         tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
       };
@@ -225,9 +263,14 @@ export class InvoicesService {
     // Tax is derived from each line's stored post-discount subtotal — the SAME
     // basis as the line itself — so boxed/prorated lines are taxed on what they
     // actually bill (previously re-derived qty*unitPrice, which diverged).
-    const taxTotal = (customer as any).isTaxExempt
+    const isTaxExempt = !!(customer as any).isTaxExempt;
+    const regularTax = isTaxExempt
       ? 0
       : roundMoney(itemsData.reduce((sum, it) => sum + it.subtotal * (it.taxRate ?? 0), 0));
+    // RF-4: fold the regulated category tax into the invoice tax — exempt → 0 for
+    // BOTH (foldCategoryTax also zeroes the per-line snapshots so the ledger records 0).
+    const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
+    const taxTotal = roundMoney(regularTax + categoryTaxTotal);
     const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
 
     // Validate invoice-level discount doesn't exceed subtotal and total is non-negative
@@ -415,6 +458,24 @@ export class InvoicesService {
   }
 
   /**
+   * RF-4: category (regulated) tax folds into an invoice's tax EXACTLY like the
+   * regular sales tax w.r.t. tax exemption — an exempt customer owes $0 of BOTH.
+   * Returns the Σ per-line category tax to add on top of the regular tax; when the
+   * customer is exempt it returns 0 AND zeroes each line's snapshot in place, so the
+   * stored InvoiceItem + the regulated-sales ledger record the $0 that was billed.
+   */
+  private foldCategoryTax(
+    itemsData: Array<{ categoryTaxAmount?: number }>,
+    isTaxExempt: boolean,
+  ): number {
+    if (isTaxExempt) {
+      for (const it of itemsData) it.categoryTaxAmount = 0;
+      return 0;
+    }
+    return roundMoney(itemsData.reduce((s, it) => s + Number(it.categoryTaxAmount ?? 0), 0));
+  }
+
+  /**
    * Shared per-line invoice-item shape built from an order line, billing `billQty`
    * pieces of it. Reused by createInvoiceFromOrder, reconcileOrderDraftInvoice and
    * createPartialFromOrder so the invoice line NEVER drifts from the order line.
@@ -478,6 +539,19 @@ export class InvoicesService {
       );
     }
 
+    // RF-4: prorate the line's snapshotted category tax the SAME telescoping way as
+    // the subtotal, so a partial / delivered-basis bill collects only its share and
+    // Σ(partials) == the order line's full category tax. A full bill from scratch
+    // (prior 0, billQty = orderQty) copies the stored amount verbatim.
+    const storedCategoryTax = Number(li.categoryTaxAmount ?? 0);
+    const categoryTaxAmount =
+      storedCategoryTax === 0 || orderQty <= 0
+        ? storedCategoryTax
+        : roundMoney(
+            roundMoney((storedCategoryTax * (prior + billQty)) / orderQty) -
+              roundMoney((storedCategoryTax * prior) / orderQty),
+          );
+
     return {
       // Catalog lines use the product name; unlisted lines carry a free-text `name`.
       description: li.product?.name ?? li.name ?? `Product`,
@@ -510,7 +584,7 @@ export class InvoicesService {
       // RF-3: reporting-only subcategory snapshot, mirroring trackedCategoryId — prefer
       // the order-line snapshot, fall back to the live product for pre-RF-3 lines.
       trackedSubcategoryId: li.trackedSubcategoryId ?? li.product?.trackedSubcategoryId ?? null,
-      categoryTaxAmount: Number(li.categoryTaxAmount ?? 0),
+      categoryTaxAmount,
       ...(tenantId ? { tenantId } : {}),
     };
   }
@@ -587,10 +661,13 @@ export class InvoicesService {
    * invoice with `invoiceGroupId=null` (identical to pre-W4).
    *
    * Money: each group's subtotal is the sum of its line subtotals; the order's
-   * regular tax is allocated proportionally by subtotal with the LAST group
-   * absorbing the rounding remainder, so Σ(group tax) == the single-invoice tax
-   * exactly. Category tax (snapshotted per line) is added per group — currently
-   * always 0 (guarded below), so siblings sum == the order total to the cent.
+   * regular tax is allocated proportionally by subtotal with the LARGEST group
+   * absorbing the rounding remainder, so Σ(group regular tax) == the single-invoice
+   * tax exactly. RF-4: the per-line category (regulated) tax is summed per group and
+   * added on top — because every order line lands in exactly one group, Σ(group
+   * category tax) == the order's category tax, so Σ(sibling total) == the order total
+   * (subtotal + regular tax + category tax) to the cent. A tax-exempt customer owes
+   * $0 of BOTH taxes (foldCategoryTax zeroes the per-line snapshots too).
    */
   private async createSplitInvoices(params: {
     order: any;
@@ -619,19 +696,6 @@ export class InvoicesService {
 
     const groups = await this.groupOrderLinesForInvoicing(remainingItems, db);
 
-    // Interim guard: category tax is snapshotted but NOT yet folded into the ORDER
-    // total, so a non-zero rate would make sibling totals exceed the order total
-    // and break the split invariant. Block it explicitly until the order-total
-    // follow-up ships. Tobacco (the only seeded category) is taxType=NONE/rate=0,
-    // so no current tenant is affected.
-    for (const g of groups) {
-      if (g.category && g.category.taxType !== "NONE" && Number(g.category.rate) > 0) {
-        throw new BadRequestException(
-          `Category "${g.category.name}" has a non-zero tax rate; per-category tax on invoices is not enabled yet. Set its rate to 0 before invoicing it.`,
-        );
-      }
-    }
-
     const orderSubtotal = Number(order.subtotal) || 1;
     const orderTax = Number(order.tax) || 0;
 
@@ -645,9 +709,9 @@ export class InvoicesService {
         }),
       );
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
-      const categoryTax = roundMoney(
-        itemsData.reduce((s: number, it: any) => s + Number(it.categoryTaxAmount ?? 0), 0),
-      );
+      // RF-4: Σ the per-line category tax for this group (0 when the customer is
+      // tax-exempt — foldCategoryTax also zeroes the per-line snapshots then).
+      const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
       return { g, itemsData, subtotal, categoryTax, regularTax: 0, taxAmount: 0, total: 0 };
     });
 
@@ -831,9 +895,13 @@ export class InvoicesService {
       where: { id: order.customerId },
       select: { isTaxExempt: true },
     });
+    const isTaxExempt = !!customer?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
-    const taxAmount = customer?.isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    // RF-4: fold the per-line category tax into the draft's tax (exempt → 0 for both).
+    const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+    const taxAmount = roundMoney(regularTax + categoryTax);
     const total = roundMoney(
       subtotal - Number(draft.discount ?? 0) + Number(draft.shippingFee ?? 0) + taxAmount,
     );
@@ -1070,7 +1138,19 @@ export class InvoicesService {
         this.buildInvoiceItemData(li, billQty, tenantId),
       );
       const subtotal = roundMoney(itemsData.reduce((s: number, it: any) => s + it.subtotal, 0));
-      return { draft, lines, billable, itemsData, subtotal, taxAmount: 0, total: 0 };
+      // RF-4: per-draft category tax (0 + zeroed snapshots when the customer is exempt).
+      const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+      return {
+        draft,
+        lines,
+        billable,
+        itemsData,
+        subtotal,
+        categoryTax,
+        regularTax: 0,
+        taxAmount: 0,
+        total: 0,
+      };
     });
 
     if (!isTaxExempt && orderTax !== 0) {
@@ -1078,18 +1158,20 @@ export class InvoicesService {
       const totalTax = roundMoney(orderTax * (totalSubtotal / orderSubtotal));
       let allocated = 0;
       perDraft.forEach((pd) => {
-        pd.taxAmount = roundMoney(orderTax * (pd.subtotal / orderSubtotal));
-        allocated = roundMoney(allocated + pd.taxAmount);
+        pd.regularTax = roundMoney(orderTax * (pd.subtotal / orderSubtotal));
+        allocated = roundMoney(allocated + pd.regularTax);
       });
       const remainder = roundMoney(totalTax - allocated);
       if (remainder !== 0 && perDraft.length > 0) {
         let maxIdx = 0;
         for (let i = 1; i < perDraft.length; i++)
           if (perDraft[i].subtotal > perDraft[maxIdx].subtotal) maxIdx = i;
-        perDraft[maxIdx].taxAmount = roundMoney(perDraft[maxIdx].taxAmount + remainder);
+        perDraft[maxIdx].regularTax = roundMoney(perDraft[maxIdx].regularTax + remainder);
       }
     }
     perDraft.forEach((pd) => {
+      // RF-4: tax = allocated regular tax + this draft's category tax (both exempt-0).
+      pd.taxAmount = roundMoney(pd.regularTax + pd.categoryTax);
       pd.total = roundMoney(
         pd.subtotal -
           Number(pd.draft.discount ?? 0) +
@@ -1268,6 +1350,7 @@ export class InvoicesService {
       productId: string | null;
       qty: number;
       subtotal: number;
+      categoryTax: number; // RF-4: Σ billed category tax for this source line
       unitPrice: number;
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
@@ -1285,11 +1368,13 @@ export class InvoicesService {
           productId: it.productId ?? null,
           qty: 0,
           subtotal: 0,
+          categoryTax: 0,
           unitPrice: Number(it.unitPrice),
           sample: it,
         };
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
+        prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
         prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
         prev.sample = it;
         byTarget.set(key, prev);
@@ -1297,10 +1382,13 @@ export class InvoicesService {
     }
 
     let subtotal = 0;
+    let categoryTaxSum = 0;
     for (const agg of byTarget.values()) {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
+      const lineCategoryTax = roundMoney(agg.categoryTax);
       subtotal += lineSubtotal;
+      categoryTaxSum += lineCategoryTax;
       // Preserve the denomination. For an existing line use ITS stored box/piece
       // shape + snapshot upb; for a new line use the invoice item's snapshot. Box
       // splits re-derive their display split from the billed qty; selling-unit and
@@ -1323,6 +1411,8 @@ export class InvoicesService {
             unitsPerBox: upbSnapshot,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
+            // RF-4: mirror the billed category tax back onto the order line.
+            categoryTaxAmount: lineCategoryTax,
             invoicedQty: split.qty,
             status: "PENDING",
           },
@@ -1339,6 +1429,8 @@ export class InvoicesService {
             unitsPerBox: upbSnapshot,
             unitPrice: agg.unitPrice,
             subtotal: lineSubtotal,
+            // RF-4: mirror the billed category tax back onto the new order line.
+            categoryTaxAmount: lineCategoryTax,
             invoicedQty: split.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
@@ -1363,12 +1455,15 @@ export class InvoicesService {
     }
 
     // Preserve the order's effective tax rate (avoids depending on global config
-    // drift); mirror updateOrderItems' total = subtotal + tax convention.
+    // drift); mirror updateOrderItems' total = subtotal + regular tax + category tax.
     subtotal = roundMoney(subtotal);
     const prevSubtotal = Number(order.subtotal) || 0;
     const effectiveTaxRate = prevSubtotal > 0 ? Number(order.tax) / prevSubtotal : 0;
     const tax = roundMoney(subtotal * effectiveTaxRate);
-    const total = roundMoney(subtotal + tax);
+    // RF-4: fold the billed category tax (Σ per line) back into the order total, so
+    // the order stays in step with what the invoices actually charged.
+    const categoryTax = roundMoney(categoryTaxSum);
+    const total = roundMoney(subtotal + tax + categoryTax);
     await db.order.update({ where: { id: orderId }, data: { subtotal, tax, total } });
     return { orderId, subtotal, tax, total };
   }
@@ -1537,11 +1632,13 @@ export class InvoicesService {
     const customer = await this.prisma
       .forTenant()
       .customer.findUnique({ where: { id: order.customerId }, select: { isTaxExempt: true } });
+    const isTaxExempt = !!(customer as any)?.isTaxExempt;
     const orderSubtotal = Number(order.subtotal) || 1;
     const proportion = subtotal / orderSubtotal;
-    const taxAmount = (customer as any)?.isTaxExempt
-      ? 0
-      : roundMoney(Number(order.tax) * proportion);
+    const regularTax = isTaxExempt ? 0 : roundMoney(Number(order.tax) * proportion);
+    // RF-4: fold each partial's share of the per-line category tax (exempt → 0 both).
+    const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
+    const taxAmount = roundMoney(regularTax + categoryTax);
     const total = roundMoney(subtotal + taxAmount);
 
     // Resolve due date: explicit dto.dueDate wins, else default term.
@@ -1847,6 +1944,18 @@ export class InvoicesService {
             })
           : [];
       const productMap = new Map(products.map((p) => [p.id, p]));
+      // RF-4: regulated section tax config for the edited lines (mirrors create()).
+      const editCatIds = [
+        ...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean)),
+      ] as string[];
+      const categoryMap = new Map<string, any>(
+        (editCatIds.length > 0
+          ? await this.prisma
+              .forTenant()
+              .trackedCategory.findMany({ where: { id: { in: editCatIds } } })
+          : []
+        ).map((c: any) => [c.id, c]),
+      );
 
       let subtotal = 0;
       const itemsData = dto.items.map((item) => {
@@ -1877,6 +1986,21 @@ export class InvoicesService {
         });
         const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
         subtotal += lineSub;
+        // RF-4: per-line category tax on the net sale (mirrors create()).
+        const category = product?.trackedCategoryId
+          ? categoryMap.get(product.trackedCategoryId)
+          : null;
+        const upbForPieces = Number(product?.unitsPerBox ?? 0);
+        const pieceQty = boxes != null ? qty : upbForPieces > 1 ? qty * upbForPieces : qty;
+        const categoryTaxAmount = category
+          ? computeCategoryTax({
+              taxType: category.taxType as CategoryTaxType,
+              rate: Number(category.rate),
+              unitBasisQty: pieceQty,
+              lineSubtotal: lineSub,
+              priceIncludesTax: category.priceIncludesTax,
+            })
+          : 0;
         return {
           description: item.description,
           productId: item.productId,
@@ -1893,6 +2017,8 @@ export class InvoicesService {
           // consistent with create(); the ledger re-sync below reconciles the change.
           trackedCategoryId: product?.trackedCategoryId ?? null,
           trackedSubcategoryId: product?.trackedSubcategoryId ?? null,
+          // RF-4: per-line category tax snapshot (folded into taxTotal below).
+          categoryTaxAmount,
           // Preserve per-line notes across the delete-and-recreate edit — dropping
           // this silently wipes notes the order carried onto the invoice.
           notes: item.notes ?? null,
@@ -1904,9 +2030,13 @@ export class InvoicesService {
         .forTenant()
         .customer.findUnique({ where: { id: inv.customerId }, select: { isTaxExempt: true } });
       // Tax from each line's stored post-discount subtotal (same basis as the line).
-      const taxTotal = (customerForTax as any)?.isTaxExempt
+      const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
+      const regularTax = isTaxExempt
         ? 0
         : roundMoney(itemsData.reduce((s, it) => s + it.subtotal * (it.taxRate ?? 0), 0));
+      // RF-4: fold the regulated category tax (exempt → 0 for both + zeroed snapshots).
+      const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
+      const taxTotal = roundMoney(regularTax + categoryTaxTotal);
       const invDiscount = dto.discount ?? Number(inv.discount);
       const shipping = dto.shippingFee ?? Number(inv.shippingFee);
       const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
@@ -2483,12 +2613,20 @@ export class InvoicesService {
       boxes: (i as any).boxes ?? null,
       pieces: (i as any).pieces ?? null,
       subtotal: roundMoney(Number(i.subtotal)),
+      // RF-4: carry each line's category tax + regulated snapshots onto the copy.
+      trackedCategoryId: (i as any).trackedCategoryId ?? null,
+      trackedSubcategoryId: (i as any).trackedSubcategoryId ?? null,
+      categoryTaxAmount: roundMoney(Number((i as any).categoryTaxAmount ?? 0)),
       tenantId: this.prisma.getTenantId(),
     }));
     const subtotal = roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal), 0));
-    const taxTotal = (customer as any)?.isTaxExempt
+    const isTaxExempt = !!(customer as any)?.isTaxExempt;
+    const regularTax = isTaxExempt
       ? 0
       : roundMoney(itemsData.reduce((s, i) => s + Number(i.subtotal) * Number(i.taxRate ?? 0), 0));
+    // RF-4: fold category tax (exempt → 0 both + zeroed snapshots).
+    const categoryTaxTotal = this.foldCategoryTax(itemsData, isTaxExempt);
+    const taxTotal = roundMoney(regularTax + categoryTaxTotal);
     const invDiscount = Number(inv.discount ?? 0);
     const shipping = Number(inv.shippingFee ?? 0);
     const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);

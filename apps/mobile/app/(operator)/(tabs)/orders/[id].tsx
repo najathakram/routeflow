@@ -599,6 +599,19 @@ export default function OrderDetailScreen() {
                 <Text style={styles.totalValue}>{formatCurrency(order.tax)}</Text>
               </View>
             ) : null}
+            {/* RF-4: regulated (category) tax the server folded into order.total —
+                the Σ of the non-cancelled lines' snapshotted amounts. */}
+            {(() => {
+              const catTax = (order.lineItems ?? [])
+                .filter((li) => li.status !== "CANCELLED")
+                .reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0);
+              return catTax > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Regulated tax</Text>
+                  <Text style={styles.totalValue}>{formatCurrency(catTax)}</Text>
+                </View>
+              ) : null;
+            })()}
             <View style={[styles.totalRow, styles.totalRowMain]}>
               <Text style={styles.totalLabelMain}>Total</Text>
               <Text style={styles.totalValueMain}>{formatCurrency(order.total)}</Text>

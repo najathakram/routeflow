@@ -1662,7 +1662,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   const taxRate = order.subtotal > 0 ? Number(order.tax) / Number(order.subtotal) : 0;
   const editTax = isEditing ? editSubtotal * taxRate : Number(order.tax);
-  const editTotal = editSubtotal + editTax;
+  // RF-4: regulated (category) tax the server folded into order.total — the Σ of the
+  // non-cancelled lines' snapshotted per-line amounts. Surface it so the displayed
+  // Subtotal + Tax + Regulated tax reconciles to the server total. In edit mode this
+  // is a best-effort estimate (stored snapshots; the server re-derives it on save).
+  const orderCategoryTax = roundMoney(
+    order.lineItems
+      .filter((li) => li.status !== "CANCELLED")
+      .reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
+  );
+  const editTotal = editSubtotal + editTax + orderCategoryTax;
 
   return (
     <div className="space-y-5 p-6">
@@ -2085,6 +2094,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                     <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
                     <span className="money text-navy/70">${editTax.toFixed(2)}</span>
                   </div>
+                  {orderCategoryTax > 0 && (
+                    <div className="flex justify-between text-sm text-navy/70 mt-1">
+                      <span>Regulated tax</span>
+                      <span className="money text-navy/70">${orderCategoryTax.toFixed(2)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-base font-semibold text-navy border-t border-surface-border mt-2 pt-2">
                     <span>New total</span>
                     <span className="money text-[15px] text-navy">${editTotal.toFixed(2)}</span>
@@ -2572,6 +2587,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 <dt className="text-navy/70">Tax</dt>
                 <dd className="money text-navy">${Number(order.tax).toFixed(2)}</dd>
               </div>
+              {orderCategoryTax > 0 && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Regulated tax</dt>
+                  <dd className="money text-navy">${orderCategoryTax.toFixed(2)}</dd>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
                 <dt className="font-semibold text-navy">Order total</dt>
                 <dd className="money text-[15px] font-semibold text-navy">${total.toFixed(2)}</dd>

@@ -463,6 +463,62 @@ describe("InvoicesService", () => {
     });
   });
 
+  // ─── RF-4: manual invoice per-category tax ─────────────────────────────────
+
+  describe("RF-4 — manual invoice category tax", () => {
+    const seedManual = (isTaxExempt: boolean) => {
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", isTaxExempt });
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-tob",
+          unitsPerBox: null,
+          trackedCategoryId: "cat-tob",
+          trackedSubcategoryId: null,
+        },
+      ]);
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.1,
+          unitBasis: null,
+          priceIncludesTax: false,
+        },
+      ]);
+      prisma.invoice.findFirst.mockResolvedValue(null); // nextInvoiceNumber
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: "inv-x", ...args.data, items: [], customer: {}, payments: [] }),
+      );
+    };
+
+    it("folds category tax into taxAmount + total (PERCENT_OF_SALE 10%)", async () => {
+      seedManual(false);
+      await service.create({
+        customerId: "cust-1",
+        items: [{ productId: "prod-tob", description: "Cigs", qty: 3, unitPrice: 10 }],
+      });
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      // subtotal 30; regular tax 0 (no line taxRate); category tax 10% × 30 = 3; total 33.
+      expect(Number(data.subtotal)).toBe(30);
+      expect(Number(data.taxAmount)).toBe(3);
+      expect(Number(data.total)).toBe(33);
+      expect(Number(data.items.create[0].categoryTaxAmount)).toBe(3);
+    });
+
+    it("tax-exempt customer → category tax 0 (both the total AND the line snapshot)", async () => {
+      seedManual(true);
+      await service.create({
+        customerId: "cust-1",
+        items: [{ productId: "prod-tob", description: "Cigs", qty: 3, unitPrice: 10 }],
+      });
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      expect(Number(data.taxAmount)).toBe(0);
+      expect(Number(data.total)).toBe(30);
+      expect(Number(data.items.create[0].categoryTaxAmount)).toBe(0);
+    });
+  });
+
   // ─── RF-079: tax-exempt customer → invoice tax = 0 ────────────────────────
 
   describe("RF-079 — tax-exempt customer", () => {
@@ -1094,27 +1150,112 @@ describe("InvoicesService", () => {
       expect(Number(taxSum.toFixed(2))).toBe(18.14);
     });
 
-    it("blocks invoicing a category with a non-zero rate (interim guard)", async () => {
+    it("RF-4: a non-zero-rate category no longer throws — it folds category tax into the split", async () => {
       setupSplitSpies();
       prisma.trackedCategory.findMany.mockResolvedValue([
         {
           id: "cat-alc",
           name: "Alcohol",
           invoiceTreatment: "SEPARATE_INVOICE",
-          taxType: "EXCISE_PER_UNIT",
-          rate: 2.5,
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.05,
         },
       ]);
+      // Order line already carries its snapshotted category tax ($10 × 5% = $0.50);
+      // the invoice copies + folds it (the removed guard used to reject this).
       prisma.order.findUnique.mockResolvedValue({
         id: "ord-3",
         customerId: "cust-1",
         orderNumber: "ORD-11",
         subtotal: 10,
         tax: 0,
-        lineItems: [line("alc", "cat-alc", "Beer")],
+        lineItems: [{ ...line("alc", "cat-alc", "Beer"), categoryTaxAmount: 0.5 }],
       });
 
-      await expect(service.createInvoiceFromOrder("ord-3")).rejects.toThrow(/non-zero tax rate/);
+      const result = (await service.createInvoiceFromOrder("ord-3")) as any[];
+      expect(result).toHaveLength(1);
+      // subtotal 10 + regular tax 0 + category tax 0.50 = 10.50.
+      expect(Number(result[0].taxAmount)).toBe(0.5);
+      expect(Number(result[0].total)).toBe(10.5);
+    });
+
+    it("RF-4: split invariant — Σ sibling totals == order total with a PERCENT category", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-alc",
+          name: "Alcohol",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.05,
+        },
+      ]);
+      // Standard line $20 (cat tax 0) + alcohol line $10 (5% = $0.50 snapshot).
+      // Order total = 30 subtotal + 3 regular tax + 0.50 category tax = 33.50.
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-inv",
+        customerId: "cust-1",
+        orderNumber: "ORD-INV",
+        subtotal: 30,
+        tax: 3,
+        lineItems: [
+          line("std", null, "Widget"),
+          { ...line("alc", "cat-alc", "Cabernet"), categoryTaxAmount: 0.5 },
+        ],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-inv")) as any[];
+      expect(result).toHaveLength(2);
+      const [primary, sibling] = result;
+      // Standard sibling: subtotal 20, regular tax 2, category tax 0 → total 22.
+      expect(Number(primary.total)).toBe(22);
+      // Alcohol sibling: subtotal 10, regular tax 1, category tax 0.50 → total 11.50.
+      expect(Number(sibling.taxAmount)).toBe(1.5);
+      expect(Number(sibling.total)).toBe(11.5);
+      // INVARIANT: Σ sibling totals == order total (33.50).
+      const orderTotal = 30 + 3 + 0.5;
+      expect(Number(primary.total) + Number(sibling.total)).toBe(orderTotal);
+    });
+
+    it("RF-4: a tax-exempt customer owes $0 of BOTH regular AND category tax", async () => {
+      setupSplitSpies();
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: true });
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-alc",
+          name: "Alcohol",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "PERCENT_OF_SALE",
+          rate: 0.05,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-ex",
+        customerId: "cust-1",
+        orderNumber: "ORD-EX",
+        subtotal: 30,
+        tax: 3,
+        lineItems: [
+          line("std", null, "Widget"),
+          { ...line("alc", "cat-alc", "Cabernet"), categoryTaxAmount: 0.5 },
+        ],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-ex")) as any[];
+      // Both siblings: 0 tax. Total charged = subtotal only (no regular OR category tax).
+      const totalTax = result.reduce((s, inv) => s + Number(inv.taxAmount), 0);
+      expect(totalTax).toBe(0);
+      const totalCharged = result.reduce((s, inv) => s + Number(inv.total), 0);
+      expect(totalCharged).toBe(30); // subtotal only
+      // The exempt customer's per-line category-tax snapshot is zeroed too, so the
+      // created InvoiceItems (and the regulated-sales ledger) record $0 category tax.
+      const createdItems = prisma.invoice.create.mock.calls.flatMap(
+        (c: any) => c[0].data.items.create as any[],
+      );
+      expect(createdItems.length).toBeGreaterThan(0);
+      for (const it of createdItems) {
+        expect(Number(it.categoryTaxAmount ?? 0)).toBe(0);
+      }
     });
 
     it("W6b backstop: blocks invoicing when the customer's license guard rejects", async () => {
