@@ -179,6 +179,17 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
       .locator("xpath=following-sibling::*[1]")
       .first()
       .or(page.locator("[data-testid='invoice-total']").first());
+    // Discount and Shipping rows only render when their amount is > 0 (optional rows).
+    const discountEl = page
+      .getByText(/^discount$/i)
+      .locator("xpath=following-sibling::*[1]")
+      .first()
+      .or(page.locator("[data-testid='invoice-discount']").first());
+    const shippingEl = page
+      .getByText(/^shipping$/i)
+      .locator("xpath=following-sibling::*[1]")
+      .first()
+      .or(page.locator("[data-testid='invoice-shipping']").first());
 
     // It's fine if the page doesn't surface these three fields individually.
     // We only run the math check when all three are found.
@@ -200,11 +211,22 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
 
     if (sub === null || tax === null || tot === null) return;
 
-    const expected = Math.round((sub + tax) * 100) / 100;
+    // Discount/Shipping are optional rows — probe presence with count() first so an
+    // absent row resolves instantly instead of waiting out the actionability timeout.
+    const discText =
+      (await discountEl.count()) > 0 ? await discountEl.textContent().catch(() => null) : null;
+    const shipText =
+      (await shippingEl.count()) > 0 ? await shippingEl.textContent().catch(() => null) : null;
+    // Discount renders with a literal leading "-" (e.g. "-$5.00") — normalize to a
+    // positive magnitude so it matches the subtotal − discount + shipping + tax formula.
+    const discount = discText ? Math.abs(parseMoney(discText) ?? 0) : 0;
+    const shippingFee = shipText ? (parseMoney(shipText) ?? 0) : 0;
+
+    const expected = Math.round((sub - discount + shippingFee + tax) * 100) / 100;
     const diff = Math.abs(expected - tot);
     expect(
       diff,
-      `Invoice total mismatch: subtotal(${sub}) + tax(${tax}) = ${expected} ≠ total(${tot})`,
+      `Invoice total mismatch: subtotal(${sub}) - discount(${discount}) + shipping(${shippingFee}) + tax(${tax}) = ${expected} ≠ total(${tot})`,
     ).toBeLessThanOrEqual(0.01);
   });
 
@@ -397,15 +419,21 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     if (!detailRes.ok()) return;
 
     const detail = await detailRes.json();
-    const { subtotal = 0, taxAmount = 0, total = 0 } = detail;
+    // Decimal columns (shippingFee/discount included) may arrive as strings — coerce all.
+    const { subtotal = 0, taxAmount = 0, total = 0, discount = 0, shippingFee = 0 } = detail;
+    const sub = Number(subtotal);
+    const tax = Number(taxAmount);
+    const tot = Number(total);
+    const disc = Number(discount);
+    const ship = Number(shippingFee);
 
     // Round to cents to allow for stored-rounding conventions
-    const expected = Math.round((subtotal + taxAmount) * 100) / 100;
-    const diff = Math.abs(expected - total);
+    const expected = Math.round((sub - disc + ship + tax) * 100) / 100;
+    const diff = Math.abs(expected - tot);
 
     expect(
       diff,
-      `Invoice #${inv.id}: subtotal(${subtotal}) + tax(${taxAmount}) = ${expected} but total = ${total}`,
+      `Invoice #${inv.id}: subtotal(${sub}) - discount(${disc}) + shipping(${ship}) + tax(${tax}) = ${expected} but total = ${tot}`,
     ).toBeLessThanOrEqual(0.01);
 
     // Verify no line-item has more than 2dp in money fields (catches 420 bug)

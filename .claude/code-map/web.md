@@ -92,6 +92,13 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   — persistent dock at the bottom-left of the content column (mounted in `(dashboard)/layout.tsx`
   right-column, non-CUSTOMER roles), lists parked drafts + Resume/Discard + a global scan-to-draft
   wedge-listener (active only while a draft is parked; bails inside any open `[role=dialog]`).
+  **Shipping fee (2026-07-18):** `CreateOrderModal` has a "Shipping fee" input next to the order
+  discount (display total `+ shippingAmt`, payload `...(shippingAmt>0?{shippingFee}:{})`, serialized
+  into `OrderDraftPayload.shippingFee` for park/resume — `lib/drafts.ts`); `orders/[id]/page.tsx` renders
+  a conditional Shipping totals row + a staff edit-mode fee input threaded through BOTH save paths
+  (`handleSaveItems` AND DRAFT `saveThenPublish` — the latter with `replaceAll:false`, a caught blocker:
+  fee-only publish previously sent `items:[]` which the API heuristic read as replace-all → wiped lines);
+  `e2e/06-critical-paths.spec.ts` CP-03/CP-10 assert `total == subtotal − discount + shippingFee + tax`.
   `CreateOrderModal.tsx` gained a **Minimize** footer button + `resumeDraftId`/`initialScanCode` props:
   parks/hydrates/autosaves (debounced, bound to a draft only after Minimize/Resume) + auto-adds a
   scanned barcode on open + deletes the draft on successful submit. `orders/page.tsx` reads

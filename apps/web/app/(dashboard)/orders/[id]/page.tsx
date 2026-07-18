@@ -1251,6 +1251,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
   const [pendingDeletes, setPendingDeletes] = React.useState<string[]>([]);
   const [draftAutoEntered, setDraftAutoEntered] = React.useState(false);
+  // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
+  // the stored order fee whenever edit mode opens; never taxed.
+  const [editShippingFee, setEditShippingFee] = React.useState(0);
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -1308,6 +1311,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             }),
         );
         setPendingDeletes([]);
+        setEditShippingFee(Number(order.shippingFee ?? 0));
         setIsEditing(true);
       }
     }
@@ -1333,6 +1337,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   }
 
   const total = Number(order.total);
+  const shippingFee = Number((order as any).shippingFee ?? 0);
   // P5-08 / R1: the server's edit window is authoritative. Items are now editable at
   // every live stage (incl. OUT_FOR_DELIVERY / DELIVERED) — only a CANCELLED order
   // closes it — and post-delivery edits re-sync the linked invoice + ledger server-side.
@@ -1442,6 +1447,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         }),
     );
     setPendingDeletes([]);
+    setEditShippingFee(Number(order!.shippingFee ?? 0));
     setIsEditing(true);
   }
 
@@ -1449,6 +1455,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     setIsEditing(false);
     setEditItems([]);
     setPendingDeletes([]);
+    setEditShippingFee(0);
   }
 
   function handleDeleteItem(id: string) {
@@ -1539,7 +1546,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       }
     }
 
-    if (updates.length === 0) {
+    // Only send shippingFee when it actually changed — avoids no-op churn (and
+    // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
+    const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+
+    if (updates.length === 0 && !feeChanged) {
       setIsEditing(false);
       return;
     }
@@ -1548,7 +1559,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     // id). Without it the API's legacy heuristic would treat an add-only payload
     // as a full replace and delete the untouched lines.
     updateItems.mutate(
-      { id: order!.id, items: updates, replaceAll: false },
+      {
+        id: order!.id,
+        items: updates,
+        replaceAll: false,
+        ...(feeChanged ? { shippingFee: editShippingFee } : {}),
+      },
       {
         onSuccess: () => {
           setIsEditing(false);
@@ -1672,7 +1688,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       .filter((li) => li.status !== "CANCELLED")
       .reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
   );
-  const editTotal = editSubtotal + editTax + orderCategoryTax;
+  const editTotal = editSubtotal + editTax + orderCategoryTax + editShippingFee;
 
   return (
     <div className="space-y-5 p-6">
@@ -2101,6 +2117,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                       <span className="money text-navy/70">${orderCategoryTax.toFixed(2)}</span>
                     </div>
                   )}
+                  {/* Staff-editable shipping fee — never taxed, added after tax. */}
+                  <div className="flex items-center justify-between text-sm text-navy/70 mt-1">
+                    <label className="flex items-center gap-2">
+                      Shipping fee
+                      <MoneyInput
+                        min={0}
+                        placeholder="0.00"
+                        value={editShippingFee}
+                        onChange={(v) => setEditShippingFee(Math.max(0, v ?? 0))}
+                        className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                      />
+                    </label>
+                  </div>
                   <div className="flex justify-between text-base font-semibold text-navy border-t border-surface-border mt-2 pt-2">
                     <span>New total</span>
                     <span className="money text-[15px] text-navy">${editTotal.toFixed(2)}</span>
@@ -2178,10 +2207,25 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                 onError: guardError(() => doPublish()),
                               },
                             );
+                          // Carry a shipping-fee edit into the publish save the same
+                          // way handleSaveItems does — otherwise publishing straight
+                          // from edit mode silently drops the fee the operator typed.
+                          const feeChanged =
+                            Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
                           const saveThenPublish = () => {
-                            if (updates.length > 0) {
+                            if (updates.length > 0 || feeChanged) {
                               updateItems.mutate(
-                                { id: order!.id, items: updates },
+                                {
+                                  id: order!.id,
+                                  items: updates,
+                                  // replaceAll:false — this is an incremental diff (new
+                                  // items have no id, and a fee-only save sends []).
+                                  // Without it the API's add-only/empty heuristic treats
+                                  // the payload as a full replace and deletes untouched
+                                  // lines. Mirrors handleSaveItems.
+                                  replaceAll: false,
+                                  ...(feeChanged ? { shippingFee: editShippingFee } : {}),
+                                },
                                 {
                                   onSuccess: doPublish,
                                   onError: guardError(() => saveThenPublish()),
@@ -2592,6 +2636,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Regulated tax</dt>
                   <dd className="money text-navy">${orderCategoryTax.toFixed(2)}</dd>
+                </div>
+              )}
+              {shippingFee > 0 && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Shipping</dt>
+                  <dd className="money text-navy">${shippingFee.toFixed(2)}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">

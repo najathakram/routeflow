@@ -58,6 +58,8 @@ export interface Order {
   subtotal: number;
   tax: number;
   total: number;
+  /** Optional flat shipping fee added to the order total (never taxed). */
+  shippingFee?: number | string;
   notes?: string;
   driverNote?: string;
   requestedDeliveryDate?: string;
@@ -129,6 +131,8 @@ export interface CreateOrderAsDriverDto {
   requestedDeliveryDate?: string;
   /** Order-level discount in currency (NOT `discount`). Only send when > 0. */
   discountAmount?: number;
+  /** Optional flat shipping fee added to the order total (never taxed). Only send when > 0. */
+  shippingFee?: number;
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;

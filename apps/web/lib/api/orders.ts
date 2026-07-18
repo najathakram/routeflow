@@ -24,6 +24,7 @@ export interface Order {
   tax: number;
   total: number;
   discountAmount?: number;
+  shippingFee?: number | string;
   notes?: string;
   requestedDeliveryDate?: string;
   templateId?: string;
@@ -193,6 +194,7 @@ export function useCreateOrder() {
       urgent?: boolean;
       requestedDeliveryDate?: string;
       discountAmount?: number;
+      shippingFee?: number;
       /**
        * Operator's choice when an active draft/pending order already exists for the customer.
        * If omitted and an active order exists, the API responds 409 with the active-order
@@ -220,6 +222,7 @@ export interface CreateSaleDto {
   deliveredNow: boolean;
   notes?: string;
   discountAmount?: number;
+  shippingFee?: number;
   requestedDeliveryDate?: string;
   /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
   send?: boolean;
@@ -322,11 +325,17 @@ export function useUpdateOrderItems() {
   return useMutation<
     Order,
     Error,
-    { id: string; items: ItemUpdate[]; orderNotes?: string; replaceAll?: boolean }
+    {
+      id: string;
+      items: ItemUpdate[];
+      orderNotes?: string;
+      replaceAll?: boolean;
+      shippingFee?: number;
+    }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll }) =>
+    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee }) =>
       apiClient
-        .patch<Order>(`/orders/${id}/items`, { items, orderNotes, replaceAll })
+        .patch<Order>(`/orders/${id}/items`, { items, orderNotes, replaceAll, shippingFee })
         .then((r) => r.data),
     onSuccess: (data) => {
       qc.setQueryData(["orders", data.id], data);

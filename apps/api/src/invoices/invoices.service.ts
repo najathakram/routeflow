@@ -712,7 +712,16 @@ export class InvoicesService {
       // RF-4: Σ the per-line category tax for this group (0 when the customer is
       // tax-exempt — foldCategoryTax also zeroes the per-line snapshots then).
       const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
-      return { g, itemsData, subtotal, categoryTax, regularTax: 0, taxAmount: 0, total: 0 };
+      return {
+        g,
+        itemsData,
+        subtotal,
+        categoryTax,
+        regularTax: 0,
+        taxAmount: 0,
+        shippingFee: 0,
+        total: 0,
+      };
     });
 
     const totalSubtotal = roundMoney(groupData.reduce((s, gd) => s + gd.subtotal, 0));
@@ -741,9 +750,31 @@ export class InvoicesService {
         groupData[maxIdx].regularTax = roundMoney(groupData[maxIdx].regularTax + remainder);
       }
     }
+    // Order-level shipping fee: the WHOLE remaining fee rides on exactly ONE
+    // sibling — the largest-subtotal group (same recipient rule as the tax
+    // rounding remainder). Never prorated, so Σ(sibling totals) still equals the
+    // order total to the cent. "Remaining" defends against re-entry when some
+    // non-void invoice for this order already carries fee dollars.
+    const orderFee = roundMoney(Number((order as any).shippingFee ?? 0));
+    if (orderFee > 0 && groupData.length > 0) {
+      const priorFeeAgg = await db.invoice.aggregate({
+        where: { orderId: order.id, status: { not: InvoiceStatus.VOID } },
+        _sum: { shippingFee: true },
+      });
+      const feeRemaining = Math.max(
+        0,
+        roundMoney(orderFee - Number(priorFeeAgg._sum.shippingFee ?? 0)),
+      );
+      if (feeRemaining > 0) {
+        let feeIdx = 0;
+        for (let i = 1; i < groupData.length; i++)
+          if (groupData[i].subtotal > groupData[feeIdx].subtotal) feeIdx = i;
+        groupData[feeIdx].shippingFee = feeRemaining;
+      }
+    }
     groupData.forEach((gd) => {
       gd.taxAmount = roundMoney(gd.regularTax + gd.categoryTax);
-      gd.total = roundMoney(gd.subtotal + gd.taxAmount);
+      gd.total = roundMoney(gd.subtotal + gd.taxAmount + gd.shippingFee);
     });
 
     const multi = groupData.length > 1;
@@ -769,7 +800,7 @@ export class InvoicesService {
             subtotal: gd.subtotal,
             taxAmount: gd.taxAmount,
             discount: 0,
-            shippingFee: 0,
+            shippingFee: gd.shippingFee,
             total: gd.total,
             ...(invoiceGroupId ? { invoiceGroupId } : {}),
             ...extraInvoiceData,
@@ -902,9 +933,20 @@ export class InvoicesService {
     // RF-4: fold the per-line category tax into the draft's tax (exempt → 0 for both).
     const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
-    const total = roundMoney(
-      subtotal - Number(draft.discount ?? 0) + Number(draft.shippingFee ?? 0) + taxAmount,
+    // Order-driven reconcile: the ORDER owns the fee. Subtract fee dollars already
+    // carried by OTHER non-void invoices of this order (split/partial siblings) so
+    // Σ(invoice fees) == order.shippingFee stays exact.
+    const otherFeeAgg = await db.invoice.aggregate({
+      where: { orderId, status: { not: InvoiceStatus.VOID }, id: { not: draft.id } },
+      _sum: { shippingFee: true },
+    });
+    const draftFee = Math.max(
+      0,
+      roundMoney(
+        Number((order as any).shippingFee ?? 0) - Number(otherFeeAgg._sum.shippingFee ?? 0),
+      ),
     );
+    const total = roundMoney(subtotal - Number(draft.discount ?? 0) + draftFee + taxAmount);
 
     await db.invoiceItem.deleteMany({ where: { invoiceId: draft.id } });
     const updated = await db.invoice.update({
@@ -912,6 +954,7 @@ export class InvoicesService {
       data: {
         subtotal,
         taxAmount,
+        shippingFee: draftFee,
         total,
         status: InvoiceStatus.DRAFT,
         pdfUrl: null,
@@ -1150,6 +1193,7 @@ export class InvoicesService {
         categoryTax,
         regularTax: 0,
         taxAmount: 0,
+        shippingFee: 0,
         total: 0,
       };
     });
@@ -1170,14 +1214,33 @@ export class InvoicesService {
         perDraft[maxIdx].regularTax = roundMoney(perDraft[maxIdx].regularTax + remainder);
       }
     }
+    // Sibling fee placement. If the current sibling fees already sum to the order
+    // fee, keep each sibling's own placement (an operator may have moved the fee
+    // to a specific sibling via an invoice edit — that edit back-synced the order,
+    // so the sums agree). On mismatch (the fee changed on the order side) re-seed
+    // the whole fee onto the largest-subtotal sibling and zero the rest — mirrors
+    // createSplitInvoices.
+    const orderFee = roundMoney(Number(order.shippingFee ?? 0));
+    const currentFeeSum = roundMoney(
+      perDraft.reduce((s, pd) => s + Number(pd.draft.shippingFee ?? 0), 0),
+    );
+    if (currentFeeSum === orderFee) {
+      perDraft.forEach((pd) => {
+        pd.shippingFee = roundMoney(Number(pd.draft.shippingFee ?? 0));
+      });
+    } else {
+      let maxIdx = 0;
+      for (let i = 1; i < perDraft.length; i++)
+        if (perDraft[i].subtotal > perDraft[maxIdx].subtotal) maxIdx = i;
+      perDraft.forEach((pd, i) => {
+        pd.shippingFee = i === maxIdx ? orderFee : 0;
+      });
+    }
     perDraft.forEach((pd) => {
       // RF-4: tax = allocated regular tax + this draft's category tax (both exempt-0).
       pd.taxAmount = roundMoney(pd.regularTax + pd.categoryTax);
       pd.total = roundMoney(
-        pd.subtotal -
-          Number(pd.draft.discount ?? 0) +
-          Number(pd.draft.shippingFee ?? 0) +
-          pd.taxAmount,
+        pd.subtotal - Number(pd.draft.discount ?? 0) + pd.shippingFee + pd.taxAmount,
       );
     });
 
@@ -1208,6 +1271,7 @@ export class InvoicesService {
         data: {
           subtotal: pd.subtotal,
           taxAmount: pd.taxAmount,
+          shippingFee: pd.shippingFee,
           total: pd.total,
           status: nextStatus,
           // Invalidate a cached PDF only when the invoice is (re)opened as a DRAFT; a
@@ -1627,9 +1691,18 @@ export class InvoicesService {
     // RF-4: fold the billed category tax (Σ per line) back into the order total, so
     // the order stays in step with what the invoices actually charged.
     const categoryTax = roundMoney(categoryTaxSum);
-    const total = roundMoney(subtotal + tax + categoryTax);
-    await db.order.update({ where: { id: orderId }, data: { subtotal, tax, total } });
-    return { orderId, subtotal, tax, total };
+    // Shipping back-sync: the order's fee is DEFINED as Σ(non-void invoice fees) —
+    // an invoice-side fee edit lands here and updates the order, which is what
+    // lets the order-driven reconciles treat the order as source of truth.
+    const shippingFeeSum = roundMoney(
+      invoices.reduce((s: number, inv: any) => s + Number(inv.shippingFee ?? 0), 0),
+    );
+    const total = roundMoney(subtotal + tax + categoryTax + shippingFeeSum);
+    await db.order.update({
+      where: { id: orderId },
+      data: { subtotal, tax, total, shippingFee: shippingFeeSum },
+    });
+    return { orderId, subtotal, tax, total, shippingFee: shippingFeeSum };
   }
 
   /**
@@ -1803,7 +1876,17 @@ export class InvoicesService {
     // RF-4: fold each partial's share of the per-line category tax (exempt → 0 both).
     const categoryTax = this.foldCategoryTax(itemsData, isTaxExempt);
     const taxAmount = roundMoney(regularTax + categoryTax);
-    const total = roundMoney(subtotal + taxAmount);
+    // First partial carries the whole remaining order fee; later partials get 0.
+    const orderFee = roundMoney(Number((order as any).shippingFee ?? 0));
+    let feeRemaining = 0;
+    if (orderFee > 0) {
+      const priorFeeAgg = await this.prisma.forTenant().invoice.aggregate({
+        where: { orderId: order.id, status: { not: InvoiceStatus.VOID } },
+        _sum: { shippingFee: true },
+      });
+      feeRemaining = Math.max(0, roundMoney(orderFee - Number(priorFeeAgg._sum.shippingFee ?? 0)));
+    }
+    const total = roundMoney(subtotal + taxAmount + feeRemaining);
 
     // Resolve due date: explicit dto.dueDate wins, else default term.
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
@@ -1830,7 +1913,7 @@ export class InvoicesService {
           subtotal,
           taxAmount,
           discount: 0,
-          shippingFee: 0,
+          shippingFee: feeRemaining,
           total,
           dueDate,
           terms: dto.terms ?? tenantDefaults.terms ?? defaultTerms,

@@ -731,7 +731,9 @@ export class OrdersService implements OnApplicationBootstrap {
         data: {
           subtotal,
           tax,
-          total: roundMoney(subtotal + tax + categoryTax),
+          // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
+          // order is one delivery → one fee). Same asymmetry as discountAmount.
+          total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
           // A merged-in regulated line flips the denormalized flag on.
           hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
         },
@@ -945,7 +947,9 @@ export class OrdersService implements OnApplicationBootstrap {
         data: {
           subtotal,
           tax,
-          total: roundMoney(subtotal + tax + categoryTax),
+          // Winner keeps ITS OWN stored fee; loser fees drop with the losers (the merged
+          // order is one delivery → one fee). Same asymmetry as discountAmount.
+          total: roundMoney(subtotal + tax + categoryTax + Number(winner.shippingFee ?? 0)),
           // A merged-in regulated line flips the denormalized flag on.
           hasRegulated: activeItems.some((li: any) => li.trackedCategoryId != null),
           ...routeUpdate,
@@ -1323,6 +1327,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
     subtotal = roundMoney(subtotal);
     const orderDiscount = dto.discountAmount ?? 0;
+    // Optional shipping fee — never taxed; added after tax like Invoice.shippingFee.
+    const orderShippingFee = roundMoney(Math.max(0, dto.shippingFee ?? 0));
     const tax = roundMoney(subtotal * (await this.getTaxRate()));
     // RF-4: fold the regulated category tax (Σ per-line) into the order total. The
     // `tax` column stays REGULAR tax only; category tax is reconstructable from the
@@ -1330,7 +1336,7 @@ export class OrdersService implements OnApplicationBootstrap {
     const categoryTax = roundMoney(
       lineItemsData.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
     );
-    const total = roundMoney(subtotal + tax + categoryTax - orderDiscount);
+    const total = roundMoney(subtotal + tax + categoryTax - orderDiscount + orderShippingFee);
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -1428,6 +1434,7 @@ export class OrdersService implements OnApplicationBootstrap {
               tax,
               total,
               discountAmount: orderDiscount,
+              shippingFee: orderShippingFee,
               notes: dto.notes,
               urgent: dto.urgent ?? false,
               skipAutoMerge: options.skipAutoMerge ?? false,
@@ -1517,6 +1524,7 @@ export class OrdersService implements OnApplicationBootstrap {
         items: dto.items,
         notes: dto.notes,
         discountAmount: dto.discountAmount,
+        shippingFee: dto.shippingFee,
         requestedDeliveryDate: dto.requestedDeliveryDate,
         status: "PENDING",
       },
@@ -1877,7 +1885,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // totals/line set (not a pre-mutation simulation), so there is no second
     // pricing formula to drift. reconcileOrderDraftInvoice and
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
-    const { subtotal, tax, total, shouldRevert } = await this.prisma.tenantTransaction(
+    const { subtotal, tax, total, shouldRevert, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
         // Customer/Driver path: replace items by productId
         if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
@@ -2413,7 +2421,16 @@ export class OrdersService implements OnApplicationBootstrap {
         // edited set and fold Σ into the total (kept out of the `tax` column, which
         // stays regular tax only). `total` is reused by the credit guard + revision.
         const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
-        const total = roundMoney(subtotal + tax + categoryTax);
+        // Staff may set/change the fee on edit; everyone else keeps the stored fee.
+        // Reading the STORED fee here is what stops an ordinary item edit from
+        // silently zeroing shipping (the fee-wipe regression).
+        const isStaffFeeEdit =
+          (user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN) &&
+          dto.shippingFee !== undefined;
+        const shippingFee = isStaffFeeEdit
+          ? roundMoney(Math.max(0, dto.shippingFee!))
+          : roundMoney(Number((order as any).shippingFee ?? 0));
+        const total = roundMoney(subtotal + tax + categoryTax + shippingFee);
 
         // P5-08b inline guards (completes P5-08 "credit / regulated / stock-
         // violating edit blocked inline"). DRAFT edits are exempt, matching the
@@ -2454,6 +2471,7 @@ export class OrdersService implements OnApplicationBootstrap {
             subtotal,
             tax,
             total,
+            ...(isStaffFeeEdit ? { shippingFee } : {}),
             // Recompute the denormalized regulated flag from the edited line set.
             hasRegulated: activeItems.some((li) => li.trackedCategoryId != null),
             ...(shouldRevert ? { status: "PENDING" } : {}),
@@ -2464,7 +2482,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 : {}),
           },
         });
-        return { subtotal, tax, total, shouldRevert };
+        return { subtotal, tax, total, shouldRevert, shippingFee };
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
       // queries inside the transaction (same shape as create()'s in-tx per-line work).
@@ -2521,7 +2539,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await this.appendOrderRevision(
       orderId,
       user,
-      { subtotal, tax, total },
+      { subtotal, tax, total, shippingFee },
       "EDIT",
       dto.orderNotes ?? null,
     );
@@ -2550,7 +2568,7 @@ export class OrdersService implements OnApplicationBootstrap {
   private async appendOrderRevision(
     orderId: string,
     user: JwtPayload | undefined,
-    totals: { subtotal: number; tax: number; total: number },
+    totals: { subtotal: number; tax: number; total: number; shippingFee?: number },
     source: string,
     reason?: string | null,
   ) {
@@ -2564,6 +2582,7 @@ export class OrdersService implements OnApplicationBootstrap {
       subtotal: totals.subtotal,
       tax: totals.tax,
       total: totals.total,
+      shippingFee: totals.shippingFee ?? 0,
       lineItems: lines.map((li) => ({
         productId: li.productId,
         name: li.name ?? li.product?.name ?? null,
@@ -3144,7 +3163,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // RF-4: re-derive + persist each regulated line's category tax from the
         // post-change set and fold Σ into the total (kept out of the `tax` column).
         const categoryTax = await this.recomputeLineCategoryTaxes(tx, activeItems);
-        const total = roundMoney(subtotal + tax + categoryTax);
+        const total = roundMoney(
+          subtotal + tax + categoryTax + Number((order as any).shippingFee ?? 0),
+        );
 
         // ── G6: stock + credit guards RE-RUN inside the tx (:2175-2187).
         // A throw rolls back the claim AND the merge. Resolver role drives the
@@ -3199,7 +3220,7 @@ export class OrdersService implements OnApplicationBootstrap {
     await this.appendOrderRevision(
       order.id,
       resolver,
-      { subtotal, tax, total },
+      { subtotal, tax, total, shippingFee: Number((order as any).shippingFee ?? 0) },
       "CHANGE_REQUEST",
       cr.note ?? null,
     );

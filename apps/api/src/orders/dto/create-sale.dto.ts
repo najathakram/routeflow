@@ -44,6 +44,8 @@ export class CreateSaleDto {
 
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) discountAmount?: number;
+  /** Optional flat shipping fee added to the order total (never taxed). */
+  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
 
   /** Only used when deliveredNow=false: issue (send) the draft invoice now instead of leaving it DRAFT. */

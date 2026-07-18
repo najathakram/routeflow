@@ -935,6 +935,91 @@ describe("OrdersService", () => {
         );
       });
     });
+
+    describe("optional shipping fee", () => {
+      it("creates an order without shippingFee → shippingFee 0, totals match the pre-feature formula (regression lock)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockImplementation((key: string) =>
+          key === "settings.taxRate" ? "0.1" : null,
+        );
+
+        await service.create(
+          { items: [{ productId: "prod-1", qty: 3 }], urgent: false },
+          customerPayload,
+        );
+
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 14.97,
+              tax: 1.5,
+              total: 16.47,
+              shippingFee: 0,
+            }),
+          }),
+        );
+      });
+
+      it("creates an order with shippingFee: 5 → added to the total AFTER tax, never taxed itself", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockImplementation((key: string) =>
+          key === "settings.taxRate" ? "0.1" : null,
+        );
+
+        await service.create(
+          { items: [{ productId: "prod-1", qty: 3 }], urgent: false, shippingFee: 5 },
+          customerPayload,
+        );
+
+        // 14.97 subtotal + 1.5 tax + 5 fee = 21.47 — fee is untaxed (not folded into subtotal).
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 14.97,
+              tax: 1.5,
+              total: 21.47,
+              shippingFee: 5,
+            }),
+          }),
+        );
+      });
+
+      it("combines an order-level discount with a shipping fee correctly", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockImplementation((key: string) =>
+          key === "settings.taxRate" ? "0.1" : null,
+        );
+
+        await service.create(
+          {
+            items: [{ productId: "prod-1", qty: 3 }],
+            urgent: false,
+            discountAmount: 2,
+            shippingFee: 5,
+          },
+          customerPayload,
+        );
+
+        // 14.97 + 1.5 - 2 (discount) + 5 (fee) = 19.47.
+        expect(prisma.order.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              subtotal: 14.97,
+              tax: 1.5,
+              total: 19.47,
+              discountAmount: 2,
+              shippingFee: 5,
+            }),
+          }),
+        );
+      });
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -1359,6 +1444,95 @@ describe("OrdersService", () => {
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ subtotal: 9 }) }),
       );
+    });
+  });
+
+  // ─── updateOrderItems — shipping fee ─────────────────────────────────────
+
+  describe("updateOrderItems — shipping fee", () => {
+    const draftOrder = {
+      ...MOCK_ORDER,
+      status: "DRAFT" as const,
+      orderNumber: "ORD-DRAFT",
+      lineItems: [
+        {
+          id: "li-1",
+          orderId: "ord-1",
+          productId: "prod-1",
+          qty: 3,
+          unitPrice: 4.99,
+          subtotal: 14.97,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+          priceType: "STANDARD",
+          originalPrice: null,
+        },
+      ],
+    };
+
+    it("edit preserves the stored fee: no dto.shippingFee keeps it in the total, and the update payload omits the key (the fee-wipe regression)", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...draftOrder, shippingFee: 7 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4 }] },
+        operatorPayload,
+      );
+
+      // 12 subtotal + 0 tax + 7 stored fee = 19.
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ total: 19 }) }),
+      );
+      const updateArg = prisma.order.update.mock.calls[0][0] as any;
+      expect(updateArg.data).not.toHaveProperty("shippingFee");
+    });
+
+    it("OPERATOR (staff) can set the fee via dto.shippingFee — it lands on the update payload", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...draftOrder, shippingFee: 0 });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3, unitPrice: 4 }],
+          shippingFee: 3,
+        } as any,
+        operatorPayload,
+      );
+
+      // 12 + 0 tax + 3 staff-set fee = 15.
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ total: 15, shippingFee: 3 }) }),
+      );
+    });
+
+    it("CUSTOMER dto.shippingFee is ignored — the stored fee is used and no shippingFee key is written", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        shippingFee: 7,
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-plain", pricePerUnit: 3.5, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 17.5, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-plain", qty: 5 }], shippingFee: 3 } as any,
+        customerPayload,
+      );
+
+      // 17.5 + 0 tax + 7 stored fee (the buyer's dto.shippingFee: 3 is ignored) = 24.5.
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ total: 24.5 }) }),
+      );
+      const updateArg = prisma.order.update.mock.calls[0][0] as any;
+      expect(updateArg.data).not.toHaveProperty("shippingFee");
     });
   });
 
@@ -2516,6 +2690,22 @@ describe("OrdersService", () => {
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).not.toHaveBeenCalled();
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+    });
+
+    it("credit-limit guard receives the fee-inclusive projected total (order carries a stored shippingFee)", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...editableOrder(), shippingFee: 5 });
+      prisma.customer.findUnique.mockResolvedValue({ creditLimit: 100 });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 200, orderId: null, payments: [{ amount: 80 }] }, // balance 120
+      ]);
+      prisma.order.findMany.mockResolvedValue([]);
+
+      // Projected total = 15 (edited subtotal) + 5 (stored fee) = 20; exposure = 120 + 20 = 140.
+      await expect(
+        service.updateOrderItems("ord-1", editDto, operatorPayload),
+      ).rejects.toMatchObject({
+        response: { code: "CREDIT_LIMIT_EXCEEDED", limit: 100, exposure: 140 },
+      });
     });
 
     it("excludes the edited order from exposure (its mirror invoice AND its order row)", async () => {
