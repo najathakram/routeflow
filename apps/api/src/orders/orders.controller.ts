@@ -101,7 +101,14 @@ export class OrdersController {
           ];
           await this.ordersService.updateOrderItems(
             activeOrder.id,
-            { items: mergedItems } as any,
+            {
+              items: mergedItems,
+              // Thread the operator's credit-note selection into the merge winner
+              // so the existing sync+settle logic applies it (else it's dropped).
+              ...(dto.appliedCreditNotes !== undefined
+                ? { appliedCreditNotes: dto.appliedCreditNotes }
+                : {}),
+            } as any,
             user,
           );
           // After merging, sweep any other unflagged PENDING orders for this customer.

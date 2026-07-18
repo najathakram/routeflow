@@ -50,7 +50,11 @@ export class InvoicePdfService {
         // Exclude VOID (bounced) payments (P5-12): the PDF template sums payments
         // into the headline balance-due, so a reversed payment must not appear as
         // received on a customer-facing invoice or under-state what they owe.
-        payments: { where: { status: { not: "VOID" } }, orderBy: { paidAt: "asc" } },
+        payments: {
+          where: { status: { not: "VOID" } },
+          orderBy: { paidAt: "asc" },
+          include: { creditNote: { select: { creditNoteNumber: true, reason: true } } },
+        },
         order: { select: { status: true } },
       },
     });

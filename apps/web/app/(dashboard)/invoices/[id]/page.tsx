@@ -55,12 +55,31 @@ import {
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
+import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
+
+// ─── Credit-note relation on a payment row ─────────────────────────────────────
+// WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
+// reason, ...}` on CREDIT_NOTE payments. The shared `InvoicePayment` type
+// (lib/api/invoices.ts) isn't part of this package's file set, so read it via a
+// local, narrowly-typed cast rather than widening that shared interface here.
+interface PaymentCreditNoteInfo {
+  id: string;
+  creditNoteNumber: string;
+  reason?: string | null;
+}
+
+function creditNoteOf(pmt: InvoicePayment): PaymentCreditNoteInfo | null {
+  const withCn = pmt as unknown as { creditNote?: PaymentCreditNoteInfo | null };
+  return withCn.creditNote ?? null;
+}
 
 function methodLabel(method: string) {
   switch (method) {
@@ -1050,8 +1069,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
   const setCheckStatus = useSetCheckStatus();
+  const unapplyCreditNote = useUnapplyCreditNote();
+  const { user } = useAuth();
+  const isOperator = user?.role === "OPERATOR";
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  // Payment row whose "Remove credit" was clicked — confirm before un-applying.
+  const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
+    null,
+  );
   const [showAdjustPanel, setShowAdjustPanel] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isReopenOpen, setIsReopenOpen] = React.useState(false);
@@ -1423,6 +1449,35 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onError: (err: any) => {
           toast({
             title: "Failed to update check status",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
+  const handleRemoveCredit = () => {
+    if (!removingCreditPayment) return;
+    const cnInfo = creditNoteOf(removingCreditPayment);
+    if (!cnInfo) {
+      setRemovingCreditPayment(null);
+      return;
+    }
+    unapplyCreditNote.mutate(
+      { id: cnInfo.id, invoiceId: invoice.id },
+      {
+        onSuccess: () => {
+          setRemovingCreditPayment(null);
+          toast({
+            title: "Credit removed",
+            description: "The credit note's balance has been restored.",
+            variant: "success",
+          });
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to remove credit",
             description: err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
@@ -2139,6 +2194,31 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           )}
                         </div>
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
+                        {pmt.method === "CREDIT_NOTE" &&
+                          (() => {
+                            const cnInfo = creditNoteOf(pmt);
+                            if (!cnInfo) return null;
+                            return (
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-navy/70">
+                                <Link
+                                  href={`/credit-notes/${cnInfo.id}`}
+                                  className="font-mono text-brand-600 hover:underline"
+                                >
+                                  {cnInfo.creditNoteNumber}
+                                </Link>
+                                {cnInfo.reason && <span>— {cnInfo.reason}</span>}
+                                {isOperator && !isVoided && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRemovingCreditPayment(pmt)}
+                                    className="font-medium text-danger hover:underline"
+                                  >
+                                    Remove credit
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
                         {canSetCheckStatus && (
                           <div className="mt-1.5">
                             <DropdownMenu
@@ -2259,6 +2339,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         }}
         amount={Number(bouncingPayment?.amount ?? 0)}
         isPending={setCheckStatus.isPending}
+      />
+
+      <ConfirmDialog
+        open={!!removingCreditPayment}
+        onClose={() => setRemovingCreditPayment(null)}
+        onConfirm={handleRemoveCredit}
+        title="Remove this credit?"
+        description={`This will un-apply ${fmt(Number(removingCreditPayment?.amount ?? 0))} from this invoice and restore it to the credit note's balance.`}
+        confirmLabel="Remove credit"
+        loading={unapplyCreditNote.isPending}
       />
 
       <VoidConfirmModal

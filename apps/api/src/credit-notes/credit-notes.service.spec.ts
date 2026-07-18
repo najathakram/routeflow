@@ -537,4 +537,598 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
     expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
     expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
   });
+
+  it("autoApplyOldestCreditsInTx: threads opts.excludeCreditNoteIds into the candidate query so an operator's explicit-amount order selection is not overridden by the sweep", async () => {
+    prisma.invoice.findUnique.mockResolvedValueOnce({
+      id: "inv-a4",
+      total: 50,
+      dueDate: null,
+      status: "SENT",
+      payments: [],
+    });
+    prisma.creditNote.findMany.mockResolvedValueOnce([]); // excluded id filtered server-side
+
+    const result = await service.autoApplyOldestCreditsInTx(prisma as any, "inv-a4", "c1", {
+      excludeCreditNoteIds: ["cn-explicit"],
+    });
+
+    expect(prisma.creditNote.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { notIn: ["cn-explicit"] } }),
+      }),
+    );
+    expect(result).toEqual({ applied: 0, invoiceStatus: null });
+  });
+
+  it("autoApplyOldestCreditsInTx: an empty excludeCreditNoteIds does not add an id filter", async () => {
+    prisma.invoice.findUnique.mockResolvedValueOnce({
+      id: "inv-a5",
+      total: 50,
+      dueDate: null,
+      status: "SENT",
+      payments: [],
+    });
+    prisma.creditNote.findMany.mockResolvedValueOnce([]);
+
+    await service.autoApplyOldestCreditsInTx(prisma as any, "inv-a5", "c1", {
+      excludeCreditNoteIds: [],
+    });
+
+    const where = prisma.creditNote.findMany.mock.calls[0][0].where;
+    expect(where.id).toBeUndefined();
+  });
+});
+
+describe("CreditNotesService — order credit-note intents (unapply / settle / validate / update)", () => {
+  let service: CreditNotesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+      ],
+    }).compile();
+    service = mod.get(CreditNotesService);
+  });
+
+  describe("unapplyFromInvoice", () => {
+    it("restores amountUsed, flips APPLIED→ISSUED, and clears appliedToInvoiceId", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([
+        {
+          id: "pay-1",
+          invoiceId: "inv-1",
+          creditNoteId: "cn-1",
+          amount: 40,
+          status: "PAID",
+          createdAt: new Date("2026-01-02"),
+        },
+      ]);
+      // 1st creditNote.findUnique: inside restoreCreditFromPaymentInTx (fetch to update).
+      // 2nd: the final fresh-row read at the end of unapplyFromInvoice.
+      prisma.creditNote.findUnique
+        .mockResolvedValueOnce({
+          id: "cn-1",
+          amount: 40,
+          amountUsed: 40,
+          status: "APPLIED",
+          appliedToInvoiceId: "inv-1",
+        })
+        .mockResolvedValueOnce({ id: "cn-1", amount: 40, amountUsed: 0, status: "ISSUED" });
+      // 1st invoice.findUnique: inside restoreCreditFromPaymentInTx (recompute status).
+      // 2nd: unapplyFromInvoice's own orderId lookup.
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({
+          id: "inv-1",
+          total: 100,
+          dueDate: null,
+          status: "PAID",
+          payments: [],
+        })
+        .mockResolvedValueOnce({ orderId: null });
+
+      const result = await service.unapplyFromInvoice("cn-1", "inv-1");
+
+      expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-1" } });
+      const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
+      expect(cnUpdate.data).toMatchObject({
+        amountUsed: 0,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+      });
+      expect(result).toMatchObject({ id: "cn-1", amountUsed: 0, status: "ISSUED" });
+    });
+
+    it("on a credit partially consumed by ANOTHER invoice, restores only this pair's dollars", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([
+        {
+          id: "pay-2",
+          invoiceId: "inv-2",
+          creditNoteId: "cn-2",
+          amount: 40,
+          status: "PAID",
+          createdAt: new Date("2026-01-05"),
+        },
+      ]);
+      // amountUsed=70 reflects $40 on THIS invoice + $30 already consumed elsewhere.
+      prisma.creditNote.findUnique
+        .mockResolvedValueOnce({
+          id: "cn-2",
+          amount: 100,
+          amountUsed: 70,
+          status: "ISSUED",
+          appliedToInvoiceId: null,
+        })
+        .mockResolvedValueOnce({ id: "cn-2", amount: 100, amountUsed: 30, status: "ISSUED" });
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({
+          id: "inv-2",
+          total: 50,
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [],
+        })
+        .mockResolvedValueOnce({ orderId: null });
+
+      await service.unapplyFromInvoice("cn-2", "inv-2");
+
+      const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
+      // 70 - 40 = 30: the OTHER invoice's $30 consumption is untouched.
+      expect(cnUpdate.data.amountUsed).toBe(30);
+      expect(cnUpdate.data.status).toBe("ISSUED");
+    });
+
+    it("throws when there is no active application of this credit to this invoice", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([]);
+      await expect(service.unapplyFromInvoice("cn-3", "inv-3")).rejects.toThrow(
+        /no active application/i,
+      );
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+    });
+
+    it("reduces the order intent so a later settle doesn't just re-apply the restored dollars", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([
+        {
+          id: "pay-4",
+          invoiceId: "inv-4",
+          creditNoteId: "cn-4",
+          amount: 25,
+          status: "PAID",
+          createdAt: new Date("2026-01-06"),
+        },
+      ]);
+      prisma.creditNote.findUnique
+        .mockResolvedValueOnce({
+          id: "cn-4",
+          amount: 100,
+          amountUsed: 25,
+          status: "ISSUED",
+          appliedToInvoiceId: null,
+        })
+        .mockResolvedValueOnce({ id: "cn-4", amount: 100, amountUsed: 0, status: "ISSUED" });
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({
+          id: "inv-4",
+          total: 25,
+          dueDate: null,
+          status: "SENT",
+          payments: [],
+        })
+        .mockResolvedValueOnce({ orderId: "order-4" });
+      prisma.orderCreditNote.findFirst.mockResolvedValueOnce({
+        id: "ocn-4",
+        orderId: "order-4",
+        creditNoteId: "cn-4",
+        amount: 25, // explicit $25 request, fully restored — should be removed
+      });
+
+      await service.unapplyFromInvoice("cn-4", "inv-4");
+
+      expect(prisma.orderCreditNote.delete).toHaveBeenCalledWith({ where: { id: "ocn-4" } });
+    });
+  });
+
+  describe("settleOrderCreditsInTx", () => {
+    it("applies a stored (null-amount) intent once an invoice exists; a second call is idempotent (applies 0)", async () => {
+      const baseIntent = {
+        id: "ocn-1",
+        orderId: "order-1",
+        creditNoteId: "cn-3",
+        amount: null,
+        createdAt: new Date("2026-01-01"),
+      };
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
+        {
+          ...baseIntent,
+          creditNote: { id: "cn-3", amount: 50, amountUsed: 0, status: "ISSUED", expiresAt: null },
+        },
+      ]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-3",
+          invoiceNumber: "INV-0001",
+          total: 100,
+          dueDate: null,
+          status: "SENT",
+          payments: [],
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-3",
+        amount: 50,
+        amountUsed: 0,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+        appliedAt: null,
+        autoApplied: false,
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-3",
+        total: 100,
+        dueDate: null,
+        status: "SENT",
+        payments: [],
+      });
+
+      const first = await service.settleOrderCreditsInTx(prisma as any, "order-1");
+      expect(first).toEqual({ applied: 50, unapplied: 0 });
+
+      // Re-mock as if the first apply had actually persisted: the invoice now carries
+      // the $50 CREDIT_NOTE payment and the credit is fully consumed — a re-run
+      // must be a no-op (idempotent).
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
+        {
+          ...baseIntent,
+          creditNote: {
+            id: "cn-3",
+            amount: 50,
+            amountUsed: 50,
+            status: "APPLIED",
+            expiresAt: null,
+          },
+        },
+      ]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-3",
+          invoiceNumber: "INV-0001",
+          total: 100,
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-3",
+              amount: 50,
+              status: "PAID",
+              method: "CREDIT_NOTE",
+              creditNoteId: "cn-3",
+              createdAt: new Date(),
+            },
+          ],
+        },
+      ]);
+
+      const second = await service.settleOrderCreditsInTx(prisma as any, "order-1");
+      expect(second).toEqual({ applied: 0, unapplied: 0 });
+    });
+
+    it("shrink pass: an invoice total dropped below Σ payments reduces the credit payment and decrements amountUsed; cash is untouched", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]); // no apply-phase intents needed
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-4",
+          invoiceNumber: "INV-0002",
+          total: 60, // shrunk from 100
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-cash",
+              amount: 40,
+              status: "PAID",
+              method: "CASH",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-01"),
+            },
+            {
+              id: "pay-credit",
+              amount: 60,
+              status: "PAID",
+              method: "CREDIT_NOTE",
+              creditNoteId: "cn-4",
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-4",
+        amount: 100,
+        amountUsed: 60,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-4",
+        total: 60,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [
+          { amount: 40, status: "PAID" },
+          { amount: 20, status: "PAID" },
+        ],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-4");
+
+      expect(result.unapplied).toBe(40);
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-credit" },
+        data: { amount: 20 },
+      });
+      expect(prisma.invoicePayment.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "pay-cash" } }),
+      );
+      expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
+      const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
+      expect(cnUpdate.data.amountUsed).toBe(20);
+    });
+
+    it("explicit-amount intent applies exactly min(requested amount, credit remaining, invoice balance)", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
+        {
+          id: "ocn-2",
+          orderId: "order-5",
+          creditNoteId: "cn-5",
+          amount: 30, // operator requested $30
+          createdAt: new Date("2026-01-01"),
+          creditNote: {
+            id: "cn-5",
+            amount: 100,
+            amountUsed: 80,
+            status: "ISSUED",
+            expiresAt: null,
+          }, // $20 remaining
+        },
+      ]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-5",
+          invoiceNumber: "INV-0003",
+          total: 50,
+          dueDate: null,
+          status: "SENT",
+          payments: [],
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-5",
+        amount: 100,
+        amountUsed: 80,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+        appliedAt: null,
+        autoApplied: false,
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-5",
+        total: 50,
+        dueDate: null,
+        status: "SENT",
+        payments: [],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-5");
+
+      expect(result.applied).toBe(20); // min(30 requested, 20 remaining, 50 balance)
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ amount: 20, creditNoteId: "cn-5" }),
+        }),
+      );
+    });
+
+    it("is a no-op when the order has no non-VOID invoices yet", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
+        {
+          id: "ocn-9",
+          orderId: "order-9",
+          creditNoteId: "cn-9",
+          amount: null,
+          createdAt: new Date(),
+        },
+      ]);
+      prisma.invoice.findMany.mockResolvedValueOnce([]);
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-9");
+
+      expect(result).toEqual({ applied: 0, unapplied: 0 });
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("validateSelectionsForCustomer", () => {
+    it("rejects a duplicate creditNoteId in the selection list", async () => {
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [
+          { creditNoteId: "cn-1" },
+          { creditNoteId: "cn-1" },
+        ]),
+      ).rejects.toThrow(/duplicate/i);
+    });
+
+    it("rejects an unknown credit note id", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([]);
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [
+          { creditNoteId: "cn-missing" },
+        ]),
+      ).rejects.toThrow(/not found/i);
+    });
+
+    it("rejects a credit note belonging to a different customer", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([
+        { id: "cn-1", customerId: "other-customer", status: "ISSUED", expiresAt: null },
+      ]);
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
+      ).rejects.toThrow(/customer/i);
+    });
+
+    it("rejects a VOID credit note", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([
+        { id: "cn-1", customerId: "c1", status: "VOID", expiresAt: null },
+      ]);
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
+      ).rejects.toThrow(/voided/i);
+    });
+
+    it("rejects an expired credit note", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([
+        {
+          id: "cn-1",
+          customerId: "c1",
+          status: "ISSUED",
+          expiresAt: new Date(Date.now() - 60_000),
+        },
+      ]);
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [{ creditNoteId: "cn-1" }]),
+      ).rejects.toThrow(/expired/i);
+    });
+
+    it("ACCEPTS a fully-consumed selection (idempotent resubmit) — no remaining-balance check", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([
+        {
+          id: "cn-1",
+          customerId: "c1",
+          status: "APPLIED",
+          amount: 50,
+          amountUsed: 50,
+          expiresAt: null,
+        },
+      ]);
+      await expect(
+        service.validateSelectionsForCustomer(prisma as any, "c1", [
+          { creditNoteId: "cn-1", amount: 50 },
+        ]),
+      ).resolves.toBeUndefined();
+    });
+
+    it("is a no-op for an empty selection list (no query issued)", async () => {
+      await service.validateSelectionsForCustomer(prisma as any, "c1", []);
+      expect(prisma.creditNote.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("syncOrderCreditSelections", () => {
+    it("undefined selections leaves credits untouched (no reads or writes)", async () => {
+      await service.syncOrderCreditSelections(prisma as any, "order-1", "c1", undefined);
+      expect(prisma.orderCreditNote.findMany).not.toHaveBeenCalled();
+    });
+
+    it("creates a new OrderCreditNote row for a newly selected credit not previously stored", async () => {
+      prisma.creditNote.findMany.mockResolvedValueOnce([
+        { id: "cn-1", customerId: "c1", status: "ISSUED", expiresAt: null },
+      ]);
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]); // nothing stored yet
+
+      await service.syncOrderCreditSelections(prisma as any, "order-1", "c1", [
+        { creditNoteId: "cn-1", amount: 20 },
+      ]);
+
+      expect(prisma.orderCreditNote.create).toHaveBeenCalledWith({
+        data: { orderId: "order-1", creditNoteId: "cn-1", amount: 20, tenantId: "test-tenant" },
+      });
+    });
+
+    it("drops a de-selected credit: pulls back its money then deletes the row", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([
+        { id: "ocn-1", orderId: "order-1", creditNoteId: "cn-1", amount: null },
+      ]);
+      prisma.invoicePayment.findMany.mockResolvedValueOnce([
+        {
+          id: "pay-1",
+          invoiceId: "inv-1",
+          creditNoteId: "cn-1",
+          amount: 15,
+          status: "PAID",
+          createdAt: new Date(),
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-1",
+        amount: 15,
+        amountUsed: 15,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-1",
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-1",
+        total: 15,
+        dueDate: null,
+        status: "PAID",
+        payments: [],
+      });
+
+      // Selection list is now empty — cn-1 was de-selected.
+      await service.syncOrderCreditSelections(prisma as any, "order-1", "c1", []);
+
+      expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-1" } });
+      expect(prisma.orderCreditNote.delete).toHaveBeenCalledWith({ where: { id: "ocn-1" } });
+      expect(prisma.orderCreditNote.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateCreditNote", () => {
+    it("edits the reason at ANY status (e.g. APPLIED)", async () => {
+      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
+      prisma.creditNote.update.mockResolvedValueOnce({ id: "cn-1", reason: "updated reason" });
+
+      const result = await service.updateCreditNote("cn-1", { reason: "updated reason" });
+
+      expect(prisma.creditNote.update).toHaveBeenCalledWith({
+        where: { id: "cn-1" },
+        data: { reason: "updated reason" },
+      });
+      expect(result).toMatchObject({ reason: "updated reason" });
+    });
+
+    it("rejects an expiresAt edit when the credit note is not ISSUED", async () => {
+      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "APPLIED" });
+      await expect(service.updateCreditNote("cn-1", { expiresAt: "2030-01-01" })).rejects.toThrow(
+        /ISSUED/,
+      );
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+    });
+
+    it("allows an expiresAt edit while ISSUED", async () => {
+      prisma.creditNote.findUnique.mockResolvedValueOnce({ id: "cn-1", status: "ISSUED" });
+      await service.updateCreditNote("cn-1", { expiresAt: "2030-01-01" });
+      expect(prisma.creditNote.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "cn-1" },
+          data: expect.objectContaining({ expiresAt: expect.any(Date) }),
+        }),
+      );
+    });
+
+    it("throws NotFound for an unknown credit note id", async () => {
+      prisma.creditNote.findUnique.mockResolvedValueOnce(null);
+      await expect(service.updateCreditNote("cn-missing", { reason: "x" })).rejects.toThrow(
+        /not found/i,
+      );
+    });
+  });
 });

@@ -24,6 +24,7 @@ import {
   type CreateOrderItemInput,
   type CustomerPriceHistory,
 } from "../lib/api/orders";
+import { useCreditNotes } from "../lib/api/credit-notes";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
@@ -413,6 +414,19 @@ function ProductPickView({
   const [deliveryDate, setDeliveryDate] = useState("");
   const [discountRaw, setDiscountRaw] = useState("");
   const [shippingFeeRaw, setShippingFeeRaw] = useState("");
+  // Apply-credit selection (mobile v1: toggle only, no amount input — null
+  // amount = up to the credit's remaining balance, resolved server-side).
+  const [selectedCreditIds, setSelectedCreditIds] = useState<string[]>([]);
+  const { data: openCredits } = useCreditNotes({
+    customerId: customerId || undefined,
+    status: "ISSUED",
+    limit: 100,
+  });
+  // Reset the selection whenever the customer changes so a stale credit id
+  // from a previous customer never rides along into this order's payload.
+  useEffect(() => {
+    setSelectedCreditIds([]);
+  }, [customerId]);
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
   const scrollRef = useRef<ScrollView>(null);
@@ -847,6 +861,9 @@ function ProductPickView({
         ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(shippingFee > 0 ? { shippingFee } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
+        ...(selectedCreditIds.length
+          ? { appliedCreditNotes: selectedCreditIds.map((id) => ({ creditNoteId: id })) }
+          : {}),
       },
       {
         onSuccess: (order) => {
@@ -1044,6 +1061,57 @@ function ProductPickView({
             </View>
           ) : null}
         </View>
+
+        {/* Apply credit — customer-scoped open credit notes. Toggle only (no
+            amount input on mobile v1); null amount = up to remaining. */}
+        {customerId && (openCredits?.data?.length ?? 0) > 0 ? (
+          <View style={styles.optionsWrap}>
+            <View style={styles.optionsHeader}>
+              <Ionicons name="pricetag-outline" size={16} color={ios.brand} />
+              <Text style={styles.optionsTitle}>Apply credit</Text>
+              {selectedCreditIds.length > 0 ? (
+                <Text style={styles.optionsSummary} numberOfLines={1}>
+                  {selectedCreditIds.length} selected
+                </Text>
+              ) : null}
+            </View>
+            <View style={styles.optionsBody}>
+              {openCredits!.data.map((cn) => {
+                const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
+                const checked = selectedCreditIds.includes(cn.id);
+                return (
+                  <Pressable
+                    key={cn.id}
+                    style={styles.optionRow}
+                    onPress={() =>
+                      setSelectedCreditIds((ids) =>
+                        checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
+                      )
+                    }
+                  >
+                    <Ionicons
+                      name={checked ? "checkbox" : "square-outline"}
+                      size={20}
+                      color={checked ? ios.brand : ios.label2}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.optionLabel} numberOfLines={1}>
+                        {cn.creditNoteNumber}
+                        {cn.reason ? ` · ${cn.reason}` : ""}
+                      </Text>
+                      {cn.expiresAt ? (
+                        <Text style={styles.optionsSummary}>
+                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
 
         <SearchBar
           placeholder="Search items…"

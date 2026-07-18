@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -13,6 +14,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { AppliedCreditNoteDto } from "./create-order.dto";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -117,4 +119,13 @@ export class UpdateOrderItemsDto {
   @Min(0)
   @Max(1_000_000)
   shippingFee?: number;
+
+  /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
+   *  [] = remove all; otherwise the FULL desired set (server diffs). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => AppliedCreditNoteDto)
+  appliedCreditNotes?: AppliedCreditNoteDto[];
 }

@@ -357,6 +357,7 @@ model Tenant {
   purchaseOrderItems     PurchaseOrderItem[]
   creditNotes            CreditNote[]
   creditNoteItems        CreditNoteItem[]
+  orderCreditNotes       OrderCreditNote[]
   estimates              Estimate[]
   estimateItems          EstimateItem[]
   vendorBills            VendorBill[]
@@ -1193,6 +1194,7 @@ model Order {
   returns           Return[]
   revisions         OrderRevision[]
   changeRequests    ChangeRequest[]
+  orderCreditNotes  OrderCreditNote[]
 
   // RF-014: prevent duplicate order numbers within the same tenant.
   // NULL values are treated as distinct by PostgreSQL, so rows with
@@ -2067,11 +2069,12 @@ model CreditNote {
   updatedAt   DateTime  @updatedAt
   tenantId    String?
 
-  customer        Customer         @relation(fields: [customerId], references: [id])
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
-  invoice         Invoice?         @relation(fields: [invoiceId], references: [id])
+  customer        Customer          @relation(fields: [customerId], references: [id])
+  tenant          Tenant?           @relation(fields: [tenantId], references: [id])
+  invoice         Invoice?          @relation(fields: [invoiceId], references: [id])
   invoicePayments InvoicePayment[]
   items           CreditNoteItem[]
+  orderLinks      OrderCreditNote[]
 
   @@unique([tenantId, creditNoteNumber])
   @@index([customerId])
@@ -2100,6 +2103,30 @@ model CreditNoteItem {
 
   @@index([tenantId])
   @@index([creditNoteId])
+}
+
+/// Order↔credit-note INTENT: "apply this credit (up to `amount`, or its remaining
+/// balance when null) to this order's invoice(s)". Pure selection state — the MONEY
+/// only ever moves through CreditNotesService.applyCreditInTx (an InvoicePayment with
+/// method CREDIT_NOTE), and settleOrderCreditsInTx re-applies intents idempotently
+/// whenever the order's invoice picture changes. Survives every destructive invoice
+/// line rebuild because it never references invoice rows. `amount` is a REQUEST,
+/// never a balance — CreditNote.amountUsed stays the single wallet truth.
+model OrderCreditNote {
+  id           String   @id @default(uuid())
+  tenantId     String?
+  orderId      String
+  creditNoteId String
+  amount       Decimal? @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  creditNote CreditNote @relation(fields: [creditNoteId], references: [id])
+  tenant     Tenant?    @relation(fields: [tenantId], references: [id])
+
+  @@unique([orderId, creditNoteId])
+  @@index([creditNoteId])
+  @@index([tenantId])
 }
 
 model Estimate {

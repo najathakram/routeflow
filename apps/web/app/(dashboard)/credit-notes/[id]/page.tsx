@@ -14,6 +14,7 @@ import {
   Search,
   Zap,
   AlertTriangle,
+  Pencil,
 } from "lucide-react";
 import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -22,6 +23,7 @@ import {
   useIssueCreditNote,
   useApplyCreditNote,
   useVoidCreditNote,
+  useUpdateCreditNote,
 } from "@/lib/api/credit-notes";
 import { useInvoices } from "@/lib/api/invoices";
 import { fmt, fmtDate } from "@/lib/formatting";
@@ -211,10 +213,14 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
   const issueCreditNote = useIssueCreditNote();
   const applyCreditNote = useApplyCreditNote();
   const voidCreditNote = useVoidCreditNote();
+  const updateCreditNote = useUpdateCreditNote();
 
   const [isIssueOpen, setIsIssueOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isApplyOpen, setIsApplyOpen] = React.useState(false);
+  // Inline reason edit — editable at ANY status (descriptive text).
+  const [isEditingReason, setIsEditingReason] = React.useState(false);
+  const [reasonDraft, setReasonDraft] = React.useState("");
 
   React.useEffect(() => {
     if (cn) setTitle(cn.creditNoteNumber);
@@ -288,6 +294,27 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
         });
       },
     });
+  };
+
+  const handleSaveReason = () => {
+    const reason = reasonDraft.trim();
+    if (!reason) return;
+    updateCreditNote.mutate(
+      { id: cn.id, reason },
+      {
+        onSuccess: () => {
+          setIsEditingReason(false);
+          toast({ title: "Reason updated", variant: "success" });
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to update reason",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
   };
 
   const handleApply = (invoiceId: string) => {
@@ -471,12 +498,58 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
               </div>
             </div>
 
-            {/* Reason */}
+            {/* Reason — editable at ANY status; rendered live via the relation
+                everywhere it's shown (order/invoice/PDF), so this edit is the
+                one place it needs to be changed. */}
             <div className="mt-6 border-t border-surface-border pt-4">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Reason
-              </p>
-              <p className="text-sm text-navy/80 whitespace-pre-line">{cn.reason}</p>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Reason
+                </p>
+                {!isEditingReason && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReasonDraft(cn.reason);
+                      setIsEditingReason(true);
+                    }}
+                    className="rounded p-1 text-navy/40 hover:text-brand-500 transition-colors"
+                    title="Edit reason"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {isEditingReason ? (
+                <div className="space-y-2">
+                  <textarea
+                    rows={2}
+                    value={reasonDraft}
+                    onChange={(e) => setReasonDraft(e.target.value)}
+                    className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsEditingReason(false)}
+                      disabled={updateCreditNote.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      loading={updateCreditNote.isPending}
+                      disabled={!reasonDraft.trim()}
+                      onClick={handleSaveReason}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-navy/80 whitespace-pre-line">{cn.reason}</p>
+              )}
             </div>
 
             {/* Notes */}

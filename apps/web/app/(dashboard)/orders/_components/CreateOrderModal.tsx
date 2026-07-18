@@ -27,6 +27,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -313,6 +314,7 @@ export function CreateOrderModal({
     setRequestedDeliveryDate("");
     setOrderDiscount("");
     setShippingFeeInput("");
+    setAppliedCredits([]);
     setFloorAcked(new Set());
     setCreateProductOpen(false);
     setCreateProductInitialName("");
@@ -328,6 +330,13 @@ export function CreateOrderModal({
 
   const [orderDiscount, setOrderDiscount] = React.useState("");
   const [shippingFeeInput, setShippingFeeInput] = React.useState("");
+  // Customer credit notes selected to apply to this order's invoice(s). Not
+  // draft-persisted (see drafts.ts) — a resumed draft starts with none selected.
+  const [appliedCredits, setAppliedCredits] = React.useState<CreditSelection[]>([]);
+  // Credit selections are per-customer — reset whenever the operator swaps customers.
+  React.useEffect(() => {
+    setAppliedCredits([]);
+  }, [selectedCustomer?.id]);
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -841,6 +850,9 @@ export function CreateOrderModal({
         ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
         ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
+        // Bill-now (createSale) has no path through this modal today — only
+        // the create-order payload needs threading here.
+        ...(appliedCredits.length ? { appliedCreditNotes: appliedCredits } : {}),
       } as any,
       {
         onSuccess: (created: any) => {
@@ -1655,6 +1667,16 @@ export function CreateOrderModal({
                 <span>${total.toFixed(2)}</span>
               </div>
             </div>
+          )}
+
+          {/* ── Apply customer credit notes (customer-scoped, auto-populated) ── */}
+          {selectedCustomer && (
+            <CreditNotePicker
+              customerId={selectedCustomer.id}
+              value={appliedCredits}
+              onChange={setAppliedCredits}
+              estimatedOrderTotal={total}
+            />
           )}
 
           {/* ── Options ── */}

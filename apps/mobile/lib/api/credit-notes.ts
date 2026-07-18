@@ -16,8 +16,11 @@ export interface CreditNote {
   status: CreditNoteStatus;
   issueDate?: string;
   amount: number;
+  /** Dollars already consumed against this credit (Σ non-VOID CREDIT_NOTE payments). */
+  amountUsed?: number;
   reason?: string;
   notes?: string;
+  expiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +37,8 @@ export function useCreditNotes(params?: {
   search?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** Scope to one customer's credits — backs the order picker. */
+  customerId?: string;
   page?: number;
   limit?: number;
 }) {
@@ -99,6 +104,28 @@ export function useApplyCreditNote() {
     onSuccess: (_, { id }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
+
+/**
+ * Un-apply a credit note from one invoice: restores the pair's dollars to the
+ * wallet, reverts the credit's status, and recomputes the invoice's status.
+ */
+export function useUnapplyCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
+    mutationFn: ({ id, invoiceId }) =>
+      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }).then((r) => r.data),
+    onSuccess: (_, { id, invoiceId }) => {
+      invalidateCreditNote(qc, id);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      // The operator invoice/order detail screens read via `lib/api/admin.ts`'s
+      // own query keys — invalidate those too so the unapply reflects there.
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", invoiceId] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
     },
   });
 }

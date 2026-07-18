@@ -67,6 +67,9 @@ export interface InvoicePdfData {
     reference?: string | null;
     notes?: string | null;
     paidAt: Date | string;
+    /** Present on CREDIT_NOTE payments — read live via the relation so a later
+     *  edit of the credit's reason shows up on the next PDF render. */
+    creditNote?: { creditNoteNumber: string; reason: string | null } | null;
   }>;
   tenant?: {
     businessName?: string | null;
@@ -563,7 +566,11 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 <View key={pmt.id} style={styles.paymentRow}>
                   <View>
                     <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
-                    {pmt.reference ? (
+                    {pmt.method === "CREDIT_NOTE" && pmt.creditNote?.reason ? (
+                      <Text style={{ fontSize: 8, color: GRAY }}>
+                        Credit {pmt.creditNote.creditNoteNumber} — {pmt.creditNote.reason}
+                      </Text>
+                    ) : pmt.reference ? (
                       <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
                     ) : null}
                   </View>

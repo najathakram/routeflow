@@ -59,6 +59,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
 
 @Injectable()
 export class OrdersService implements OnApplicationBootstrap {
@@ -75,6 +76,7 @@ export class OrdersService implements OnApplicationBootstrap {
     private readonly authGuard: AuthorizationGuardService,
     private readonly promotionsService: PromotionsService,
     private readonly messaging: MessagingService,
+    private readonly creditNotes: CreditNotesService,
   ) {}
 
   /**
@@ -331,7 +333,38 @@ export class OrdersService implements OnApplicationBootstrap {
           orderBy: [{ position: "asc" }, { createdAt: "asc" }],
         },
         transaction: true,
-        invoices: { select: { id: true, invoiceNumber: true, status: true, total: true } },
+        invoices: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            status: true,
+            total: true,
+            // Applied credit-note payments, so clients can show per-credit dollars
+            // actually applied without a second roundtrip.
+            payments: {
+              where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
+              select: { id: true, amount: true, creditNoteId: true },
+            },
+          },
+        },
+        // Credit-note INTENTS selected for this order (join table) — the reason/
+        // amount/status render at read time via the relation so an edit to the
+        // credit note's reason shows up everywhere automatically.
+        orderCreditNotes: {
+          include: {
+            creditNote: {
+              select: {
+                id: true,
+                creditNoteNumber: true,
+                reason: true,
+                amount: true,
+                amountUsed: true,
+                status: true,
+                expiresAt: true,
+              },
+            },
+          },
+        },
         // P5-08: version history + the run state that governs the edit window.
         revisions: { orderBy: { revisionNumber: "asc" } },
         // P5-09: post-dispatch change requests, newest first.
@@ -1057,6 +1090,17 @@ export class OrdersService implements OnApplicationBootstrap {
       customerId = customer.id;
     }
 
+    // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
+    // selections reject before any stock mutation). Fully-consumed re-submissions
+    // are deliberately accepted (idempotent resubmit).
+    if (dto.appliedCreditNotes?.length) {
+      await this.creditNotes.validateSelectionsForCustomer(
+        this.prisma.forTenant(),
+        customerId,
+        dto.appliedCreditNotes,
+      );
+    }
+
     const isDraft = dto.status === "DRAFT";
     const items = dto.items ?? [];
 
@@ -1501,6 +1545,25 @@ export class OrdersService implements OnApplicationBootstrap {
       }
     }
 
+    // Credit-note intents: store the operator's selection against the FINAL order
+    // id, then settle (a harmless no-op until an invoice exists — settle bails
+    // early when the order has no invoices yet). Short, dedicated Serializable tx
+    // — NOT inside the stock/create transaction above.
+    if (dto.appliedCreditNotes !== undefined) {
+      await this.prisma.tenantTransaction(
+        async (tx) => {
+          await this.creditNotes.syncOrderCreditSelections(
+            tx,
+            order.id,
+            customerId,
+            dto.appliedCreditNotes,
+          );
+          await this.creditNotes.settleOrderCreditsInTx(tx, order.id);
+        },
+        { isolationLevel: "Serializable" },
+      );
+    }
+
     return order;
   }
 
@@ -1527,6 +1590,7 @@ export class OrdersService implements OnApplicationBootstrap {
         shippingFee: dto.shippingFee,
         requestedDeliveryDate: dto.requestedDeliveryDate,
         status: "PENDING",
+        appliedCreditNotes: dto.appliedCreditNotes,
       },
       user,
       { skipAutoMerge: true },
@@ -1681,6 +1745,23 @@ export class OrdersService implements OnApplicationBootstrap {
             `Failed to auto-create invoice for order ${id}: ${err?.message ?? err}`,
           );
         });
+      }
+
+      // Best-effort credit-note settle: the awaited reconcile path above doesn't
+      // apply credits itself (the fire-and-forget auto-create path already settles
+      // internally via the WP2 invoice-creation hook, so this is idempotent there
+      // too — settle clamps, money never moves twice).
+      try {
+        await this.prisma.tenantTransaction(
+          async (tx) => {
+            await this.creditNotes.settleOrderCreditsInTx(tx, id);
+          },
+          { isolationLevel: "Serializable" },
+        );
+      } catch (err) {
+        // Delivery must not fail because a credit top-up hit contention — send()'s
+        // auto-apply catches up. Money never moves twice (settle clamps).
+        this.logger.warn(`Credit settle after delivery failed for order ${id}: ${err}`);
       }
     } else if (dto.status === OrderStatus.CANCELLED) {
       // Cancelling an order voids its pending mirror draft (releases invoicedQty).
@@ -2522,6 +2603,29 @@ export class OrdersService implements OnApplicationBootstrap {
     } else {
       await this.invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "order" });
     }
+
+    // Credit-note intents: sync operator selection changes, then settle (shrink or
+    // top-up) against the order's current invoices. Runs even when line-resync was
+    // skipped for partial billing — the credits are payment-level, not line-level.
+    // Staff-only: apply the same role gate as the shipping fee — when the caller
+    // is NOT OPERATOR/TENANT_ADMIN, treat dto.appliedCreditNotes as undefined
+    // (drivers/customers can't manage credits).
+    const isStaffCreditEdit =
+      user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+    await this.prisma.tenantTransaction(
+      async (tx) => {
+        if (isStaffCreditEdit && dto.appliedCreditNotes !== undefined) {
+          await this.creditNotes.syncOrderCreditSelections(
+            tx,
+            orderId,
+            order.customerId,
+            dto.appliedCreditNotes,
+          );
+        }
+        await this.creditNotes.settleOrderCreditsInTx(tx, orderId);
+      },
+      { isolationLevel: "Serializable" },
+    );
 
     if (shouldRevert) {
       this.gateway.emitOrderStatusChanged(this.prisma.getTenantId(), {

@@ -74,6 +74,40 @@ export interface Order {
   changeRequests?: ChangeRequest[]; // NEW
   /** P5-08 edit-window gate — direct PATCH /items vs. change-request flow. */
   editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null }; // NEW
+  /**
+   * Order-scoped credit-note INTENTS (server: `OrderCreditNote`). `amount` is the
+   * requested dollars — null means "up to the credit's remaining balance". Applied
+   * dollars-so-far live on `invoices[].payments` (CREDIT_NOTE rows), not here.
+   */
+  orderCreditNotes?: Array<{
+    id: string;
+    creditNoteId: string;
+    amount?: number | string | null;
+    creditNote?: {
+      id: string;
+      creditNoteNumber: string;
+      reason?: string | null;
+      amount: number | string;
+      amountUsed: number | string;
+      status: string;
+      expiresAt?: string | null;
+    };
+  }>;
+  /** CREDIT_NOTE payments per invoice (present when `orderCreditNotes` is). */
+  invoices?: Array<{
+    id: string;
+    invoiceNumber: string;
+    status: string;
+    total: number;
+    payments?: Array<{ id: string; amount: number | string; creditNoteId: string | null }>;
+  }>;
+}
+
+/** One order-selected credit-note intent in a create/edit payload. */
+export interface AppliedCreditNoteInput {
+  creditNoteId: string;
+  /** Dollars to apply from this credit. Omit = up to the credit's remaining balance. */
+  amount?: number;
 }
 
 export interface CreateOrderDto {
@@ -142,6 +176,11 @@ export interface CreateOrderAsDriverDto {
    * summary so the UI can prompt.
    */
   mergeChoice?: "merge" | "separate";
+  /**
+   * Credit notes to apply to this order's invoice(s). Omit = leave untouched;
+   * [] = remove all; otherwise the FULL desired set (server diffs).
+   */
+  appliedCreditNotes?: AppliedCreditNoteInput[];
 }
 
 export interface ActiveOrderSummary {
@@ -257,10 +296,22 @@ export function useUpdateOrderItems() {
        * flip to full-replace when every entry is id-less (e.g. only new adds).
        */
       replaceAll?: boolean;
+      /**
+       * Credit notes to apply to this order's invoice(s). Omit = leave untouched
+       * (server intent survives edits); [] = remove all; otherwise the FULL
+       * desired set.
+       */
+      appliedCreditNotes?: AppliedCreditNoteInput[];
     }
   >({
-    mutationFn: ({ orderId, items, replaceAll }) =>
-      apiClient.patch(`/orders/${orderId}/items`, { items, replaceAll }).then((r) => r.data),
+    mutationFn: ({ orderId, items, replaceAll, appliedCreditNotes }) =>
+      apiClient
+        .patch(`/orders/${orderId}/items`, {
+          items,
+          replaceAll,
+          ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
+        })
+        .then((r) => r.data),
     onSuccess: (_, { orderId }) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });

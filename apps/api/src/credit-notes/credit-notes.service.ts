@@ -383,7 +383,7 @@ export class CreditNotesService {
       payments?: Array<{ amount: unknown; status?: string }>;
     },
     requestedAmount?: number,
-    opts?: { autoApplied?: boolean },
+    opts?: { autoApplied?: boolean; tenantId?: string | null },
   ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
     const remaining = roundMoney(Number(cn.amount) - Number(cn.amountUsed));
     // P5-12: a bounced check flips its InvoicePayment to VOID — must NOT count as
@@ -403,6 +403,12 @@ export class CreditNotesService {
     // The credit consumes invoice balance as a payment — the ONLY place a credit
     // reduces an invoice, and amountUsed below removes the same dollars from the
     // wallet (Σ amount − amountUsed). One or the other, never both.
+    // Set tenantId explicitly (mirroring the invoice.create defense): the settle
+    // path can run on an UNWRAPPED tx — the fire-and-forget invoice creation loses
+    // AsyncLocalStorage context, so the tenant proxy wouldn't inject it — and a
+    // tenant-orphaned (tenantId=null) payment is excluded from every tenant-scoped
+    // read. On a wrapped tx the proxy overrides this with the same value; harmless.
+    const effectiveTenantId = opts?.tenantId ?? this.prisma.getTenantId();
     await tx.invoicePayment.create({
       data: {
         invoiceId: inv.id,
@@ -410,6 +416,7 @@ export class CreditNotesService {
         method: PaymentMethod.CREDIT_NOTE,
         creditNoteId: cn.id,
         reference: cn.creditNoteNumber,
+        ...(effectiveTenantId ? { tenantId: effectiveTenantId } : {}),
       },
     });
 
@@ -449,6 +456,7 @@ export class CreditNotesService {
     tx: any,
     invoiceId: string,
     customerId: string,
+    opts?: { excludeCreditNoteIds?: string[] },
   ): Promise<{ applied: number; invoiceStatus: InvoiceStatus | null }> {
     const nothing: { applied: number; invoiceStatus: InvoiceStatus | null } = {
       applied: 0,
@@ -475,6 +483,7 @@ export class CreditNotesService {
         customerId,
         status: { not: "VOID" },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
       },
       orderBy: { createdAt: "asc" },
     });
@@ -587,5 +596,372 @@ export class CreditNotesService {
       },
       { isolationLevel: "Serializable" },
     );
+  }
+
+  /**
+   * Inverse of applyCreditInTx: give (part of) an applied credit back to the wallet.
+   * Deletes (or shrinks) the CREDIT_NOTE InvoicePayment, decrements amountUsed,
+   * reverts APPLIED→ISSUED when the credit is no longer fully consumed, and
+   * recomputes the invoice's status from its remaining non-VOID payments.
+   * Returns the dollars actually restored.
+   */
+  private async restoreCreditFromPaymentInTx(
+    tx: any,
+    payment: { id: string; invoiceId: string; creditNoteId: string | null; amount: unknown },
+    reduceBy?: number,
+  ): Promise<number> {
+    if (!payment.creditNoteId) return 0;
+    const payAmt = roundMoney(Number(payment.amount));
+    const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
+    if (!(restore > 0.001)) return 0;
+
+    if (restore >= payAmt - 0.001) {
+      await tx.invoicePayment.delete({ where: { id: payment.id } });
+    } else {
+      await tx.invoicePayment.update({
+        where: { id: payment.id },
+        data: { amount: roundMoney(payAmt - restore) },
+      });
+    }
+
+    const cn = await tx.creditNote.findUnique({ where: { id: payment.creditNoteId } });
+    if (cn) {
+      const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
+      const fullyApplied = newUsed >= Number(cn.amount) - 0.001;
+      await tx.creditNote.update({
+        where: { id: cn.id },
+        data: {
+          amountUsed: newUsed,
+          // VOID stays VOID (defensive; callers pre-filter). Otherwise the wallet
+          // state follows consumption: fully consumed = APPLIED, else ISSUED.
+          status: cn.status === "VOID" ? "VOID" : fullyApplied ? "APPLIED" : "ISSUED",
+          appliedToInvoiceId: fullyApplied ? cn.appliedToInvoiceId : null,
+          ...(newUsed <= 0.001 ? { appliedAt: null, autoApplied: false } : {}),
+        },
+      });
+    }
+
+    const inv = await tx.invoice.findUnique({
+      where: { id: payment.invoiceId },
+      include: { payments: true },
+    });
+    if (inv) {
+      const paid = roundMoney(
+        (inv.payments ?? [])
+          .filter((p: any) => p.status !== "VOID")
+          .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      const newStatus = this.recomputeStatus(paid, Number(inv.total), inv.dueDate, inv.status);
+      await tx.invoice.update({
+        where: { id: inv.id },
+        data: {
+          status: newStatus,
+          paidAt: newStatus === InvoiceStatus.PAID ? (inv.paidAt ?? new Date()) : null,
+        },
+      });
+    }
+    return restore;
+  }
+
+  /**
+   * Validates a proposed set of order credit-note selections against the customer's
+   * wallet BEFORE any mutation. Throws BadRequest/NotFound on: duplicate creditNoteId
+   * in the list; unknown id; different customer; status VOID; expired
+   * (expiresAt <= now). Deliberately does NOT require remaining balance > 0 — an
+   * idempotent resubmit of an already-consumed selection must not fail (the apply
+   * clamp in applyCreditInTx makes over-selection harmless).
+   */
+  async validateSelectionsForCustomer(
+    db: any,
+    customerId: string,
+    selections: Array<{ creditNoteId: string; amount?: number }>,
+  ): Promise<void> {
+    if (!selections.length) return;
+
+    const seen = new Set<string>();
+    for (const s of selections) {
+      if (seen.has(s.creditNoteId))
+        throw new BadRequestException(`Duplicate credit note selection: ${s.creditNoteId}`);
+      seen.add(s.creditNoteId);
+    }
+
+    const ids = [...seen];
+    const notes = await db.creditNote.findMany({ where: { id: { in: ids } } });
+    const byId = new Map(notes.map((n: any) => [n.id, n]));
+    const now = new Date();
+    for (const id of ids) {
+      const cn: any = byId.get(id);
+      if (!cn) throw new NotFoundException(`Credit note ${id} not found`);
+      if (cn.customerId !== customerId)
+        throw new BadRequestException(
+          `Credit note ${cn.creditNoteNumber ?? id} does not belong to this customer`,
+        );
+      if (cn.status === "VOID")
+        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has been voided`);
+      if (cn.expiresAt && new Date(cn.expiresAt) <= now)
+        throw new BadRequestException(`Credit note ${cn.creditNoteNumber ?? id} has expired`);
+    }
+  }
+
+  /** Pull back the money for one (orderId, creditNoteId) pair — every non-VOID
+   * CREDIT_NOTE payment this credit made against this order's invoices, restored
+   * via restoreCreditFromPaymentInTx. Used by syncOrderCreditSelections whenever a
+   * selection is dropped or its requested amount changes. */
+  private async pullBackOrderCreditPair(
+    tx: any,
+    orderId: string,
+    creditNoteId: string,
+  ): Promise<void> {
+    const pays = await tx.invoicePayment.findMany({
+      where: {
+        creditNoteId,
+        method: PaymentMethod.CREDIT_NOTE,
+        status: { not: "VOID" },
+        invoice: { orderId },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, p);
+  }
+
+  /**
+   * Syncs an order's OrderCreditNote intent rows to the operator's desired selection
+   * set. `selections === undefined` is backward compatible — leaves credits untouched
+   * (clients that don't send the field never affect existing intents). Otherwise
+   * `selections` is the FULL desired set: the server diffs against what's currently
+   * stored and pulls back money for anything dropped or re-amounted before writing
+   * the new rows. Never applies money itself — settleOrderCreditsInTx does that.
+   */
+  async syncOrderCreditSelections(
+    tx: any,
+    orderId: string,
+    customerId: string,
+    selections: Array<{ creditNoteId: string; amount?: number }> | undefined,
+  ): Promise<void> {
+    if (selections === undefined) return;
+    await this.validateSelectionsForCustomer(tx, customerId, selections);
+
+    const existing = await tx.orderCreditNote.findMany({ where: { orderId } });
+    const selectionById = new Map(selections.map((s) => [s.creditNoteId, s]));
+
+    for (const row of existing) {
+      const sel = selectionById.get(row.creditNoteId);
+      if (!sel) {
+        // Dropped selection — pull back this pair's money then delete the row.
+        await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
+        await tx.orderCreditNote.delete({ where: { id: row.id } });
+        continue;
+      }
+      const nextAmount = sel.amount != null ? roundMoney(sel.amount) : null;
+      const currentAmount = row.amount != null ? roundMoney(Number(row.amount)) : null;
+      if (nextAmount !== currentAmount) {
+        // Requested amount changed (null vs number, or a different rounded number) —
+        // pull back this pair's money; settle re-applies at the new request.
+        await this.pullBackOrderCreditPair(tx, orderId, row.creditNoteId);
+        await tx.orderCreditNote.update({ where: { id: row.id }, data: { amount: nextAmount } });
+      }
+    }
+
+    const existingIds = new Set(existing.map((r: any) => r.creditNoteId));
+    for (const sel of selections) {
+      if (existingIds.has(sel.creditNoteId)) continue;
+      await tx.orderCreditNote.create({
+        data: {
+          orderId,
+          creditNoteId: sel.creditNoteId,
+          amount: sel.amount ?? null,
+          tenantId: this.prisma.getTenantId(),
+        },
+      });
+    }
+  }
+
+  /**
+   * Reconcile the order's credit INTENTS (OrderCreditNote rows) with actual
+   * CREDIT_NOTE InvoicePayments, inside the caller's transaction. Idempotent:
+   * (a) SHRINK — if an order edit dropped an invoice total below what its
+   *     payments cover, un-apply the excess from credit payments (newest first;
+   *     cash is never auto-adjusted);
+   * (b) APPLY — for each intent (oldest first), apply the unmet remainder
+   *     across the order's non-VOID invoices (base number first, then -R#
+   *     siblings). applyCreditInTx clamps everything, so re-runs are no-ops.
+   * No-op when the order has no invoices yet (intent waits for one).
+   */
+  async settleOrderCreditsInTx(
+    tx: any,
+    orderId: string,
+    // Effective tenant for the credit payment rows. Defaults to the request context,
+    // but callers on an unwrapped tx (fire-and-forget invoice creation) MUST pass it
+    // explicitly — AsyncLocalStorage is lost there, so getTenantId() returns null and
+    // the payment would be written tenant-orphaned.
+    tenantId: string | null = this.prisma.getTenantId(),
+  ): Promise<{ applied: number; unapplied: number }> {
+    const result = { applied: 0, unapplied: 0 };
+    const intents = await tx.orderCreditNote.findMany({
+      where: { orderId },
+      orderBy: { createdAt: "asc" },
+      include: { creditNote: true },
+    });
+    const invoices = await tx.invoice.findMany({
+      where: { orderId, status: { not: "VOID" } },
+      include: { payments: true },
+      orderBy: { invoiceNumber: "asc" },
+    });
+    if (invoices.length === 0) return result;
+
+    // (a) shrink
+    for (const inv of invoices) {
+      const nonVoid = (inv.payments ?? []).filter((p: any) => p.status !== "VOID");
+      const paid = roundMoney(nonVoid.reduce((s: number, p: any) => s + Number(p.amount), 0));
+      let excess = roundMoney(paid - Number(inv.total));
+      if (!(excess > 0.001)) continue;
+      const creditPays = nonVoid
+        .filter((p: any) => p.method === "CREDIT_NOTE" && p.creditNoteId)
+        .sort(
+          (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+      for (const p of creditPays) {
+        if (!(excess > 0.001)) break;
+        const restored = await this.restoreCreditFromPaymentInTx(tx, p, excess);
+        excess = roundMoney(excess - restored);
+        result.unapplied = roundMoney(result.unapplied + restored);
+        // Fold the restore back into the in-memory snapshot so the apply pass below
+        // sees POST-shrink consumption. restoreCreditFromPaymentInTx mutated the DB
+        // rows but not these objects; without this, appliedForPair (explicit intents)
+        // and the credit's amountUsed (null-amount intents) would still reflect the
+        // pre-shrink dollars, over-counting consumption and under-applying the credit
+        // across sibling invoices within this same settle call.
+        p.amount = roundMoney(Number(p.amount) - restored);
+        const owner = intents.find((it: any) => it.creditNoteId === p.creditNoteId);
+        if (owner?.creditNote) {
+          owner.creditNote.amountUsed = Math.max(
+            0,
+            roundMoney(Number(owner.creditNote.amountUsed) - restored),
+          );
+        }
+      }
+    }
+
+    // (b) apply — reads the in-memory `invoices`/`intent.creditNote` snapshot, which
+    // pass (a) folded its restore deltas into, so consumption figures are current.
+    const now = new Date();
+    for (const intent of intents) {
+      const cn0 = intent.creditNote;
+      if (!cn0 || cn0.status === "VOID") continue;
+      if (cn0.expiresAt && new Date(cn0.expiresAt) <= now) continue;
+      const appliedForPair = roundMoney(
+        invoices
+          .flatMap((inv: any) => inv.payments ?? [])
+          .filter((p: any) => p.status !== "VOID" && p.creditNoteId === intent.creditNoteId)
+          .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      let unmet =
+        intent.amount != null
+          ? roundMoney(Math.max(0, Number(intent.amount) - appliedForPair))
+          : roundMoney(Number(cn0.amount) - Number(cn0.amountUsed));
+      for (const inv of invoices) {
+        if (!(unmet > 0.001)) break;
+        // Fresh reads — earlier loop iterations move money.
+        const cn = await tx.creditNote.findUnique({ where: { id: intent.creditNoteId } });
+        const freshInv = await tx.invoice.findUnique({
+          where: { id: inv.id },
+          include: { payments: true },
+        });
+        if (!cn || !freshInv) break;
+        const res = await this.applyCreditInTx(tx, cn, freshInv, unmet, { tenantId });
+        if (res.applied <= 0) continue;
+        unmet = roundMoney(unmet - res.applied);
+        result.applied = roundMoney(result.applied + res.applied);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Un-applies a credit note from one invoice: restores this (creditNoteId, invoiceId)
+   * pair's active CREDIT_NOTE payments to the wallet, then reduces (or removes) the
+   * order's OrderCreditNote intent so a later settle doesn't just re-apply the same
+   * dollars. Returns the fresh credit note row.
+   */
+  async unapplyFromInvoice(creditNoteId: string, invoiceId: string) {
+    return this.prisma.tenantTransaction(
+      async (tx: any) => {
+        const payments = await tx.invoicePayment.findMany({
+          where: {
+            creditNoteId,
+            invoiceId,
+            method: PaymentMethod.CREDIT_NOTE,
+            status: { not: "VOID" },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (!payments.length)
+          throw new BadRequestException(
+            "This credit note has no active application to that invoice",
+          );
+
+        let restored = 0;
+        for (const p of payments) {
+          restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, p)));
+        }
+
+        const invoice = await tx.invoice.findUnique({
+          where: { id: invoiceId },
+          select: { orderId: true },
+        });
+        if (invoice?.orderId) {
+          const link = await tx.orderCreditNote.findFirst({
+            where: { orderId: invoice.orderId, creditNoteId },
+          });
+          if (link) {
+            if (link.amount == null) {
+              await tx.orderCreditNote.delete({ where: { id: link.id } });
+            } else {
+              const newAmt = roundMoney(Number(link.amount) - restored);
+              if (newAmt > 0.001) {
+                await tx.orderCreditNote.update({
+                  where: { id: link.id },
+                  data: { amount: newAmt },
+                });
+              } else {
+                await tx.orderCreditNote.delete({ where: { id: link.id } });
+              }
+            }
+          }
+        }
+
+        return tx.creditNote.findUnique({ where: { id: creditNoteId } });
+      },
+      { isolationLevel: "Serializable" },
+    );
+  }
+
+  /**
+   * Edits a credit note's descriptive `reason` (any status — it's just text that
+   * renders via the relation everywhere the credit is shown) and/or `expiresAt`
+   * (ISSUED only — an applied/void credit's expiry is no longer meaningful).
+   */
+  async updateCreditNote(id: string, dto: { reason?: string; expiresAt?: string | null }) {
+    const cn = await this.prisma.forTenant().creditNote.findUnique({ where: { id } });
+    if (!cn) throw new NotFoundException("Credit note not found");
+
+    const data: any = {};
+    if (dto.reason !== undefined) data.reason = dto.reason;
+    if (dto.expiresAt !== undefined) {
+      if (cn.status !== "ISSUED")
+        throw new BadRequestException(
+          "expiresAt can only be changed while the credit note is ISSUED",
+        );
+      if (dto.expiresAt === null) {
+        data.expiresAt = null;
+      } else {
+        const expiresAt = new Date(dto.expiresAt);
+        if (isNaN(expiresAt.getTime()))
+          throw new BadRequestException("expiresAt must be a valid ISO date");
+        data.expiresAt = expiresAt;
+      }
+    }
+
+    return this.prisma.forTenant().creditNote.update({ where: { id }, data });
   }
 }
