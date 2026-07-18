@@ -725,6 +725,28 @@ describe("InvoicesService", () => {
       expect(line.originalPrice).toBe(100);
       expect(line.subtotal).toBeCloseTo(550, 2); // 110 × 5
     });
+
+    // Order-driven reconcile (WP2): the ORDER owns the fee — a stale value left on
+    // the draft (e.g. from before the order's fee was edited) is overwritten.
+    it("order-driven reconcile: the order's fee OVERWRITES a stale draft fee value", async () => {
+      const feeOrder = { ...order, id: "o-fee", shippingFee: 8 };
+      prisma.invoice.findFirst.mockResolvedValue({ id: "d-fee", discount: 0, shippingFee: 3 });
+      prisma.order.findUnique.mockResolvedValue(feeOrder);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoiceItem.deleteMany.mockResolvedValue({});
+      prisma.invoice.update.mockResolvedValue({ id: "d-fee", status: InvoiceStatus.DRAFT });
+      prisma.orderItem.findMany.mockResolvedValue([{ id: "li1" }]);
+      prisma.orderItem.update.mockResolvedValue({});
+      // No other non-void sibling invoices carry any of the fee.
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+
+      await service.reconcileOrderDraftInvoice("o-fee", { basis: "order" });
+
+      const data = prisma.invoice.update.mock.calls[0][0].data;
+      expect(data.shippingFee).toBe(8); // order fee wins, stale draft value (3) discarded
+      // subtotal 50 - discount 0 + fee 8 + tax 5 = 63.
+      expect(data.total).toBeCloseTo(63, 2);
+    });
   });
 
   // ─── send(): invoice-after-delivery gating ─────────────────────────────────
@@ -1003,6 +1025,45 @@ describe("InvoicesService", () => {
       expect(res).toBeNull();
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
+    // Shipping back-sync (WP2): Order.shippingFee is DEFINED as Σ(non-void invoice
+    // fees) — an invoice-side fee edit back-syncs here. The `invoice.findMany` this
+    // method runs already filters `status: { not: VOID }`, so a VOID sibling never
+    // appears in `invoices` here — mirrored below by simply not including one.
+    it("writes Order.shippingFee = Σ non-void invoice fees, folded into the total", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: "o1",
+        subtotal: 100,
+        tax: 10,
+        lineItems: [{ id: "li1", productId: "p1" }],
+      });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "a",
+          status: InvoiceStatus.SENT,
+          shippingFee: 6,
+          items: [{ productId: "p1", qty: 1, subtotal: 220, unitPrice: 220 }],
+        },
+        {
+          id: "b",
+          status: InvoiceStatus.DRAFT,
+          shippingFee: 0,
+          items: [{ productId: "p1", qty: 1, subtotal: 220, unitPrice: 220 }],
+        },
+        // A VOID sibling's fee is EXCLUDED — Prisma's own query filter would never
+        // return it, so it's simply left off the mocked findMany result here.
+      ]);
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.order.update.mockResolvedValue({});
+
+      const res = await service.recomputeOrderFromInvoices("o1");
+
+      const data = prisma.order.update.mock.calls[0][0].data;
+      expect(data.shippingFee).toBe(6);
+      // subtotal 440, tax 44, categoryTax 0, fee 6 → total 490.
+      expect(data.total).toBeCloseTo(490, 2);
+      expect(res).toMatchObject({ shippingFee: 6, total: 490 });
     });
   });
 
@@ -1348,6 +1409,80 @@ describe("InvoicesService", () => {
         ConflictException,
       );
       expect(prisma.invoice.create).not.toHaveBeenCalled(); // blocked before any invoice row
+    });
+
+    // ─── Shipping fee seeding (WP2) ───────────────────────────────────────────
+
+    it("seeds Invoice.shippingFee from the order for a single (non-split) invoice", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-fee1",
+        customerId: "cust-1",
+        orderNumber: "ORD-FEE1",
+        subtotal: 20,
+        tax: 2,
+        shippingFee: 6,
+        lineItems: [line("std", null, "Widget")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-fee1")) as any[];
+      expect(result).toHaveLength(1);
+      expect(Number(result[0].shippingFee)).toBe(6);
+      // subtotal 20 + tax 2 + fee 6 = 28.
+      expect(Number(result[0].total)).toBe(28);
+    });
+
+    it("split — the WHOLE fee lands on exactly the largest-subtotal sibling, never prorated", async () => {
+      setupSplitSpies();
+      prisma.trackedCategory.findMany.mockResolvedValue([
+        {
+          id: "cat-tob",
+          name: "Tobacco",
+          invoiceTreatment: "SEPARATE_INVOICE",
+          taxType: "NONE",
+          rate: 0,
+        },
+      ]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-fee2",
+        customerId: "cust-1",
+        orderNumber: "ORD-FEE2",
+        subtotal: 30,
+        tax: 3,
+        shippingFee: 6,
+        lineItems: [line("std", null, "Widget"), line("tob", "cat-tob", "Cigarillos")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-fee2")) as any[];
+      const [primary, sibling] = result;
+      // std group $20 > tobacco group $10 → the whole $6 fee lands on the primary.
+      expect(Number(primary.subtotal)).toBe(20);
+      expect(Number(sibling.subtotal)).toBe(10);
+      expect(Number(primary.shippingFee)).toBe(6);
+      expect(Number(sibling.shippingFee)).toBe(0);
+      // INVARIANT: Σ sibling totals == order total (30 + 3 tax + 6 fee = 39).
+      expect(Number(primary.total) + Number(sibling.total)).toBe(39);
+    });
+
+    it("tax-exempt customer: the fee is STILL charged even though tax is zeroed", async () => {
+      setupSplitSpies();
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: true });
+      prisma.trackedCategory.findMany.mockResolvedValue([]);
+      prisma.order.findUnique.mockResolvedValue({
+        id: "ord-fee3",
+        customerId: "cust-1",
+        orderNumber: "ORD-FEE3",
+        subtotal: 20,
+        tax: 2,
+        shippingFee: 4,
+        lineItems: [line("std", null, "Widget")],
+      });
+
+      const result = (await service.createInvoiceFromOrder("ord-fee3")) as any[];
+      expect(Number(result[0].taxAmount)).toBe(0); // tax-exempt
+      expect(Number(result[0].shippingFee)).toBe(4); // fee still applies
+      expect(Number(result[0].total)).toBe(24); // 20 + 0 + 4
     });
   });
 
@@ -2355,6 +2490,46 @@ describe("InvoicesService", () => {
       expect(updOf("d-r1").data.subtotal).toBe(20); // 4/10 of 50
       expect(oiUpdOf("oi-reg").data.invoicedQty).toBe(4);
     });
+
+    // ─── Sibling shipping-fee placement (WP2, rebuildSiblingDrafts) ────────────
+
+    it("stability: sibling fees already sum to the order fee → placement KEPT (no ping-pong)", async () => {
+      // d-base already carries the whole $6 fee (e.g. from a prior invoice-side
+      // edit that back-synced the order); d-r1 carries 0. Sums agree with the
+      // order's fee (6), so the existing placement is preserved verbatim.
+      prisma.invoice.findMany.mockResolvedValue([
+        draft({ id: "d-base", items: [{ orderItemId: "oi-std" }], shippingFee: 6 }),
+        draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }], shippingFee: 0 }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), regLine()], { shippingFee: 6 }) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      expect(updOf("d-base").data.shippingFee).toBe(6);
+      expect(updOf("d-r1").data.shippingFee).toBe(0);
+    });
+
+    it("re-seed: order fee changed → the WHOLE new fee lands on the largest-subtotal sibling", async () => {
+      // Siblings currently show a stale placement {6,0}, but the order's fee
+      // changed to 9 — sums no longer agree (6 ≠ 9) → re-seed the whole new fee
+      // onto whichever sibling has the larger DELIVERED subtotal this time.
+      prisma.invoice.findMany.mockResolvedValue([
+        draft({ id: "d-base", items: [{ orderItemId: "oi-std" }], shippingFee: 6 }),
+        draft({ id: "d-r1", items: [{ orderItemId: "oi-reg" }], shippingFee: 0 }),
+      ] as any);
+      prisma.order.findUnique.mockResolvedValue(
+        mockOrder([line(), regLine({ deliveredQty: 5 })], { shippingFee: 9 }) as any,
+      );
+
+      await service.reconcileOrderDeliveredInvoices("ord-1", prisma);
+
+      // std billed $50 (full) > reg billed $25 (half-delivered) → the whole $9
+      // fee re-seeds onto d-base; d-r1 is zeroed.
+      expect(updOf("d-base").data.shippingFee).toBe(9);
+      expect(updOf("d-r1").data.shippingFee).toBe(0);
+    });
   });
 
   // R1 — a POST-DELIVERY edit re-syncs the order's FINALIZED / PAID / delivery-batch
@@ -2768,6 +2943,67 @@ describe("InvoicesService", () => {
       // …and the NAME flows straight through onto the returned payload.
       expect((res.items as any[])[0].trackedCategory.name).toBe("Tobacco");
       expect((res.items as any[])[0].trackedSubcategory.name).toBe("Cigarettes");
+    });
+  });
+
+  // ─── createPartialFromOrder — remaining-fee seeding (WP2) ──────────────────
+  describe("createPartialFromOrder — shipping fee seeding", () => {
+    const baseOrder = (over: any = {}) => ({
+      id: "ord-p1",
+      customerId: "cust-1",
+      orderNumber: "ORD-P1",
+      subtotal: 50,
+      tax: 5,
+      shippingFee: 7,
+      lineItems: [
+        {
+          id: "oi-1",
+          productId: "p-1",
+          qty: 10,
+          invoicedQty: 0,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          unitPrice: 5,
+          subtotal: 50,
+          product: { name: "Widget", unitsPerBox: null },
+        },
+      ],
+      ...over,
+    });
+
+    beforeEach(() => {
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false } as any);
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+      prisma.orderItem.update.mockResolvedValue({} as any);
+    });
+
+    it("first partial carries the WHOLE remaining order fee", async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder());
+      // No prior non-void invoice for this order carries any fee yet.
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+
+      const invoice = (await service.createPartialFromOrder("ord-p1", {
+        items: [{ orderItemId: "oi-1", qty: 10 }],
+      } as any)) as any;
+
+      expect(Number(invoice.shippingFee)).toBe(7);
+      // subtotal 50 + regular tax (5 × 50/50 = 5) + fee 7 = 62.
+      expect(Number(invoice.total)).toBe(62);
+    });
+
+    it("a second partial (a prior invoice already carries the fee) gets 0", async () => {
+      prisma.order.findUnique.mockResolvedValue(baseOrder());
+      // A prior partial already billed the entire $7 fee.
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 7 } });
+
+      const invoice = (await service.createPartialFromOrder("ord-p1", {
+        items: [{ orderItemId: "oi-1", qty: 5 }],
+      } as any)) as any;
+
+      expect(Number(invoice.shippingFee)).toBe(0);
     });
   });
 });

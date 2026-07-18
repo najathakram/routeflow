@@ -412,6 +412,7 @@ function ProductPickView({
   const [orderUrgent, setOrderUrgent] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
   const [discountRaw, setDiscountRaw] = useState("");
+  const [shippingFeeRaw, setShippingFeeRaw] = useState("");
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
   const scrollRef = useRef<ScrollView>(null);
@@ -831,6 +832,7 @@ function ProductPickView({
     const itemPayload = [...catalogPayload, ...unlistedPayload];
 
     const discountAmount = Math.max(0, parseFloat(discountRaw) || 0);
+    const shippingFee = Math.max(0, parseFloat(shippingFeeRaw) || 0);
     const deliveryTrim = deliveryDate.trim();
     createOrder.mutate(
       {
@@ -843,6 +845,7 @@ function ProductPickView({
         ...(orderUrgent ? { urgent: true } : {}),
         ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
         ...(discountAmount > 0 ? { discountAmount } : {}),
+        ...(shippingFee > 0 ? { shippingFee } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
       },
       {
@@ -959,12 +962,16 @@ function ProductPickView({
           <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
             <Ionicons name="options-outline" size={16} color={ios.brand} />
             <Text style={styles.optionsTitle}>Order options</Text>
-            {!optionsOpen && (orderUrgent || deliveryDate || discountRaw || orderNotes) ? (
+            {!optionsOpen &&
+            (orderUrgent || deliveryDate || discountRaw || shippingFeeRaw || orderNotes) ? (
               <Text style={styles.optionsSummary} numberOfLines={1}>
                 {[
                   orderUrgent ? "Urgent" : null,
                   deliveryDate ? `Deliver ${deliveryDate}` : null,
                   parseFloat(discountRaw) > 0 ? `-$${parseFloat(discountRaw).toFixed(2)}` : null,
+                  parseFloat(shippingFeeRaw) > 0
+                    ? `+$${parseFloat(shippingFeeRaw).toFixed(2)} shipping`
+                    : null,
                   orderNotes.trim() ? "Notes" : null,
                 ]
                   .filter(Boolean)
@@ -1007,6 +1014,17 @@ function ProductPickView({
                   value={discountRaw}
                   onChangeText={setDiscountRaw}
                   placeholder="0.00"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="decimal-pad"
+                  style={styles.optionInput}
+                />
+              </View>
+              <View style={styles.optionField}>
+                <Text style={styles.optionLabel}>Shipping fee ($)</Text>
+                <TextInput
+                  value={shippingFeeRaw}
+                  onChangeText={setShippingFeeRaw}
+                  placeholder="0.00 (optional)"
                   placeholderTextColor={ios.label3}
                   keyboardType="decimal-pad"
                   style={styles.optionInput}

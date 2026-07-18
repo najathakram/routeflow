@@ -111,6 +111,7 @@ export interface AdminOrder {
   subtotal: number;
   tax: number;
   total: number;
+  shippingFee?: number | string;
   notes?: string;
   requestedDeliveryDate?: string;
   deliveredAt?: string;
@@ -277,6 +278,7 @@ export interface AdminInvoice {
   subtotal: number;
   taxAmount?: number;
   discount?: number;
+  shippingFee?: number;
   dueDate?: string;
   issueDate?: string;
   balanceDue?: number;

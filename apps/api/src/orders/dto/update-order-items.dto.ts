@@ -110,4 +110,11 @@ export class UpdateOrderItemsDto {
   @StripHtml()
   @IsString()
   orderNotes?: string;
+
+  /** Optional flat shipping fee added to the order total (never taxed). Staff-only. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1_000_000)
+  shippingFee?: number;
 }

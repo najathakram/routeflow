@@ -56,6 +56,8 @@ export interface Invoice {
   subtotal: number;
   taxAmount: number;
   discount: number;
+  /** Optional flat shipping fee added after tax (never taxed). */
+  shippingFee?: number | string;
   total: number;
   dueDate?: string;
   notes?: string;

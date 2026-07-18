@@ -40,6 +40,7 @@ export interface OrderDraftPayload {
   customer: DraftCustomer | null;
   lineItems: DraftLineItem[];
   orderDiscount: string;
+  shippingFee: string;
   requestedDeliveryDate: string;
   notes: string;
   urgent: boolean;

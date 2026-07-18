@@ -312,6 +312,7 @@ export function CreateOrderModal({
     setCustomError("");
     setRequestedDeliveryDate("");
     setOrderDiscount("");
+    setShippingFeeInput("");
     setFloorAcked(new Set());
     setCreateProductOpen(false);
     setCreateProductInitialName("");
@@ -326,6 +327,7 @@ export function CreateOrderModal({
   }, [isOpen, resumeDraftId]);
 
   const [orderDiscount, setOrderDiscount] = React.useState("");
+  const [shippingFeeInput, setShippingFeeInput] = React.useState("");
 
   // ── Derived totals ────────────────────────────────────────────────────────
 
@@ -346,7 +348,8 @@ export function CreateOrderModal({
   );
   const tax = subtotal * taxRate;
   const discountAmt = parseFloat(orderDiscount) || 0;
-  const total = subtotal + tax - discountAmt;
+  const shippingAmt = Math.max(0, parseFloat(shippingFeeInput) || 0);
+  const total = subtotal + tax - discountAmt + shippingAmt;
 
   // Live preview of the eventual invoice split (mirrors the API's
   // groupOrderLinesForInvoicing): each SEPARATE_INVOICE regulated category becomes
@@ -615,6 +618,7 @@ export function CreateOrderModal({
       customer: selectedCustomer,
       lineItems,
       orderDiscount,
+      shippingFee: shippingFeeInput,
       requestedDeliveryDate,
       notes: notesValue ?? "",
       urgent: !!isUrgent,
@@ -624,6 +628,7 @@ export function CreateOrderModal({
       selectedCustomer,
       lineItems,
       orderDiscount,
+      shippingFeeInput,
       requestedDeliveryDate,
       notesValue,
       isUrgent,
@@ -729,6 +734,7 @@ export function CreateOrderModal({
     setSelectedCustomer(p.customer ?? null);
     setLineItems(Array.isArray(p.lineItems) ? p.lineItems : []);
     setOrderDiscount(p.orderDiscount ?? "");
+    setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
     setFloorAcked(new Set(p.floorAcked ?? []));
     reset({ notes: p.notes ?? "", urgent: !!p.urgent });
@@ -738,6 +744,7 @@ export function CreateOrderModal({
       customer: p.customer ?? null,
       lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
       orderDiscount: p.orderDiscount ?? "",
+      shippingFee: p.shippingFee ?? "",
       requestedDeliveryDate: p.requestedDeliveryDate ?? "",
       notes: p.notes ?? "",
       urgent: !!p.urgent,
@@ -831,6 +838,7 @@ export function CreateOrderModal({
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
+        ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
         ...(asDraft ? { status: "DRAFT" as const } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
       } as any,
@@ -1627,6 +1635,20 @@ export function CreateOrderModal({
                 {discountAmt > 0 && (
                   <span className="text-amber-600">−${discountAmt.toFixed(2)}</span>
                 )}
+              </div>
+              {/* Shipping fee (optional, never taxed) */}
+              <div className="flex items-center justify-between text-navy/70">
+                <label className="flex items-center gap-2 text-sm">
+                  Shipping fee
+                  <MoneyInput
+                    min={0}
+                    placeholder="0.00 (optional)"
+                    value={shippingFeeInput === "" ? null : parseFloat(shippingFeeInput)}
+                    onChange={(v) => setShippingFeeInput(v == null ? "" : String(v))}
+                    className="w-20 rounded border border-surface-border bg-white px-2 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  />
+                </label>
+                {shippingAmt > 0 && <span className="text-navy">+${shippingAmt.toFixed(2)}</span>}
               </div>
               <div className="flex justify-between border-t border-surface-border pt-1.5 font-semibold text-navy">
                 <span>Total</span>

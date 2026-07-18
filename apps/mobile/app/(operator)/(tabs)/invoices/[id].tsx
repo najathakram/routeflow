@@ -434,6 +434,12 @@ export default function InvoiceDetailScreen() {
                   <Text style={styles.totalValue}>{fmtCurrency(invoice.discount)}</Text>
                 </View>
               ) : null}
+              {Number(invoice.shippingFee ?? 0) > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Shipping</Text>
+                  <Text style={styles.totalValue}>{fmtCurrency(invoice.shippingFee)}</Text>
+                </View>
+              ) : null}
               <View style={[styles.totalRow, { borderTopWidth: 0 }]}>
                 <Text style={styles.totalLabelMain}>Total</Text>
                 <Text style={styles.totalValueMain}>{fmtCurrency(invoice.total)}</Text>
