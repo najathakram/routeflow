@@ -27,12 +27,15 @@ export interface ImportBatch {
 /** One line item as extracted by the AI scan, echoed back inside extractedPayload. */
 export interface ImportScanLine {
   extractedName?: string;
+  sku?: string | null;
   qty?: number;
   unitCost?: number;
   lineTotal?: number | null;
   matchedProductId?: string | null;
   matchedProductName?: string | null;
   confidence?: "high" | "medium" | "low" | "none";
+  /** Up to 5 "did you mean" suggestions when the line has no confident match. */
+  candidates?: { productId: string; name: string; sku: string | null; score: number }[];
   /** True once the operator has explicitly mapped or dismissed this line. */
   reviewed?: boolean;
 }

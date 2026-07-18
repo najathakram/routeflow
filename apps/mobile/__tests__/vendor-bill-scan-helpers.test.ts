@@ -156,6 +156,30 @@ describe("unmatchedCount", () => {
     result.items[1] = { extractedName: "junk", qty: 0, unitCost: 0, confidence: "none" };
     expect(unmatchedCount(result)).toBe(0);
   });
+
+  it("counts a candidates-bearing unmatched line and keeps it out of the bill DTO's productId", () => {
+    const result = scanResult();
+    result.items[1] = {
+      extractedName: "Big Red Cinnamon Gum",
+      qty: 3,
+      unitCost: 5,
+      lineTotal: 15,
+      matchedProductId: null,
+      matchedProductName: null,
+      confidence: "low",
+      candidates: [
+        {
+          productId: "prod-variant",
+          name: "Big Red Chewing Gum - Cinnamon",
+          sku: null,
+          score: 0.55,
+        },
+        { productId: "prod-standalone", name: "Big Red Chewing Gum", sku: null, score: 0.48 },
+      ],
+    };
+    expect(unmatchedCount(result)).toBe(1);
+    expect(buildBillDtoFromScan(result, suppliers).items[1].productId).toBeUndefined();
+  });
 });
 
 describe("linkScanItem", () => {

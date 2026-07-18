@@ -1,5 +1,15 @@
 import { apiClient } from "../api-client";
 
+/** A ranked "Did you mean…" suggestion for a line that didn't confidently match. */
+export interface ScanCandidate {
+  productId: string;
+  /** Composed display name (e.g. "Big Red Chewing Gum - Cinnamon"). */
+  name: string;
+  sku: string | null;
+  /** Weighted-overlap score, 0..1. */
+  score: number;
+}
+
 export interface ScannedItem {
   extractedName: string;
   qty: number;
@@ -8,6 +18,10 @@ export interface ScannedItem {
   matchedProductId: string | null;
   matchedProductName: string | null;
   confidence: "high" | "medium" | "low" | "none";
+  /** Item code / SKU printed on the line, as read by the OCR (if any). */
+  sku?: string | null;
+  /** Ranked alternates when the match was too weak to auto-assign. */
+  candidates?: ScanCandidate[];
 }
 
 export interface ScanResult {

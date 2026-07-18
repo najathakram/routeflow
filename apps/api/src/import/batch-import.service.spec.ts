@@ -8,7 +8,12 @@ import { BatchImportService } from "./batch-import.service";
 describe("BatchImportService", () => {
   let service: BatchImportService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let vendorBills: { scanInvoice: jest.Mock; create: jest.Mock; receive: jest.Mock };
+  let vendorBills: {
+    scanInvoice: jest.Mock;
+    create: jest.Mock;
+    receive: jest.Mock;
+    saveProductMapping: jest.Mock;
+  };
   let dupMatch: { findInvoiceDuplicate: jest.Mock; findVendorBillDuplicate: jest.Mock };
 
   beforeEach(async () => {
@@ -17,6 +22,7 @@ describe("BatchImportService", () => {
       scanInvoice: jest.fn(),
       create: jest.fn().mockResolvedValue({ id: "bill1" }),
       receive: jest.fn().mockResolvedValue({}),
+      saveProductMapping: jest.fn().mockResolvedValue({}),
     };
     dupMatch = {
       findInvoiceDuplicate: jest.fn().mockResolvedValue(null),
@@ -163,6 +169,30 @@ describe("BatchImportService", () => {
       );
     });
 
+    it("marks NEEDS_REVIEW and counts a null-matched line that only carries candidate suggestions", async () => {
+      vendorBills.scanInvoice.mockResolvedValue({
+        invoiceNumber: "VB-7",
+        invoiceDate: "2026-07-01",
+        total: 15,
+        items: [
+          {
+            extractedName: "Big Red Cinnamon Gum",
+            matchedProductId: null,
+            confidence: "low",
+            candidates: [
+              { productId: "p1", name: "Big Red Chewing Gum - Cinnamon", sku: null, score: 0.5 },
+            ],
+          },
+        ],
+      });
+      await scan();
+      expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "NEEDS_REVIEW", unmatchedLines: 1 }),
+        }),
+      );
+    });
+
     it("does not require a supplier when the scan detected none (unnamed/blank supplier)", async () => {
       vendorBills.scanInvoice.mockResolvedValue({
         supplier: null,
@@ -262,6 +292,44 @@ describe("BatchImportService", () => {
         reviewed: true,
       });
       expect(result.unreviewedLines).toBe(0);
+      expect(vendorBills.saveProductMapping).toHaveBeenCalledWith("Acme", "Mystery Item", "p9");
+    });
+
+    it("does not write a product mapping when the supplier name is missing", async () => {
+      prisma.importQueueItem.findUnique.mockResolvedValue({
+        id: "i1",
+        batchId: "b1",
+        status: "NEEDS_REVIEW",
+        supplierMatchId: null,
+        duplicateOfInvoiceId: null,
+        extractedPayload: {
+          items: [{ extractedName: "Mystery Item", qty: 1, unitCost: 5, matchedProductId: null }],
+        },
+      });
+      prisma.product.findMany.mockResolvedValue([{ id: "p9", name: "Widget 9" }]);
+
+      await service.updateItemLines("i1", { lines: [{ index: 0, productId: "p9" }] });
+
+      expect(vendorBills.saveProductMapping).not.toHaveBeenCalled();
+    });
+
+    it("does not write a product mapping when the line has no extractedName", async () => {
+      prisma.importQueueItem.findUnique.mockResolvedValue({
+        id: "i1",
+        batchId: "b1",
+        status: "NEEDS_REVIEW",
+        supplierMatchId: "s1",
+        duplicateOfInvoiceId: null,
+        extractedPayload: {
+          supplier: "Acme",
+          items: [{ qty: 1, unitCost: 5, matchedProductId: null }],
+        },
+      });
+      prisma.product.findMany.mockResolvedValue([{ id: "p9", name: "Widget 9" }]);
+
+      await service.updateItemLines("i1", { lines: [{ index: 0, productId: "p9" }] });
+
+      expect(vendorBills.saveProductMapping).not.toHaveBeenCalled();
     });
 
     it("keeps a line custom (unmatched but reviewed) without blocking on that line again", async () => {

@@ -15,6 +15,7 @@ import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/c
 import { roundMoney } from "../common/pricing";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
+import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
 
 @Injectable()
 export class VendorBillsService {
@@ -605,6 +606,7 @@ Return exactly this structure:
   "items": [
     {
       "extractedName": "exact product name as written on invoice",
+      "sku": "item code / SKU / product number printed on the line, exactly as written, or null if none",
       "qty": quantity as a number (REQUIRED — read directly from invoice; default 1 only if completely absent),
       "unitCost": unit price as a number (if not shown, calculate lineTotal / qty),
       "lineTotal": line total as a number or null
@@ -701,10 +703,28 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
     const [products, allMappings] = await Promise.all([
       this.prisma.forTenant().product.findMany({
-        select: { id: true, name: true, sku: true, barcode: true },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          barcode: true,
+          parentProductId: true,
+          parent: { select: { name: true } },
+        },
       }),
       this.prisma.forTenant().productMapping.findMany({
-        include: { product: { select: { id: true, name: true } } },
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              barcode: true,
+              parentProductId: true,
+              parent: { select: { name: true } },
+            },
+          },
+        },
       }),
     ]);
 
@@ -717,44 +737,23 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
       mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
         productId: m.productId,
-        productName: m.product?.name ?? null,
+        productName: m.product ? composedProductName(m.product) : null,
       };
     }
 
-    // Normalise a string for fuzzy comparison
-    const norm = (s: string) =>
-      s
-        .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-    // Word-overlap score (ignores words ≤ 2 chars)
-    const overlap = (a: string, b: string): number => {
-      const wa = new Set(
-        norm(a)
-          .split(" ")
-          .filter((w) => w.length > 2),
-      );
-      const wb = new Set(
-        norm(b)
-          .split(" ")
-          .filter((w) => w.length > 2),
-      );
-      if (wa.size === 0 || wb.size === 0) return 0;
-      let hits = 0;
-      for (const w of wa) if (wb.has(w)) hits++;
-      return hits / Math.max(wa.size, wb.size);
-    };
-
     const supplierName = (parsed.supplier as string) ?? "";
     const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
+
+    // Rarity-weighted token weights over the composed catalog names — computed
+    // once for the whole scan, reused per line.
+    const weights = buildTokenWeights(products);
 
     const items = ((parsed.items as any[]) ?? []).map((item: any) => {
       const raw: string = item.extractedName ?? "";
       const rawLower = raw.toLowerCase();
 
-      // 1. Exact mapping hit (learned from previous corrections)
+      // 1. Exact mapping hit (learned from previous corrections) — learned
+      //    mappings stay first and authoritative, no candidates.
       if (supplierMappings[rawLower]?.productId) {
         const m = supplierMappings[rawLower];
         return {
@@ -765,60 +764,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         };
       }
 
-      // 2. Exact name match (case-insensitive)
-      const exactName = products.find((p) => p.name.toLowerCase() === rawLower);
-      if (exactName) {
-        return {
-          ...item,
-          matchedProductId: exactName.id,
-          matchedProductName: exactName.name,
-          confidence: "high",
-        };
-      }
-
-      // 3. Exact SKU / barcode match
-      const exactCode = products.find(
-        (p) => (p.sku && p.sku.toLowerCase() === rawLower) || (p.barcode && p.barcode === raw),
-      );
-      if (exactCode) {
-        return {
-          ...item,
-          matchedProductId: exactCode.id,
-          matchedProductName: exactCode.name,
-          confidence: "high",
-        };
-      }
-
-      // 4. Fuzzy word-overlap match
-      let bestId: string | null = null;
-      let bestName: string | null = null;
-      let bestScore = 0;
-      for (const p of products) {
-        const score = overlap(raw, p.name);
-        if (score > bestScore) {
-          bestScore = score;
-          bestId = p.id;
-          bestName = p.name;
-        }
-      }
-      if (bestScore >= 0.6) {
-        return {
-          ...item,
-          matchedProductId: bestId,
-          matchedProductName: bestName,
-          confidence: bestScore >= 0.8 ? "high" : "medium",
-        };
-      }
-      if (bestScore >= 0.35) {
-        return {
-          ...item,
-          matchedProductId: bestId,
-          matchedProductName: bestName,
-          confidence: "low",
-        };
-      }
-
-      return { ...item, matchedProductId: null, matchedProductName: null, confidence: "none" };
+      // 2-3. Composed-name / rarity-weighted fuzzy matching against the catalog.
+      const match = matchLine(raw, item.sku ?? null, products, weights);
+      return { ...item, ...match };
     });
 
     return { ...parsed, items };

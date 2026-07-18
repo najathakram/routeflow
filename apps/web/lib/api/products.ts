@@ -11,12 +11,13 @@ export function useProducts(
     limit?: number;
     includeVariants?: boolean;
   },
-  options?: { refetchInterval?: number },
+  options?: { refetchInterval?: number; enabled?: boolean },
 ) {
   return useQuery({
     queryKey: ["products", params],
     queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
     ...options,
+    enabled: options?.enabled ?? true,
   });
 }
 

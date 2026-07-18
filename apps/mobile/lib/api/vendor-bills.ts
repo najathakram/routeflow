@@ -30,6 +30,14 @@ export interface VendorBill {
   createdAt: string;
 }
 
+/** Ranked suggestion for an unmatched scan line (mirrors web lib/api/invoice-scan.ts). */
+export interface ScanCandidate {
+  productId: string;
+  name: string;
+  sku: string | null;
+  score: number;
+}
+
 /** One extracted line as the API actually returns it (mirrors web lib/api/invoice-scan.ts). */
 export interface ScannedItem {
   extractedName: string;
@@ -39,6 +47,10 @@ export interface ScannedItem {
   matchedProductId?: string | null;
   matchedProductName?: string | null;
   confidence: "high" | "medium" | "low" | "none";
+  /** Item code / SKU printed on the scanned line, if any (additive). */
+  sku?: string | null;
+  /** Ranked suggestions when the line is unmatched (additive; mobile chip UI is deferred). */
+  candidates?: ScanCandidate[];
 }
 
 /** Header fields as the API actually returns them (`supplier`, `invoiceDate` — not

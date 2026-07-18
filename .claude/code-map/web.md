@@ -92,6 +92,21 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   — persistent dock at the bottom-left of the content column (mounted in `(dashboard)/layout.tsx`
   right-column, non-CUSTOMER roles), lists parked drafts + Resume/Discard + a global scan-to-draft
   wedge-listener (active only while a draft is parked; bails inside any open `[role=dialog]`).
+  **Scanner picker overhaul + create-from-line (2026-07-18):** `SearchableProductPicker` gained an
+  **async mode** (`async` prop → 300ms-debounced server-side `useProducts({search, isActive, includeVariants, limit:50}, {enabled: open})`
+  — fetches ONLY while open; kills the 1000-product static ceiling), `selectedLabel` (closed-state
+  display when the selection isn't in the fetched page), `onChange(id, product?)` second arg,
+  `displayProductName` composed labels, `line-clamp-2` (no more truncation), and a **fixed-position
+  floating preview panel** (`ProductPreviewPanel`, private) following the highlighted option —
+  name/SKU/barcode/price/thumbnail, flips at the viewport edge, `z-[300]`, default on (`preview` prop).
+  `useProducts` gained `opts.enabled`. Both scan surfaces (`ScanInvoiceModal` — native select replaced;
+  `BatchItemReviewModal` — 1000-fetch dropped) use the async picker + "Did you mean…" candidate chips
+  (from the scan response's new `candidates[]`; picking feeds the mapping learning loop) + a **"+ Add
+  product" icon button** beside the picker on unlinked lines opening the NEW shared
+  `components/ProductCreateModal.tsx` — the products page's FULL AddProductModal extracted
+  (variants/regulated/costing/description/images, prop-for-prop identical there) with
+  `initialName/initialSku/initialPrice/initialCost` prefills from the scanned line (OCR now extracts
+  per-line `sku`). `InlineCreateProductModal` untouched at its other quick-entry call sites.
   **Credit notes on orders (2026-07-18):** new `orders/_components/CreditNotePicker.tsx`
   (customer-scoped open-credit checkboxes + optional per-credit amount input, "Credits to apply at
   invoicing −$X" + "Estimated balance due" display-only — NOT a discount, totals unchanged) used by
