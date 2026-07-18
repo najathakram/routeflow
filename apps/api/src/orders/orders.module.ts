@@ -12,6 +12,7 @@ import { InventoryModule } from "../inventory/inventory.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { PromotionsModule } from "../promotions/promotions.module";
 import { MessagingModule } from "../messaging/messaging.module";
+import { CreditNotesModule } from "../credit-notes/credit-notes.module";
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { MessagingModule } from "../messaging/messaging.module";
     AuthorizationsModule,
     PromotionsModule,
     MessagingModule,
+    CreditNotesModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

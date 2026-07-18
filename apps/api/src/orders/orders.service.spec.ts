@@ -40,6 +40,7 @@ import { InventoryService } from "../inventory/inventory.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { OrderStatus, UserRole, Prisma } from "@prisma/client";
 
 const MOCK_PRODUCT = {
@@ -99,6 +100,13 @@ describe("OrdersService", () => {
   };
   // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
   let messagingService: { notify: jest.Mock; notifyEvent: jest.Mock };
+  // WP3: captured so the order-scoped credit-note tests can assert
+  // sync/settle are called with the right (order id, customer id, selections).
+  let creditNotesService: {
+    validateSelectionsForCustomer: jest.Mock;
+    syncOrderCreditSelections: jest.Mock;
+    settleOrderCreditsInTx: jest.Mock;
+  };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
     emitStopCompleted: jest.Mock;
@@ -188,6 +196,14 @@ describe("OrdersService", () => {
             notifyEvent: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: CreditNotesService,
+          useValue: {
+            validateSelectionsForCustomer: jest.fn().mockResolvedValue(undefined),
+            syncOrderCreditSelections: jest.fn().mockResolvedValue(undefined),
+            settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+          },
+        },
       ],
     }).compile();
 
@@ -195,6 +211,7 @@ describe("OrdersService", () => {
     inventoryService = module.get(InventoryService);
     invoicesService = module.get(InvoicesService);
     messagingService = module.get(MessagingService);
+    creditNotesService = module.get(CreditNotesService);
   });
 
   // ─── findAll ──────────────────────────────────────────────────────────────
@@ -1020,6 +1037,77 @@ describe("OrdersService", () => {
         );
       });
     });
+
+    // ─── WP3: order-scoped credit-note application ──────────────────────────
+
+    describe("appliedCreditNotes (WP3 — order-scoped credit-note application)", () => {
+      it("validates selections up-front — a rejected selection throws before the order is created", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        (service as any).systemConfig.get.mockResolvedValue("0");
+        creditNotesService.validateSelectionsForCustomer.mockRejectedValueOnce(
+          new BadRequestException("Credit note belongs to a different customer"),
+        );
+
+        await expect(
+          service.create(
+            {
+              items: [{ productId: "prod-1", qty: 1 }],
+              appliedCreditNotes: [{ creditNoteId: "cn-1" }],
+            } as any,
+            customerPayload,
+          ),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(creditNotesService.validateSelectionsForCustomer).toHaveBeenCalledWith(
+          expect.anything(),
+          "cust-1",
+          [{ creditNoteId: "cn-1" }],
+        );
+        // Rejected up-front, before any stock mutation / order write.
+        expect(prisma.order.create).not.toHaveBeenCalled();
+        expect(creditNotesService.syncOrderCreditSelections).not.toHaveBeenCalled();
+      });
+
+      it("stores + settles the caller's credit-note selection against the created order id", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER); // id: "ord-1", customerId: "cust-1"
+        (service as any).systemConfig.get.mockResolvedValue("0");
+
+        const selections = [{ creditNoteId: "cn-1", amount: 20 }];
+        await service.create(
+          {
+            items: [{ productId: "prod-1", qty: 1 }],
+            appliedCreditNotes: selections,
+          } as any,
+          customerPayload,
+        );
+
+        expect(creditNotesService.syncOrderCreditSelections).toHaveBeenCalledWith(
+          expect.anything(),
+          MOCK_ORDER.id,
+          "cust-1",
+          selections,
+        );
+        expect(creditNotesService.settleOrderCreditsInTx).toHaveBeenCalledWith(
+          expect.anything(),
+          MOCK_ORDER.id,
+        );
+      });
+
+      it("omitting appliedCreditNotes leaves credit selections untouched (no sync/settle call)", async () => {
+        prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+        prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+        prisma.order.create.mockResolvedValue(MOCK_ORDER);
+        (service as any).systemConfig.get.mockResolvedValue("0");
+
+        await service.create({ items: [{ productId: "prod-1", qty: 1 }] } as any, customerPayload);
+
+        expect(creditNotesService.syncOrderCreditSelections).not.toHaveBeenCalled();
+        expect(creditNotesService.settleOrderCreditsInTx).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // ─── createSale (order + invoice in one step) ─────────────────────────────
@@ -1175,6 +1263,43 @@ describe("OrdersService", () => {
 
       expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
       expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+    });
+
+    // ─── WP3: best-effort credit-note settle on DELIVERED ──────────────────
+
+    it("marking DELIVERED best-effort settles credit notes against the order", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      expect(creditNotesService.settleOrderCreditsInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+      );
+    });
+
+    it("a credit-settle failure after DELIVERED is swallowed (warn), never thrown — send()'s auto-apply catches up", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...MOCK_ORDER, status: "CONFIRMED" });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+      creditNotesService.settleOrderCreditsInTx.mockRejectedValueOnce(
+        new Error("serialization failure"),
+      );
+      const warnSpy = jest
+        .spyOn((service as any).logger, "warn")
+        .mockImplementation(() => undefined);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload),
+      ).resolves.toMatchObject({ status: "DELIVERED" });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Credit settle after delivery failed"),
+      );
     });
 
     // ─── P6-5: transactional notification triggers ────────────────────────
@@ -1533,6 +1658,85 @@ describe("OrdersService", () => {
       );
       const updateArg = prisma.order.update.mock.calls[0][0] as any;
       expect(updateArg.data).not.toHaveProperty("shippingFee");
+    });
+  });
+
+  // ─── updateOrderItems — appliedCreditNotes (WP3) ─────────────────────────
+
+  describe("updateOrderItems — appliedCreditNotes (WP3 — order-scoped credit-note application)", () => {
+    it("OPERATOR (staff) selection syncs + settles against the order", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "DRAFT" as const,
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 3,
+            unitPrice: 4.99,
+            subtotal: 14.97,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 14.97, status: "PENDING" }]);
+
+      const selections = [{ creditNoteId: "cn-1", amount: 10 }];
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 3 }],
+          appliedCreditNotes: selections,
+        } as any,
+        operatorPayload,
+      );
+
+      expect(creditNotesService.syncOrderCreditSelections).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+        "cust-1",
+        selections,
+      );
+      expect(creditNotesService.settleOrderCreditsInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+      );
+    });
+
+    it("non-staff (CUSTOMER) selection is ignored — sync is skipped, settle still runs", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "PENDING",
+        lineItems: [],
+      });
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-plain", pricePerUnit: 3.5, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 17.5, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ productId: "prod-plain", qty: 5 }],
+          appliedCreditNotes: [{ creditNoteId: "cn-1" }],
+        } as any,
+        customerPayload,
+      );
+
+      // Drivers/customers can't manage credits — their selection is treated as
+      // untouched (undefined), same gate as the shipping fee above.
+      expect(creditNotesService.syncOrderCreditSelections).not.toHaveBeenCalled();
+      // Settle still runs — a harmless idempotent re-settle even for a non-staff edit.
+      expect(creditNotesService.settleOrderCreditsInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+      );
     });
   });
 
@@ -2557,6 +2761,56 @@ describe("OrdersService", () => {
       expect(invoicesService.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
       expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
       expect(prisma.orderRevision.create).toHaveBeenCalled();
+    });
+
+    it("WP3: the partial-billing skip still settles credit notes — they're payment-level, not line-level", async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...confirmedOrder({ status: "COMPLETED", startedAt: new Date() }),
+        status: "DELIVERED",
+        lineItems: [
+          {
+            id: "li-1",
+            orderId: "ord-1",
+            productId: "prod-1",
+            qty: 10,
+            invoicedQty: 6, // a partial invoice billed 6 of 10 — remainder un-invoiced
+            unitPrice: 5,
+            subtotal: 50,
+            status: "PENDING",
+            boxes: null,
+            pieces: null,
+            priceType: "STANDARD",
+            originalPrice: null,
+          },
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { id: "li-1", productId: "prod-1", qty: 10, unitPrice: 5, subtotal: 50, status: "PENDING" },
+      ]);
+      prisma.orderRevision.aggregate.mockResolvedValue({ _max: { revisionNumber: null } });
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-1", action: "UPDATE", qty: 10, unitPrice: 6 }],
+          appliedCreditNotes: [{ creditNoteId: "cn-1" }],
+        } as any,
+        operatorPayload,
+      );
+
+      // The line-resync is skipped (partial billing), but the credit sync + settle
+      // still runs — credits apply to invoice payments, not order lines.
+      expect(invoicesService.resyncOrderInvoicesForEdit).not.toHaveBeenCalled();
+      expect(creditNotesService.syncOrderCreditSelections).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+        "cust-1",
+        [{ creditNoteId: "cn-1" }],
+      );
+      expect(creditNotesService.settleOrderCreditsInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+      );
     });
 
     it("SKIPS the resync for a CROSS-LINE partial (line A fully invoiced, line B untouched)", async () => {

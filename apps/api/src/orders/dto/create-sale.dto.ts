@@ -15,7 +15,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
-import { OrderItemDto } from "./create-order.dto";
+import { AppliedCreditNoteDto, OrderItemDto } from "./create-order.dto";
 
 /**
  * "Sale" = an order plus its invoice created in one step (the operator "bill now" flow).
@@ -50,4 +50,13 @@ export class CreateSaleDto {
 
   /** Only used when deliveredNow=false: issue (send) the draft invoice now instead of leaving it DRAFT. */
   @IsOptional() @IsBoolean() send?: boolean;
+
+  /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
+   *  [] = remove all; otherwise the FULL desired set (server diffs). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => AppliedCreditNoteDto)
+  appliedCreditNotes?: AppliedCreditNoteDto[];
 }

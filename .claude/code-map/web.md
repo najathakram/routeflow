@@ -92,6 +92,16 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   — persistent dock at the bottom-left of the content column (mounted in `(dashboard)/layout.tsx`
   right-column, non-CUSTOMER roles), lists parked drafts + Resume/Discard + a global scan-to-draft
   wedge-listener (active only while a draft is parked; bails inside any open `[role=dialog]`).
+  **Credit notes on orders (2026-07-18):** new `orders/_components/CreditNotePicker.tsx`
+  (customer-scoped open-credit checkboxes + optional per-credit amount input, "Credits to apply at
+  invoicing −$X" + "Estimated balance due" display-only — NOT a discount, totals unchanged) used by
+  `CreateOrderModal` (payload `appliedCreditNotes` when non-empty; merge-resubmit carries it — the
+  controller merge branch honoring it was a review catch) and `orders/[id]` edit mode (sent only when
+  touched, through BOTH save paths). Order detail read mode shows an Applied-credits block (reason via
+  `orderCreditNotes[].creditNote`); `invoices/[id]` CREDIT_NOTE payment rows show the credit's reason +
+  link + operator "Remove credit" (`useUnapplyCreditNote` → POST /credit-notes/:id/unapply);
+  `credit-notes/[id]` has inline reason edit (`useUpdateCreditNote` PATCH). Reason always rendered from
+  the relation at read time — edits propagate everywhere with no copy/sync.
   **Shipping fee (2026-07-18):** `CreateOrderModal` has a "Shipping fee" input next to the order
   discount (display total `+ shippingAmt`, payload `...(shippingAmt>0?{shippingFee}:{})`, serialized
   into `OrderDraftPayload.shippingFee` for park/resume — `lib/drafts.ts`); `orders/[id]/page.tsx` renders

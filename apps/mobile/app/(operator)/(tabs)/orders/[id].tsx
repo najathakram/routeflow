@@ -643,6 +643,52 @@ export default function OrderDetailScreen() {
             </View>
           </View>
 
+          {/* Applied credits — order-scoped credit-note intents (server:
+              OrderCreditNote). "Applied so far" sums this credit's CREDIT_NOTE
+              payments across the order's invoices; the reason renders via the
+              relation so a later edit shows up here automatically. Types come
+              through untyped (AdminOrder predates this field) — cast defensively. */}
+          {((order as any).orderCreditNotes?.length ?? 0) > 0 ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Applied credits</Text>
+              {(order as any).orderCreditNotes.map((oc: any, i: number) => {
+                const appliedSoFar = ((order as any).invoices ?? [])
+                  .flatMap((inv: any) => inv.payments ?? [])
+                  .filter((p: any) => p.creditNoteId === oc.creditNoteId)
+                  .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+                return (
+                  <View
+                    key={oc.id}
+                    style={[
+                      styles.invoiceRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.invoiceNumber} numberOfLines={1}>
+                        {oc.creditNote?.creditNoteNumber ?? "Credit"}
+                      </Text>
+                      {oc.creditNote?.reason ? (
+                        <Text style={styles.itemSub} numberOfLines={2}>
+                          {oc.creditNote.reason}
+                        </Text>
+                      ) : null}
+                      <Text style={styles.itemSub}>
+                        {oc.amount != null
+                          ? `Requested ${formatCurrency(oc.amount)}`
+                          : "Up to remaining balance"}
+                      </Text>
+                    </View>
+                    <Text style={styles.itemTotal}>{formatCurrency(appliedSoFar)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+
           {/* R3: Invoice — mirror web's Invoice card. A CONFIRMED (or later) order
               can already have a draft invoice; surface it so mobile can open it, or
               generate one on demand. Hidden on DRAFT/CANCELLED (nothing to bill). */}

@@ -66,6 +66,7 @@ import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
+import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -1213,6 +1214,16 @@ function displayLineStatus(
   return li.status as BadgeStatus;
 }
 
+/** Map the order's stored credit-note intents into the picker's selection shape. */
+function creditSelectionsFromOrder(o: {
+  orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
+}): CreditSelection[] {
+  return (o.orderCreditNotes ?? []).map((oc) => ({
+    creditNoteId: oc.creditNoteId,
+    amount: oc.amount != null ? Number(oc.amount) : undefined,
+  }));
+}
+
 export default function OrderDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(params.id);
@@ -1254,6 +1265,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // Staff-editable shipping fee (operator/tenant-admin only page). Initialized from
   // the stored order fee whenever edit mode opens; never taxed.
   const [editShippingFee, setEditShippingFee] = React.useState(0);
+  // Credit-note selection (edit mode) — initialized from order.orderCreditNotes
+  // whenever edit mode opens; `creditsTouched` gates whether it's sent on save
+  // (undefined on the wire = leave the server's stored intents untouched).
+  const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
+  const [creditsTouched, setCreditsTouched] = React.useState(false);
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -1312,6 +1328,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         );
         setPendingDeletes([]);
         setEditShippingFee(Number(order.shippingFee ?? 0));
+        setEditCredits(creditSelectionsFromOrder(order));
+        setCreditsTouched(false);
         setIsEditing(true);
       }
     }
@@ -1448,6 +1466,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
     setPendingDeletes([]);
     setEditShippingFee(Number(order!.shippingFee ?? 0));
+    setEditCredits(creditSelectionsFromOrder(order!));
+    setCreditsTouched(false);
     setIsEditing(true);
   }
 
@@ -1456,6 +1476,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     setEditItems([]);
     setPendingDeletes([]);
     setEditShippingFee(0);
+    setEditCredits([]);
+    setCreditsTouched(false);
   }
 
   function handleDeleteItem(id: string) {
@@ -1550,7 +1572,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
-    if (updates.length === 0 && !feeChanged) {
+    if (updates.length === 0 && !feeChanged && !creditsTouched) {
       setIsEditing(false);
       return;
     }
@@ -1564,11 +1586,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         items: updates,
         replaceAll: false,
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
+        // Credit-note selection: only sent when the operator actually touched
+        // the picker — undefined on the wire leaves the server's stored
+        // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
+        ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
       },
       {
         onSuccess: () => {
           setIsEditing(false);
           setEditItems([]);
+          setEditCredits([]);
+          setCreditsTouched(false);
         },
         onError: guardError(() => handleSaveItems()),
       },
@@ -2136,6 +2164,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   </div>
                 </div>
 
+                {/* Credit notes — same picker as create; initialized from the order's
+                    stored intents. Sent on save ONLY when touched (undefined on the
+                    wire leaves the server's stored intents untouched). */}
+                <CreditNotePicker
+                  customerId={order.customerId}
+                  value={editCredits}
+                  onChange={(next) => {
+                    setEditCredits(next);
+                    setCreditsTouched(true);
+                  }}
+                  estimatedOrderTotal={editTotal}
+                />
+
                 <div className="flex gap-2 flex-wrap">
                   {localStatus === "DRAFT" ? (
                     <>
@@ -2203,6 +2244,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   setLocalStatus("PENDING");
                                   setIsEditing(false);
                                   setEditItems([]);
+                                  setEditCredits([]);
+                                  setCreditsTouched(false);
                                 },
                                 onError: guardError(() => doPublish()),
                               },
@@ -2213,7 +2256,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           const feeChanged =
                             Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
                           const saveThenPublish = () => {
-                            if (updates.length > 0 || feeChanged) {
+                            if (updates.length > 0 || feeChanged || creditsTouched) {
                               updateItems.mutate(
                                 {
                                   id: order!.id,
@@ -2225,6 +2268,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   // lines. Mirrors handleSaveItems.
                                   replaceAll: false,
                                   ...(feeChanged ? { shippingFee: editShippingFee } : {}),
+                                  // Same dual-path threading as handleSaveItems — this
+                                  // Publish flow builds its own `updates` array rather
+                                  // than reusing handleSaveItems, so credits need the
+                                  // same explicit carry-through (shippingFee had this
+                                  // exact miss last PR — do not repeat it).
+                                  ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
                                 },
                                 {
                                   onSuccess: doPublish,
@@ -2649,6 +2698,56 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 <dd className="money text-[15px] font-semibold text-navy">${total.toFixed(2)}</dd>
               </div>
             </dl>
+
+            {/* Applied credits — intent (order.orderCreditNotes) vs money already
+                moved (Σ CREDIT_NOTE payments across this order's invoices). Credits
+                reduce the invoice balance due, never this order total above. */}
+            {(order.orderCreditNotes?.length ?? 0) > 0 && (
+              <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Applied credits
+                </p>
+                {order.orderCreditNotes!.map((oc) => {
+                  const appliedSoFar = (order.invoices ?? []).reduce((sum, inv) => {
+                    const pays = inv.payments ?? [];
+                    return (
+                      sum +
+                      pays
+                        .filter((p) => p.creditNoteId === oc.creditNoteId)
+                        .reduce((s, p) => s + Number(p.amount), 0)
+                    );
+                  }, 0);
+                  return (
+                    <div key={oc.id} className="flex items-start justify-between gap-2 text-xs">
+                      <div className="min-w-0">
+                        <Link
+                          href={`/credit-notes/${oc.creditNoteId}`}
+                          className="font-mono font-medium text-brand-600 hover:underline"
+                        >
+                          {oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8)}
+                        </Link>
+                        {oc.creditNote?.reason && (
+                          <span
+                            className="ml-1.5 truncate text-navy/70"
+                            title={oc.creditNote.reason}
+                          >
+                            {oc.creditNote.reason}
+                          </span>
+                        )}
+                        <div className="text-navy/50">
+                          {oc.amount != null
+                            ? `Requested $${Number(oc.amount).toFixed(2)}`
+                            : "Up to remaining"}
+                        </div>
+                      </div>
+                      <span className="shrink-0 font-medium text-navy">
+                        ${appliedSoFar.toFixed(2)} applied
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           {/* Carrier shipment — operator records carrier + tracking when goods ship
