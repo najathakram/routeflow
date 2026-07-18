@@ -35,6 +35,29 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
+    /** CREDIT_NOTE payments only (server-scoped include) — sums to the "applied
+     *  $ so far" shown per credit-note intent on the order detail page. */
+    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+  }>;
+  /**
+   * Credit-note intents applied to this order (join table — survives invoice
+   * rebuilds because it never references invoice rows). `amount` null means
+   * "up to the credit's remaining balance". `creditNote` carries the
+   * display-only reason/status snapshot for the read-mode "Applied credits" list.
+   */
+  orderCreditNotes?: Array<{
+    id: string;
+    creditNoteId: string;
+    amount?: number | string | null;
+    creditNote?: {
+      id: string;
+      creditNoteNumber: string;
+      reason?: string | null;
+      amount: number | string;
+      amountUsed: number | string;
+      status: string;
+      expiresAt?: string | null;
+    };
   }>;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
@@ -201,6 +224,9 @@ export function useCreateOrder() {
        * summary so the UI can prompt.
        */
       mergeChoice?: "merge" | "separate";
+      /** Customer credit notes to apply to this order's invoice(s) at creation
+       *  time — undefined/omitted leaves credits untouched. */
+      appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
     }
   >({
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
@@ -226,6 +252,9 @@ export interface CreateSaleDto {
   requestedDeliveryDate?: string;
   /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
   send?: boolean;
+  /** Customer credit notes to apply to this order's invoice(s) at creation
+   *  time — undefined/omitted leaves credits untouched. */
+  appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
 }
 
 /**
@@ -331,11 +360,23 @@ export function useUpdateOrderItems() {
       orderNotes?: string;
       replaceAll?: boolean;
       shippingFee?: number;
+      /**
+       * Full desired credit-note selection (server diffs against the stored
+       * intents) — undefined = leave credits untouched, [] = remove all.
+       * Staff-only (operator/tenant-admin); the server ignores it otherwise.
+       */
+      appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
     }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee }) =>
+    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee, appliedCreditNotes }) =>
       apiClient
-        .patch<Order>(`/orders/${id}/items`, { items, orderNotes, replaceAll, shippingFee })
+        .patch<Order>(`/orders/${id}/items`, {
+          items,
+          orderNotes,
+          replaceAll,
+          shippingFee,
+          appliedCreditNotes,
+        })
         .then((r) => r.data),
     onSuccess: (data) => {
       qc.setQueryData(["orders", data.id], data);

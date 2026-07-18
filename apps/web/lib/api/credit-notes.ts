@@ -41,17 +41,23 @@ interface PaginatedResponse<T> {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useCreditNotes(params?: {
-  status?: string;
-  search?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  page?: number;
-  limit?: number;
-}) {
+export function useCreditNotes(
+  params?: {
+    status?: string;
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    /** Customer-scoped lookup — backs the order-builder credit picker. */
+    customerId?: string;
+    page?: number;
+    limit?: number;
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery<PaginatedResponse<CreditNote>>({
     queryKey: ["credit-notes", params],
     queryFn: () => apiClient.get("/credit-notes", { params }).then((r) => r.data),
+    ...options,
   });
 }
 
@@ -124,4 +130,55 @@ export function useVoidCreditNote() {
       qc.invalidateQueries({ queryKey: ["credit-notes", id] });
     },
   });
+}
+
+/**
+ * Un-apply (part of) a credit note from one invoice — the inverse of
+ * useApplyCreditNote. Restores the wallet balance, reverts the credit note's
+ * status when it's no longer fully consumed, and reduces/removes the order's
+ * stored intent so a later settle doesn't just re-apply it.
+ */
+export function useUnapplyCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
+    mutationFn: ({ id, invoiceId }) =>
+      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }).then((r) => r.data),
+    onSuccess: (_, { id, invoiceId }) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+    },
+  });
+}
+
+export interface UpdateCreditNoteDto {
+  /** Descriptive text — editable at ANY status, unlike expiresAt below. */
+  reason?: string;
+  /** Only settable while the credit note is ISSUED (server rejects otherwise). */
+  expiresAt?: string | null;
+}
+
+export function useUpdateCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<CreditNote, Error, { id: string } & UpdateCreditNoteDto>({
+    mutationFn: ({ id, ...dto }) => apiClient.patch(`/credit-notes/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes", id] });
+    },
+  });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Open (remaining) balance on a credit note — `amount - amountUsed`, NEVER
+ * `amount` alone (a partially-applied ISSUED note still carries a nonzero
+ * amountUsed). Display-only client math; the server clamp is the real source
+ * of truth for what actually applies.
+ */
+export function openCreditBalance(cn: Pick<CreditNote, "amount" | "amountUsed">): number {
+  const remaining = Number(cn.amount) - Number(cn.amountUsed ?? 0);
+  return Math.max(0, Math.round(remaining * 100) / 100);
 }

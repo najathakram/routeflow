@@ -837,6 +837,11 @@ export class InvoicesService {
           data: { invoicedQty: { increment: remainingQty } },
         });
       }
+      // Apply any order-selected credit notes to the freshly created invoice(s).
+      // Pass the effective tenantId explicitly: this runs on an unwrapped tx in the
+      // fire-and-forget path (createInvoiceFromOrderWithTenant), where the tenant
+      // proxy can't inject it and the credit payment would be tenant-orphaned.
+      await this.creditNotes.settleOrderCreditsInTx(tx, order.id, tenantId);
       return out;
     };
 
@@ -2127,7 +2132,21 @@ export class InvoicesService {
             trackedSubcategory: { select: { id: true, name: true } },
           },
         },
-        payments: { orderBy: { createdAt: "desc" } },
+        payments: {
+          orderBy: { createdAt: "desc" },
+          include: {
+            creditNote: {
+              select: {
+                id: true,
+                creditNoteNumber: true,
+                reason: true,
+                amount: true,
+                amountUsed: true,
+                status: true,
+              },
+            },
+          },
+        },
         // The web invoice page gates Edit/Send for an order-linked DRAFT until the
         // order is delivered (the "pending mirror"). Surface the order's status here.
         order: { select: { status: true, orderNumber: true } },
@@ -2438,7 +2457,40 @@ export class InvoicesService {
           where: { id },
           data: { status: nextStatus, sentAt: new Date() },
         });
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId);
+        // An operator's EXPLICIT-amount order selection must not be overridden by the
+        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
+        const explicitIds = updated.orderId
+          ? (
+              await tx.orderCreditNote.findMany({
+                where: { orderId: updated.orderId, amount: { not: null } },
+                select: { creditNoteId: true },
+              })
+            ).map((r: any) => r.creditNoteId)
+          : [];
+        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
+          excludeCreditNoteIds: explicitIds,
+        });
+        // A credit pre-applied at order time can already cover this invoice. Auto-apply
+        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
+        // a fully-credited invoice stuck SENT — recompute from the payments it has.
+        if (!auto.invoiceStatus) {
+          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
+          if (fresh) {
+            const paid = roundMoney(
+              (fresh.payments ?? [])
+                .filter((p: any) => p.status !== "VOID")
+                .reduce((s: number, p: any) => s + Number(p.amount), 0),
+            );
+            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
+            if (st !== fresh.status) {
+              await tx.invoice.update({
+                where: { id },
+                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
+              });
+              auto.invoiceStatus = st;
+            }
+          }
+        }
         return { updated, auto };
       },
       { isolationLevel: "Serializable" },
@@ -2465,7 +2517,7 @@ export class InvoicesService {
         })
         .catch(() => {});
     }
-    if (auto.applied > 0) {
+    if (auto.applied > 0 || auto.invoiceStatus != null) {
       const final = await this.prisma.forTenant().invoice.findUnique({ where: { id } });
       if (final) return final;
     }
@@ -2568,7 +2620,40 @@ export class InvoicesService {
           where: { id },
           data: { status: nextStatus, sentAt: new Date() },
         });
-        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId);
+        // An operator's EXPLICIT-amount order selection must not be overridden by the
+        // oldest-first sweep; null-amount intents are already settled and clamp to 0.
+        const explicitIds = updated.orderId
+          ? (
+              await tx.orderCreditNote.findMany({
+                where: { orderId: updated.orderId, amount: { not: null } },
+                select: { creditNoteId: true },
+              })
+            ).map((r: any) => r.creditNoteId)
+          : [];
+        const auto = await this.creditNotes.autoApplyOldestCreditsInTx(tx, id, updated.customerId, {
+          excludeCreditNoteIds: explicitIds,
+        });
+        // A credit pre-applied at order time can already cover this invoice. Auto-apply
+        // returns {applied:0, invoiceStatus:null} on a zero balance, which used to leave
+        // a fully-credited invoice stuck SENT — recompute from the payments it has.
+        if (!auto.invoiceStatus) {
+          const fresh = await tx.invoice.findUnique({ where: { id }, include: { payments: true } });
+          if (fresh) {
+            const paid = roundMoney(
+              (fresh.payments ?? [])
+                .filter((p: any) => p.status !== "VOID")
+                .reduce((s: number, p: any) => s + Number(p.amount), 0),
+            );
+            const st = this.recomputeStatus(paid, Number(fresh.total), fresh.dueDate, fresh.status);
+            if (st !== fresh.status) {
+              await tx.invoice.update({
+                where: { id },
+                data: { status: st, paidAt: st === InvoiceStatus.PAID ? new Date() : null },
+              });
+              auto.invoiceStatus = st;
+            }
+          }
+        }
         return { updated, auto };
       },
       { isolationLevel: "Serializable" },
@@ -3401,6 +3486,11 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      if ((payment.method as any) === "CREDIT_NOTE") {
+        throw new BadRequestException(
+          "This payment is an applied credit note. Un-apply it from the credit note instead (POST /credit-notes/:id/unapply) so the credit's balance is restored.",
+        );
+      }
 
       await tx.invoicePayment.delete({ where: { id: paymentId } });
 
@@ -3608,6 +3698,11 @@ export class InvoicesService {
       });
       if (!payment) throw new NotFoundException("Payment not found");
       if (payment.status === "VOID") throw new BadRequestException("Payment already voided");
+      if ((payment.method as any) === "CREDIT_NOTE") {
+        throw new BadRequestException(
+          "This payment is an applied credit note. Un-apply it from the credit note instead (POST /credit-notes/:id/unapply) so the credit's balance is restored.",
+        );
+      }
 
       await tx.invoicePayment.update({
         where: { id: paymentId },

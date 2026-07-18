@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -66,5 +66,19 @@ export class CreditNotesController {
   @Roles(UserRole.OPERATOR)
   voidNote(@Param("id") id: string) {
     return this.creditNotesService.voidCreditNote(id);
+  }
+
+  @Post(":id/unapply")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  unapply(@Param("id") id: string, @Body() body: { invoiceId: string }) {
+    return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId);
+  }
+
+  @Patch(":id")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  update(@Param("id") id: string, @Body() body: { reason?: string; expiresAt?: string | null }) {
+    return this.creditNotesService.updateCreditNote(id, body);
   }
 }

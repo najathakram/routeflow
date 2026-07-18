@@ -46,6 +46,18 @@ export class OrderItemDto {
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;
 }
 
+export class AppliedCreditNoteDto {
+  @IsString()
+  creditNoteId!: string;
+
+  /** Dollars to apply from this credit. Omit = up to the credit's remaining balance. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0.01)
+  @Max(1_000_000)
+  amount?: number;
+}
+
 export class CreateOrderDto {
   @IsOptional() @IsString() customerId?: string;
   @IsOptional() @IsEnum(["DRAFT", "PENDING"]) status?: "DRAFT" | "PENDING";
@@ -77,4 +89,12 @@ export class CreateOrderDto {
    * `{ code: 'MERGE_CHOICE_REQUIRED', activeOrder: {...} }` so the UI can prompt.
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
+  /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
+   *  [] = remove all; otherwise the FULL desired set (server diffs). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => AppliedCreditNoteDto)
+  appliedCreditNotes?: AppliedCreditNoteDto[];
 }
