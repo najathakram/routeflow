@@ -3492,6 +3492,25 @@ export class InvoicesService {
         );
       }
 
+      // ADVANCE applications debited AdvancePayment.balance when applied
+      // (customers.service.applyAdvancePaymentToInvoice). Deleting the
+      // application returns those dollars to the customer's advance wallet —
+      // advances have no status machinery, so a balance increment is the complete
+      // inverse. Without this the wallet is silently understated (the bug credit
+      // notes had before their unapply primitive). Skip when the payment is already
+      // VOID: voidPayment already restored the balance, so re-crediting on delete
+      // would double-credit the wallet.
+      if (
+        (payment.method as any) === "ADVANCE" &&
+        (payment as any).advancePaymentId &&
+        payment.status !== "VOID"
+      ) {
+        await tx.advancePayment.update({
+          where: { id: (payment as any).advancePaymentId },
+          data: { balance: { increment: roundMoney(Number(payment.amount)) } },
+        });
+      }
+
       await tx.invoicePayment.delete({ where: { id: paymentId } });
 
       // Exclude the deleted payment AND any VOID (bounced) payment — otherwise a voided
@@ -3702,6 +3721,19 @@ export class InvoicesService {
         throw new BadRequestException(
           "This payment is an applied credit note. Un-apply it from the credit note instead (POST /credit-notes/:id/unapply) so the credit's balance is restored.",
         );
+      }
+
+      // ADVANCE applications debited AdvancePayment.balance when applied
+      // (customers.service.applyAdvancePaymentToInvoice). Voiding the
+      // application returns those dollars to the customer's advance wallet —
+      // advances have no status machinery, so a balance increment is the complete
+      // inverse. Without this the wallet is silently understated (the bug credit
+      // notes had before their unapply primitive).
+      if ((payment.method as any) === "ADVANCE" && (payment as any).advancePaymentId) {
+        await tx.advancePayment.update({
+          where: { id: (payment as any).advancePaymentId },
+          data: { balance: { increment: roundMoney(Number(payment.amount)) } },
+        });
       }
 
       await tx.invoicePayment.update({

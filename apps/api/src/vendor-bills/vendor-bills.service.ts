@@ -607,6 +607,7 @@ Return exactly this structure:
     {
       "extractedName": "exact product name as written on invoice",
       "sku": "item code / SKU / product number printed on the line, exactly as written, or null if none",
+      "packSize": units per box/case/pack as a number ONLY when the line explicitly shows one (e.g. "12x330ml" -> 12, "24 CT" -> 24, "1X6X4OZ" -> 6), else null — NEVER guess or infer,
       "qty": quantity as a number (REQUIRED — read directly from invoice; default 1 only if completely absent),
       "unitCost": unit price as a number (if not shown, calculate lineTotal / qty),
       "lineTotal": line total as a number or null

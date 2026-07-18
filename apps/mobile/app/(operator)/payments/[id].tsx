@@ -40,7 +40,7 @@ export default function PaymentDetailScreen() {
 
   const s = paymentStatusPill(payment.status);
   const m = paymentMethodPill(payment.method);
-  const flags = paymentActionFlags(payment.status);
+  const flags = paymentActionFlags(payment.status, payment.method);
   const received = payment.paidAt ?? payment.createdAt;
 
   const handleVoid = () => {

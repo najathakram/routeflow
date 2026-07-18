@@ -55,6 +55,13 @@ interface ProductCreateModalProps {
   initialPrice?: number;
   /** Purchase cost carried from a vendor-bill line; pre-fills Standard Cost. */
   initialCost?: number;
+  /** Units-per-box prefill from an OCR-read pack size (e.g. "12x330ml") — editable, verify hint shown. */
+  initialUnitsPerBox?: number;
+}
+
+/** Only prefill units-per-box from a whole number greater than 1 — never guess/round. */
+function validUnitsPerBoxPrefill(v: number | undefined): boolean {
+  return v != null && Number.isInteger(v) && v > 1;
 }
 
 /**
@@ -76,6 +83,7 @@ export function ProductCreateModal({
   initialSku,
   initialPrice,
   initialCost,
+  initialUnitsPerBox,
 }: ProductCreateModalProps) {
   const { toast } = useToast();
   const createProduct = useCreateProduct();
@@ -94,7 +102,7 @@ export function ProductCreateModal({
     description: "",
     costingMethod: "FIFO",
     standardCost: initialCost != null && initialCost > 0 ? String(initialCost) : "",
-    unitsPerBox: "",
+    unitsPerBox: validUnitsPerBoxPrefill(initialUnitsPerBox) ? String(initialUnitsPerBox) : "",
     parentProductId: defaultParentId ?? "",
     variantName: "",
     trackedCategoryId: "",
@@ -118,9 +126,20 @@ export function ProductCreateModal({
       // costing methods get their cost from the bill's receive layer
       // instead, so nothing is lost by pre-filling the field here.
       ...(initialCost != null && initialCost > 0 ? { standardCost: String(initialCost) } : {}),
+      ...(validUnitsPerBoxPrefill(initialUnitsPerBox)
+        ? { unitsPerBox: String(initialUnitsPerBox) }
+        : {}),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, initialName, initialSku, initialPrice, initialCost, defaultParentId]);
+  }, [
+    isOpen,
+    initialName,
+    initialSku,
+    initialPrice,
+    initialCost,
+    initialUnitsPerBox,
+    defaultParentId,
+  ]);
 
   // Pre-populate fields from parent when a parent is selected
   React.useEffect(() => {
@@ -581,6 +600,13 @@ export function ProductCreateModal({
                 <p className="mt-0.5 text-xs text-navy/70">
                   How many individual units are in one box (optional)
                 </p>
+                {validUnitsPerBoxPrefill(initialUnitsPerBox) &&
+                  form.unitsPerBox === String(initialUnitsPerBox) && (
+                    <p className="mt-0.5 text-[11px] text-navy/70">
+                      Suggested from the invoice line ({initialUnitsPerBox} per box) — verify before
+                      saving.
+                    </p>
+                  )}
               </div>
             </div>
           </div>

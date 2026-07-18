@@ -499,6 +499,42 @@ describe("VendorBillsService", () => {
 
       expect(result.items[0].sku).toBe("SKU-777");
     });
+
+    it("carries the per-line packSize through from the OCR JSON to the response", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [{ extractedName: "Widget", packSize: 12, qty: 1, unitCost: 5 }],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(result.items[0].packSize).toBe(12);
+    });
+
+    it("leaves packSize null/absent when the OCR JSON doesn't include it", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(result.items[0].packSize).toBeUndefined();
+    });
   });
 
   describe("recordPayment", () => {

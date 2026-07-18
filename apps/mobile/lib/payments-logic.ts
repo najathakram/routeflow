@@ -54,7 +54,16 @@ export interface PaymentActionFlags {
   canVoid: boolean;
 }
 
-/** Void is allowed for anything not already VOID (the server 400s a re-void). */
-export function paymentActionFlags(status?: PaymentStatus): PaymentActionFlags {
-  return { canVoid: status !== "VOID" };
+/**
+ * Void is allowed for anything not already VOID (the server 400s a re-void).
+ * CREDIT_NOTE payments are also excluded — voiding one would need to unwind
+ * the credit-note application (a separate primitive), so the API refuses it;
+ * the button is hidden here to match. ADVANCE stays voidable — voiding
+ * restores the source AdvancePayment.balance (see invoices.service voidPayment).
+ */
+export function paymentActionFlags(
+  status?: PaymentStatus,
+  method?: PaymentMethod,
+): PaymentActionFlags {
+  return { canVoid: status !== "VOID" && method !== "CREDIT_NOTE" };
 }

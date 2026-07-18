@@ -36,8 +36,8 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useSuppliers } from "@/lib/api/inventory";
 import { SupplierSelect } from "@/components/SupplierSelect";
-import { useProducts } from "@/lib/api/products";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { roundMoney } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
@@ -346,8 +346,6 @@ function EditLineItems({
   /** Bill supplier — used to teach the scan matcher when a product is created/linked here. */
   supplierName?: string;
 }) {
-  const { data: productsData } = useProducts({ limit: 500, isActive: true });
-  const products = (productsData as any)?.data ?? [];
   const saveMapping = useSaveProductMapping();
   const [createFromRow, setCreateFromRow] = React.useState<number | null>(null);
 
@@ -363,32 +361,24 @@ function EditLineItems({
       {items.map((row, i) => (
         <div key={i} className="grid grid-cols-[1fr_80px_100px_32px] gap-2 items-start">
           <div>
-            <select
+            <SearchableProductPicker
+              async
               value={row.productId}
-              onChange={(e) => {
-                const pid = e.target.value;
-                const p = products.find((x: any) => x.id === pid);
-                if (p) {
-                  update(i, {
-                    productId: pid,
-                    description: p.name,
-                    unitCost: p.averageCost
-                      ? String(parseFloat(p.averageCost).toFixed(4))
-                      : row.unitCost,
-                  });
-                } else {
-                  update(i, { productId: "", description: row.description });
-                }
-              }}
-              className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-navy focus:outline-none focus:ring-1 focus:ring-brand-500 mb-1"
-            >
-              <option value="">— Custom item —</option>
-              {products.map((p: any) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              selectedLabel={row.description}
+              placeholder="Search products… (or leave as custom item)"
+              onChange={(id, product) =>
+                product
+                  ? update(i, {
+                      productId: id,
+                      description: product.name,
+                      unitCost:
+                        (product as any).averageCost != null
+                          ? String(parseFloat(String((product as any).averageCost)).toFixed(4))
+                          : row.unitCost,
+                    })
+                  : update(i, { productId: "" })
+              }
+            />
             {!row.productId && (
               <>
                 <input

@@ -18,6 +18,7 @@ interface ScanLine {
   /** Set once the operator has explicitly mapped or dismissed this line in the review UI. */
   reviewed?: boolean;
   sku?: string | null;
+  packSize?: number | null;
   /** Ranked weak-match suggestions when the scanner didn't auto-assign (see product-matcher.ts). */
   candidates?: Array<{ productId: string; name: string; sku: string | null; score: number }>;
 }

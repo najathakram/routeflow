@@ -2193,6 +2193,182 @@ describe("InvoicesService", () => {
     });
   });
 
+  // WP1 — an ADVANCE InvoicePayment debits AdvancePayment.balance when applied
+  // (customers.service.applyAdvancePaymentToInvoice). Deleting/voiding that
+  // application must restore the balance inline, in the same tx, or the
+  // customer's advance wallet is silently understated while the invoice
+  // re-opens. Advances have no status machinery, so a plain increment is the
+  // complete inverse — unlike CREDIT_NOTE, which is refused outright above.
+  describe("WP1 — ADVANCE payment balance restore on delete/void", () => {
+    it("deletePayment restores AdvancePayment.balance when deleting an ADVANCE application", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        payments: [
+          {
+            id: "pay-adv",
+            amount: 40,
+            status: "PAID",
+            method: "ADVANCE",
+            advancePaymentId: "ap-1",
+          },
+        ],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        total: 100,
+      });
+
+      await service.deletePayment("inv-1", "pay-adv");
+
+      expect(prisma.advancePayment.update).toHaveBeenCalledWith({
+        where: { id: "ap-1" },
+        data: { balance: { increment: 40 } },
+      });
+      expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-adv" } });
+    });
+
+    it("deletePayment does not re-restore an already-VOID ADVANCE payment (voidPayment already did)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [
+          {
+            id: "pay-adv",
+            amount: 40,
+            status: "VOID",
+            method: "ADVANCE",
+            advancePaymentId: "ap-1",
+          },
+        ],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        total: 100,
+      });
+
+      await service.deletePayment("inv-1", "pay-adv");
+
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+      expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-adv" } });
+    });
+
+    it("voidPayment restores AdvancePayment.balance when voiding an ADVANCE application", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        id: "pay-adv",
+        invoiceId: "inv-1",
+        status: "PAID",
+        method: "ADVANCE",
+        amount: 25.5,
+        advancePaymentId: "ap-2",
+      });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        paidAt: null,
+        payments: [],
+      });
+
+      await service.voidPayment("inv-1", "pay-adv");
+
+      expect(prisma.advancePayment.update).toHaveBeenCalledWith({
+        where: { id: "ap-2" },
+        data: { balance: { increment: 25.5 } },
+      });
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-adv" },
+        data: { status: "VOID" },
+      });
+    });
+
+    it("deletePayment does not touch AdvancePayment for non-ADVANCE methods", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        payments: [{ id: "pay-cash", amount: 40, status: "PAID", method: "CASH" }],
+      });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        total: 100,
+      });
+
+      await service.deletePayment("inv-1", "pay-cash");
+
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("voidPayment does not touch AdvancePayment for non-ADVANCE methods", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        id: "pay-cash",
+        invoiceId: "inv-1",
+        status: "PAID",
+        method: "CASH",
+        amount: 40,
+      });
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        customerId: "cust-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        paidAt: null,
+        payments: [],
+      });
+
+      await service.voidPayment("inv-1", "pay-cash");
+
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("deletePayment still refuses a CREDIT_NOTE payment without touching AdvancePayment", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        payments: [{ id: "pay-cn", amount: 40, status: "PAID", method: "CREDIT_NOTE" }],
+      });
+
+      await expect(service.deletePayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
+    it("voidPayment still refuses a CREDIT_NOTE payment without touching AdvancePayment", async () => {
+      prisma.invoicePayment.findFirst.mockResolvedValue({
+        id: "pay-cn",
+        invoiceId: "inv-1",
+        status: "PAID",
+        method: "CREDIT_NOTE",
+      });
+
+      await expect(service.voidPayment("inv-1", "pay-cn")).rejects.toThrow(BadRequestException);
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── Driver at-door payment — server resolves the invoice by orderId ─────────
   // The mobile client cannot supply an invoiceId (Order has no such scalar), so
   // recordDeliveryPaymentInTx resolves/ensures the invoice server-side and records

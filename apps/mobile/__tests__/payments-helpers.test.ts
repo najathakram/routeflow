@@ -45,4 +45,10 @@ describe("paymentActionFlags", () => {
   it("VOID → terminal, no void", () => {
     expect(paymentActionFlags("VOID")).toEqual({ canVoid: false });
   });
+  it("CREDIT_NOTE method → no void (API refuses; matches web)", () => {
+    expect(paymentActionFlags("PAID", "CREDIT_NOTE")).toEqual({ canVoid: false });
+  });
+  it.each(["ADVANCE", "CASH"] as PaymentMethod[])("%s method → voidable", (method) =>
+    expect(paymentActionFlags("PAID", method)).toEqual({ canVoid: true }),
+  );
 });

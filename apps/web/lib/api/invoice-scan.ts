@@ -20,6 +20,8 @@ export interface ScannedItem {
   confidence: "high" | "medium" | "low" | "none";
   /** Item code / SKU printed on the line, as read by the OCR (if any). */
   sku?: string | null;
+  /** Units per box/case/pack, ONLY when the line explicitly shows one (else null). */
+  packSize?: number | null;
   /** Ranked alternates when the match was too weak to auto-assign. */
   candidates?: ScanCandidate[];
 }
