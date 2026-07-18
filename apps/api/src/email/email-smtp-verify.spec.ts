@@ -102,6 +102,37 @@ describe("mapSmtpError — provider-aware guidance", () => {
     expect(msg).not.toMatch(/fd00::1234/);
     expect(msg).toMatch(/\[address\]/);
   });
+
+  it("redacts a ::-compressed IPv6 loopback (the form Node emits, e.g. ::1:587)", () => {
+    const msg = mapSmtpError(
+      { code: "EHOSTUNREACH", message: "connect EHOSTUNREACH ::1:587" },
+      "evil.example.com",
+      587,
+    );
+    expect(msg).not.toMatch(/::1/);
+    expect(msg).toMatch(/\[address\]/);
+  });
+
+  it("redacts the unspecified-address form (:::port)", () => {
+    const msg = mapSmtpError(
+      { code: "ENETUNREACH", message: "connect ENETUNREACH :::53408" },
+      "evil.example.com",
+      587,
+    );
+    // the "::" address literal must be gone
+    expect(msg).toMatch(/\[address\]/);
+    expect(msg).not.toMatch(/:::/);
+  });
+
+  it("redacts the RFC1918 IPv4 octets even inside an IPv4-mapped IPv6 literal", () => {
+    const msg = mapSmtpError(
+      { code: "EHOSTUNREACH", message: "connect EHOSTUNREACH ::ffff:10.0.1.4:587" },
+      "evil.example.com",
+      587,
+    );
+    expect(msg).not.toMatch(/10\.0\.1\.4/);
+    expect(msg).toMatch(/\[address\]/);
+  });
 });
 
 describe("EmailService.verifySmtpConnection", () => {

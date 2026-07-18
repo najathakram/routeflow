@@ -128,11 +128,18 @@ export function mapSmtpError(
   return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
 }
 
-/** Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback). */
+/**
+ * Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback).
+ * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
+ * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
+ * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
+ * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
+ * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
+ */
 function redactAddresses(msg: string): string {
   return msg
-    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4
-    .replace(/\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b/gi, "[address]"); // IPv6
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
+    .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
 @Injectable()
