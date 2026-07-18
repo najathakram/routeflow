@@ -19,7 +19,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
-import { scanInvoice, type ScannedItem, type ScanResult } from "@/lib/api/invoice-scan";
+import {
+  scanInvoice,
+  type ScannedItem,
+  type ScanResult,
+  type ScanCandidate,
+} from "@/lib/api/invoice-scan";
 import { useSuppliers } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import {
@@ -29,7 +34,8 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
-import { InlineCreateProductModal } from "./InlineCreateProductModal";
+import { SearchableProductPicker } from "./SearchableProductPicker";
+import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { roundMoney } from "@/lib/pricing";
 
@@ -49,6 +55,17 @@ interface ReviewItem {
   extractedName: string;
   productId: string;
   description: string;
+  /**
+   * The scan match's own composed name, kept separate from `description`
+   * (which the operator can freely retype for custom/unlinked lines) so the
+   * async picker's closed-state label survives an edit to the description.
+   */
+  matchedProductName?: string | null;
+  /** Scanned per-line SKU/item code, if the OCR found one — prefills the
+   *  create-product form when the operator adds this line as a new product. */
+  sku?: string | null;
+  /** Ranked "Did you mean…" suggestions for a line that didn't confidently match. */
+  candidates?: ScanCandidate[];
   qty: string;
   unitCost: string;
   lineTotal: number | null; // raw AI-extracted line total (read-only reference)
@@ -207,11 +224,17 @@ function ConfidenceBadge({ confidence }: { confidence: ScannedItem["confidence"]
     low: "bg-orange-100 text-orange-700",
     none: "bg-gray-100 text-gray-600",
   };
+  // "low" no longer means "matched, but shakily" — the matcher never
+  // auto-assigns below 0.6, so a "low" line arrives UNLINKED with ranked
+  // "Did you mean…" chips below it instead. Label + tooltip say so.
   const labels: Record<ScannedItem["confidence"], string> = {
     high: "High match",
     medium: "Possible match",
-    low: "Weak match",
+    low: "Unmatched",
     none: "No match",
+  };
+  const titles: Partial<Record<ScannedItem["confidence"], string>> = {
+    low: "No confident match — review the suggestions below",
   };
   return (
     <span
@@ -219,6 +242,7 @@ function ConfidenceBadge({ confidence }: { confidence: ScannedItem["confidence"]
         "inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium",
         styles[confidence],
       )}
+      title={titles[confidence]}
     >
       {labels[confidence]}
     </span>
@@ -458,6 +482,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       extractedName: item.extractedName,
       productId: item.matchedProductId ?? "",
       description: item.matchedProductName ?? item.extractedName,
+      matchedProductName: item.matchedProductName ?? null,
+      sku: item.sku ?? null,
+      candidates: item.candidates,
       qty: String(item.qty ?? 1),
       unitCost: String(item.unitCost ?? ""),
       lineTotal: item.lineTotal ?? null,
@@ -670,9 +697,23 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     ]);
   };
 
-  const handleProductSelect = (i: number, productId: string) => {
-    const product = products.find((p) => p.id === productId);
+  const handleProductSelect = (
+    i: number,
+    productId: string,
+    /**
+     * The full product object from an async picker pick or a candidate chip.
+     * Used as a fallback when the pick isn't in the local 1000-row `products`
+     * list (a fresh/async pick beyond that page, or a not-yet-cached create).
+     */
+    pickedProduct?: {
+      id: string;
+      name: string;
+      sku?: string | null;
+    },
+  ) => {
     const item = reviewItems[i];
+    const product =
+      products.find((p) => p.id === productId) ?? (productId ? pickedProduct : undefined);
     if (product) {
       // Only update the product link + description.
       // Keep the invoice-extracted price — that is what the supplier is actually charging.
@@ -1645,49 +1686,66 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                   </span>
                                                 </div>
                                               )}
-                                            <select
-                                              value={item.productId}
-                                              onChange={(e) =>
-                                                handleProductSelect(i, e.target.value)
-                                              }
-                                              className="w-full rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                            >
-                                              <option value="">
-                                                — Custom item (no inventory link) —
-                                              </option>
-                                              {item.productId &&
-                                                !products.find((p) => p.id === item.productId) && (
-                                                  <option value={item.productId}>
-                                                    {item.description}
-                                                  </option>
-                                                )}
-                                              {products.map((p) => (
-                                                <option key={p.id} value={p.id}>
-                                                  {p.name}
-                                                </option>
-                                              ))}
-                                            </select>
-                                            {!item.productId && (
-                                              <>
-                                                <input
-                                                  type="text"
-                                                  value={item.description}
-                                                  onChange={(e) =>
-                                                    updateItem(i, { description: e.target.value })
-                                                  }
-                                                  placeholder="Custom description (won't update stock)"
-                                                  className="w-full rounded-lg border border-surface-border px-2.5 py-1.5 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                                />
+                                            <div className="flex items-start gap-1.5">
+                                              <SearchableProductPicker
+                                                async
+                                                value={item.productId}
+                                                selectedLabel={
+                                                  item.description ||
+                                                  item.matchedProductName ||
+                                                  undefined
+                                                }
+                                                onChange={(id, product) =>
+                                                  handleProductSelect(i, id, product)
+                                                }
+                                                placeholder="Search products…"
+                                                className="flex-1"
+                                              />
+                                              {!item.productId && (
                                                 <button
                                                   type="button"
                                                   onClick={() => setCreateFromRow(i)}
                                                   disabled={isPending}
-                                                  className="flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
+                                                  title="Add as new product"
+                                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-surface-border text-brand-600 transition-colors hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-40"
                                                 >
-                                                  <Plus className="h-3 w-3" />
-                                                  Create product from this line
+                                                  <Plus className="h-3.5 w-3.5" />
                                                 </button>
-                                              </>
+                                              )}
+                                            </div>
+                                            {!item.productId &&
+                                              item.candidates &&
+                                              item.candidates.length > 0 && (
+                                                <div className="flex flex-wrap gap-1">
+                                                  {item.candidates.slice(0, 3).map((c) => (
+                                                    <button
+                                                      key={c.productId}
+                                                      type="button"
+                                                      onClick={() =>
+                                                        handleProductSelect(i, c.productId, {
+                                                          id: c.productId,
+                                                          name: c.name,
+                                                          sku: c.sku ?? undefined,
+                                                        })
+                                                      }
+                                                      className="inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 transition-colors hover:bg-brand-100"
+                                                    >
+                                                      Did you mean {c.name}? (
+                                                      {Math.round(c.score * 100)}%)
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            {!item.productId && (
+                                              <input
+                                                type="text"
+                                                value={item.description}
+                                                onChange={(e) =>
+                                                  updateItem(i, { description: e.target.value })
+                                                }
+                                                placeholder="Custom description (won't update stock)"
+                                                className="w-full rounded-lg border border-surface-border px-2.5 py-1.5 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                              />
                                             )}
                                           </div>
                                         </td>
@@ -2025,16 +2083,18 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         </div>
       </div>
 
-      {/* Quick-create a product from an unmatched extracted line: name pre-filled
-          from the invoice text, sell price suggested at cost + 30% (editable),
-          the invoice cost saved as standardCost — finish setup later. */}
+      {/* Full product form (variants, regulated section/subcategory, description,
+          costing, units/box, images) pre-filled from the unmatched extracted line:
+          name + scanned SKU, sell price suggested at cost + 30% (editable), the
+          invoice cost pre-filled as standardCost — finish setup later. */}
       {createFromRow != null && reviewItems[createFromRow] && (
-        <InlineCreateProductModal
+        <ProductCreateModal
           isOpen
           onClose={() => setCreateFromRow(null)}
           initialName={
             reviewItems[createFromRow].extractedName || reviewItems[createFromRow].description
           }
+          initialSku={reviewItems[createFromRow].sku ?? undefined}
           initialPrice={
             parseFloat(reviewItems[createFromRow].unitCost) > 0
               ? roundMoney(parseFloat(reviewItems[createFromRow].unitCost) * 1.3)

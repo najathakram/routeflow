@@ -17,6 +17,9 @@ interface ScanLine {
   confidence?: ScanConfidence;
   /** Set once the operator has explicitly mapped or dismissed this line in the review UI. */
   reviewed?: boolean;
+  sku?: string | null;
+  /** Ranked weak-match suggestions when the scanner didn't auto-assign (see product-matcher.ts). */
+  candidates?: Array<{ productId: string; name: string; sku: string | null; score: number }>;
 }
 interface ExtractedInvoice {
   supplier?: string | null;
@@ -290,6 +293,18 @@ export class BatchImportService {
           line.matchedProductName = name;
           line.confidence = "high"; // operator-confirmed
           line.reviewed = true;
+          // Teach the matcher: an operator pick on a batch-review line is exactly
+          // as strong a signal as the web scanner's inline mapping-save — without
+          // this, batch-review corrections taught the matcher nothing.
+          const supplierName = payload.supplier?.trim();
+          const rawDescription = line.extractedName?.trim();
+          if (supplierName && rawDescription) {
+            await this.vendorBills.saveProductMapping(
+              supplierName,
+              rawDescription,
+              patch.productId,
+            );
+          }
         } else if (patch.keepCustom) {
           line.matchedProductId = null;
           line.matchedProductName = null;

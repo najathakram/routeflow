@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { X, Sparkles, Check } from "lucide-react";
+import { X, Sparkles, Check, Plus } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
 import { SupplierSelect } from "./SupplierSelect";
 import { SearchableProductPicker } from "./SearchableProductPicker";
+import { ProductCreateModal } from "./ProductCreateModal";
 import { useSuppliers } from "@/lib/api/inventory";
-import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
 import {
   useResolveItem,
   useUpdateBatchItem,
@@ -36,13 +37,6 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
   const { toast } = useToast();
   const { data: suppliersData } = useSuppliers();
   const suppliers = (suppliersData as { id: string; name: string }[] | undefined) ?? [];
-  const { data: productsData } = useProducts({ limit: 1000 });
-  const products =
-    (
-      productsData as
-        | { data: { id: string; name: string; sku?: string; isActive?: boolean }[] }
-        | undefined
-    )?.data ?? [];
 
   const updateItem = useUpdateBatchItem();
   const resolveItem = useResolveItem();
@@ -50,7 +44,10 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
   const [supplierId, setSupplierId] = React.useState(item.supplierMatchId ?? "");
   // Local per-line decisions since the last save: productId picked, or "keep as custom".
   const [picks, setPicks] = React.useState<Record<number, string>>({});
+  const [pickLabels, setPickLabels] = React.useState<Record<number, string>>({});
   const [customized, setCustomized] = React.useState<Record<number, boolean>>({});
+  // Index of the line the operator is creating a brand-new product for, if any.
+  const [createFromRow, setCreateFromRow] = React.useState<number | null>(null);
 
   const payload = item.extractedPayload;
   const lines = payload?.items ?? [];
@@ -206,21 +203,59 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <SearchableProductPicker
-                          value={picks[i] ?? ""}
-                          onChange={(id) => setPicks((p) => ({ ...p, [i]: id }))}
-                          products={products}
-                          className="flex-1"
-                          placeholder="Link to a product…"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setCustomized((c) => ({ ...c, [i]: true }))}
-                          className="shrink-0 rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-medium text-navy transition-colors hover:bg-white"
-                        >
-                          Keep custom
-                        </button>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <SearchableProductPicker
+                            async
+                            value={picks[i] ?? ""}
+                            selectedLabel={
+                              pickLabels[i] ?? line.matchedProductName ?? line.extractedName
+                            }
+                            onChange={(id, product) => {
+                              setPicks((p) => ({ ...p, [i]: id }));
+                              setPickLabels((l) => ({
+                                ...l,
+                                [i]: product ? displayProductName(product) : "",
+                              }));
+                            }}
+                            className="flex-1"
+                            placeholder="Link to a product…"
+                          />
+                          {!picks[i] && (
+                            <button
+                              type="button"
+                              onClick={() => setCreateFromRow(i)}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-surface-border text-brand-600 transition-colors hover:bg-brand-50"
+                              title="Add as new product"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setCustomized((c) => ({ ...c, [i]: true }))}
+                            className="shrink-0 rounded-lg border border-surface-border px-2.5 py-1.5 text-xs font-medium text-navy transition-colors hover:bg-white"
+                          >
+                            Keep custom
+                          </button>
+                        </div>
+                        {!picks[i] && line.candidates && line.candidates.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {line.candidates.slice(0, 3).map((c) => (
+                              <button
+                                key={c.productId}
+                                type="button"
+                                onClick={() => {
+                                  setPicks((p) => ({ ...p, [i]: c.productId }));
+                                  setPickLabels((l) => ({ ...l, [i]: c.name }));
+                                }}
+                                className="rounded-full border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-100"
+                              >
+                                Did you mean {c.name}? ({Math.round(c.score * 100)}%)
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -256,6 +291,26 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
           </div>
         </div>
       </div>
+
+      {createFromRow != null && (
+        <ProductCreateModal
+          isOpen
+          onClose={() => setCreateFromRow(null)}
+          onCreated={(product) => {
+            setPicks((p) => ({ ...p, [createFromRow]: product.id }));
+            setPickLabels((l) => ({ ...l, [createFromRow]: product.name }));
+            setCreateFromRow(null);
+          }}
+          initialName={lines[createFromRow]?.extractedName ?? undefined}
+          initialSku={lines[createFromRow]?.sku ?? undefined}
+          initialPrice={
+            lines[createFromRow]?.unitCost != null
+              ? lines[createFromRow].unitCost! * 1.3
+              : undefined
+          }
+          initialCost={lines[createFromRow]?.unitCost ?? undefined}
+        />
+      )}
     </div>
   );
 }

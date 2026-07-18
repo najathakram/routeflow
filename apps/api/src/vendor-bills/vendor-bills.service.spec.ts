@@ -397,6 +397,108 @@ describe("VendorBillsService", () => {
       ).rejects.toThrow(/couldn't read any/i);
       expect(mockAnthropicCreate).not.toHaveBeenCalled();
     });
+
+    it("does NOT auto-assign a weak (0.35-0.6) fuzzy match — line comes back unlinked with candidates", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-1",
+          name: "Wheat Bread",
+          sku: null,
+          barcode: null,
+          parentProductId: null,
+          parent: null,
+        },
+      ]);
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [{ extractedName: "Wheat Bread Multigrain Extra", qty: 1, unitCost: 2.5 }],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(result.items[0]).toMatchObject({
+        matchedProductId: null,
+        matchedProductName: null,
+        confidence: "low",
+      });
+      expect(result.items[0].candidates?.length).toBeGreaterThan(0);
+      expect(result.items[0].candidates[0]).toMatchObject({ productId: "prod-1" });
+    });
+
+    it("a learned product mapping wins over a competing exact-name catalog match and returns the composed name", async () => {
+      prisma.productMapping.findMany.mockResolvedValue([
+        {
+          supplierName: "Acme Foods",
+          rawDescription: "big red cinnamon gum",
+          productId: "prod-9",
+          product: {
+            id: "prod-9",
+            name: "Cinnamon",
+            sku: null,
+            barcode: null,
+            parentProductId: "parent-1",
+            parent: { name: "Big Red Chewing Gum" },
+          },
+        },
+      ]);
+      // A decoy catalog product that would otherwise win an EXACT name match —
+      // the learned mapping must be checked first and take priority regardless.
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-decoy",
+          name: "Big Red Cinnamon Gum",
+          sku: null,
+          barcode: null,
+          parentProductId: null,
+          parent: null,
+        },
+      ]);
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [{ extractedName: "Big Red Cinnamon Gum", qty: 2, unitCost: 3 }],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(result.items[0]).toMatchObject({
+        matchedProductId: "prod-9",
+        matchedProductName: "Big Red Chewing Gum - Cinnamon",
+        confidence: "high",
+      });
+      expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    it("carries the per-line sku through from the OCR JSON to the response", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              supplier: "Acme Foods",
+              items: [{ extractedName: "Widget", sku: "SKU-777", qty: 1, unitCost: 5 }],
+            }),
+          },
+        ],
+      });
+
+      const result = await service.scanInvoice([jpegPage]);
+
+      expect(result.items[0].sku).toBe("SKU-777");
+    });
   });
 
   describe("recordPayment", () => {
