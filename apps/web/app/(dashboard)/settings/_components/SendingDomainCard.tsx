@@ -157,7 +157,7 @@ export function SendingDomainCard() {
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
             Platform email isn’t set up yet — an admin needs to add the email service key before
-            domains can be verified. Until then, use custom SMTP below.
+            domains can be verified. Your own SMTP setup above works independently of this.
           </span>
         </div>
       )}

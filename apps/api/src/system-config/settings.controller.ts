@@ -247,6 +247,26 @@ export class SettingsController {
       "smtpPassword",
       "smtpSecure",
     ];
+    // Credential-exfil guard: the stored password belongs to a specific mailbox+server.
+    // If the host or user CHANGES without a new password, CLEAR the stored one — never
+    // silently replay a saved password against a different server (a hostile/typo'd
+    // host would receive the old credential on the next send).
+    const newHost = typeof dto.smtpHost === "string" ? dto.smtpHost : undefined;
+    const newUser = typeof dto.smtpUser === "string" ? dto.smtpUser : undefined;
+    const passwordProvided =
+      typeof dto.smtpPassword === "string" &&
+      dto.smtpPassword !== "" &&
+      dto.smtpPassword !== "••••••••";
+    if (!passwordProvided && (newHost !== undefined || newUser !== undefined)) {
+      const [curHost, curUser] = await Promise.all([
+        this.svc.get("email.smtpHost"),
+        this.svc.get("email.smtpUser"),
+      ]);
+      const mailboxChanged =
+        (newHost !== undefined && newHost !== (curHost ?? "")) ||
+        (newUser !== undefined && newUser !== (curUser ?? ""));
+      if (mailboxChanged) await this.svc.set("email.smtpPassword", "");
+    }
     await Promise.all(
       allowed
         .filter((k) => dto[k] !== undefined && dto[k] !== "••••••••") // don't overwrite with masked password
@@ -259,6 +279,33 @@ export class SettingsController {
   @HttpCode(HttpStatus.OK)
   async testEmailSettings(@Body() dto: { toEmail: string }) {
     return this.emailService.sendTestEmail(dto.toEmail);
+  }
+
+  /**
+   * Pre-save SMTP connection check: real handshake + login with the candidate
+   * settings (password optional — falls back to the saved one for the same
+   * mailbox/server). Returns {ok, message} with actionable, provider-aware guidance;
+   * never 500s for a connection problem.
+   */
+  @Post("email/verify")
+  @HttpCode(HttpStatus.OK)
+  async verifyEmailConnection(
+    @Body()
+    dto: {
+      smtpHost?: string;
+      smtpPort?: number;
+      smtpUser?: string;
+      smtpPassword?: string;
+      smtpSecure?: boolean;
+    },
+  ) {
+    return this.emailService.verifySmtpConnection({
+      host: dto.smtpHost,
+      port: dto.smtpPort,
+      secure: dto.smtpSecure,
+      user: dto.smtpUser,
+      password: dto.smtpPassword,
+    });
   }
 
   // ─── Sending domain (Resend, per-tenant own-domain verification) ──────────────
