@@ -266,6 +266,19 @@ export class TenantsService {
     if (dto.smtpFromName !== undefined) data.smtpFromName = dto.smtpFromName;
     if (dto.smtpFromEmail !== undefined) data.smtpFromEmail = dto.smtpFromEmail;
 
+    // Credential-exfil guard (mirrors SettingsController.updateEmailSettings): the stored
+    // password belongs to a specific mailbox+server. If the host or user CHANGES without a
+    // new password, CLEAR the stored one — never silently replay a saved credential against
+    // a different server (a hostile/typo'd host would otherwise receive the tenant's real
+    // password on the next send). A blank/omitted password with an unchanged mailbox keeps
+    // the existing credential.
+    const changingHost = dto.smtpHost !== undefined && dto.smtpHost !== cfg.smtpHost;
+    const changingUser = dto.smtpUser !== undefined && dto.smtpUser !== cfg.smtpUser;
+    const settingPassword = dto.smtpPassword !== undefined && dto.smtpPassword !== "";
+    if ((changingHost || changingUser) && !settingPassword) {
+      data.smtpPassword = null;
+    }
+
     await this.prisma.tenantConfig.update({ where: { tenantId }, data });
     return this.getEmailConfig(tenantId);
   }

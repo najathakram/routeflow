@@ -46,6 +46,102 @@ function assertSafeSmtpEndpoint(host: string, port: number): void {
   }
 }
 
+/**
+ * Translate a raw SMTP failure into plain-language, provider-aware guidance the
+ * operator can act on. Exported for tests. The raw error is logged by the caller —
+ * this string is what the settings UI shows, so it must say what to DO, not just
+ * what happened. Keyed on the well-known responses of the providers tenants
+ * actually use (Gmail app-passwords, Microsoft 365's disabled-by-default SMTP
+ * auth) with sensible fallbacks for connection/TLS problems.
+ */
+export function mapSmtpError(
+  err: { message?: string; code?: string; responseCode?: number } | null | undefined,
+  host: string,
+  port: number,
+): string {
+  const msg = err?.message ?? "";
+  const code = err?.code ?? "";
+  const lower = msg.toLowerCase();
+  const h = (host ?? "").toLowerCase();
+
+  // Microsoft 365 / Outlook (incl. GoDaddy-M365): SMTP AUTH is disabled by default.
+  if (lower.includes("smtpclientauthentication is disabled") || msg.includes("5.7.139")) {
+    return (
+      "Microsoft 365 is blocking SMTP sign-in for this mailbox (it's off by default). " +
+      "An admin must enable 'Authenticated SMTP' for the mailbox: Microsoft 365 admin center → " +
+      "Users → Active users → select the user → Mail → Manage email apps → tick 'Authenticated SMTP'. " +
+      "Wait a few minutes, then test again."
+    );
+  }
+  if (lower.includes("basic authentication is disabled") || lower.includes("basic auth")) {
+    return (
+      "This mailbox has basic (password) sign-in disabled. Enable 'Authenticated SMTP' for it in the " +
+      "Microsoft 365 admin center, or use an app password if your organisation requires one."
+    );
+  }
+
+  // Gmail: normal passwords are always rejected — an App Password is required.
+  if (lower.includes("application-specific password") || msg.includes("5.7.9")) {
+    return (
+      "Google rejected this password because Gmail requires an App Password for SMTP (your normal " +
+      "password won't work). Turn on 2-Step Verification, then create one at " +
+      "myaccount.google.com/apppasswords and paste the 16-character code here."
+    );
+  }
+  if (code === "EAUTH" || msg.includes("535") || lower.includes("password not accepted")) {
+    const gmailHint = h.includes("gmail")
+      ? " Gmail needs an App Password (myaccount.google.com/apppasswords), not your normal password."
+      : h.includes("office365") || h.includes("outlook")
+        ? " For Microsoft 365, make sure 'Authenticated SMTP' is enabled for the mailbox, and use an app password if you have 2-step verification."
+        : "";
+    return `The email address or password wasn't accepted by the mail server.${gmailHint} Double-check both and try again.`;
+  }
+
+  // Connection-level problems: wrong host, wrong port, or a TLS mismatch.
+  if (code === "EDNS" || code === "ENOTFOUND" || lower.includes("getaddrinfo")) {
+    return `The mail server "${host}" couldn't be found — check the SMTP host name.`;
+  }
+  if (
+    code === "ETIMEDOUT" ||
+    code === "ESOCKET" ||
+    code === "ECONNECTION" ||
+    code === "ECONNREFUSED" ||
+    lower.includes("timeout")
+  ) {
+    return (
+      `Couldn't reach ${host}:${port}. Check the host and port — the usual pairs are ` +
+      "port 587 with the secure toggle OFF (STARTTLS) or port 465 with it ON (SSL)."
+    );
+  }
+  if (lower.includes("certificate") || lower.includes("ssl") || lower.includes("tls")) {
+    return (
+      "Secure-connection mismatch with the mail server. Try port 587 with the secure toggle OFF, " +
+      "or port 465 with it ON."
+    );
+  }
+
+  // Fallback for uncovered codes (EHOSTUNREACH, ENETUNREACH, ECONNRESET, …). Node embeds
+  // the RESOLVED ip:port in these messages (e.g. "connect EHOSTUNREACH 10.0.1.4:587"); since
+  // the tenant controls the host, this endpoint must not become an internal-network probe
+  // that echoes back resolved private IPs — redact any address literal before surfacing it.
+  const safe = redactAddresses(msg);
+  return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
+}
+
+/**
+ * Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback).
+ * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
+ * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
+ * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
+ * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
+ * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
+ */
+function redactAddresses(msg: string): string {
+  return msg
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
+    .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -261,9 +357,7 @@ export class EmailService {
   }
 
   /** Normalize Resend's records array to a stable DNS-record shape for the UI. */
-  private mapDomainRecords(
-    records: any,
-  ): Array<{
+  private mapDomainRecords(records: any): Array<{
     record: string;
     type: string;
     name: string;
@@ -421,6 +515,65 @@ export class EmailService {
     }
     await this.writeSendingDomainConfig(null);
     return this.getSendingDomainStatus();
+  }
+
+  // ─── Verify SMTP connection (pre-save) ─────────────────────────────────────
+
+  /**
+   * Do a REAL SMTP handshake + login with the given (possibly unsaved) settings and
+   * report the result in plain language — so a tenant knows their credentials work
+   * BEFORE saving, instead of discovering a typo on the first invoice send. When
+   * `password` is blank, falls back to the tenant's saved password (lets them re-test
+   * after saving without retyping). Never throws for a connection problem; the SSRF
+   * guard's rejection is also returned as a friendly failure.
+   */
+  async verifySmtpConnection(candidate: {
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    user?: string;
+    password?: string;
+  }): Promise<{ ok: boolean; message: string }> {
+    const host = candidate.host?.trim() ?? "";
+    const user = candidate.user?.trim() ?? "";
+    const port = Number(candidate.port ?? 587);
+    let pass = candidate.password ?? "";
+    if (!pass) {
+      const saved = await this.getTenantEmailConfig();
+      // Only reuse the saved password when it belongs to the same mailbox+server —
+      // a saved Gmail password must not be replayed against a newly-typed host.
+      if (saved && saved.host === host && saved.user === user) pass = saved.pass;
+    }
+    if (!host || !user || !pass) {
+      return {
+        ok: false,
+        message: "Enter the SMTP host, email address, and password first, then test again.",
+      };
+    }
+
+    try {
+      assertSafeSmtpEndpoint(host, port);
+    } catch (err: any) {
+      return { ok: false, message: err?.message ?? "SMTP host is not permitted" };
+    }
+
+    try {
+      const transport = nodemailer.createTransport({
+        host,
+        port,
+        secure: !!candidate.secure,
+        auth: { user, pass },
+        // Fail fast — the settings UI is waiting on this round-trip.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 15_000,
+      });
+      await transport.verify();
+      return { ok: true, message: "Connection successful — your credentials were accepted." };
+    } catch (err: any) {
+      this.logger.warn(`SMTP verify failed for ${host}:${port} — ${err?.message}`);
+      return { ok: false, message: mapSmtpError(err, host, port) };
+    }
   }
 
   // ─── Send test email ───────────────────────────────────────────────────────

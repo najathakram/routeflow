@@ -42,6 +42,7 @@ import {
   Landmark,
   ArrowLeft,
   ChevronDown,
+  Plug,
 } from "lucide-react";
 import {
   Input,
@@ -1054,9 +1055,39 @@ const EMAIL_PROVIDERS = [
     helpLinkLabel: "Open App Passwords →",
   },
   {
+    id: "microsoft365",
+    label: "Microsoft 365 / Outlook",
+    description: "Office 365, Outlook.com, and GoDaddy Microsoft 365 email",
+    logo: (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+        <rect x="1" y="1" width="10" height="10" fill="#F25022" />
+        <rect x="13" y="1" width="10" height="10" fill="#7FBA00" />
+        <rect x="1" y="13" width="10" height="10" fill="#00A4EF" />
+        <rect x="13" y="13" width="10" height="10" fill="#FFB900" />
+      </svg>
+    ),
+    smtpHost: "smtp.office365.com",
+    smtpPort: 587,
+    smtpSecure: false,
+    userLabel: "Email address",
+    userPlaceholder: "you@yourbusiness.com",
+    passwordLabel: "Password (or app password)",
+    passwordPlaceholder: "Your email password",
+    helpTitle: "SMTP sign-in must be enabled for your mailbox",
+    helpSteps: [
+      "Microsoft turns SMTP sign-in OFF by default — an admin must enable it once",
+      "Microsoft 365 admin center → Users → Active users → select the user",
+      'Open the "Mail" tab → "Manage email apps" → tick "Authenticated SMTP" → Save',
+      "If you use 2-step verification, create an app password and use it here",
+      "GoDaddy email is usually Microsoft 365 — this preset is the right one for it",
+    ],
+    helpLink: "https://aka.ms/smtp_auth_disabled",
+    helpLinkLabel: "How to enable SMTP sign-in →",
+  },
+  {
     id: "godaddy",
-    label: "GoDaddy",
-    description: "Send from your GoDaddy-hosted business email",
+    label: "GoDaddy Workspace (legacy)",
+    description: "Older GoDaddy Workspace Email only — newer GoDaddy email is Microsoft 365",
     logo: (
       <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
         <path
@@ -1072,14 +1103,35 @@ const EMAIL_PROVIDERS = [
     userPlaceholder: "you@yourbusiness.com",
     passwordLabel: "Email password",
     passwordPlaceholder: "Your GoDaddy email password",
-    helpTitle: "Use your GoDaddy email credentials",
+    helpTitle: "Only for legacy Workspace Email",
     helpSteps: [
-      "Use the full email address you created in GoDaddy",
-      "Use the password you set for that email account",
+      'If your GoDaddy email is Microsoft 365 (most are now), pick "Microsoft 365 / Outlook" instead',
+      "Use the full email address you created in GoDaddy and its password",
       "If you forgot it, reset it in GoDaddy → Email & Office → Manage",
     ],
     helpLink: "https://email.godaddy.com",
     helpLinkLabel: "Open GoDaddy Email →",
+  },
+  {
+    id: "custom",
+    label: "Other / custom SMTP",
+    description: "Any provider — enter the SMTP details yourself",
+    logo: <Mail className="h-5 w-5 text-navy/60" aria-hidden="true" />,
+    smtpHost: "",
+    smtpPort: 587,
+    smtpSecure: false,
+    userLabel: "Email address",
+    userPlaceholder: "you@yourbusiness.com",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Your email or app password",
+    helpTitle: "Where to find these details",
+    helpSteps: [
+      'Search your provider\'s help for "SMTP settings" (host, port, SSL)',
+      "Port 587 usually pairs with the secure toggle OFF (STARTTLS); port 465 with it ON (SSL)",
+      "Providers with 2-step verification usually need an app password instead of your normal one",
+    ],
+    helpLink: "",
+    helpLinkLabel: "",
   },
 ] as const;
 
@@ -1095,36 +1147,113 @@ function EmailSettingsTab() {
   const [emailAddress, setEmailAddress] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [fromName, setFromName] = React.useState("");
+  // Custom-provider SMTP details (only used when the "custom" preset is selected).
+  const [customHost, setCustomHost] = React.useState("");
+  const [customPort, setCustomPort] = React.useState("587");
+  const [customSecure, setCustomSecure] = React.useState(false);
+  const [isVerifying, setIsVerifying] = React.useState(false);
+  // Last connection-check outcome, shown inline so the guidance stays visible
+  // (toast text disappears too fast for a multi-step fix like enabling SMTP auth).
+  const [verifyResult, setVerifyResult] = React.useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   const { data: savedSettings } = useQuery({
     queryKey: ["settings", "email"],
     queryFn: () => apiClient.get("/settings/email").then((r) => r.data),
   });
 
-  // Detect provider from saved SMTP host
+  // Detect provider from the saved SMTP host. Match the host EXACTLY against a preset's
+  // host (not a loose substring) — otherwise a legitimate custom host that merely contains
+  // a brand word (e.g. Google Workspace's "smtp-relay.gmail.com") would be reclassified to
+  // a preset whose hardcoded host ("smtp.gmail.com") then overwrites the real one on save.
   React.useEffect(() => {
     if (!savedSettings) return;
-    const host = savedSettings.smtpHost ?? "";
-    if (host.includes("gmail")) setSelectedProvider("gmail");
-    else if (host.includes("secureserver")) setSelectedProvider("godaddy");
+    const host = (savedSettings.smtpHost ?? "").trim();
+    const preset = host
+      ? EMAIL_PROVIDERS.find((p) => p.smtpHost && p.smtpHost.toLowerCase() === host.toLowerCase())
+      : undefined;
+    if (preset) {
+      setSelectedProvider(preset.id);
+    } else if (host) {
+      setSelectedProvider("custom");
+      setCustomHost(host);
+      setCustomPort(String(savedSettings.smtpPort ?? 587));
+      setCustomSecure(!!savedSettings.smtpSecure);
+    }
     setEmailAddress(savedSettings.smtpUser ?? "");
     setFromName(savedSettings.fromName ?? "");
     // Don't pre-fill password — it's masked server-side
   }, [savedSettings]);
 
   const provider = EMAIL_PROVIDERS.find((p) => p.id === selectedProvider);
+  const isCustom = provider?.id === "custom";
+  // The SMTP endpoint actually in play: preset values, or the custom fields.
+  const effective = provider
+    ? {
+        host: isCustom ? customHost.trim() : provider.smtpHost,
+        port: isCustom ? parseInt(customPort, 10) || 587 : provider.smtpPort,
+        secure: isCustom ? customSecure : provider.smtpSecure,
+      }
+    : null;
+
+  const handleVerifyConnection = async () => {
+    if (!effective?.host || !emailAddress) {
+      toast({ title: "Pick a provider and enter your email address first", variant: "error" });
+      return;
+    }
+    setIsVerifying(true);
+    setVerifyResult(null);
+    try {
+      // Blank password → the server re-uses the SAVED password for this same
+      // mailbox+server, so a re-test after saving doesn't need retyping.
+      const { data } = await apiClient.post("/settings/email/verify", {
+        smtpHost: effective.host,
+        smtpPort: effective.port,
+        smtpSecure: effective.secure,
+        smtpUser: emailAddress,
+        smtpPassword: password || undefined,
+      });
+      setVerifyResult(data);
+    } catch (e: any) {
+      setVerifyResult({
+        ok: false,
+        message: e?.response?.data?.message || "The connection test failed. Try again.",
+      });
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   const handleSave = async () => {
-    if (!provider) {
+    if (!provider || !effective) {
       toast({ title: "Select an email provider first", variant: "error" });
+      return;
+    }
+    if (isCustom && !effective.host) {
+      toast({ title: "Enter your provider's SMTP host", variant: "error" });
       return;
     }
     if (!emailAddress) {
       toast({ title: "Enter your email address", variant: "error" });
       return;
     }
-    if (!password && !savedSettings?.configured) {
-      toast({ title: "Enter your password", variant: "error" });
+    // A saved password only carries over for the SAME mailbox+server — switching
+    // provider/host/address needs the password re-entered (the server clears the old
+    // one rather than replay it against a different server).
+    const mailboxChanged =
+      savedSettings?.smtpConfigured &&
+      (effective.host !== (savedSettings?.smtpHost ?? "") ||
+        emailAddress !== (savedSettings?.smtpUser ?? ""));
+    if (!password && (!savedSettings?.smtpConfigured || mailboxChanged)) {
+      toast({
+        title: "Enter your password",
+        description: mailboxChanged
+          ? "You changed the email address or server, so the password must be re-entered."
+          : undefined,
+        variant: "error",
+      });
       return;
     }
 
@@ -1133,11 +1262,11 @@ function EmailSettingsTab() {
       await apiClient.post("/settings/email", {
         fromName: fromName || emailAddress,
         fromEmail: emailAddress,
-        smtpHost: provider.smtpHost,
-        smtpPort: provider.smtpPort,
+        smtpHost: effective.host,
+        smtpPort: effective.port,
         smtpUser: emailAddress,
         smtpPassword: password || undefined, // don't overwrite if blank
-        smtpSecure: provider.smtpSecure,
+        smtpSecure: effective.secure,
       });
       qc.invalidateQueries({ queryKey: ["settings", "email"] });
       toast({ title: "Email settings saved", variant: "success" });
@@ -1178,17 +1307,18 @@ function EmailSettingsTab() {
 
   return (
     <div className="space-y-6">
-      {/* Recommended path: send from your own domain via the platform (Resend). */}
-      <SendingDomainCard />
-
-      {/* Advanced fallback: send through your own SMTP mailbox. Collapsed by default —
-          it only reliably works for a single mailbox that allows SMTP auth. */}
-      <details className="group max-w-xl overflow-hidden rounded-card border border-surface-border bg-white [&_summary]:list-none">
-        <summary className="flex cursor-pointer items-center justify-between gap-2 px-5 py-4 text-sm font-medium text-navy hover:bg-surface-secondary/40">
-          <span>Advanced — send through your own SMTP server</span>
-          <ChevronDown className="h-4 w-4 text-navy/40 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="space-y-6 border-t border-surface-border p-5">
+      {/* PRIMARY: each tenant sends through its own email account (BYO SMTP) — their
+          address, their provider, no third-party account. The platform/domain path
+          below is the optional alternative. */}
+      <div className="max-w-xl overflow-hidden rounded-card border border-surface-border bg-white">
+        <div className="border-b border-surface-border px-5 py-4">
+          <p className="text-sm font-semibold text-navy">Send from your own email</p>
+          <p className="mt-0.5 text-xs text-navy/60">
+            Connect the email account your business already uses — invoices and reminders go out
+            from that exact address.
+          </p>
+        </div>
+        <div className="space-y-6 p-5">
           {/* Step 1 — Pick provider */}
           <div className="space-y-2">
             <p className="text-sm font-semibold text-navy">Step 1 — Choose your email provider</p>
@@ -1221,6 +1351,41 @@ function EmailSettingsTab() {
               <div className="space-y-4">
                 <p className="text-sm font-semibold text-navy">Step 2 — Enter your credentials</p>
 
+                {/* Custom provider: the SMTP endpoint itself */}
+                {isCustom && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_110px_auto]">
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-navy">SMTP host</label>
+                      <input
+                        type="text"
+                        placeholder="smtp.yourprovider.com"
+                        value={customHost}
+                        onChange={(e) => setCustomHost(e.target.value)}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-sm font-medium text-navy">Port</label>
+                      <input
+                        type="number"
+                        placeholder="587"
+                        value={customPort}
+                        onChange={(e) => setCustomPort(e.target.value)}
+                        className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <label className="flex items-end gap-2 pb-2.5 text-sm text-navy">
+                      <input
+                        type="checkbox"
+                        checked={customSecure}
+                        onChange={(e) => setCustomSecure(e.target.checked)}
+                        className="h-4 w-4 rounded border-surface-border"
+                      />
+                      SSL (465)
+                    </label>
+                  </div>
+                )}
+
                 {/* Display name */}
                 <div className="space-y-1">
                   <label className="block text-sm font-medium text-navy">
@@ -1251,6 +1416,10 @@ function EmailSettingsTab() {
                     autoComplete="off"
                     className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
+                  <p className="text-xs text-navy/70">
+                    Emails send from this exact address — it must be the mailbox you sign in with
+                    (providers reject a mismatched sender).
+                  </p>
                 </div>
 
                 {/* Password */}
@@ -1262,7 +1431,7 @@ function EmailSettingsTab() {
                     <input
                       type={showPassword ? "text" : "password"}
                       placeholder={
-                        savedSettings?.configured
+                        savedSettings?.smtpConfigured
                           ? "Leave blank to keep current password"
                           : provider.passwordPlaceholder
                       }
@@ -1296,18 +1465,47 @@ function EmailSettingsTab() {
                     </li>
                   ))}
                 </ol>
-                <a
-                  href={provider.helpLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block mt-1 text-xs font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
-                >
-                  {provider.helpLinkLabel}
-                </a>
+                {provider.helpLink && (
+                  <a
+                    href={provider.helpLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block mt-1 text-xs font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
+                  >
+                    {provider.helpLinkLabel}
+                  </a>
+                )}
               </div>
 
+              {/* Connection-check result — inline (not a toast) so multi-step fixes
+                  like enabling M365 SMTP auth stay readable while the operator acts. */}
+              {verifyResult && (
+                <div
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg px-4 py-3 text-sm",
+                    verifyResult.ok ? "bg-success-bg text-success" : "bg-danger-bg text-danger",
+                  )}
+                >
+                  {verifyResult.ok ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  <span>{verifyResult.message}</span>
+                </div>
+              )}
+
               {/* Actions */}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleVerifyConnection}
+                  loading={isVerifying}
+                  leftIcon={<Plug className="h-4 w-4" />}
+                >
+                  Test connection
+                </Button>
                 <Button
                   type="button"
                   onClick={handleSave}
@@ -1338,6 +1536,18 @@ function EmailSettingsTab() {
               Email is configured and ready to send
             </div>
           )}
+        </div>
+      </div>
+
+      {/* OPTIONAL: RouteFlow-managed sending (platform transactional service with a
+          verified domain) — for tenants who don't want to touch their mail account. */}
+      <details className="group max-w-xl overflow-hidden rounded-card border border-surface-border bg-white [&_summary]:list-none">
+        <summary className="flex cursor-pointer items-center justify-between gap-2 px-5 py-4 text-sm font-medium text-navy hover:bg-surface-secondary/40">
+          <span>Optional — let RouteFlow send for you (verified domain)</span>
+          <ChevronDown className="h-4 w-4 text-navy/40 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="border-t border-surface-border p-4">
+          <SendingDomainCard />
         </div>
       </details>
     </div>
