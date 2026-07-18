@@ -111,6 +111,7 @@ export interface AdminOrder {
   subtotal: number;
   tax: number;
   total: number;
+  customerId: string;
   shippingFee?: number | string;
   notes?: string;
   requestedDeliveryDate?: string;
@@ -168,6 +169,8 @@ export interface AdminOrder {
       unit: string;
       unitsPerBox?: number | null;
       pricePerUnit?: number | string;
+      averageCost?: number | string | null;
+      category?: string | null;
     };
   }>;
   /**
@@ -175,13 +178,37 @@ export interface AdminOrder {
    * them from GET /orders/:id). Mirrors web's Invoice card: a CONFIRMED order can
    * already have a draft invoice, which mobile now surfaces + can open.
    */
-  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
+  invoices?: Array<{
+    id: string;
+    invoiceNumber: string;
+    status: string;
+    total: number;
+    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+  }>;
   /**
    * P5-08 edit-window descriptor (server-computed). `editable` is the single source
    * of truth for whether items can be edited — mobile trusts it instead of
    * re-deriving from status, so it tracks the API gate (incl. post-delivery edits).
    */
   editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null };
+  /**
+   * Order-scoped credit-note intents (server: OrderCreditNote). Already returned
+   * by GET /orders/:id's include — was untyped, forcing `as any` on the detail screen.
+   */
+  orderCreditNotes?: Array<{
+    id: string;
+    creditNoteId: string;
+    amount?: number | string | null;
+    creditNote?: {
+      id: string;
+      creditNoteNumber: string;
+      reason?: string | null;
+      amount: number | string;
+      amountUsed?: number | string;
+      status: string;
+      expiresAt?: string | null;
+    };
+  }>;
 }
 
 export function useAdminOrders(params?: {
@@ -312,6 +339,9 @@ export interface AdminInvoice {
     bankCharges?: number;
     paidAt: string;
     createdAt: string;
+    creditNote?: { id: string; creditNoteNumber: string; reason?: string | null } | null;
+    creditNoteId?: string | null;
+    advancePaymentId?: string | null;
   }>;
   items?: Array<{
     id: string;

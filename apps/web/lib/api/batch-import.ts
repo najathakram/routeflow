@@ -28,6 +28,8 @@ export interface ImportBatch {
 export interface ImportScanLine {
   extractedName?: string;
   sku?: string | null;
+  /** Units per box/case/pack, ONLY when the line explicitly shows one (else null). */
+  packSize?: number | null;
   qty?: number;
   unitCost?: number;
   lineTotal?: number | null;

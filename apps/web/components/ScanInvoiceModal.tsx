@@ -64,6 +64,9 @@ interface ReviewItem {
   /** Scanned per-line SKU/item code, if the OCR found one — prefills the
    *  create-product form when the operator adds this line as a new product. */
   sku?: string | null;
+  /** Units per box/case, if the OCR read one — prefills the create-product
+   *  form's units-per-box field when the operator adds this line as a new product. */
+  packSize?: number | null;
   /** Ranked "Did you mean…" suggestions for a line that didn't confidently match. */
   candidates?: ScanCandidate[];
   qty: string;
@@ -484,6 +487,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       description: item.matchedProductName ?? item.extractedName,
       matchedProductName: item.matchedProductName ?? null,
       sku: item.sku ?? null,
+      packSize: item.packSize ?? null,
       candidates: item.candidates,
       qty: String(item.qty ?? 1),
       unitCost: String(item.unitCost ?? ""),
@@ -2101,6 +2105,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               : undefined
           }
           initialCost={parseFloat(reviewItems[createFromRow].unitCost) || undefined}
+          initialUnitsPerBox={reviewItems[createFromRow].packSize ?? undefined}
           onCreated={(product) => {
             const i = createFromRow;
             const item = reviewItems[i];

@@ -49,7 +49,9 @@ export interface ScannedItem {
   confidence: "high" | "medium" | "low" | "none";
   /** Item code / SKU printed on the scanned line, if any (additive). */
   sku?: string | null;
-  /** Ranked suggestions when the line is unmatched (additive; mobile chip UI is deferred). */
+  /** Units per box/case/pack extracted from the line, only when explicit (additive). */
+  packSize?: number | null;
+  /** Ranked suggestions when the line is unmatched — rendered as tap-to-link chips. */
   candidates?: ScanCandidate[];
 }
 

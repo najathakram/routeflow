@@ -646,16 +646,15 @@ export default function OrderDetailScreen() {
           {/* Applied credits — order-scoped credit-note intents (server:
               OrderCreditNote). "Applied so far" sums this credit's CREDIT_NOTE
               payments across the order's invoices; the reason renders via the
-              relation so a later edit shows up here automatically. Types come
-              through untyped (AdminOrder predates this field) — cast defensively. */}
-          {((order as any).orderCreditNotes?.length ?? 0) > 0 ? (
+              relation so a later edit shows up here automatically. */}
+          {(order.orderCreditNotes?.length ?? 0) > 0 ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Applied credits</Text>
-              {(order as any).orderCreditNotes.map((oc: any, i: number) => {
-                const appliedSoFar = ((order as any).invoices ?? [])
-                  .flatMap((inv: any) => inv.payments ?? [])
-                  .filter((p: any) => p.creditNoteId === oc.creditNoteId)
-                  .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+              {order.orderCreditNotes!.map((oc, i) => {
+                const appliedSoFar = (order.invoices ?? [])
+                  .flatMap((inv) => inv.payments ?? [])
+                  .filter((p) => p.creditNoteId === oc.creditNoteId)
+                  .reduce((s, p) => s + Number(p.amount ?? 0), 0);
                 return (
                   <View
                     key={oc.id}

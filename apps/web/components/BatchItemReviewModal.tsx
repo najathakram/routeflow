@@ -309,6 +309,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
               : undefined
           }
           initialCost={lines[createFromRow]?.unitCost ?? undefined}
+          initialUnitsPerBox={lines[createFromRow]?.packSize ?? undefined}
         />
       )}
     </div>

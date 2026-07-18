@@ -297,16 +297,33 @@ function ReviewStep({
                       {isMatched && item.matchedProductName ? " · linked" : ""}
                     </Text>
                     {!isMatched ? (
-                      <View style={styles.lineActions}>
-                        <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
-                          <Ionicons name="link" size={13} color={ios.brand} />
-                          <Text style={styles.lineActionText}>Link</Text>
-                        </Pressable>
-                        <Pressable style={styles.lineActionBtn} onPress={() => setCreateFor(i)}>
-                          <Ionicons name="add-circle-outline" size={13} color={ios.brand} />
-                          <Text style={styles.lineActionText}>Create</Text>
-                        </Pressable>
-                      </View>
+                      <>
+                        <View style={styles.lineActions}>
+                          <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
+                            <Ionicons name="link" size={13} color={ios.brand} />
+                            <Text style={styles.lineActionText}>Link</Text>
+                          </Pressable>
+                          <Pressable style={styles.lineActionBtn} onPress={() => setCreateFor(i)}>
+                            <Ionicons name="add-circle-outline" size={13} color={ios.brand} />
+                            <Text style={styles.lineActionText}>Create</Text>
+                          </Pressable>
+                        </View>
+                        {item.candidates?.length ? (
+                          <View style={styles.candidateChips}>
+                            {item.candidates.slice(0, 3).map((c) => (
+                              <Pressable
+                                key={c.productId}
+                                style={styles.candidateChip}
+                                onPress={() => applyLink(i, c.productId, c.name)}
+                              >
+                                <Text style={styles.candidateChipText} numberOfLines={1}>
+                                  Did you mean {c.name}? ({Math.round(c.score * 100)}%)
+                                </Text>
+                              </Pressable>
+                            ))}
+                          </View>
+                        ) : null}
+                      </>
                     ) : (
                       <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
                         <Ionicons name="swap-horizontal" size={13} color={ios.label2} />
@@ -356,6 +373,7 @@ function ReviewStep({
       <InlineCreateProductSheet
         visible={createFor != null}
         initialName={createFor != null ? result.items[createFor]?.extractedName : undefined}
+        initialCode={createFor != null ? (result.items[createFor]?.sku ?? undefined) : undefined}
         initialPrice={
           createFor != null && (result.items[createFor]?.unitCost ?? 0) > 0
             ? roundMoney((result.items[createFor]!.unitCost as number) * 1.3)
@@ -363,6 +381,9 @@ function ReviewStep({
         }
         initialCost={
           createFor != null ? (result.items[createFor]?.unitCost ?? undefined) : undefined
+        }
+        initialUnitsPerBox={
+          createFor != null ? (result.items[createFor]?.packSize ?? undefined) : undefined
         }
         onClose={() => setCreateFor(null)}
         onCreated={(product: CreatedProduct) => {
@@ -499,6 +520,15 @@ const styles = StyleSheet.create({
   lineActions: { flexDirection: "row", gap: 12, marginTop: 6 },
   lineActionBtn: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 6 },
   lineActionText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  candidateChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  candidateChip: {
+    backgroundColor: ios.brandWash,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    maxWidth: "100%",
+  },
+  candidateChipText: { fontSize: 11, fontFamily: "Inter_500Medium", color: ios.brand },
   confidenceLegend: {
     flexDirection: "row",
     alignItems: "center",

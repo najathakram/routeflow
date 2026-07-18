@@ -18,6 +18,11 @@ import { ProductPickerSheet } from "./ProductPickerSheet";
 import { emptyProductForm, buildProductPayload, type ProductFormValues } from "../lib/product-form";
 import { useCreateProduct, type CreatedProduct } from "../lib/api/products";
 
+/** Only prefill units-per-box from a whole number greater than 1 — never guess/round. */
+function validUnitsPerBoxPrefill(v: number | undefined): boolean {
+  return v != null && Number.isInteger(v) && v > 1;
+}
+
 /**
  * Compact create-product sheet shown when a scan (or typed search) finds no
  * product WHILE the operator is building an order/invoice. Unlike navigating to
@@ -34,6 +39,7 @@ export function InlineCreateProductSheet({
   initialCode,
   initialPrice,
   initialCost,
+  initialUnitsPerBox,
   onClose,
   onCreated,
 }: {
@@ -46,6 +52,8 @@ export function InlineCreateProductSheet({
   initialPrice?: number;
   /** Prefill the standard cost (e.g. the invoice unit cost). */
   initialCost?: number;
+  /** Prefill pieces-per-box from an OCR-extracted pack size (e.g. "12x330ml" -> 12). */
+  initialUnitsPerBox?: number;
   onClose: () => void;
   onCreated: (product: CreatedProduct) => void;
 }) {
@@ -63,10 +71,11 @@ export function InlineCreateProductSheet({
         barcode: initialCode ?? "",
         pricePerUnit: initialPrice != null ? initialPrice.toFixed(2) : "",
         standardCost: initialCost != null ? String(initialCost) : "",
+        unitsPerBox: validUnitsPerBoxPrefill(initialUnitsPerBox) ? String(initialUnitsPerBox) : "",
       });
       setError(null);
     }
-  }, [visible, initialName, initialCode, initialPrice, initialCost]);
+  }, [visible, initialName, initialCode, initialPrice, initialCost, initialUnitsPerBox]);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -213,7 +222,12 @@ export function InlineCreateProductSheet({
 
             <FormField
               label="Pieces per box (optional)"
-              hint="Set if 1 box holds N loose pieces — the price above is then the BOX price."
+              hint={
+                validUnitsPerBoxPrefill(initialUnitsPerBox) &&
+                form.unitsPerBox === String(initialUnitsPerBox)
+                  ? "From the invoice line — verify."
+                  : "Set if 1 box holds N loose pieces — the price above is then the BOX price."
+              }
             >
               <FormTextInput
                 value={form.unitsPerBox}

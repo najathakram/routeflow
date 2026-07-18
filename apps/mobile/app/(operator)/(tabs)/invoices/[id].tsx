@@ -474,13 +474,10 @@ export default function InvoiceDetailScreen() {
                     </Text>
                     {p.reference ? <Text style={styles.payMeta}>Ref: {p.reference}</Text> : null}
                     {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
-                    {/* Credit-note reason via relation (read-time, never copied) —
-                        `creditNote` isn't in the admin.ts payment type yet, so
-                        this arrives untyped at runtime; cast defensively. */}
-                    {p.method === "CREDIT_NOTE" && (p as any).creditNote?.reason ? (
+                    {/* Credit-note reason via relation (read-time, never copied). */}
+                    {p.method === "CREDIT_NOTE" && p.creditNote?.reason ? (
                       <Text style={styles.payMeta}>
-                        Credit {(p as any).creditNote.creditNoteNumber} —{" "}
-                        {(p as any).creditNote.reason}
+                        Credit {p.creditNote.creditNoteNumber} — {p.creditNote.reason}
                       </Text>
                     ) : null}
                   </View>

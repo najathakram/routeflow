@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { useCreditNotes } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { useProducts } from "../../../../../lib/api/products";
@@ -176,6 +177,59 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const updateMut = useUpdateOrderItems();
 
+  // ── Apply-credit section (mirrors NewOrderScreen) ──────────────────────────
+  // Driver-gated off below (drivers don't manage credits). `creditsTouched`
+  // gates whether `appliedCreditNotes` is sent at all — omitted = leave the
+  // server's existing intent untouched, per the API contract.
+  const [selectedCreditIds, setSelectedCreditIds] = useState<string[]>([]);
+  const [creditsTouched, setCreditsTouched] = useState(false);
+  const { data: openCredits } = useCreditNotes({
+    customerId,
+    status: "ISSUED",
+    limit: 100,
+  });
+  // Rows to show: the customer's open credits, PLUS any credit already
+  // applied to this order even if it's no longer ISSUED (e.g. fully consumed)
+  // — otherwise a previously-applied credit would vanish from the list
+  // instead of showing checked.
+  const creditRows = useMemo(() => {
+    const rows = new Map<
+      string,
+      {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string;
+        amount: number;
+        amountUsed?: number;
+        expiresAt?: string | null;
+      }
+    >();
+    for (const cn of openCredits?.data ?? []) {
+      rows.set(cn.id, {
+        id: cn.id,
+        creditNoteNumber: cn.creditNoteNumber,
+        reason: cn.reason,
+        amount: cn.amount,
+        amountUsed: cn.amountUsed,
+        expiresAt: cn.expiresAt,
+      });
+    }
+    for (const oc of (order as any)?.orderCreditNotes ?? []) {
+      if (!rows.has(oc.creditNoteId) && oc.creditNote) {
+        rows.set(oc.creditNoteId, {
+          id: oc.creditNoteId,
+          creditNoteNumber: oc.creditNote.creditNoteNumber,
+          reason: oc.creditNote.reason ?? undefined,
+          amount: toNumber(oc.creditNote.amount),
+          amountUsed:
+            oc.creditNote.amountUsed != null ? toNumber(oc.creditNote.amountUsed) : undefined,
+          expiresAt: oc.creditNote.expiresAt ?? null,
+        });
+      }
+    }
+    return Array.from(rows.values());
+  }, [openCredits, order]);
+
   const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
     getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
 
@@ -227,6 +281,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     }
     setDraft(next);
     setUnlisted(nextUnlisted);
+    // Apply-credit: pre-check whatever the order already carries, and reset
+    // the touched flag — resets alongside the draft whenever the order reloads.
+    setSelectedCreditIds(
+      ((order as any)?.orderCreditNotes ?? []).map((oc: any) => oc.creditNoteId),
+    );
+    setCreditsTouched(false);
   }, [order]);
 
   // Live total mirrors the server math (BOX-price proration when split).
@@ -400,13 +460,25 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       pendingCancels: [],
     });
 
-    if (items.length === 0) {
+    if (items.length === 0 && !creditsTouched) {
       // Nothing changed — mirror web: just leave the editor, don't error.
       leaveEditor();
       return;
     }
     updateMut.mutate(
-      { orderId: id, items, replaceAll: false },
+      {
+        orderId: id,
+        items,
+        replaceAll: false,
+        // A credits-only edit still reaches the server: `items: []` +
+        // `replaceAll: false` is a safe no-op for lines (the web fee-only
+        // data-loss bug came from omitting replaceAll:false, not from an
+        // empty items array). Omitted entirely when untouched, so the
+        // server's existing intent survives per the API contract.
+        ...(creditsTouched
+          ? { appliedCreditNotes: selectedCreditIds.map((cnId) => ({ creditNoteId: cnId })) }
+          : {}),
+      },
       {
         onSuccess: () => {
           showToast("Items updated");
@@ -619,6 +691,58 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       ) : (
         <>
           <ScrollView showsVerticalScrollIndicator={false}>
+            {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
+                don't manage credits. Toggle only (no amount input); null amount
+                = up to remaining, resolved server-side. */}
+            {!isDriver && creditRows.length > 0 ? (
+              <View style={styles.optionsWrap}>
+                <View style={styles.optionsHeader}>
+                  <Ionicons name="pricetag-outline" size={16} color={ios.brand} />
+                  <Text style={styles.optionsTitle}>Apply credit</Text>
+                  {selectedCreditIds.length > 0 ? (
+                    <Text style={styles.optionsSummary} numberOfLines={1}>
+                      {selectedCreditIds.length} selected
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.optionsBody}>
+                  {creditRows.map((cn) => {
+                    const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
+                    const checked = selectedCreditIds.includes(cn.id);
+                    return (
+                      <Pressable
+                        key={cn.id}
+                        style={styles.optionRow}
+                        onPress={() => {
+                          setSelectedCreditIds((ids) =>
+                            checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
+                          );
+                          setCreditsTouched(true);
+                        }}
+                      >
+                        <Ionicons
+                          name={checked ? "checkbox" : "square-outline"}
+                          size={20}
+                          color={checked ? ios.brand : ios.label2}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.optionLabel} numberOfLines={1}>
+                            {cn.creditNoteNumber}
+                            {cn.reason ? ` · ${cn.reason}` : ""}
+                          </Text>
+                          {cn.expiresAt ? (
+                            <Text style={styles.optionsSummary}>
+                              Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
             <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
               {Object.values(draft).length === 0 && unlisted.length === 0 ? (
                 <Text style={styles.empty}>No items. Add one below.</Text>
@@ -1661,6 +1785,21 @@ const styles = StyleSheet.create({
   },
   modalBtnDisabled: { opacity: 0.4 },
   modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
+
+  // ── Apply credit (mirrors NewOrderScreen) ─────────────────────────────────
+  optionsWrap: { marginHorizontal: 16, marginTop: 10 },
+  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  optionsBody: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 12,
+    padding: 12,
+    gap: 12,
+    marginBottom: 4,
+  },
+  optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
 });
 
 // Default export = the operator route (reads the [id] param). The named export
