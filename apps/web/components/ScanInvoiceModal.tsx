@@ -26,7 +26,6 @@ import {
   type ScanCandidate,
 } from "@/lib/api/invoice-scan";
 import { useSuppliers } from "@/lib/api/inventory";
-import { useProducts } from "@/lib/api/products";
 import {
   useCreateVendorBill,
   useReceiveVendorBill,
@@ -38,6 +37,7 @@ import { SearchableProductPicker } from "./SearchableProductPicker";
 import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { roundMoney } from "@/lib/pricing";
+import { apiClient } from "@/lib/api-client";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -49,6 +49,11 @@ type CreateMode = "bill" | "expense" | "both";
 interface VarietySplit {
   productId: string;
   qty: string;
+  /** Self-describing so split rows/bill-line descriptions never need a
+   *  catalog lookup — carried over from the sibling fetch or the manual-add
+   *  picker's onChange product object. */
+  name?: string;
+  variantName?: string | null;
 }
 
 interface ReviewItem {
@@ -356,82 +361,82 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const { data: suppliersData } = useSuppliers();
   const suppliers = (suppliersData as { id: string; name: string }[] | undefined) ?? [];
 
-  const { data: productsData } = useProducts({ limit: 1000 });
-  const products =
-    (
-      productsData as
-        | {
-            data: {
-              id: string;
-              name: string;
-              unit: string;
-              averageCost?: string;
-              parentProductId?: string | null;
-              variantName?: string | null;
-            }[];
-          }
-        | undefined
-    )?.data ?? [];
+  type SiblingProduct = {
+    id: string;
+    name: string;
+    variantName?: string | null;
+    parentProductId?: string | null;
+  };
+  // Cache of already-fetched sibling families, keyed by the matched row's
+  // productId — avoids re-fetching when the operator re-opens the split
+  // panel or navigates between rows/invoices sharing the same product.
+  const [siblingCache, setSiblingCache] = React.useState<Record<string, SiblingProduct[]>>({});
+  const [siblingLoadingId, setSiblingLoadingId] = React.useState<string | null>(null);
 
   /**
-   * Given the productId of a matched row, return the full set of likely
-   * sibling products so the operator can split one invoice line across
-   * flavors / varieties. Two discovery paths, deduped by id:
-   *
-   *   1. Parent-tagged variants — products that share `parentProductId`
-   *      (the "correct" model). Includes the case where the matched
-   *      product itself IS a parent and has children.
-   *
-   *   2. Name-prefix grouping — for catalogs where flavors were entered
-   *      as independent products (no parentProductId). We split the
-   *      matched product's name on common separators (" - ", " — ",
-   *      ": ") and find every other product whose name starts with the
-   *      same "<base> <separator>" prefix. This means the operator can
-   *      use the split feature without first reorganising their catalog.
-   *
-   * Returns the matched product first (so it pre-selects naturally),
-   * then everything else sorted by display label.
+   * On-demand replacement for the old preload-based getVariantSiblings. Same
+   * two discovery paths, same ordering, but fetched only when the operator
+   * reaches for the split feature — and no longer blind past the first 1000
+   * products (the old preload silently no-op'd the split button there).
    */
-  const getVariantSiblings = React.useCallback(
-    (productId: string) => {
-      const matched = products.find((p) => p.id === productId);
-      if (!matched) return [] as typeof products;
-
-      // Path 1 — proper parent-tagged variants
-      const parentId = matched.parentProductId ?? matched.id;
-      const parentSiblings = products
-        .filter((p) => (p.parentProductId ?? p.id) === parentId)
-        .filter((p) => p.id !== parentId || p.parentProductId === parentId);
-
-      // Path 2 — name-prefix grouping (catches flavors stored as standalone products).
-      // Tries " - ", " — ", and ": " in that order; uses whichever appears in the name.
+  const fetchVariantSiblings = React.useCallback(
+    async (matched: { id: string; name: string }): Promise<SiblingProduct[]> => {
+      // Path 1 — parent-tagged family via the product detail (includes parent + variants).
+      const detail = await apiClient.get(`/products/${matched.id}`).then((r) => r.data);
+      const familyRootId: string = detail.parentProductId ?? detail.id;
+      const root =
+        familyRootId === detail.id
+          ? detail
+          : await apiClient.get(`/products/${familyRootId}`).then((r) => r.data);
+      // Mirror the old semantics: the family set is the root's CHILDREN (variants);
+      // the matched product itself is re-added first in the merge below.
+      const parentSiblings: SiblingProduct[] = (root?.variants ?? []).map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        variantName: v.variantName ?? null,
+        parentProductId: v.parentProductId ?? null,
+      }));
+      // Path 2 — name-prefix grouping for flavors entered as standalone products.
       const SEPARATORS = [" - ", " — ", ": "];
       const sep = SEPARATORS.find((s) => matched.name.includes(s));
-      let prefixSiblings: typeof products = [];
+      let prefixSiblings: SiblingProduct[] = [];
       if (sep) {
         const prefix = matched.name.split(sep).slice(0, -1).join(sep).trim();
-        // Require ≥3 chars to avoid grouping on tokens like "A" / "S".
         if (prefix.length >= 3) {
           const needle = `${prefix}${sep}`.toLowerCase();
-          prefixSiblings = products.filter((p) => p.name.toLowerCase().startsWith(needle));
+          const res = await apiClient
+            .get(`/products`, { params: { search: prefix, limit: 100 } })
+            .then((r) => r.data);
+          prefixSiblings = ((res?.data ?? []) as any[])
+            .filter((p) => p.name.toLowerCase().startsWith(needle))
+            .map((p) => ({
+              id: p.id,
+              name: p.name,
+              variantName: p.variantName ?? null,
+              parentProductId: p.parentProductId ?? null,
+            }));
         }
       }
-
-      // Merge + dedupe by id; keep the matched product first.
+      const matchedSibling: SiblingProduct = {
+        id: detail.id,
+        name: detail.name,
+        variantName: detail.variantName ?? null,
+        parentProductId: detail.parentProductId ?? null,
+      };
       const seen = new Set<string>();
-      const merged: typeof products = [];
-      for (const p of [matched, ...parentSiblings, ...prefixSiblings]) {
+      const merged: SiblingProduct[] = [];
+      for (const p of [matchedSibling, ...parentSiblings, ...prefixSiblings]) {
         if (seen.has(p.id)) continue;
         seen.add(p.id);
         merged.push(p);
       }
       return merged.sort((a, b) => {
-        if (a.id === productId) return -1;
-        if (b.id === productId) return 1;
+        if (a.id === matched.id) return -1;
+        if (b.id === matched.id) return 1;
         return (a.variantName ?? a.name).localeCompare(b.variantName ?? b.name);
       });
     },
-    [products],
+    [],
   );
 
   const { data: expenseCategories } = useExpenseCategories();
@@ -706,8 +711,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     productId: string,
     /**
      * The full product object from an async picker pick or a candidate chip.
-     * Used as a fallback when the pick isn't in the local 1000-row `products`
-     * list (a fresh/async pick beyond that page, or a not-yet-cached create).
+     * Every caller passes one now (the async picker's onChange, the
+     * candidate chips whose `name` is already the composed display name);
+     * the create-from-line flow updates the row directly, not through here.
      */
     pickedProduct?: {
       id: string;
@@ -716,8 +722,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     },
   ) => {
     const item = reviewItems[i];
-    const product =
-      products.find((p) => p.id === productId) ?? (productId ? pickedProduct : undefined);
+    const product = productId ? pickedProduct : undefined;
     if (product) {
       // Only update the product link + description.
       // Keep the invoice-extracted price — that is what the supplier is actually charging.
@@ -727,7 +732,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         // Compose "<Parent> - <Variant>" so the bill line reads
         // meaningfully on its own (variants store just the variant
         // name in `product.name` per PR #44).
-        description: displayProductName(product, products),
+        description: displayProductName(product),
         // unitCost intentionally NOT overwritten — preserve the extracted invoice price
         // Changing the matched product invalidates any in-progress split.
         splits: undefined,
@@ -754,16 +759,38 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   /**
    * Open the variant-split panel on a row. Pre-allocates the full extracted
    * qty to the originally-matched variant so the operator only has to edit
-   * the rows whose qty actually changed.
+   * the rows whose qty actually changed. Fetches (and caches) the sibling
+   * family on demand — no longer blocked on the removed 1000-row preload.
    */
-  const startSplit = (i: number) => {
+  const startSplit = async (i: number) => {
     const item = reviewItems[i];
-    if (!item.productId) return;
-    const siblings = getVariantSiblings(item.productId);
-    if (siblings.length === 0) return;
+    if (!item.productId || siblingLoadingId) return;
+    let siblings = siblingCache[item.productId];
+    if (!siblings) {
+      setSiblingLoadingId(item.productId);
+      try {
+        siblings = await fetchVariantSiblings({
+          id: item.productId,
+          // description carries the composed display name for linked rows.
+          name: item.description || item.extractedName || "",
+        });
+        setSiblingCache((prev) => ({ ...prev, [item.productId]: siblings! }));
+      } catch {
+        toast({
+          title: "Couldn't load varieties",
+          description: "Check your connection and try again.",
+          variant: "error",
+        });
+        return;
+      } finally {
+        setSiblingLoadingId(null);
+      }
+    }
     const splits: VarietySplit[] = siblings.map((s) => ({
       productId: s.id,
       qty: s.id === item.productId ? item.qty : "0",
+      name: s.name,
+      variantName: s.variantName ?? null,
     }));
     updateItem(i, { splits });
   };
@@ -785,16 +812,33 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   /**
    * Manually add another product to a split (escape hatch when flavors
    * weren't tagged as variants in the catalog and weren't picked up by
-   * the name-prefix grouping). Skips no-ops and duplicates.
+   * the name-prefix grouping). Skips no-ops and duplicates. `product` comes
+   * from the async picker's onChange second argument — always present on a
+   * real pick, so the split entry is self-describing from the start.
    */
-  const addSplitVariant = (rowIdx: number, productId: string) => {
+  const addSplitVariant = (
+    rowIdx: number,
+    productId: string,
+    product?: { name: string; variantName?: string | null },
+  ) => {
     if (!productId) return;
     setReviewItems((prev) =>
       prev.map((row, idx) => {
         if (idx !== rowIdx) return row;
         const splits = row.splits ?? [];
         if (splits.some((s) => s.productId === productId)) return row;
-        return { ...row, splits: [...splits, { productId, qty: "0" }] };
+        return {
+          ...row,
+          splits: [
+            ...splits,
+            {
+              productId,
+              qty: "0",
+              name: product?.name,
+              variantName: product?.variantName ?? null,
+            },
+          ],
+        };
       }),
     );
   };
@@ -864,15 +908,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       if (item.splits && item.splits.length > 0) {
         return item.splits
           .filter((s) => parseFloat(s.qty) > 0)
-          .map((s) => {
-            const variant = products.find((p) => p.id === s.productId);
-            return {
-              productId: s.productId,
-              description: variant?.name ?? item.description,
-              qty: parseFloat(s.qty) || 0,
-              unitCost: parseFloat(item.unitCost) || 0,
-            };
-          });
+          .map((s) => ({
+            productId: s.productId,
+            description: s.name ?? item.description,
+            qty: parseFloat(s.qty) || 0,
+            unitCost: parseFloat(item.unitCost) || 0,
+          }));
       }
       return [
         {
@@ -1659,12 +1700,15 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   const costChanged =
                                     item.unitCost !== item.extractedUnitCost &&
                                     item.extractedUnitCost;
-                                  // Sibling variants exist only for catalog-linked items.
+                                  // Sibling family — read from cache only; fetched on demand
+                                  // when the operator actually clicks Split (startSplit).
                                   const siblings = item.productId
-                                    ? getVariantSiblings(item.productId)
-                                    : [];
+                                    ? siblingCache[item.productId]
+                                    : undefined;
                                   // Auto-detected siblings (parent-tagged or name-prefix grouped).
-                                  const autoDetectedCount = siblings.length - 1;
+                                  // null until fetched — the button falls back to generic wording.
+                                  const autoDetectedCount = siblings ? siblings.length - 1 : null;
+                                  const isLoadingSiblings = siblingLoadingId === item.productId;
                                   // Always offer the split affordance on a catalog-linked row —
                                   // even if no auto-siblings were detected, the operator can
                                   // open the panel and add varieties manually (e.g. when flavors
@@ -1802,21 +1846,29 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                               {canSplit && (
                                                 <button
                                                   type="button"
-                                                  onClick={() => startSplit(i)}
-                                                  className="mt-1 inline-flex items-center gap-1 rounded px-1 text-[10px] font-medium text-brand-600 transition-colors hover:bg-brand-50"
+                                                  onClick={() => void startSplit(i)}
+                                                  disabled={isLoadingSiblings}
+                                                  className="mt-1 inline-flex items-center gap-1 rounded px-1 text-[10px] font-medium text-brand-600 transition-colors hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-50"
                                                   title={
-                                                    autoDetectedCount > 0
-                                                      ? `Split this qty across ${autoDetectedCount} other variant${autoDetectedCount === 1 ? "" : "s"}`
-                                                      : "Split this qty across multiple varieties — pick them manually"
+                                                    autoDetectedCount == null
+                                                      ? "Split this qty across multiple varieties"
+                                                      : autoDetectedCount > 0
+                                                        ? `Split this qty across ${autoDetectedCount} other variant${autoDetectedCount === 1 ? "" : "s"}`
+                                                        : "Split this qty across multiple varieties — pick them manually"
                                                   }
                                                 >
-                                                  <Layers className="h-2.5 w-2.5" />
-                                                  Split by variety
-                                                  {autoDetectedCount > 0 && (
-                                                    <span className="text-navy/70">
-                                                      ({autoDetectedCount + 1})
-                                                    </span>
+                                                  {isLoadingSiblings ? (
+                                                    <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                                                  ) : (
+                                                    <Layers className="h-2.5 w-2.5" />
                                                   )}
+                                                  Split by variety
+                                                  {autoDetectedCount != null &&
+                                                    autoDetectedCount > 0 && (
+                                                      <span className="text-navy/70">
+                                                        ({autoDetectedCount + 1})
+                                                      </span>
+                                                    )}
                                                 </button>
                                               )}
                                             </>
@@ -1902,9 +1954,6 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                               </div>
                                               <div className="grid gap-1.5">
                                                 {item.splits!.map((split, j) => {
-                                                  const variantProduct = products.find(
-                                                    (p) => p.id === split.productId,
-                                                  );
                                                   return (
                                                     <div
                                                       key={split.productId}
@@ -1912,10 +1961,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                     >
                                                       <span
                                                         className="flex-1 truncate text-xs text-navy"
-                                                        title={variantProduct?.name}
+                                                        title={split.name}
                                                       >
-                                                        {variantProduct?.variantName ??
-                                                          variantProduct?.name ??
+                                                        {split.variantName ??
+                                                          split.name ??
                                                           "Unknown variant"}
                                                       </span>
                                                       <input
@@ -1953,32 +2002,16 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                       one-by-one from the full product list.
                                     */}
                                               <div className="mt-2 flex items-center gap-2">
-                                                <select
+                                                <SearchableProductPicker
+                                                  async
                                                   value=""
-                                                  onChange={(e) => {
-                                                    if (e.target.value) {
-                                                      addSplitVariant(i, e.target.value);
-                                                      // Reset back to the placeholder option so the
-                                                      // operator can pick another product right after.
-                                                      e.target.value = "";
-                                                    }
+                                                  onChange={(id, product) => {
+                                                    if (id) addSplitVariant(i, id, product);
                                                   }}
-                                                  className="flex-1 rounded border border-dashed border-brand-300 bg-white px-2.5 py-1.5 text-xs text-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                                                >
-                                                  <option value="">+ Add another variety…</option>
-                                                  {products
-                                                    .filter(
-                                                      (p) =>
-                                                        !item.splits!.some(
-                                                          (s) => s.productId === p.id,
-                                                        ),
-                                                    )
-                                                    .map((p) => (
-                                                      <option key={p.id} value={p.id}>
-                                                        {p.name}
-                                                      </option>
-                                                    ))}
-                                                </select>
+                                                  excludeIds={item.splits!.map((s) => s.productId)}
+                                                  placeholder="+ Add another variety…"
+                                                  className="flex-1"
+                                                />
                                               </div>
                                               {!sumMatchesOriginal && (
                                                 <p className="mt-2 flex items-start gap-1 text-[11px] text-amber-700">
