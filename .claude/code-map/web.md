@@ -107,6 +107,13 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (variants/regulated/costing/description/images, prop-for-prop identical there) with
   `initialName/initialSku/initialPrice/initialCost` prefills from the scanned line (OCR now extracts
   per-line `sku`). `InlineCreateProductModal` untouched at its other quick-entry call sites.
+  **(2026-07-19) ScanInvoiceModal preload DELETED:** the residual `useProducts({limit:1000})` is gone —
+  variant-split siblings now fetch ON DEMAND (`fetchVariantSiblings`: `GET /products/:id` parent+variants
+  family via the root, + prefix-search path for standalone-flavor catalogs; `siblingCache` keyed by
+  productId; `startSplit` async with loading state + error toast). `VarietySplit` entries are
+  self-describing (`name`/`variantName`) so panel labels + bill descriptions need no catalog list;
+  manual-add picker async. Also FIXED the latent no-op: the split button now works for products beyond
+  the first 1000 (old code returned [] when the match wasn't in the preload page).
   **Credit notes on orders (2026-07-18):** new `orders/_components/CreditNotePicker.tsx`
   (customer-scoped open-credit checkboxes + optional per-credit amount input, "Credits to apply at
   invoicing −$X" + "Estimated balance due" display-only — NOT a discount, totals unchanged) used by
