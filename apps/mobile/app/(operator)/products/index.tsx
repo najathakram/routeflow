@@ -26,6 +26,7 @@ import {
   type AdminProduct,
   type StockStatusFilter,
 } from "../../../lib/api/admin";
+import { useTrackedCategories } from "../../../lib/api/tracked-categories";
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -47,12 +48,28 @@ export default function ProductsListScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<StockStatusFilter | undefined>(undefined);
   const [search, setSearch] = useState("");
+  const [sectionFilter, setSectionFilter] = useState<string | undefined>(undefined);
+  const { data: sections } = useTrackedCategories({ active: true });
+  const sectionNameById = useMemo(
+    () => new Map((sections ?? []).map((s) => [s.id, s.name])),
+    [sections],
+  );
+  const sectionFilters = useMemo(
+    () => [
+      { id: undefined as string | undefined, label: "All" },
+      { id: "any", label: "Regulated" },
+      ...(sections ?? []).map((s) => ({ id: s.id, label: s.name })),
+      { id: "none", label: "Non-reg" },
+    ],
+    [sections],
+  );
   // Infinite pages through the whole catalog — the previous single
   // `limit:100` request cut the list off at 100 rows.
   const { data, isLoading, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage, refetch } =
     useAdminProductsInfinite({
       stockStatus: filter,
       search: search.trim() || undefined,
+      section: sectionFilter,
     });
 
   // De-dupe by id: offset pagination can re-emit a page-boundary row if the
@@ -96,11 +113,23 @@ export default function ProductsListScreen() {
         onChange={(label) => setFilter(FILTERS.find((f) => f.label === label)?.id)}
       />
 
+      {sections && sections.length > 0 ? (
+        <FilterChipRow
+          chips={sectionFilters.map((f) => ({ label: f.label }))}
+          value={sectionFilters.find((f) => f.id === sectionFilter)?.label ?? "All"}
+          onChange={(label) => setSectionFilter(sectionFilters.find((f) => f.label === label)?.id)}
+        />
+      ) : null}
+
       <FlatList
         data={products}
         keyExtractor={(p) => p.id}
         renderItem={({ item }) => (
-          <ProductRow p={item} onPress={() => router.push(`/(operator)/products/${item.id}`)} />
+          <ProductRow
+            p={item}
+            sectionNameById={sectionNameById}
+            onPress={() => router.push(`/(operator)/products/${item.id}`)}
+          />
         )}
         contentContainerStyle={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
@@ -146,7 +175,15 @@ export default function ProductsListScreen() {
   );
 }
 
-function ProductRow({ p, onPress }: { p: AdminProduct; onPress: () => void }) {
+function ProductRow({
+  p,
+  sectionNameById,
+  onPress,
+}: {
+  p: AdminProduct;
+  sectionNameById: Map<string, string>;
+  onPress: () => void;
+}) {
   const stock = toNumber(p.currentStock);
   const threshold = p.reorderPoint ?? 5;
   const pct = threshold > 0 ? Math.min(100, Math.round((stock / threshold) * 100)) : 100;
@@ -188,6 +225,11 @@ function ProductRow({ p, onPress }: { p: AdminProduct; onPress: () => void }) {
         ) : !p.isActive ? (
           <Pill variant="gray" small>
             Inactive
+          </Pill>
+        ) : null}
+        {p.trackedCategoryId && sectionNameById.get(p.trackedCategoryId) ? (
+          <Pill variant="gray" small>
+            {sectionNameById.get(p.trackedCategoryId)}
           </Pill>
         ) : null}
       </View>

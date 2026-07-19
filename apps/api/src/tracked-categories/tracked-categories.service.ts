@@ -152,9 +152,13 @@ export class TrackedCategoriesService {
    */
   async assignProducts(id: string, productIds: string[]) {
     await this.findOne(id);
+    // Movers/new assignees get the section AND a cleared subcategory (a
+    // subcategory's parent must equal the product's section — leaving the old
+    // one behind strands an invariant violation that 400s later product
+    // updates). Rows already in this section are untouched.
     const { count } = await this.prisma.forTenant().product.updateMany({
-      where: { id: { in: productIds } },
-      data: { trackedCategoryId: id },
+      where: { id: { in: productIds }, NOT: { trackedCategoryId: id } },
+      data: { trackedCategoryId: id, trackedSubcategoryId: null },
     });
     return { assigned: count };
   }
@@ -164,7 +168,7 @@ export class TrackedCategoriesService {
     await this.findOne(id);
     const { count } = await this.prisma.forTenant().product.updateMany({
       where: { id: { in: productIds }, trackedCategoryId: id },
-      data: { trackedCategoryId: null },
+      data: { trackedCategoryId: null, trackedSubcategoryId: null },
     });
     return { unassigned: count };
   }

@@ -8,8 +8,10 @@ export interface EditRecord {
   productId: string;
   productName: string;
   field: string;
-  oldValue: string | number | null;
-  newValue: string | number | null;
+  // `Record<string, unknown>` covers the "section" field's object patch
+  // ({ trackedCategoryId, trackedSubcategoryId }) saved/undone in one shot.
+  oldValue: string | number | null | Record<string, unknown>;
+  newValue: string | number | null | Record<string, unknown>;
 }
 
 interface QuickEditCellProps {

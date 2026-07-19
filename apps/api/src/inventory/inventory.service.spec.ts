@@ -476,6 +476,17 @@ describe("InventoryService", () => {
       expect(row.totalValue).toBe(30);
       expect(row.averageCost).toBe(3); // value ÷ stock, not the moving average of 2
     });
+
+    it("selects trackedCategoryId and passes it through to the row (regulated-section filtering)", async () => {
+      prisma.product.findMany.mockResolvedValue([product({ trackedCategoryId: "sec-1" })]);
+
+      const [row] = await service.getStockOverview();
+
+      expect(prisma.product.findMany.mock.calls[0][0].select).toMatchObject({
+        trackedCategoryId: true,
+      });
+      expect(row.trackedCategoryId).toBe("sec-1");
+    });
   });
 
   // ─── commitStockCount — idempotency ───────────────────────────────────────────
