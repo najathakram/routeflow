@@ -126,7 +126,7 @@ describe("TrackedCategoriesService", () => {
   });
 
   describe("assignProducts", () => {
-    it("sets trackedCategoryId on the given products and returns the count", async () => {
+    it("sets trackedCategoryId + clears trackedSubcategoryId on movers, returning the mover count", async () => {
       prisma.trackedCategory.findUnique.mockResolvedValue({
         id: "c1",
         name: "Tobacco",
@@ -138,13 +138,33 @@ describe("TrackedCategoriesService", () => {
       const res = await service.assignProducts("c1", ["p1", "p2"]);
 
       expect(prisma.product.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: ["p1", "p2"] } },
-        data: { trackedCategoryId: "c1" },
+        where: { id: { in: ["p1", "p2"] }, NOT: { trackedCategoryId: "c1" } },
+        data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
       });
       expect(res).toEqual({ assigned: 2 });
     });
 
-    it("only unassigns products currently in the category", async () => {
+    it("excludes rows already in this section from the count (movers-only semantics)", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      // Of the 3 requested ids, only the movers matched the NOT-in-section where
+      // clause and got updated — the row already in "c1" is excluded by Prisma.
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+
+      const res = await service.assignProducts("c1", ["p1", "p2", "p3"]);
+
+      expect(prisma.product.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
+      });
+      expect(res).toEqual({ assigned: 1 });
+    });
+
+    it("only unassigns products currently in the category and clears trackedSubcategoryId", async () => {
       prisma.trackedCategory.findUnique.mockResolvedValue({
         id: "c1",
         name: "Tobacco",
@@ -157,7 +177,7 @@ describe("TrackedCategoriesService", () => {
 
       expect(prisma.product.updateMany).toHaveBeenCalledWith({
         where: { id: { in: ["p1"] }, trackedCategoryId: "c1" },
-        data: { trackedCategoryId: null },
+        data: { trackedCategoryId: null, trackedSubcategoryId: null },
       });
       expect(res).toEqual({ unassigned: 1 });
     });

@@ -462,6 +462,8 @@ export function useAdminProducts(params?: {
   limit?: number;
   stockStatus?: StockStatusFilter;
   isActive?: boolean;
+  /** Regulated-section filter: "any" | "none" | a section id. */
+  section?: string;
 }) {
   return useQuery<{ data: AdminProduct[]; meta: PaginationMeta }>({
     queryKey: ["admin", "products", params],
@@ -481,6 +483,8 @@ export function useAdminProductsInfinite(params?: {
   stockStatus?: StockStatusFilter;
   isActive?: boolean;
   limit?: number;
+  /** Regulated-section filter: "any" | "none" | a section id. */
+  section?: string;
 }) {
   const limit = params?.limit ?? 50;
   return useInfiniteQuery({

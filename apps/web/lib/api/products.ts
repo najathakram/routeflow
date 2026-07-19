@@ -7,6 +7,8 @@ export function useProducts(
     category?: string;
     isActive?: boolean;
     stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
+    /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
+    section?: string;
     page?: number;
     limit?: number;
     includeVariants?: boolean;

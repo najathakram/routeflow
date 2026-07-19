@@ -179,12 +179,18 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
             Snapshot pending the tax engine · net sales are live
           </p>
         </Card>
-        <Card>
-          <div className="flex items-center gap-2 text-xs text-navy/70">
-            <Package className="h-4 w-4" /> Regulated Products
-          </div>
-          <p className="mt-1 text-2xl font-bold text-navy">{c.productCount}</p>
-        </Card>
+        <Link
+          href={`/products?section=${params.categoryId}`}
+          title="View these products"
+          className="block rounded-lg transition-shadow hover:ring-2 hover:ring-brand-200"
+        >
+          <Card>
+            <div className="flex items-center gap-2 text-xs text-navy/70">
+              <Package className="h-4 w-4" /> Regulated Products
+            </div>
+            <p className="mt-1 text-2xl font-bold text-navy">{c.productCount}</p>
+          </Card>
+        </Link>
         <Card>
           <div className="flex items-center gap-2 text-xs text-navy/70">
             <FileText className="h-4 w-4" /> Filings

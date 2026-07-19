@@ -140,6 +140,7 @@ export class InventoryService {
         unitsPerBox: true,
         reorderPoint: true,
         reorderQty: true,
+        trackedCategoryId: true,
       },
     });
 

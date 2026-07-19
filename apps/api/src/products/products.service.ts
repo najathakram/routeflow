@@ -116,6 +116,19 @@ export class ProductsService {
       where.trackedCategoryId = { notIn: opts.excludeTrackedCategoryIds };
     }
 
+    // Regulated-section filter ("any" | "none" | <sectionId>). When the internal
+    // buyer-catalog exclusion already occupies where.trackedCategoryId, fold this
+    // clause into AND so BOTH apply.
+    if (query.section) {
+      const clause =
+        query.section === "any" ? { not: null } : query.section === "none" ? null : query.section;
+      if (where.trackedCategoryId !== undefined) {
+        where.AND = [...(where.AND ?? []), { trackedCategoryId: clause }];
+      } else {
+        where.trackedCategoryId = clause;
+      }
+    }
+
     // Server-side stock-status filtering so pagination counts are accurate
     if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
       // "Out" = inactive OR zero/negative stock. Keep it as its own disjunction

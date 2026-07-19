@@ -107,6 +107,22 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (variants/regulated/costing/description/images, prop-for-prop identical there) with
   `initialName/initialSku/initialPrice/initialCost` prefills from the scanned line (OCR now extracts
   per-line `sku`). `InlineCreateProductModal` untouched at its other quick-entry call sites.
+  **Regulated-section isolation (2026-07-19b):** Products page (`products/page.tsx`) gained a
+  toolbar **"Section"** `<select>` (All / Regulated-any / per-section / Non-regulated) bound to a
+  deep-linkable `?section=` via `useUrlFilters({section:""})` → `useProducts({section})`; a Section
+  **pill** column/card (name from an id→name map built off the UNFILTERED `useTrackedCategories()`
+  so deactivated-but-tagged sections still resolve); Quick Edit gets new
+  `_components/SectionEditCell.tsx` (dependent Section→Subcategory selects, save-on-change,
+  subcategory ALWAYS clears on section change, one PATCH; `handleSectionSave` takes the full
+  product row — avoids a used-before-declaration `productList` closure trap; undo/redo replays
+  object patches, `QuickEditCell` EditRecord value union widened); the multi-select bar gets a bulk
+  **"Assign to section…"** `components/AssignToSectionModal.tsx` (one target select incl.
+  "None — remove"; assigns all in one `useAssignProductsToCategory` call, "None" unassigns grouped
+  by current section). All new UI hidden when the tenant has no sections; the legacy amber
+  `isTobacco` badge + free-text Category filter are untouched separate axes. Inventory Stock tab
+  (`inventory/page.tsx`) mirrors the filter CLIENT-side (its list is unpaginated, like
+  `missingCostOnly`) + pills via `StockTable` props. Compliance `compliance/[categoryId]` "Regulated
+  Products: N" KPI is now a `Link` to `/products?section=<id>`.
   **(2026-07-19) ScanInvoiceModal preload DELETED:** the residual `useProducts({limit:1000})` is gone —
   variant-split siblings now fetch ON DEMAND (`fetchVariantSiblings`: `GET /products/:id` parent+variants
   family via the root, + prefix-search path for standalone-flavor catalogs; `siblingCache` keyed by

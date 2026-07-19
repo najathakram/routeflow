@@ -18,17 +18,22 @@ import {
   ChevronDown,
   ChevronRight,
   GitBranch,
+  Layers,
 } from "lucide-react";
 import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
+import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { ProductCreateModal } from "@/components/ProductCreateModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
+import { SectionEditCell } from "./_components/SectionEditCell";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,6 +66,9 @@ interface ApiProduct {
   isFeatured?: boolean;
   isNew?: boolean;
   isDeal?: boolean;
+  /** Regulated section + subcategory tags (Phase 4 / section isolation). */
+  trackedCategoryId?: string | null;
+  trackedSubcategoryId?: string | null;
 }
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
@@ -113,6 +121,7 @@ function ProductCard({
   onSelect,
   selectionMode,
   onAddVariant,
+  sectionNameById,
 }: {
   product: ApiProduct;
   onClick: () => void;
@@ -120,6 +129,7 @@ function ProductCard({
   onSelect: (e: React.MouseEvent) => void;
   selectionMode: boolean;
   onAddVariant?: (parentId: string) => void;
+  sectionNameById: Map<string, string>;
 }) {
   const status = getStockStatus(product);
   return (
@@ -214,6 +224,18 @@ function ProductCard({
         <div className="flex items-center gap-1.5">
           <StockBadge status={status} />
           <MerchBadges product={product} />
+          {product.trackedCategoryId && (
+            <span
+              title={
+                (product as any).trackedSubcategory?.name ??
+                sectionNameById.get(product.trackedCategoryId) ??
+                "Section"
+              }
+              className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+            >
+              {sectionNameById.get(product.trackedCategoryId) ?? "Section"}
+            </span>
+          )}
         </div>
         {/* Add variant button for parent products */}
         {product.variants && product.variants.length > 0 && onAddVariant && !selectionMode && (
@@ -258,9 +280,57 @@ function makeTableColumns(
   barcodeRefs: React.MutableRefObject<Record<string, React.RefObject<HTMLInputElement | null>>>,
   productIds: string[],
   categories: string[],
+  sectionNameById: Map<string, string>,
+  activeSections: TrackedCategory[],
+  hasSections: boolean,
+  onSectionSave: (
+    product: ApiProduct,
+    patch: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
+    prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
+  ) => void,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
+
+  const sectionCol: ColumnDef<ApiProduct, unknown> = {
+    id: "section",
+    header: "Section",
+    enableSorting: false,
+    cell: ({ row }) => {
+      const p = row.original;
+      if (quickEditMode) {
+        return (
+          <div onClick={(e) => e.stopPropagation()}>
+            <SectionEditCell
+              productId={p.id}
+              trackedCategoryId={p.trackedCategoryId ?? null}
+              trackedSubcategoryId={p.trackedSubcategoryId ?? null}
+              activeSections={activeSections}
+              sectionNameById={sectionNameById}
+              onSave={(patch) =>
+                onSectionSave(p, patch, {
+                  trackedCategoryId: p.trackedCategoryId ?? null,
+                  trackedSubcategoryId: p.trackedSubcategoryId ?? null,
+                })
+              }
+            />
+          </div>
+        );
+      }
+      if (!p.trackedCategoryId) {
+        return <span className="text-xs text-navy/30">—</span>;
+      }
+      const sectionName = sectionNameById.get(p.trackedCategoryId) ?? "Section";
+      return (
+        <span
+          title={(p as any).trackedSubcategory?.name ?? sectionName}
+          className="inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
+        >
+          {sectionName}
+        </span>
+      );
+    },
+  };
 
   const selectCol: ColumnDef<ApiProduct, unknown> = {
     id: "select",
@@ -412,6 +482,7 @@ function makeTableColumns(
         );
       },
     },
+    ...(hasSections ? [sectionCol] : []),
     {
       accessorKey: "unit",
       header: "Unit",
@@ -589,6 +660,10 @@ export default function ProductsPage() {
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [stockFilter, setStockFilter] = React.useState("");
+  // Regulated-section filter is the one deep-linkable filter (?section=) — the
+  // Compliance hub's per-section KPI links here.
+  const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
+  const sectionFilter = urlFilters.section;
   const [viewMode, setViewMode] = React.useState<"grid" | "table">("grid");
   const [showCreate, setShowCreate] = React.useState(false);
   const [newVariantParentId, setNewVariantParentId] = React.useState<string | undefined>(undefined);
@@ -596,10 +671,22 @@ export default function ProductsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = React.useState(false);
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
+  const [showAssignToSection, setShowAssignToSection] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(50);
   const updateProduct = useUpdateProduct();
   const bulkDelete = useBulkDeleteProducts();
+
+  // Section names must resolve for deactivated sections too (a product can still
+  // carry a tag whose section was since deactivated), so this fetch is
+  // UNFILTERED — `activeSections` below is what feeds pickers/dropdowns.
+  const { data: allSections = [] } = useTrackedCategories();
+  const sectionNameById = React.useMemo(
+    () => new Map(allSections.map((c) => [c.id, c.name])),
+    [allSections],
+  );
+  const activeSections = React.useMemo(() => allSections.filter((c) => c.active), [allSections]);
+  const hasSections = allSections.length > 0;
 
   const [editingPriceId, setEditingPriceId] = React.useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = React.useState("");
@@ -673,10 +760,42 @@ export default function ProductsPage() {
     [updateProduct, toast],
   );
 
+  // Regulated section + subcategory save from the Section Quick-Edit cell — an
+  // object patch (both fields together in one update) rather than the single
+  // scalar the other Quick-Edit fields save. Takes the full product (like
+  // handleQuickSave) rather than just an id, so it doesn't need to look the row
+  // up in `productList` — which is declared further down this component and
+  // would otherwise force this callback's deps array to forward-reference it.
+  const handleSectionSave = React.useCallback(
+    async (
+      product: ApiProduct,
+      patch: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
+      prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
+    ) => {
+      await updateProduct.mutateAsync({ id: product.id, ...patch });
+      toast({ title: "Section updated", variant: "success" });
+      setUndoStack((prev) => [
+        ...prev.slice(-19),
+        {
+          productId: product.id,
+          productName: product.name,
+          field: "section",
+          oldValue: prior,
+          newValue: patch,
+        },
+      ]);
+      setRedoStack([]);
+    },
+    [updateProduct, toast],
+  );
+
   const handleUndo = async () => {
     const record = undoStack[undoStack.length - 1];
     if (!record) return;
-    await updateProduct.mutateAsync({ id: record.productId, [record.field]: record.oldValue });
+    const value = record.oldValue;
+    const patch =
+      record.field === "section" ? (value as Record<string, unknown>) : { [record.field]: value };
+    await updateProduct.mutateAsync({ id: record.productId, ...patch });
     toast({ title: `Undone: ${record.productName} · ${record.field}`, variant: "success" });
     setUndoStack((prev) => prev.slice(0, -1));
     setRedoStack((prev) => [...prev, record]);
@@ -685,7 +804,10 @@ export default function ProductsPage() {
   const handleRedo = async () => {
     const record = redoStack[redoStack.length - 1];
     if (!record) return;
-    await updateProduct.mutateAsync({ id: record.productId, [record.field]: record.newValue });
+    const value = record.newValue;
+    const patch =
+      record.field === "section" ? (value as Record<string, unknown>) : { [record.field]: value };
+    await updateProduct.mutateAsync({ id: record.productId, ...patch });
     toast({ title: `Redone: ${record.productName} · ${record.field}`, variant: "success" });
     setRedoStack((prev) => prev.slice(0, -1));
     setUndoStack((prev) => [...prev, record]);
@@ -780,7 +902,7 @@ export default function ProductsPage() {
   // Reset to page 1 whenever filters change
   React.useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, categoryFilter, stockFilter, pageSize]);
+  }, [debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
 
   const {
     data: result,
@@ -790,6 +912,7 @@ export default function ProductsPage() {
     search: debouncedSearch,
     category: categoryFilter || undefined,
     stockStatus: (stockFilter || undefined) as any,
+    section: sectionFilter || undefined,
     page,
     limit: pageSize, // 0 = all
     includeVariants: true,
@@ -873,6 +996,10 @@ export default function ProductsPage() {
         barcodeRefs,
         productIdList,
         categories,
+        sectionNameById,
+        activeSections,
+        hasSections,
+        handleSectionSave,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -885,6 +1012,10 @@ export default function ProductsPage() {
       quickEditMode,
       productIdList.join(","),
       categories.join(","),
+      sectionNameById,
+      activeSections,
+      hasSections,
+      handleSectionSave,
     ],
   );
 
@@ -1024,6 +1155,23 @@ export default function ProductsPage() {
           />
         </div>
 
+        {/* Regulated-section filter — hidden entirely when the tenant has no sections */}
+        {hasSections && (
+          <div className="w-44">
+            <Select
+              aria-label="Section"
+              options={[
+                { value: "", label: "All sections" },
+                { value: "any", label: "Regulated (any section)" },
+                ...activeSections.map((s) => ({ value: s.id, label: s.name })),
+                { value: "none", label: "Non-regulated" },
+              ]}
+              value={sectionFilter}
+              onChange={(e) => setUrlFilter("section", e.target.value)}
+            />
+          </div>
+        )}
+
         {/* Per-page selector */}
         <div className="w-36">
           <Select
@@ -1085,6 +1233,16 @@ export default function ProductsPage() {
             >
               Group as variants of…
             </Button>
+            {hasSections && (
+              <Button
+                variant="secondary"
+                leftIcon={<Layers className="h-4 w-4" />}
+                onClick={() => setShowAssignToSection(true)}
+                disabled={selected.size < 1}
+              >
+                Assign to section…
+              </Button>
+            )}
             <Button
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
@@ -1113,6 +1271,19 @@ export default function ProductsPage() {
         }}
       />
 
+      {/* Assign to section modal (bulk) */}
+      <AssignToSectionModal
+        isOpen={showAssignToSection}
+        onClose={() => setShowAssignToSection(false)}
+        products={filtered
+          .filter((p) => selected.has(p.id))
+          .map((p) => ({ id: p.id, trackedCategoryId: p.trackedCategoryId ?? null }))}
+        onSuccess={() => {
+          setSelected(new Set());
+          setShowAssignToSection(false);
+        }}
+      />
+
       {/* Content */}
       {isLoading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
@@ -1129,7 +1300,7 @@ export default function ProductsPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-lg border border-surface-border bg-white">
-          {search || categoryFilter || stockFilter ? (
+          {search || categoryFilter || stockFilter || sectionFilter ? (
             <EmptyState
               variant="products"
               title="No matching products"
@@ -1142,6 +1313,7 @@ export default function ProductsPage() {
                     setSearch("");
                     setCategoryFilter("");
                     setStockFilter("");
+                    setUrlFilter("section", "");
                   }}
                 >
                   Clear filters
@@ -1178,6 +1350,7 @@ export default function ProductsPage() {
                 setNewVariantParentId(parentId);
                 setShowCreate(true);
               }}
+              sectionNameById={sectionNameById}
             />
           ))}
         </div>

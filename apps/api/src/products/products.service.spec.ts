@@ -128,6 +128,53 @@ describe("ProductsService", () => {
       // count must use the identical where so pagination stays consistent
       expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
     });
+
+    it('filters by a section id when "section" is a uuid', async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      const sectionId = "11111111-1111-1111-1111-111111111111";
+      await service.findAll({ section: sectionId } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.trackedCategoryId).toBe(sectionId);
+      expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
+    });
+
+    it('filters to any regulated section when "section" is "any"', async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ section: "any" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.trackedCategoryId).toEqual({ not: null });
+    });
+
+    it('filters to non-regulated products when "section" is "none"', async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      await service.findAll({ section: "none" } as any);
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.trackedCategoryId).toBeNull();
+    });
+
+    it("AND-folds the section filter with the internal buyer-catalog exclusion instead of overwriting it", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.product.count.mockResolvedValue(0);
+
+      const sectionId = "22222222-2222-2222-2222-222222222222";
+      await service.findAll({ section: sectionId } as any, {
+        excludeTrackedCategoryIds: ["excluded-1"],
+      });
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.trackedCategoryId).toEqual({ notIn: ["excluded-1"] });
+      expect(where.AND).toEqual([{ trackedCategoryId: sectionId }]);
+      expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
+    });
   });
 
   // ─── listCategories ───────────────────────────────────────────────────────

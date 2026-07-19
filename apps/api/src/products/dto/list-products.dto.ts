@@ -1,4 +1,4 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min } from "class-validator";
 import { Type, Transform } from "class-transformer";
 
 export enum StockStatusFilter {
@@ -19,4 +19,13 @@ export class ListProductsDto {
   // @Min(1)@Max(200) rejected all of those with 400, leaving pickers empty.
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10000) limit?: number;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() includeVariants?: boolean;
+
+  /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^(any|none|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/,
+    { message: 'section must be "any", "none", or a section id' },
+  )
+  section?: string;
 }

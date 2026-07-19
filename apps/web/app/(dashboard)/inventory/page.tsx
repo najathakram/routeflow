@@ -18,7 +18,7 @@ import {
   DollarSign,
   RefreshCcw,
 } from "lucide-react";
-import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, PageHeader, Select, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
@@ -45,6 +45,7 @@ import {
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
@@ -71,6 +72,7 @@ interface StockItem {
   totalValue: number | null;
   isActive: boolean;
   unitsPerBox?: number | null;
+  trackedCategoryId?: string | null;
 }
 
 interface Supplier {
@@ -433,6 +435,8 @@ function StockTable({
   stockItems,
   stockSearch,
   missingCostOnly,
+  sectionFilter,
+  sectionNameById,
   setAdjustPreselectId,
   setShowAdjustModal,
   onSetCost,
@@ -441,6 +445,9 @@ function StockTable({
   stockSearch: string;
   /** Show only products with no cost basis (toggled from the valuation card chip) */
   missingCostOnly: boolean;
+  /** Regulated-section filter: "" (all) | "any" | "none" | <sectionId> */
+  sectionFilter: string;
+  sectionNameById: Map<string, string>;
   setAdjustPreselectId: (id: string | undefined) => void;
   setShowAdjustModal: (v: boolean) => void;
   onSetCost: (item: StockItem) => void;
@@ -450,6 +457,9 @@ function StockTable({
     const q = stockSearch.trim().toLowerCase();
     let rows = stockItems;
     if (missingCostOnly) rows = rows.filter((i) => i.averageCost == null);
+    if (sectionFilter === "any") rows = rows.filter((i) => i.trackedCategoryId != null);
+    else if (sectionFilter === "none") rows = rows.filter((i) => i.trackedCategoryId == null);
+    else if (sectionFilter) rows = rows.filter((i) => i.trackedCategoryId === sectionFilter);
     if (!q) return rows;
     return rows.filter(
       (i) =>
@@ -457,7 +467,7 @@ function StockTable({
         (i.sku ?? "").toLowerCase().includes(q) ||
         (i.category ?? "").toLowerCase().includes(q),
     );
-  }, [stockItems, stockSearch, missingCostOnly]);
+  }, [stockItems, stockSearch, missingCostOnly, sectionFilter]);
 
   // 2) Sort. Numeric columns get explicit comparators so "100" sorts after
   // "20" (string compare would put it first).
@@ -570,7 +580,19 @@ function StockTable({
                 item.currentStock <= 0 && "bg-danger-bg/30",
               )}
             >
-              <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
+              <td className="px-4 py-3 font-medium text-navy">
+                <span className="inline-flex items-center gap-1.5">
+                  {item.name}
+                  {item.trackedCategoryId && (
+                    <span
+                      className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700"
+                      title={sectionNameById.get(item.trackedCategoryId) ?? "Regulated section"}
+                    >
+                      {sectionNameById.get(item.trackedCategoryId) ?? "Section"}
+                    </span>
+                  )}
+                </span>
+              </td>
               <td className="px-4 py-3 font-mono text-navy">{item.sku ?? "—"}</td>
               <td className="px-4 py-3 text-navy/70">{item.category ?? "—"}</td>
               <td className="px-4 py-3">
@@ -2240,6 +2262,17 @@ export default function InventoryPage() {
   const [showBulkCostModal, setShowBulkCostModal] = React.useState(false);
   const [showRecomputeModal, setShowRecomputeModal] = React.useState(false);
   const [missingCostOnly, setMissingCostOnly] = React.useState(false);
+  const [sectionFilter, setSectionFilter] = React.useState("");
+
+  const { data: trackedCategories } = useTrackedCategories();
+  const sectionNameById = React.useMemo(
+    () => new Map((trackedCategories ?? []).map((c) => [c.id, c.name])),
+    [trackedCategories],
+  );
+  const activeSections = React.useMemo(
+    () => (trackedCategories ?? []).filter((c) => c.active),
+    [trackedCategories],
+  );
 
   const { data: valuation } = useInventoryValuation();
 
@@ -2558,6 +2591,21 @@ export default function InventoryPage() {
                 return `${shown} of ${total}`;
               })()}
             </p>
+            {activeSections.length > 0 && (
+              <div className="w-44">
+                <Select
+                  aria-label="Section"
+                  options={[
+                    { value: "", label: "All sections" },
+                    { value: "any", label: "Regulated (any section)" },
+                    ...activeSections.map((c) => ({ value: c.id, label: c.name })),
+                    { value: "none", label: "Non-regulated" },
+                  ]}
+                  value={sectionFilter}
+                  onChange={(e) => setSectionFilter(e.target.value)}
+                />
+              </div>
+            )}
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -2632,6 +2680,8 @@ export default function InventoryPage() {
                 stockItems={stockItems as StockItem[]}
                 stockSearch={stockSearch}
                 missingCostOnly={missingCostOnly}
+                sectionFilter={sectionFilter}
+                sectionNameById={sectionNameById}
                 setAdjustPreselectId={setAdjustPreselectId}
                 setShowAdjustModal={setShowAdjustModal}
                 onSetCost={setCostTarget}
