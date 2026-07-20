@@ -31,13 +31,35 @@
 import { Client } from "pg";
 import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 
-const DB_URL = process.env.DATABASE_URL;
-if (!DB_URL) {
-  console.error(
-    "DATABASE_URL not set. Run via: railway run --service postgres node apps/api/scripts/tidy-regulated-categories.mjs",
+// Connection resolution mirrors prod-migrate.mjs: `railway run --service postgres`
+// does NOT set DATABASE_URL — the postgres service exposes credential PARTS
+// (POSTGRES_* + the public TCP proxy host/port), so build the URL from them.
+// A directly-set DATABASE_URL (local docker, CI) still wins.
+function resolveDbUrl() {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+  const e = process.env;
+  const need = [
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_DB",
+    "RAILWAY_TCP_PROXY_DOMAIN",
+    "RAILWAY_TCP_PROXY_PORT",
+  ];
+  const missing = need.filter((k) => !e[k]);
+  if (missing.length) {
+    console.error(
+      `Missing env: ${missing.join(", ")}\n` +
+        "Set DATABASE_URL, or run via: railway run --service postgres node apps/api/scripts/tidy-regulated-categories.mjs",
+    );
+    process.exit(1);
+  }
+  console.log(`Target host: ${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}`);
+  return (
+    `postgresql://${e.POSTGRES_USER}:${encodeURIComponent(e.POSTGRES_PASSWORD)}` +
+    `@${e.RAILWAY_TCP_PROXY_DOMAIN}:${e.RAILWAY_TCP_PROXY_PORT}/${e.POSTGRES_DB}`
   );
-  process.exit(1);
 }
+const DB_URL = resolveDbUrl();
 
 const argv = process.argv.slice(2);
 const EXECUTE = argv.includes("--execute");
