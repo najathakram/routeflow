@@ -260,6 +260,55 @@ describe("TrackedCategoriesService", () => {
           BadRequestException,
         );
       });
+
+      it("trims the name before saving", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.trackedSubcategory.findFirst.mockResolvedValue(null);
+        prisma.trackedSubcategory.create.mockResolvedValue({
+          id: "s1",
+          name: "Cigarettes",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+
+        await service.createSubcategory("c1", { name: "  Cigarettes  " });
+
+        expect(prisma.trackedSubcategory.create).toHaveBeenCalledWith({
+          data: {
+            name: "Cigarettes",
+            active: true,
+            trackedCategoryId: "c1",
+            tenantId: "test-tenant",
+          },
+          include: { _count: { select: { products: true } } },
+        });
+      });
+
+      it("rejects a name that is empty after trimming", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        await expect(service.createSubcategory("c1", { name: "   " })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.trackedSubcategory.create).not.toHaveBeenCalled();
+      });
+
+      it("409s on a case-insensitive duplicate, quoting the EXISTING row's casing", async () => {
+        prisma.trackedCategory.findUnique.mockResolvedValue(section);
+        prisma.trackedSubcategory.findFirst.mockResolvedValue({
+          id: "s1",
+          name: "Cigarettes",
+          trackedCategoryId: "c1",
+          active: true,
+        });
+
+        await expect(service.createSubcategory("c1", { name: "cigarettes" })).rejects.toMatchObject(
+          {
+            message: expect.stringContaining('"Cigarettes"'),
+          },
+        );
+        expect(prisma.trackedSubcategory.create).not.toHaveBeenCalled();
+      });
     });
 
     describe("update / toggle (section-scoped)", () => {
@@ -273,6 +322,74 @@ describe("TrackedCategoriesService", () => {
         await expect(service.updateSubcategory("c1", "s1", { name: "X" })).rejects.toBeInstanceOf(
           NotFoundException,
         );
+      });
+
+      it("trims the name and 409s on a case-insensitive dup of a sibling (existing casing quoted)", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.trackedSubcategory.findFirst.mockResolvedValue({
+          id: "s2",
+          name: "Cigars",
+          trackedCategoryId: "c1",
+          active: true,
+        });
+
+        await expect(
+          service.updateSubcategory("c1", "s1", { name: " cigars " }),
+        ).rejects.toMatchObject({
+          message: expect.stringContaining('"Cigars"'),
+        });
+        expect(prisma.trackedSubcategory.findFirst).toHaveBeenCalledWith({
+          where: {
+            trackedCategoryId: "c1",
+            id: { not: "s1" },
+            name: { equals: "cigars", mode: "insensitive" },
+          },
+        });
+        expect(prisma.trackedSubcategory.update).not.toHaveBeenCalled();
+      });
+
+      it("allows a case-only rename of its own row (self excluded from the dup check)", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.trackedSubcategory.findFirst.mockResolvedValue(null);
+        prisma.trackedSubcategory.update.mockResolvedValue({
+          id: "s1",
+          name: "CIGARETTES",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+
+        const res = await service.updateSubcategory("c1", "s1", { name: "CIGARETTES" });
+
+        expect(prisma.trackedSubcategory.update).toHaveBeenCalledWith({
+          where: { id: "s1" },
+          data: { name: "CIGARETTES" },
+          include: { _count: { select: { products: true } } },
+        });
+        expect(res).toMatchObject({ id: "s1", name: "CIGARETTES" });
+      });
+
+      it("rejects a rename to an empty (post-trim) name", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        await expect(service.updateSubcategory("c1", "s1", { name: "   " })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.trackedSubcategory.update).not.toHaveBeenCalled();
       });
 
       it("toggles active within the section", async () => {

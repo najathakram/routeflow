@@ -107,6 +107,13 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (variants/regulated/costing/description/images, prop-for-prop identical there) with
   `initialName/initialSku/initialPrice/initialCost` prefills from the scanned line (OCR now extracts
   per-line `sku`). `InlineCreateProductModal` untouched at its other quick-entry call sites.
+  **Subcategory create-on-type + scope tabs (2026-07-19c):** subcategory fields on product surfaces become a type-ahead
+  `components/SubcategoryCombobox.tsx` (ID-based — separate query vs selected id; explicit
+  `+ Create "…"` row via `useCreateSubcategory`, case-insensitive pre-guard; server adds trim +
+  ci-dup 409); the Section dropdowns on Products + Inventory Stock tab are REPLACED by shared
+  `components/RegulatedScopeTabs.tsx` (design-system Tabs: All | Regulated(badge) | Non-regulated +
+  per-section chips when Regulated; same `?section=` contract; inventory migrates to
+  `useUrlFilters({section:""})`). Mobile gains `SubcategoryPickerSheet` (search+create).
   **Regulated-section isolation (2026-07-19b):** Products page (`products/page.tsx`) gained a
   toolbar **"Section"** `<select>` (All / Regulated-any / per-section / Non-regulated) bound to a
   deep-linkable `?section=` via `useUrlFilters({section:""})` → `useProducts({section})`; a Section

@@ -210,10 +210,25 @@ export class TrackedCategoriesService {
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a subcategory.");
     }
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException("Subcategory name is required.");
+    }
+    const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
+      where: {
+        trackedCategoryId: categoryId,
+        name: { equals: name, mode: "insensitive" },
+      },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `A subcategory named "${existing.name}" already exists in this section.`,
+      );
+    }
     try {
       const row = await this.prisma.forTenant().trackedSubcategory.create({
         data: {
-          name: dto.name,
+          name,
           active: dto.active ?? true,
           trackedCategoryId: categoryId,
           tenantId,
@@ -224,7 +239,7 @@ export class TrackedCategoriesService {
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
         throw new ConflictException(
-          `A subcategory named "${dto.name}" already exists in this section.`,
+          `A subcategory named "${name}" already exists in this section.`,
         );
       }
       throw e;
@@ -233,11 +248,30 @@ export class TrackedCategoriesService {
 
   async updateSubcategory(categoryId: string, subId: string, dto: UpdateSubcategoryDto) {
     await this.getSubcategoryOrThrow(categoryId, subId);
+    let name: string | undefined;
+    if (dto.name !== undefined) {
+      name = dto.name.trim();
+      if (!name) {
+        throw new BadRequestException("Subcategory name is required.");
+      }
+      const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
+        where: {
+          trackedCategoryId: categoryId,
+          id: { not: subId },
+          name: { equals: name, mode: "insensitive" },
+        },
+      });
+      if (existing) {
+        throw new ConflictException(
+          `A subcategory named "${existing.name}" already exists in this section.`,
+        );
+      }
+    }
     try {
       const row = await this.prisma.forTenant().trackedSubcategory.update({
         where: { id: subId },
         data: {
-          ...(dto.name !== undefined ? { name: dto.name } : {}),
+          ...(name !== undefined ? { name } : {}),
           ...(dto.active !== undefined ? { active: dto.active } : {}),
         },
         include: WITH_COUNT,
@@ -246,7 +280,7 @@ export class TrackedCategoriesService {
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
         throw new ConflictException(
-          `A subcategory named "${dto.name ?? ""}" already exists in this section.`,
+          `A subcategory named "${name ?? ""}" already exists in this section.`,
         );
       }
       throw e;

@@ -32,6 +32,7 @@ import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { ProductCreateModal } from "@/components/ProductCreateModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { AssignToSectionModal } from "@/components/AssignToSectionModal";
+import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 
@@ -1095,6 +1096,18 @@ export default function ProductsPage() {
         />
       )}
 
+      {/* Regulated scope tabs — hidden entirely when the tenant has no sections */}
+      <RegulatedScopeTabs
+        value={sectionFilter}
+        onChange={(v) => setUrlFilter("section", v)}
+        sections={activeSections.map((s) => ({
+          id: s.id,
+          name: s.name,
+          productCount: s.productCount,
+        }))}
+        className="mb-2.5"
+      />
+
       {/* Toolbar — Ledger filter bar */}
       <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-surface-border bg-white px-4 py-3 shadow-card">
         {/* Select all checkbox — only shown in selection mode */}
@@ -1154,23 +1167,6 @@ export default function ProductsPage() {
             onChange={(e) => setCategoryFilter(e.target.value)}
           />
         </div>
-
-        {/* Regulated-section filter — hidden entirely when the tenant has no sections */}
-        {hasSections && (
-          <div className="w-44">
-            <Select
-              aria-label="Section"
-              options={[
-                { value: "", label: "All sections" },
-                { value: "any", label: "Regulated (any section)" },
-                ...activeSections.map((s) => ({ value: s.id, label: s.name })),
-                { value: "none", label: "Non-regulated" },
-              ]}
-              value={sectionFilter}
-              onChange={(e) => setUrlFilter("section", e.target.value)}
-            />
-          </div>
-        )}
 
         {/* Per-page selector */}
         <div className="w-36">

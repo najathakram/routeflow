@@ -7,6 +7,7 @@ import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { CategoryInput } from "./CategoryInput";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { OptionPickerSheet } from "./OptionPickerSheet";
+import { SubcategoryPickerSheet } from "./SubcategoryPickerSheet";
 import { useTrackedCategories, useTrackedSubcategories } from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
 import {
@@ -367,20 +368,13 @@ export function ProductForm({
           setSectionPickerOpen(false);
         }}
       />
-      <OptionPickerSheet
+      <SubcategoryPickerSheet
         visible={subcategoryPickerOpen}
-        title="Subcategory"
-        options={subcategoryOptions.map((s) => ({
-          id: s.id,
-          label: s.name + (s.inactive ? " (inactive)" : ""),
-        }))}
+        sectionId={form.trackedCategoryId || null}
         selectedId={form.trackedSubcategoryId}
-        nullable
-        nullLabel="None"
         onClose={() => setSubcategoryPickerOpen(false)}
-        onSelect={(opt) => {
-          set("trackedSubcategoryId", opt.id);
-          setSubcategoryPickerOpen(false);
+        onSelect={(id) => {
+          set("trackedSubcategoryId", id);
         }}
       />
     </FormSheet>

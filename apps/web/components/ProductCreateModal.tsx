@@ -9,9 +9,10 @@ import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
+import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
-import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
-import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions } from "@/lib/regulated-format";
 
 /**
  * Same `CreatedProduct` shape `InlineCreateProductModal` returns — callers
@@ -189,9 +190,7 @@ export function ProductCreateModal({
   // Regulated section + subcategory pickers (both optional). The subcategory
   // list is scoped to the chosen section and cleared when the section changes.
   const { data: sections = [] } = useTrackedCategories({ active: true });
-  const { data: subcategories = [] } = useTrackedSubcategories(form.trackedCategoryId || undefined);
   const sectionOptions = sectionPickerOptions(sections);
-  const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
 
   const addImages = (files: FileList | null) => {
     if (!files) return;
@@ -518,26 +517,11 @@ export function ProductCreateModal({
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-navy">Subcategory</label>
-                    <select
+                    <SubcategoryCombobox
+                      sectionId={form.trackedCategoryId || null}
                       value={form.trackedSubcategoryId}
-                      onChange={(e) => set("trackedSubcategoryId", e.target.value)}
-                      disabled={!form.trackedCategoryId || subcategoryOptions.length === 0}
-                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised/60 disabled:text-navy/50"
-                    >
-                      <option value="">
-                        {!form.trackedCategoryId
-                          ? "Pick a section first"
-                          : subcategoryOptions.length === 0
-                            ? "No subcategories"
-                            : "None"}
-                      </option>
-                      {subcategoryOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                          {s.inactive ? " (inactive)" : ""}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={(id) => set("trackedSubcategoryId", id)}
+                    />
                   </div>
                 </>
               )}
