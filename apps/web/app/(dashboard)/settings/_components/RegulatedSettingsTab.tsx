@@ -46,21 +46,21 @@ export function RegulatedSettingsTab() {
           title: updated.active ? `${c.name} activated` : `${c.name} deactivated`,
           variant: "success",
         }),
-      onError: () => toast({ title: "Failed to update section", variant: "error" }),
+      onError: () => toast({ title: "Failed to update type", variant: "error" }),
     });
 
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-navy">Regulated sections</h2>
+          <h2 className="text-lg font-semibold text-navy">Regulated types</h2>
           <p className="mt-0.5 text-sm text-navy/70">
-            Separately-handled categories (tobacco, alcohol, deposits…) and their subcategories.
-            Sections drive tax, licensing and invoicing; subcategories are for reporting.
+            Separately-handled categories (tobacco, alcohol, deposits…) and their categories. Types
+            drive tax, licensing and invoicing; categories are for reporting.
           </p>
         </div>
         <Button leftIcon={<Plus className="h-4 w-4" />} onClick={openNew}>
-          New section
+          New type
         </Button>
       </div>
 
@@ -70,13 +70,13 @@ export function RegulatedSettingsTab() {
         </div>
       ) : sections.length === 0 ? (
         <div className="rounded-xl border border-dashed border-surface-border bg-surface-raised/40 py-10 text-center text-sm text-navy/70">
-          No regulated sections yet.{" "}
+          No regulated types yet.{" "}
           <button
             type="button"
             onClick={openNew}
             className="font-medium text-brand-600 hover:underline"
           >
-            Create your first section
+            Create your first type
           </button>
           .
         </div>
@@ -192,9 +192,9 @@ function SubcategoryManager({ section }: { section: TrackedCategory }) {
       {
         onSuccess: () => {
           setNewName("");
-          toast({ title: `Subcategory "${name}" added`, variant: "success" });
+          toast({ title: `Category "${name}" added`, variant: "success" });
         },
-        onError: (e) => errMsg(e, "Failed to add subcategory"),
+        onError: (e) => errMsg(e, "Failed to add category"),
       },
     );
   };
@@ -214,9 +214,9 @@ function SubcategoryManager({ section }: { section: TrackedCategory }) {
       {
         onSuccess: () => {
           setRenamingId(null);
-          toast({ title: "Subcategory renamed", variant: "success" });
+          toast({ title: "Category renamed", variant: "success" });
         },
-        onError: (e) => errMsg(e, "Failed to rename subcategory"),
+        onError: (e) => errMsg(e, "Failed to rename category"),
       },
     );
   };
@@ -230,14 +230,14 @@ function SubcategoryManager({ section }: { section: TrackedCategory }) {
             title: updated.active ? `${s.name} activated` : `${s.name} deactivated`,
             variant: "success",
           }),
-        onError: (e) => errMsg(e, "Failed to update subcategory"),
+        onError: (e) => errMsg(e, "Failed to update category"),
       },
     );
 
   return (
     <div className="mt-3 rounded-lg border border-surface-border bg-surface-raised/30 p-3">
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/60">
-        Subcategories
+        Categories
       </p>
 
       {isLoading ? (
@@ -246,7 +246,7 @@ function SubcategoryManager({ section }: { section: TrackedCategory }) {
         </div>
       ) : subs.length === 0 ? (
         <p className="mb-2 text-xs text-navy/50">
-          None yet — add subcategories to classify products within this section.
+          None yet — add categories to classify products within this type.
         </p>
       ) : (
         <ul className="mb-2 space-y-1">
@@ -322,7 +322,7 @@ function SubcategoryManager({ section }: { section: TrackedCategory }) {
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder="Add a subcategory…"
+          placeholder="Add a category…"
           className="flex-1 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <Button

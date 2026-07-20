@@ -12,14 +12,14 @@ export default function NewRegulatedCategoryScreen() {
 
   return (
     <RegulatedCategoryForm
-      title="New section"
+      title="New type"
       submitLabel={mut.isPending ? "Saving…" : "Save"}
       submitting={mut.isPending}
       initial={emptyRegulatedCategoryForm()}
       onSubmit={(payload) => {
         mut.mutate(payload, {
           onSuccess: (created) => {
-            showToast("Section created");
+            showToast("Type created");
             router.replace(`/(operator)/regulated/${created.id}`);
           },
           onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),

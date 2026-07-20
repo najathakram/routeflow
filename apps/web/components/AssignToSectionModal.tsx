@@ -19,16 +19,16 @@ interface Props {
 }
 
 /**
- * Bulk-assign the current products-page selection to a regulated section (or
+ * Bulk-assign the current products-page selection to a regulated type (or
  * remove them from one). Chrome mirrors `AssignProductsModal`.
  *
  * Assigning: one `assignProducts` call for every selected id — server-side
- * `updateMany` is idempotent for rows already in the target section (WP-A), so
+ * `updateMany` is idempotent for rows already in the target type (WP-A), so
  * we don't need to pre-filter.
- * Removing ("None"): products can each currently sit in a DIFFERENT section, and
- * `unassignProducts` is scoped to one section id, so we group the selection by
+ * Removing ("None"): products can each currently sit in a DIFFERENT type, and
+ * `unassignProducts` is scoped to one type id, so we group the selection by
  * its current `trackedCategoryId` and issue one call per group (skipping
- * products that have no section already).
+ * products that have no type already).
  */
 export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: Props) {
   const { toast } = useToast();
@@ -63,7 +63,7 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
         }
         toast({
           title: "Products unassigned",
-          description: `${unassignedCount} product${unassignedCount !== 1 ? "s" : ""} removed from their section`,
+          description: `${unassignedCount} product${unassignedCount !== 1 ? "s" : ""} removed from their regulated type`,
           variant: "success",
         });
       } else {
@@ -81,7 +81,7 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
       onClose();
     } catch (err: any) {
       toast({
-        title: "Failed to update section",
+        title: "Failed to update regulated type",
         description: err?.response?.data?.message ?? "Please try again.",
         variant: "error",
       });
@@ -92,7 +92,7 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Assign to section</h2>
+          <h2 className="text-base font-semibold text-navy">Assign to regulated type</h2>
           <button
             type="button"
             onClick={onClose}
@@ -112,17 +112,18 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
             className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="" disabled>
-              Choose a section…
+              Choose a regulated type…
             </option>
             {sections.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
             ))}
-            <option value={NONE_VALUE}>None — remove from section</option>
+            <option value={NONE_VALUE}>None — remove regulated type</option>
           </select>
           <p className="text-xs text-navy/60">
-            Products already in another section are moved; their subcategory is cleared.
+            Products already assigned elsewhere are moved between types; their category is
+            re-synced.
           </p>
         </div>
 

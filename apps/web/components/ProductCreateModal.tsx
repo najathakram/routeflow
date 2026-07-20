@@ -71,7 +71,7 @@ function validUnitsPerBoxPrefill(v: number | undefined): boolean {
  * product from a partial context (a scanned invoice line, a batch-review
  * line) can open the SAME form the products page uses, instead of the
  * slimmer `InlineCreateProductModal`. Owns its own data (parent-candidate
- * catalog, regulated section/subcategory pickers), its own `createProduct`
+ * catalog, regulated type/category pickers), its own `createProduct`
  * mutation, and the post-create image upload.
  */
 export function ProductCreateModal({
@@ -187,8 +187,8 @@ export function ProductCreateModal({
     }
   };
 
-  // Regulated section + subcategory pickers (both optional). The subcategory
-  // list is scoped to the chosen section and cleared when the section changes.
+  // Regulated type + category pickers (both optional). The category list is
+  // scoped to the chosen type and cleared when the type changes.
   const { data: sections = [] } = useTrackedCategories({ active: true });
   const sectionOptions = sectionPickerOptions(sections);
 
@@ -251,7 +251,10 @@ export function ProductCreateModal({
         sku: form.sku || undefined,
         unit: form.unit,
         pricePerUnit: form.pricePerUnit,
-        category: form.category || undefined,
+        // One category axis: a regulated type's structured Category picker
+        // drives `category` server-side — never send the free-text value
+        // (which is hidden/cleared in the form) when a type is selected.
+        category: form.trackedCategoryId ? undefined : form.category || undefined,
         description: form.description || undefined,
         costingMethod: form.costingMethod || "FIFO",
         standardCost:
@@ -478,52 +481,60 @@ export function ProductCreateModal({
                 )}
               </div>
 
-              {/* Category — pick from the tenant's existing categories OR type a new one */}
+              {/* Category — ONE axis. Free-text for non-regulated products;
+                  once a regulated type is chosen this slot switches to that
+                  type's structured, type-ahead Category picker instead. */}
               <div className="col-span-2">
                 <label className="mb-1 block text-sm font-medium text-navy">Category</label>
-                <CategoryCombobox
-                  value={form.category}
-                  onChange={(v) => set("category", v)}
-                  placeholder="Select or type a new category"
-                />
-              </div>
-
-              {/* Regulated section + subcategory (optional) — see /settings?tab=regulated */}
-              {sectionOptions.length > 0 && (
-                <>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-navy">
-                      Regulated section
-                    </label>
-                    <select
-                      value={form.trackedCategoryId}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          trackedCategoryId: e.target.value,
-                          trackedSubcategoryId: "",
-                        }))
-                      }
-                      className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      <option value="">None (not regulated)</option>
-                      {sectionOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                          {s.inactive ? " (inactive)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-navy">Subcategory</label>
+                {form.trackedCategoryId ? (
+                  <>
                     <SubcategoryCombobox
                       sectionId={form.trackedCategoryId || null}
                       value={form.trackedSubcategoryId}
                       onChange={(id) => set("trackedSubcategoryId", id)}
                     />
-                  </div>
-                </>
+                    <p className="mt-0.5 text-xs text-navy/70">
+                      Categories for this regulated type — type to create.
+                    </p>
+                  </>
+                ) : (
+                  <CategoryCombobox
+                    value={form.category}
+                    onChange={(v) => set("category", v)}
+                    placeholder="Select or type a new category"
+                  />
+                )}
+              </div>
+
+              {/* Regulated type (optional) — see /settings?tab=regulated */}
+              {sectionOptions.length > 0 && (
+                <div className="col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-navy">Regulated type</label>
+                  <select
+                    value={form.trackedCategoryId}
+                    onChange={(e) => {
+                      const trackedCategoryId = e.target.value;
+                      setForm((f) => ({
+                        ...f,
+                        trackedCategoryId,
+                        trackedSubcategoryId: "",
+                        // Selecting a type replaces the free-text Category
+                        // field with the structured combobox above — clear any
+                        // typed value so a stale one can't be submitted.
+                        category: trackedCategoryId ? "" : f.category,
+                      }));
+                    }}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">None (not regulated)</option>
+                    {sectionOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                        {s.inactive ? " (inactive)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
 
               <div className="col-span-2">

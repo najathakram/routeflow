@@ -156,8 +156,26 @@ export class TrackedCategoriesService {
     // subcategory's parent must equal the product's section — leaving the old
     // one behind strands an invariant violation that 400s later product
     // updates). Rows already in this section are untouched.
+    const moverWhere = { id: { in: productIds }, NOT: { trackedCategoryId: id } };
+    // One-category-axis rule: a mover's free-text Product.category is cleared
+    // too, but ONLY when it was synced to its OLD subcategory's name — a
+    // diverged free-text category (legacy) survives the move. updateMany can't
+    // join, so partition the movers first.
+    const movers = await this.prisma.forTenant().product.findMany({
+      where: moverWhere,
+      select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
+    });
+    const syncedIds = movers
+      .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
+      .map((p) => p.id);
+    if (syncedIds.length > 0) {
+      await this.prisma.forTenant().product.updateMany({
+        where: { id: { in: syncedIds } },
+        data: { category: null },
+      });
+    }
     const { count } = await this.prisma.forTenant().product.updateMany({
-      where: { id: { in: productIds }, NOT: { trackedCategoryId: id } },
+      where: moverWhere,
       data: { trackedCategoryId: id, trackedSubcategoryId: null },
     });
     return { assigned: count };
@@ -166,8 +184,23 @@ export class TrackedCategoriesService {
   /** Remove the given products from this category (revert to standard). */
   async unassignProducts(id: string, productIds: string[]) {
     await this.findOne(id);
+    const targetWhere = { id: { in: productIds }, trackedCategoryId: id };
+    // Same synced-category clear as assignProducts — see comment there.
+    const targets = await this.prisma.forTenant().product.findMany({
+      where: targetWhere,
+      select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
+    });
+    const syncedIds = targets
+      .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
+      .map((p) => p.id);
+    if (syncedIds.length > 0) {
+      await this.prisma.forTenant().product.updateMany({
+        where: { id: { in: syncedIds } },
+        data: { category: null },
+      });
+    }
     const { count } = await this.prisma.forTenant().product.updateMany({
-      where: { id: { in: productIds }, trackedCategoryId: id },
+      where: targetWhere,
       data: { trackedCategoryId: null, trackedSubcategoryId: null },
     });
     return { unassigned: count };
@@ -247,7 +280,7 @@ export class TrackedCategoriesService {
   }
 
   async updateSubcategory(categoryId: string, subId: string, dto: UpdateSubcategoryDto) {
-    await this.getSubcategoryOrThrow(categoryId, subId);
+    const existingSub = await this.getSubcategoryOrThrow(categoryId, subId);
     let name: string | undefined;
     if (dto.name !== undefined) {
       name = dto.name.trim();
@@ -276,6 +309,19 @@ export class TrackedCategoriesService {
         },
         include: WITH_COUNT,
       });
+      // One-category-axis rule: a rename must propagate to every product whose
+      // Product.category mirrors this subcategory — either already synced to
+      // the OLD name, or never synced (NULL). Products whose category diverged
+      // (legacy free-text) are left alone until the one-time tidy script.
+      if (name !== undefined && name !== existingSub.name) {
+        await this.prisma.forTenant().product.updateMany({
+          where: {
+            trackedSubcategoryId: subId,
+            OR: [{ category: existingSub.name }, { category: null }],
+          },
+          data: { category: name },
+        });
+      }
       return this.serializeSub(row);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {

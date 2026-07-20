@@ -34,7 +34,10 @@ export default function RegulatedCategoryDetailScreen() {
   if (isLoading || !section) {
     return (
       <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-        <NavBar inlineTitle="Section" leading={<NavBackButton onPress={() => router.back()} />} />
+        <NavBar
+          inlineTitle="Regulated type"
+          leading={<NavBackButton onPress={() => router.back()} />}
+        />
         <View style={styles.center}>
           <ActivityIndicator color={ios.brand} />
         </View>
@@ -45,7 +48,7 @@ export default function RegulatedCategoryDetailScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
-        inlineTitle="Section"
+        inlineTitle="Regulated type"
         leading={<NavBackButton label="Back" onPress={() => router.back()} />}
         trailing={
           <NavAction
@@ -89,7 +92,7 @@ export default function RegulatedCategoryDetailScreen() {
             onPress={() =>
               toggle.mutate(id!, {
                 onSuccess: (updated) =>
-                  showToast(updated.active ? "Section activated" : "Section deactivated"),
+                  showToast(updated.active ? "Type activated" : "Type deactivated"),
                 onError: (e: any) =>
                   showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
               })
@@ -98,7 +101,7 @@ export default function RegulatedCategoryDetailScreen() {
           >
             <Ionicons name="power-outline" size={16} color={ios.label} />
             <Text style={styles.toggleBtnText}>
-              {section.active ? "Deactivate section" : "Activate section"}
+              {section.active ? "Deactivate type" : "Activate type"}
             </Text>
           </Pressable>
         </View>
@@ -137,9 +140,9 @@ function SubcategoryManager({ categoryId }: { categoryId: string }) {
       {
         onSuccess: () => {
           setNewName("");
-          showToast(`Subcategory "${name}" added`);
+          showToast(`Category "${name}" added`);
         },
-        onError: (e) => err(e, "Failed to add subcategory"),
+        onError: (e) => err(e, "Failed to add category"),
       },
     );
   };
@@ -159,9 +162,9 @@ function SubcategoryManager({ categoryId }: { categoryId: string }) {
       {
         onSuccess: () => {
           setRenamingId(null);
-          showToast("Subcategory renamed");
+          showToast("Category renamed");
         },
-        onError: (e) => err(e, "Failed to rename subcategory"),
+        onError: (e) => err(e, "Failed to rename category"),
       },
     );
   };
@@ -172,17 +175,17 @@ function SubcategoryManager({ categoryId }: { categoryId: string }) {
       {
         onSuccess: (updated) =>
           showToast(updated.active ? `${s.name} activated` : `${s.name} deactivated`),
-        onError: (e) => err(e, "Failed to update subcategory"),
+        onError: (e) => err(e, "Failed to update category"),
       },
     );
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Subcategories</Text>
+      <Text style={styles.cardTitle}>Categories</Text>
       {isLoading ? (
         <ActivityIndicator color={ios.brand} style={{ marginVertical: 8 }} />
       ) : subs.length === 0 ? (
-        <Text style={styles.subEmpty}>None yet — add subcategories to classify products.</Text>
+        <Text style={styles.subEmpty}>None yet — add categories to classify products.</Text>
       ) : (
         subs.map((s) => (
           <View key={s.id} style={styles.subRow}>
@@ -231,7 +234,7 @@ function SubcategoryManager({ categoryId }: { categoryId: string }) {
         <TextInput
           value={newName}
           onChangeText={setNewName}
-          placeholder="Add a subcategory…"
+          placeholder="Add a category…"
           placeholderTextColor={ios.label3}
           style={styles.subInput}
           onSubmitEditing={addSub}

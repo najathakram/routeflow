@@ -107,6 +107,14 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   (variants/regulated/costing/description/images, prop-for-prop identical there) with
   `initialName/initialSku/initialPrice/initialCost` prefills from the scanned line (OCR now extracts
   per-line `sku`). `InlineCreateProductModal` untouched at its other quick-entry call sites.
+  **Regulated TYPE vs Category (2026-07-19d):** terminology + one-axis consolidation — user-facing
+  "Section"→"Regulated type", "Subcategory"→"Category" across products/inventory/compliance/settings
+  (invoice-treatment label "Sectioned on invoice" deliberately kept — invoice layout, not the entity).
+  Product forms (ProductCreateModal, products/[id] edit, SectionEditCell) show ONE Category slot:
+  free-text `CategoryCombobox` when non-regulated; the type-scoped `SubcategoryCombobox` (labeled
+  "Category") when a regulated type is picked — the form then does NOT send `category` (the API
+  syncs `Product.category` = structured category name server-side; see api.md products entry).
+  Legacy tidy: `apps/api/scripts/tidy-regulated-categories.mjs`.
   **Subcategory create-on-type + scope tabs (2026-07-19c):** subcategory fields on product surfaces become a type-ahead
   `components/SubcategoryCombobox.tsx` (ID-based — separate query vs selected id; explicit
   `+ Create "…"` row via `useCreateSubcategory`, case-insensitive pre-guard; server adds trim +

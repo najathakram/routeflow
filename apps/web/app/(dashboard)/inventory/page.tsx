@@ -588,9 +588,9 @@ function StockTable({
                   {item.trackedCategoryId && (
                     <span
                       className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700"
-                      title={sectionNameById.get(item.trackedCategoryId) ?? "Regulated section"}
+                      title={sectionNameById.get(item.trackedCategoryId) ?? "Regulated type"}
                     >
-                      {sectionNameById.get(item.trackedCategoryId) ?? "Section"}
+                      {sectionNameById.get(item.trackedCategoryId) ?? "Type"}
                     </span>
                   )}
                 </span>

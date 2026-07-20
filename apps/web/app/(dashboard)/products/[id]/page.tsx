@@ -275,8 +275,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
 
-  // Regulated section picker (edit mode). The subcategory field is a
-  // SubcategoryCombobox below, which fetches/scopes its own options.
+  // Regulated type picker (edit mode). The Category field below renders the
+  // structured SubcategoryCombobox in place of the free-text combobox once a
+  // type is selected, which fetches/scopes its own options.
   const { data: regulatedSections = [] } = useTrackedCategories({ active: true });
   // Keeps a since-deactivated current section selectable (labelled inactive) so
   // an edit never silently drops a still-applied tag — shared with the create
@@ -427,7 +428,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
-        category: draft.category?.trim() || null,
+        // One category axis: a regulated type's structured Category picker
+        // drives `category` server-side — never send the free-text value
+        // when a type is set. Clearing the type keeps the existing
+        // null-clears semantics.
+        category: draft.trackedCategoryId ? undefined : draft.category?.trim() || null,
         description: draft.description?.trim() || null,
         pricePerUnit: asDecimal(draft.pricePerUnit),
         priceTier2: asDecimal(draft.priceTier2),
@@ -435,7 +440,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         priceTier4: asDecimal(draft.priceTier4),
         priceTier5: asDecimal(draft.priceTier5),
         // Regulated tags: value to set, null to clear (server auto-nulls the
-        // subcategory when the section is cleared).
+        // category when the type is cleared).
         trackedCategoryId: draft.trackedCategoryId || null,
         trackedSubcategoryId: draft.trackedSubcategoryId || null,
         ...(draft.parentProductId
@@ -1374,13 +1379,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   </div>
                 )}
 
-                {/* Separately handled (regulated section + subcategory) — Phase 4.
+                {/* Regulated type + category (formerly "section"/"subcategory") — Phase 4.
                     Read mode only; the live pickers render in the details grid while editing. */}
                 {!isEditing && product.trackedCategory && (
                   <div className="mb-4 flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised/50 px-4 py-2">
                     <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
                     <span className="text-sm text-navy">
-                      <span className="font-medium">Separately handled:</span>{" "}
+                      <span className="font-medium">Regulated type:</span>{" "}
                       {product.trackedCategory.name}
                       {product.trackedSubcategory && (
                         <span className="text-navy/70"> · {product.trackedSubcategory.name}</span>
@@ -1514,12 +1519,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     label="Category"
                     value={
                       isEditing ? (
-                        <CategoryCombobox
-                          value={(editDraft.category as string) ?? ""}
-                          onChange={(v) => setEditDraft((d) => ({ ...d, category: v }))}
-                          placeholder="Select or type a category"
-                          className="px-2 py-1"
-                        />
+                        (editDraft.trackedCategoryId as string) ? (
+                          <SubcategoryCombobox
+                            sectionId={(editDraft.trackedCategoryId as string) || null}
+                            value={(editDraft.trackedSubcategoryId as string) ?? ""}
+                            onChange={(id) =>
+                              setEditDraft((d) => ({ ...d, trackedSubcategoryId: id }))
+                            }
+                            className="px-2 py-1"
+                          />
+                        ) : (
+                          <CategoryCombobox
+                            value={(editDraft.category as string) ?? ""}
+                            onChange={(v) => setEditDraft((d) => ({ ...d, category: v }))}
+                            placeholder="Select or type a category"
+                            className="px-2 py-1"
+                          />
+                        )
                       ) : (
                         product.category
                       )
@@ -1527,17 +1543,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   />
                   {isEditing && sectionOptions.length > 0 && (
                     <InfoRow
-                      label="Regulated section"
+                      label="Regulated type"
                       value={
                         <select
                           value={(editDraft.trackedCategoryId as string) ?? ""}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const trackedCategoryId = e.target.value;
                             setEditDraft((d) => ({
                               ...d,
-                              trackedCategoryId: e.target.value,
+                              trackedCategoryId,
                               trackedSubcategoryId: "",
-                            }))
-                          }
+                              // Selecting a type replaces the free-text
+                              // Category row above with the structured
+                              // combobox — clear any typed value so a stale
+                              // one can't resurface if the type is cleared.
+                              category: trackedCategoryId ? "" : d.category,
+                            }));
+                          }}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                         >
                           <option value="">None (not regulated)</option>
@@ -1548,21 +1570,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             </option>
                           ))}
                         </select>
-                      }
-                    />
-                  )}
-                  {isEditing && (editDraft.trackedCategoryId as string) && (
-                    <InfoRow
-                      label="Subcategory"
-                      value={
-                        <SubcategoryCombobox
-                          sectionId={(editDraft.trackedCategoryId as string) || null}
-                          value={(editDraft.trackedSubcategoryId as string) ?? ""}
-                          onChange={(id) =>
-                            setEditDraft((d) => ({ ...d, trackedSubcategoryId: id }))
-                          }
-                          className="px-2 py-1"
-                        />
                       }
                     />
                   )}

@@ -7,7 +7,7 @@ import { useTrackedSubcategories, useCreateSubcategory } from "@/lib/api/tracked
 import { subcategoryPickerOptions } from "@/lib/regulated-format";
 
 interface SubcategoryComboboxProps {
-  /** Parent section — null/"" disables the field ("Pick a section first"). */
+  /** Parent regulated type — null/"" disables the field ("Pick a regulated type first"). */
   sectionId: string | null;
   /** Selected subcategory id ("" = none). */
   value: string;
@@ -110,17 +110,17 @@ export function SubcategoryCombobox({
         }
       }
       toast({
-        title: err?.response?.data?.message ?? "Failed to create subcategory",
+        title: err?.response?.data?.message ?? "Failed to create category",
         variant: "error",
       });
     }
   };
 
   const effectivePlaceholder = !sectionId
-    ? "Pick a section first"
+    ? "Pick a regulated type first"
     : subs.length === 0
-      ? "None — type to create"
-      : (placeholder ?? "Select or type a subcategory");
+      ? "No categories yet — type to create"
+      : (placeholder ?? "Select or type a category");
 
   return (
     <div ref={containerRef} className={cn("relative", compact ? "w-36" : "w-full")}>
@@ -160,7 +160,7 @@ export function SubcategoryCombobox({
             type="button"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onChange("")}
-            title="Clear subcategory"
+            title="Clear category"
             className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy"
           >
             <X className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
@@ -185,7 +185,7 @@ export function SubcategoryCombobox({
             </li>
           ))}
           {filtered.length === 0 && !showCreateRow && (
-            <li className="px-3 py-1.5 text-xs text-navy/70">No subcategories yet.</li>
+            <li className="px-3 py-1.5 text-xs text-navy/70">No categories yet.</li>
           )}
           {showCreateRow && (
             <li>

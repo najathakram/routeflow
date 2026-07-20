@@ -46,13 +46,13 @@ export default function RegulatedCategoriesScreen() {
           </View>
         ) : sections.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.empty}>No regulated sections yet.</Text>
+            <Text style={styles.empty}>No regulated types yet.</Text>
             <Pressable
               style={styles.primaryBtn}
               onPress={() => router.push("/(operator)/regulated/new")}
             >
               <Ionicons name="add" size={16} color="#fff" />
-              <Text style={styles.primaryBtnText}>New section</Text>
+              <Text style={styles.primaryBtnText}>New type</Text>
             </Pressable>
           </View>
         ) : (

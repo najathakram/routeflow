@@ -181,6 +181,85 @@ describe("TrackedCategoriesService", () => {
       });
       expect(res).toEqual({ unassigned: 1 });
     });
+
+    // ── one-category-axis rule: movers' synced Product.category is cleared too ──
+
+    it("assignProducts clears movers' SYNCED categories only — diverged/free-text survives", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", category: "Zyn", trackedSubcategory: { name: "Zyn" } }, // synced — clear
+        { id: "p2", category: "My Custom Label", trackedSubcategory: { name: "Zyn" } }, // diverged — survives
+        { id: "p3", category: null, trackedSubcategory: null }, // never synced — nothing to clear
+      ]);
+      prisma.product.updateMany.mockResolvedValue({ count: 3 });
+
+      await service.assignProducts("c1", ["p1", "p2", "p3"]);
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
+      });
+      // The synced-only clear runs BEFORE the main reassignment.
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: { in: ["p1"] } },
+        data: { category: null },
+      });
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: { in: ["p1", "p2", "p3"] }, NOT: { trackedCategoryId: "c1" } },
+        data: { trackedCategoryId: "c1", trackedSubcategoryId: null },
+      });
+    });
+
+    it("assignProducts skips the extra clear when no mover has a synced category", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", category: "Custom", trackedSubcategory: { name: "Zyn" } },
+      ]);
+      prisma.product.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.assignProducts("c1", ["p1"]);
+
+      expect(prisma.product.updateMany).toHaveBeenCalledTimes(1); // only the main reassignment
+    });
+
+    it("unassignProducts clears movers' SYNCED categories only — diverged/free-text survives", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", category: "Zyn", trackedSubcategory: { name: "Zyn" } },
+        { id: "p2", category: "My Custom Label", trackedSubcategory: { name: "Zyn" } },
+      ]);
+      prisma.product.updateMany.mockResolvedValue({ count: 2 });
+
+      await service.unassignProducts("c1", ["p1", "p2"]);
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ["p1", "p2"] }, trackedCategoryId: "c1" },
+        select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
+      });
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: { in: ["p1"] } },
+        data: { category: null },
+      });
+      expect(prisma.product.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: { in: ["p1", "p2"] }, trackedCategoryId: "c1" },
+        data: { trackedCategoryId: null, trackedSubcategoryId: null },
+      });
+    });
   });
 
   describe("subcategories", () => {
@@ -356,6 +435,7 @@ describe("TrackedCategoriesService", () => {
       it("allows a case-only rename of its own row (self excluded from the dup check)", async () => {
         prisma.trackedSubcategory.findUnique.mockResolvedValue({
           id: "s1",
+          name: "Cigarettes",
           trackedCategoryId: "c1",
           active: true,
           _count: { products: 0 },
@@ -390,6 +470,58 @@ describe("TrackedCategoriesService", () => {
           BadRequestException,
         );
         expect(prisma.trackedSubcategory.update).not.toHaveBeenCalled();
+      });
+
+      // ── one-category-axis rule: rename propagates to synced products ──
+
+      it("propagates a rename to synced (category===oldName) and never-synced (category IS NULL) products", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          name: "Zyn",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.trackedSubcategory.findFirst.mockResolvedValue(null); // no dup
+        prisma.trackedSubcategory.update.mockResolvedValue({
+          id: "s1",
+          name: "Zyn Pouches",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.product.updateMany.mockResolvedValue({ count: 4 });
+
+        await service.updateSubcategory("c1", "s1", { name: "Zyn Pouches" });
+
+        expect(prisma.product.updateMany).toHaveBeenCalledWith({
+          where: {
+            trackedSubcategoryId: "s1",
+            OR: [{ category: "Zyn" }, { category: null }],
+          },
+          data: { category: "Zyn Pouches" },
+        });
+      });
+
+      it("does NOT propagate when the name is unchanged (e.g. only `active` toggled)", async () => {
+        prisma.trackedSubcategory.findUnique.mockResolvedValue({
+          id: "s1",
+          name: "Zyn",
+          trackedCategoryId: "c1",
+          active: true,
+          _count: { products: 0 },
+        });
+        prisma.trackedSubcategory.update.mockResolvedValue({
+          id: "s1",
+          name: "Zyn",
+          trackedCategoryId: "c1",
+          active: false,
+          _count: { products: 0 },
+        });
+
+        await service.updateSubcategory("c1", "s1", { active: false });
+
+        expect(prisma.product.updateMany).not.toHaveBeenCalled();
       });
 
       it("toggles active within the section", async () => {

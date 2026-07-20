@@ -37,7 +37,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
   const prepare = usePrepareFiling();
 
   React.useEffect(() => {
-    setTitle(category.data?.name ?? "Regulated section");
+    setTitle(category.data?.name ?? "Regulated type");
   }, [setTitle, category.data?.name]);
 
   // Year-to-date ledger (net sales + tax by month) for this section. `to` is
@@ -111,7 +111,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
           <ArrowLeft className="h-4 w-4" /> Regulated Items
         </Link>
         <div className="rounded-xl border border-dashed border-surface-border bg-surface-raised/40 py-16 text-center text-sm text-navy/70">
-          This regulated section wasn&apos;t found. It may have been removed.
+          This regulated type wasn&apos;t found. It may have been removed.
         </div>
       </div>
     );
@@ -232,9 +232,9 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
       </Card>
 
       {/* Subcategories (read-only; manage in Settings) */}
-      <Card title="Subcategories">
+      <Card title="Categories">
         <div className="mb-2 flex items-center justify-between">
-          <p className="text-xs text-navy/60">Classification tags within this section.</p>
+          <p className="text-xs text-navy/60">Classification tags within this type.</p>
           <Link
             href="/settings?tab=regulated"
             className="text-xs font-medium text-brand-600 hover:underline"
@@ -244,7 +244,7 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         </div>
         {activeSubs.length === 0 ? (
           <p className="rounded-lg border border-dashed border-surface-border bg-surface-raised/40 px-4 py-6 text-center text-sm text-navy/60">
-            No subcategories yet.
+            No categories yet.
           </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
