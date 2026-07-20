@@ -28,11 +28,11 @@ interface SectionEditCellProps {
 }
 
 /**
- * Inline Quick-Edit cell for a product's regulated section + subcategory —
+ * Inline Quick-Edit cell for a product's regulated type + category —
  * two dependent, save-on-change selects (no draft state; each change fires
- * immediately). Changing the section ALWAYS clears the subcategory in the same
+ * immediately). Changing the type ALWAYS clears the category in the same
  * save, mirroring the product detail page's dependent selects — the server
- * independently validates subcategory-parent === section either way.
+ * independently validates category-parent === type either way.
  */
 export function SectionEditCell({
   productId,
@@ -54,7 +54,7 @@ export function SectionEditCell({
   return (
     <div className="flex flex-col gap-1">
       <select
-        aria-label={`Section for product ${productId}`}
+        aria-label={`Regulated type for product ${productId}`}
         value={trackedCategoryId ?? ""}
         disabled={disabled}
         onChange={(e) =>

@@ -749,4 +749,197 @@ describe("ProductsService", () => {
       );
     });
   });
+
+  // ─── category sync (one-category-axis rule) ─────────────────────────────────
+
+  describe("category sync — create", () => {
+    it("a structured subcategory's name WINS the category resolution over dto.category", async () => {
+      prisma.product.findFirst.mockResolvedValue(null); // name/sku checks
+      prisma.trackedSubcategory.findUnique
+        .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
+        .mockResolvedValueOnce({ name: "Zyn" }); // sync fetch
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Zyn Pouches",
+        sku: "ZYN-1",
+        unit: "can",
+        pricePerUnit: "5",
+        category: "Tobacco", // must be ignored — the structured name wins
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ category: "Zyn" }),
+        }),
+      );
+    });
+
+    it("with a type but NO subcategory, dto.category is preserved untouched", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Loose Tobacco",
+        sku: "LT-1",
+        unit: "pack",
+        pricePerUnit: "5",
+        category: "Rolling",
+        trackedCategoryId: "sec-1",
+      } as any);
+
+      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ category: "Rolling" }),
+        }),
+      );
+    });
+
+    it("non-regulated creates are unaffected (no trackedSubcategory lookup at all)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Plain Widget",
+        sku: "PW-1",
+        unit: "each",
+        pricePerUnit: "2",
+        category: "Hardware",
+      } as any);
+
+      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ category: "Hardware" }) }),
+      );
+    });
+
+    it("a variant inheriting the parent's regulated pair also gets the synced category name", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.findUnique.mockResolvedValue({
+        priceTier2: 1,
+        priceTier3: 1,
+        priceTier4: 1,
+        priceTier5: 1,
+        category: "Vapes",
+        unitsPerBox: 1,
+        costingMethod: "AVCO",
+        standardCost: 1,
+        isTobacco: false,
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+      });
+      prisma.trackedSubcategory.findUnique
+        .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
+        .mockResolvedValueOnce({ name: "Mint Vape" }); // sync fetch
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Mint",
+        variantName: "Mint",
+        parentProductId: "parent-1",
+        unit: "each",
+        pricePerUnit: "30",
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ category: "Mint Vape" }),
+        }),
+      );
+    });
+  });
+
+  describe("category sync — update", () => {
+    it("setting a subcategory forces category to its name (dto.category ignored)", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedSubcategory.findUnique
+        .mockResolvedValueOnce({ trackedCategoryId: "sec-1" }) // assertSubcategoryInSection
+        .mockResolvedValueOnce({ name: "Juul Pods" }); // sync fetch
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", {
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+        category: "Vapes", // must be overridden
+      } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.category).toBe("Juul Pods");
+    });
+
+    it("clearing the subcategory clears a category that was synced to its name", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        category: "Juul Pods", // synced to the (about-to-be-cleared) sub's name
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+        trackedSubcategory: { id: "sub-1", name: "Juul Pods", trackedCategoryId: "sec-1" },
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedSubcategoryId: null } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.trackedSubcategoryId).toBeNull();
+      expect(data.category).toBeNull();
+    });
+
+    it("clearing the subcategory leaves a DIVERGED (manually edited) category alone", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        category: "My Custom Label", // diverged from the synced name
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+        trackedSubcategory: { id: "sub-1", name: "Juul Pods", trackedCategoryId: "sec-1" },
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedSubcategoryId: null } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.trackedSubcategoryId).toBeNull();
+      expect(data.category).toBeUndefined();
+    });
+
+    it("a category-only edit on a structured product is forced back to the synced name", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        category: "Juul Pods",
+        trackedCategoryId: "sec-1",
+        trackedSubcategoryId: "sub-1",
+        trackedSubcategory: { id: "sub-1", name: "Juul Pods", trackedCategoryId: "sec-1" },
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      // Re-validation of the unchanged pair on every update() call.
+      prisma.trackedSubcategory.findUnique.mockResolvedValue({ trackedCategoryId: "sec-1" });
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { category: "Vapes" } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.category).toBe("Juul Pods");
+    });
+
+    it("a category-only edit on a NON-regulated product is untouched", async () => {
+      prisma.product.findUnique.mockResolvedValue({ ...MOCK_PRODUCT, category: "Produce" });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { category: "Groceries" } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.category).toBe("Groceries");
+      expect(prisma.trackedSubcategory.findUnique).not.toHaveBeenCalled();
+    });
+  });
 });

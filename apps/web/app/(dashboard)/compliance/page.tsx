@@ -46,7 +46,7 @@ export default function CompliancePage() {
           href="/settings?tab=regulated"
           className="inline-flex items-center gap-1.5 rounded-lg border border-surface-border px-3 py-2 text-sm font-medium text-navy hover:bg-surface-raised"
         >
-          <ShieldCheck className="h-4 w-4" /> Manage sections
+          <ShieldCheck className="h-4 w-4" /> Manage types
         </Link>
       </div>
 
@@ -54,7 +54,7 @@ export default function CompliancePage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card>
           <div className="flex items-center gap-2 text-xs text-navy/70">
-            <Layers className="h-4 w-4" /> Tracked Sections
+            <Layers className="h-4 w-4" /> Regulated Types
           </div>
           <p className="mt-1 text-2xl font-bold text-navy">
             {activeCount}
@@ -93,14 +93,14 @@ export default function CompliancePage() {
       </div>
 
       {/* Sections */}
-      <Card title="Sections">
+      <Card title="Regulated Types">
         {isLoading ? (
           <div className="flex items-center justify-center py-10">
             <Loader2 className="h-6 w-6 animate-spin text-navy/50" />
           </div>
         ) : categories.length === 0 ? (
           <div className="rounded-xl border border-dashed border-surface-border bg-surface-raised/40 py-10 text-center text-sm text-navy/70">
-            No regulated sections yet.{" "}
+            No regulated types yet.{" "}
             <Link
               href="/settings?tab=regulated"
               className="font-medium text-brand-600 hover:underline"

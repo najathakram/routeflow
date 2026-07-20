@@ -394,6 +394,17 @@ export class ProductsService {
       regulated.trackedCategoryId,
       regulated.trackedSubcategoryId,
     );
+    // One-category-axis rule: a regulated product's category IS its structured
+    // (per-type) category name — synced server-side so every category surface
+    // (filters, analytics, buyer facets) shows "Zyn", never the type name.
+    let syncedCategory: string | undefined;
+    if (regulated.trackedSubcategoryId) {
+      const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+        where: { id: regulated.trackedSubcategoryId },
+        select: { name: true },
+      });
+      syncedCategory = sub?.name;
+    }
     return this.prisma.forTenant().product.create({
       data: {
         name: dto.name,
@@ -405,7 +416,7 @@ export class ProductsService {
         priceTier3: dto.priceTier3 ?? (parent ? parent.priceTier3.toString() : dto.pricePerUnit),
         priceTier4: dto.priceTier4 ?? (parent ? parent.priceTier4.toString() : dto.pricePerUnit),
         priceTier5: dto.priceTier5 ?? (parent ? parent.priceTier5.toString() : dto.pricePerUnit),
-        category: dto.category ?? parent?.category ?? undefined,
+        category: syncedCategory ?? dto.category ?? parent?.category ?? undefined,
         description: dto.description,
         isActive: dto.isActive,
         // Inherited-from-parent tobacco skips the addon re-check (top of create):
@@ -488,12 +499,41 @@ export class ProductsService {
           ? dto.trackedSubcategoryId
           : existing.trackedSubcategoryId;
     await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
-    const data =
+    // `data.category` needs to accept `null` below (a `string | undefined` DTO
+    // field), which the spread's inferred type won't allow — loosen it like the
+    // `where: any` Prisma clauses elsewhere in this file.
+    const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
       data.trackedSubcategoryId = null;
+    }
+    // One-category-axis rule: keep Product.category in sync with the structured
+    // category so filters/analytics/buyer facets never see the type name instead
+    // of "Zyn". See products.service.spec "category sync" scenarios.
+    if (typeof dto.trackedSubcategoryId === "string") {
+      // Structured category being SET/CHANGED — its name wins over any
+      // dto.category sent in the same request (the form never sends both;
+      // imports/legacy clients shouldn't be able to desync the axis).
+      const sub = await this.prisma.forTenant().trackedSubcategory.findUnique({
+        where: { id: dto.trackedSubcategoryId },
+        select: { name: true },
+      });
+      if (sub?.name) data.category = sub.name;
+    } else if (data.trackedSubcategoryId === null) {
+      // Structured category being CLEARED — either explicitly, or because its
+      // parent section was just cleared above. Only clear the mirrored
+      // category if it was actually synced; a diverged free-text category
+      // (legacy) survives.
+      if (existing.category != null && existing.category === existing.trackedSubcategory?.name) {
+        data.category = null;
+      }
+    } else if (existing.trackedSubcategoryId != null && dto.category !== undefined) {
+      // Category-only edit on a product that still has a structured category:
+      // the free-text field is hidden by the form for regulated items, so
+      // force it back to the synced name rather than letting it desync.
+      data.category = existing.trackedSubcategory?.name ?? null;
     }
     return this.prisma.forTenant().product.update({
       where: { id },

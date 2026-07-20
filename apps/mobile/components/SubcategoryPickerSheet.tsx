@@ -70,7 +70,7 @@ export function SubcategoryPickerSheet({
           return;
         }
       }
-      setError(e?.response?.data?.message || "Couldn't create subcategory.");
+      setError(e?.response?.data?.message || "Couldn't create category.");
     }
   };
 
@@ -79,7 +79,7 @@ export function SubcategoryPickerSheet({
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.sheet}>
         <View style={styles.handle} />
-        <Text style={styles.title}>Subcategory</Text>
+        <Text style={styles.title}>Category</Text>
         <View style={styles.searchWrap}>
           <TextInput
             style={styles.searchInput}
@@ -88,7 +88,7 @@ export function SubcategoryPickerSheet({
               setQuery(v);
               setError(null);
             }}
-            placeholder="Search or type a new subcategory…"
+            placeholder="Search or type a new category…"
             placeholderTextColor={ios.label3}
             autoCapitalize="words"
             autoCorrect={false}

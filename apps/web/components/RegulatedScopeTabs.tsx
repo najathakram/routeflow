@@ -68,7 +68,7 @@ export function RegulatedScopeTabs({
                 : "border-surface-border bg-white text-navy hover:bg-surface-raised",
             )}
           >
-            All sections
+            All types
           </button>
           {sections.map((s) => (
             <button

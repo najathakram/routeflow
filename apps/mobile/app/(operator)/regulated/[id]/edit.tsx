@@ -26,7 +26,7 @@ export default function EditRegulatedCategoryScreen() {
 
   return (
     <RegulatedCategoryForm
-      title="Edit section"
+      title="Edit regulated type"
       submitLabel={mut.isPending ? "Saving…" : "Save"}
       submitting={mut.isPending}
       initial={{
@@ -47,7 +47,7 @@ export default function EditRegulatedCategoryScreen() {
           { id, data: payload },
           {
             onSuccess: () => {
-              showToast("Section updated");
+              showToast("Type updated");
               router.back();
             },
             onError: (e: any) =>

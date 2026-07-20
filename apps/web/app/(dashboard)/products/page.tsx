@@ -230,11 +230,11 @@ function ProductCard({
               title={
                 (product as any).trackedSubcategory?.name ??
                 sectionNameById.get(product.trackedCategoryId) ??
-                "Section"
+                "Type"
               }
               className="rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
             >
-              {sectionNameById.get(product.trackedCategoryId) ?? "Section"}
+              {sectionNameById.get(product.trackedCategoryId) ?? "Type"}
             </span>
           )}
         </div>
@@ -295,7 +295,7 @@ function makeTableColumns(
 
   const sectionCol: ColumnDef<ApiProduct, unknown> = {
     id: "section",
-    header: "Section",
+    header: "Type",
     enableSorting: false,
     cell: ({ row }) => {
       const p = row.original;
@@ -321,7 +321,7 @@ function makeTableColumns(
       if (!p.trackedCategoryId) {
         return <span className="text-xs text-navy/30">—</span>;
       }
-      const sectionName = sectionNameById.get(p.trackedCategoryId) ?? "Section";
+      const sectionName = sectionNameById.get(p.trackedCategoryId) ?? "Type";
       return (
         <span
           title={(p as any).trackedSubcategory?.name ?? sectionName}
@@ -774,7 +774,7 @@ export default function ProductsPage() {
       prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
     ) => {
       await updateProduct.mutateAsync({ id: product.id, ...patch });
-      toast({ title: "Section updated", variant: "success" });
+      toast({ title: "Regulated type updated", variant: "success" });
       setUndoStack((prev) => [
         ...prev.slice(-19),
         {
@@ -1236,7 +1236,7 @@ export default function ProductsPage() {
                 onClick={() => setShowAssignToSection(true)}
                 disabled={selected.size < 1}
               >
-                Assign to section…
+                Assign to type…
               </Button>
             )}
             <Button

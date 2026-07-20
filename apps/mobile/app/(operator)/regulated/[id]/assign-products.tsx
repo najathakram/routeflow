@@ -92,7 +92,7 @@ export default function AssignProductsScreen() {
       />
       <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
       <Text style={styles.hint}>
-        {selected.size} selected · checking a product in another section moves it here.
+        {selected.size} selected · checking a product in another type moves it here.
       </Text>
       {isLoading ? (
         <View style={styles.center}>

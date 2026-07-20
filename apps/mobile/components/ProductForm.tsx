@@ -76,7 +76,7 @@ export function ProductForm({
   const sectionOptions = sectionPickerOptions(
     sections,
     initial.trackedCategoryId
-      ? { id: initial.trackedCategoryId, name: initial.trackedCategoryName ?? "Unknown section" }
+      ? { id: initial.trackedCategoryId, name: initial.trackedCategoryName ?? "Unknown type" }
       : null,
   );
   const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
@@ -147,11 +147,31 @@ export function ProductForm({
           </FormField>
         )}
         <FormField label="Category">
-          <CategoryInput
-            value={form.category}
-            onChangeText={(v) => set("category", v)}
-            placeholder="Bakery"
-          />
+          {form.trackedCategoryId ? (
+            <Pressable style={styles.picker} onPress={() => setSubcategoryPickerOpen(true)}>
+              <View style={styles.pickerInner}>
+                <Text
+                  style={[
+                    styles.pickerText,
+                    !form.trackedSubcategoryId && styles.pickerPlaceholder,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {form.trackedSubcategoryId
+                    ? (subcategoryOptions.find((s) => s.id === form.trackedSubcategoryId)?.name ??
+                      "—")
+                    : "None"}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={ios.label3} />
+              </View>
+            </Pressable>
+          ) : (
+            <CategoryInput
+              value={form.category}
+              onChangeText={(v) => set("category", v)}
+              placeholder="Bakery"
+            />
+          )}
         </FormField>
         <FormField label="Description">
           <FormTextInput
@@ -225,32 +245,13 @@ export function ProductForm({
 
       {sectionOptions.length > 0 ? (
         <FormSection title="Regulated (optional)">
-          <FormField label="Regulated section">
+          <FormField label="Regulated type">
             <Pressable style={styles.picker} onPress={() => setSectionPickerOpen(true)}>
               <View style={styles.pickerInner}>
                 <Text style={styles.pickerText} numberOfLines={1}>
                   {form.trackedCategoryId
                     ? (sectionOptions.find((s) => s.id === form.trackedCategoryId)?.name ?? "—")
                     : "None (not regulated)"}
-                </Text>
-                <Ionicons name="chevron-down" size={14} color={ios.label3} />
-              </View>
-            </Pressable>
-          </FormField>
-          <FormField label="Subcategory">
-            <Pressable
-              style={[styles.picker, !form.trackedCategoryId && { opacity: 0.5 }]}
-              onPress={() => form.trackedCategoryId && setSubcategoryPickerOpen(true)}
-              disabled={!form.trackedCategoryId}
-            >
-              <View style={styles.pickerInner}>
-                <Text style={styles.pickerText} numberOfLines={1}>
-                  {!form.trackedCategoryId
-                    ? "Pick a section first"
-                    : form.trackedSubcategoryId
-                      ? (subcategoryOptions.find((s) => s.id === form.trackedSubcategoryId)?.name ??
-                        "—")
-                      : "None"}
                 </Text>
                 <Ionicons name="chevron-down" size={14} color={ios.label3} />
               </View>
@@ -353,7 +354,7 @@ export function ProductForm({
 
       <OptionPickerSheet
         visible={sectionPickerOpen}
-        title="Regulated section"
+        title="Regulated type"
         options={sectionOptions.map((s) => ({
           id: s.id,
           label: s.name + (s.inactive ? " (inactive)" : ""),
@@ -365,6 +366,10 @@ export function ProductForm({
         onSelect={(opt) => {
           set("trackedCategoryId", opt.id);
           set("trackedSubcategoryId", "");
+          // Category becomes ONE axis when a regulated type is picked: the free-text
+          // value is cleared so buildProductPayload naturally omits `category` — the
+          // server syncs it from the structured category the user picks next.
+          if (opt.id) set("category", "");
           setSectionPickerOpen(false);
         }}
       />
