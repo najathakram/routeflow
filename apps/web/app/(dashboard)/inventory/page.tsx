@@ -18,11 +18,12 @@ import {
   DollarSign,
   RefreshCcw,
 } from "lucide-react";
-import { Badge, Button, Modal, PageHeader, Select, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import {
   useStockOverview,
   useSuppliers,
@@ -48,6 +49,7 @@ import { useProducts } from "@/lib/api/products";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { StockCountTab } from "@/components/inventory/StockCountTab";
 import { SupplierSelect } from "@/components/SupplierSelect";
@@ -2262,7 +2264,8 @@ export default function InventoryPage() {
   const [showBulkCostModal, setShowBulkCostModal] = React.useState(false);
   const [showRecomputeModal, setShowRecomputeModal] = React.useState(false);
   const [missingCostOnly, setMissingCostOnly] = React.useState(false);
-  const [sectionFilter, setSectionFilter] = React.useState("");
+  const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
+  const sectionFilter = urlFilters.section;
 
   const { data: trackedCategories } = useTrackedCategories();
   const sectionNameById = React.useMemo(
@@ -2451,6 +2454,18 @@ export default function InventoryPage() {
 
         {/* ── Stock tab ── */}
         <Tabs.Content value="stock" className="pt-4">
+          {/* Regulated scope tabs — hidden entirely when the tenant has no sections */}
+          <RegulatedScopeTabs
+            value={sectionFilter}
+            onChange={(v) => setUrlFilter("section", v)}
+            sections={activeSections.map((s) => ({
+              id: s.id,
+              name: s.name,
+              productCount: s.productCount,
+            }))}
+            className="mb-2.5"
+          />
+
           <div className="flex flex-wrap items-center gap-3 rounded-t-lg border border-b-0 border-surface-border bg-white px-4 py-3 shadow-card">
             {/* Search — filters the stock table by name, SKU, or category so
                 operators can jump to a product before adjusting its stock,
@@ -2591,21 +2606,6 @@ export default function InventoryPage() {
                 return `${shown} of ${total}`;
               })()}
             </p>
-            {activeSections.length > 0 && (
-              <div className="w-44">
-                <Select
-                  aria-label="Section"
-                  options={[
-                    { value: "", label: "All sections" },
-                    { value: "any", label: "Regulated (any section)" },
-                    ...activeSections.map((c) => ({ value: c.id, label: c.name })),
-                    { value: "none", label: "Non-regulated" },
-                  ]}
-                  value={sectionFilter}
-                  onChange={(e) => setSectionFilter(e.target.value)}
-                />
-              </div>
-            )}
             <div className="flex gap-2">
               <Button
                 size="sm"

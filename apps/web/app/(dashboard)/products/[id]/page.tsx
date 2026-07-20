@@ -44,13 +44,14 @@ import {
   type ApiProduct,
 } from "@/lib/api/products";
 import { useCostHistory } from "@/lib/api/cost-history";
-import { useTrackedCategories, useTrackedSubcategories } from "@/lib/api/tracked-categories";
-import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
+import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
+import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -274,20 +275,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
 
-  // Regulated section + subcategory pickers (edit mode). Subcategories are scoped
-  // to the section currently chosen in the draft.
+  // Regulated section picker (edit mode). The subcategory field is a
+  // SubcategoryCombobox below, which fetches/scopes its own options.
   const { data: regulatedSections = [] } = useTrackedCategories({ active: true });
-  const { data: draftSubcategories = [] } = useTrackedSubcategories(
-    (editDraft.trackedCategoryId as string) || undefined,
-  );
-  // Option lists keep a since-deactivated current section/subcategory selectable
-  // (labelled inactive) so an edit never silently drops a still-applied tag — the
-  // shared helpers keep this rule identical to the create modal.
+  // Keeps a since-deactivated current section selectable (labelled inactive) so
+  // an edit never silently drops a still-applied tag — shared with the create
+  // modal so the rule can't drift.
   const sectionOptions = sectionPickerOptions(regulatedSections, product?.trackedCategory);
-  const subcategoryOptions = subcategoryPickerOptions(
-    draftSubcategories,
-    editDraft.trackedSubcategoryId as string,
-  );
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -1561,21 +1555,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <InfoRow
                       label="Subcategory"
                       value={
-                        <select
+                        <SubcategoryCombobox
+                          sectionId={(editDraft.trackedCategoryId as string) || null}
                           value={(editDraft.trackedSubcategoryId as string) ?? ""}
-                          onChange={(e) =>
-                            setEditDraft((d) => ({ ...d, trackedSubcategoryId: e.target.value }))
+                          onChange={(id) =>
+                            setEditDraft((d) => ({ ...d, trackedSubcategoryId: id }))
                           }
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          <option value="">None</option>
-                          {subcategoryOptions.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                              {s.inactive ? " (inactive)" : ""}
-                            </option>
-                          ))}
-                        </select>
+                          className="px-2 py-1"
+                        />
                       }
                     />
                   )}

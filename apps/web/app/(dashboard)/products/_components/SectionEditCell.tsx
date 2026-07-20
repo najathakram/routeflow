@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useTrackedSubcategories, type TrackedCategory } from "@/lib/api/tracked-categories";
-import { sectionPickerOptions, subcategoryPickerOptions } from "@/lib/regulated-format";
+import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import { sectionPickerOptions } from "@/lib/regulated-format";
+import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
 
 const selectCls =
   "h-7 w-36 rounded border border-surface-border bg-white px-1.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500";
@@ -50,9 +51,6 @@ export function SectionEditCell({
     : null;
   const sectionOptions = sectionPickerOptions(activeSections, current);
 
-  const { data: subcategories = [] } = useTrackedSubcategories(trackedCategoryId || undefined);
-  const subcategoryOptions = subcategoryPickerOptions(subcategories, trackedSubcategoryId);
-
   return (
     <div className="flex flex-col gap-1">
       <select
@@ -73,23 +71,13 @@ export function SectionEditCell({
         ))}
       </select>
       {trackedCategoryId && (
-        <select
-          aria-label={`Subcategory for product ${productId}`}
+        <SubcategoryCombobox
+          sectionId={trackedCategoryId}
           value={trackedSubcategoryId ?? ""}
+          onChange={(id) => onSave({ trackedCategoryId, trackedSubcategoryId: id || null })}
           disabled={disabled}
-          onChange={(e) =>
-            onSave({ trackedCategoryId, trackedSubcategoryId: e.target.value || null })
-          }
-          className={selectCls}
-        >
-          <option value="">—</option>
-          {subcategoryOptions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-              {s.inactive ? " (inactive)" : ""}
-            </option>
-          ))}
-        </select>
+          compact
+        />
       )}
     </div>
   );
