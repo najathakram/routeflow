@@ -187,7 +187,7 @@ export function ProductForm({
       </FormSection>
 
       <FormSection title="Identifiers">
-        <FormField label="SKU">
+        <FormField label="SKU (case code)">
           <FormTextInput
             value={form.sku}
             onChangeText={(v) => set("sku", v)}
@@ -210,6 +210,30 @@ export function ProductForm({
                 onChangeText={(v) => set("barcode", v)}
                 placeholder="EAN-13, UPC-A, etc."
                 keyboardType="number-pad"
+              />
+            </View>
+            {Platform.OS !== "web" ? (
+              <Pressable
+                onPress={() => router.push("/(operator)/products/scan" as any)}
+                style={styles.scanBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+              </Pressable>
+            ) : null}
+          </View>
+        </FormField>
+        <FormField
+          label="Unit code"
+          hint="Code on the individual unit — printed on customer invoices. Leave blank if it matches the case code."
+        >
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <View style={{ flex: 1 }}>
+              <FormTextInput
+                value={form.unitSku}
+                onChangeText={(v) => set("unitSku", v)}
+                placeholder="Same as case code"
+                autoCapitalize="characters"
               />
             </View>
             {Platform.OS !== "web" ? (

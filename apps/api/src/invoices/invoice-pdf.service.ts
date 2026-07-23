@@ -5,6 +5,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
+import { invoiceItemCode } from "./invoice-item-code";
 
 import bwipjs from "bwip-js";
 
@@ -45,7 +46,9 @@ export class InvoicePdfService {
           },
         },
         items: {
-          include: { product: { select: { id: true, name: true, barcode: true, sku: true } } },
+          include: {
+            product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
+          },
         },
         // Exclude VOID (bounced) payments (P5-12): the PDF template sums payments
         // into the headline balance-due, so a reversed payment must not appear as
@@ -129,7 +132,7 @@ export class InvoicePdfService {
     // Generate barcodes for each line item
     const itemsWithBarcodes = await Promise.all(
       inv.items.map(async (item) => {
-        const barcodeText = (item as any).product?.barcode ?? (item as any).product?.sku;
+        const barcodeText = invoiceItemCode((item as any).product);
         if (barcodeText) {
           try {
             const buf = await bwipjs.toBuffer({

@@ -677,6 +677,12 @@ export class ImportService {
           });
           if (product) productId = product.id;
         }
+        if (!productId && sku) {
+          const product = await this.prisma.forTenant().product.findFirst({
+            where: { unitSku: { equals: sku, mode: "insensitive" } },
+          });
+          if (product) productId = product.id;
+        }
         if (!productId && description && description !== "Item") {
           const product = await this.prisma.forTenant().product.findFirst({
             where: { name: { equals: description, mode: "insensitive" } },

@@ -60,8 +60,11 @@ export async function resolveProductByCode<T = any>(
     });
     const matches: any[] = res?.data?.data ?? res?.data ?? [];
     if (matches.length > 0) {
+      const codeLower = code.toLowerCase();
       const skuExact = matches.find(
-        (p) => (p?.sku ?? "").toString().toLowerCase() === code.toLowerCase(),
+        (p) =>
+          (p?.sku ?? "").toString().toLowerCase() === codeLower ||
+          (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
       );
       const product = skuExact ?? matches[0];
       return { product, source: skuExact ? "sku" : "search" };

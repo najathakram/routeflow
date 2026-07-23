@@ -115,6 +115,18 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   "Category") when a regulated type is picked — the form then does NOT send `category` (the API
   syncs `Product.category` = structured category name server-side; see api.md products entry).
   Legacy tidy: `apps/api/scripts/tidy-regulated-categories.mjs`.
+  **Case code / Unit code (2026-07-23, products-dual-sku WP5):** the existing SKU field is
+  relabeled "Case code (SKU / barcode)"; a new "Unit code" text input + `BarcodeScannerButton`
+  (own ref, writes a sibling `unitSku` form field, helper text "printed on customer invoices…")
+  sits beneath it in `ProductCreateModal.tsx` (payload `unitSku: form.unitSku.trim() || undefined`)
+  and in `products/[id]/page.tsx`'s variant add/edit modal (`variantForm.unitSku`, same
+  `|| undefined` convention as its `sku` sibling — including on edit, matching existing behavior).
+  `products/[id]/page.tsx` main edit draft carries `unitSku: product.unitSku ?? ""` →
+  PATCH `unitSku: draft.unitSku?.trim() || null`; a new `InfoRow label="Unit code"` renders
+  `product.unitSku ?? "— (same as case code)"` right after "SKU / Barcode". `ApiProduct`
+  (`lib/api/products.ts`) gained `unitSku?: string | null`. No local `Product` interface exists in
+  `products/[id]/page.tsx` — `product` is untyped (`useProduct()`'s `useQuery` has no generic), so
+  `product.unitSku` needed no separate type edit there.
   **Subcategory create-on-type + scope tabs (2026-07-19c):** subcategory fields on product surfaces become a type-ahead
   `components/SubcategoryCombobox.tsx` (ID-based — separate query vs selected id; explicit
   `+ Create "…"` row via `useCreateSubcategory`, case-insensitive pre-guard; server adds trim +
@@ -177,7 +189,9 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   closes instantly; a save failure keeps the modal open). Spec: `e2e/08-create-order-escape.spec.ts`.
 - **`lib/product-display.ts`** — `displayProductName(product, allProducts?)` composes `"<Parent> - <Variant>"` for variant rows (parent relation → allProducts lookup → bare variant name) + exported `PRODUCT_NAME_SEPARATOR = " - "` (the ONE separator; no hand-composed `·` anywhere). Hand-synced mirror: `apps/mobile/lib/product-display.ts`. **`lib/image-focal.ts`** — product focal-point crop (4:5), image fit.
 - **`lib/change-requests.ts`** — shared web ChangeRequest type (`ChangeRequestType`/`Status`/`Resolution`/`ResolveAction`, `ChangeRequest`) + `describeChangeRequest`/`describeResolution` display helpers (pure, no HTTP client; consumed by both operator `orders/[id]/page.tsx` and buyer `orders/[id]/page.tsx`). CR 409 codes (`CHANGE_REQUEST_ALREADY_RESOLVED`, `STOP_ALREADY_COMPLETED`, `LINE_ALREADY_DELIVERED`, `CHANGE_WINDOW_CLOSED`, `EDIT_WINDOW_OPEN`) added to `providers.tsx` `HANDLED_CODES` so the generic mutation toast doesn't double-fire over the components' guided handling.
-- **`lib/barcode-resolve.ts`** — `BarcodeResolveHit<T>`/`Miss` types.
+- **`lib/barcode-resolve.ts`** — `BarcodeResolveHit<T>`/`Miss` types. Exact-match preference (step 2)
+  now also matches `unitSku` case-insensitively alongside `sku` (2026-07-23, products-dual-sku WP5) —
+  still reported as `source: "sku"` (no new union member).
 - **`lib/formatting.ts`**, **`lib/export.ts`** (`downloadCsv()`), **`lib/report-export.ts`** — format + CSV/report export.
 - **`lib/use-sortable-data.ts`** — table sort/pagination hook.
 - **`lib/stock-count-storage.ts`**, **`lib/buyer-cart.ts`**, **`lib/fetch-pdf-blob.ts`** — local state + PDF blobs.

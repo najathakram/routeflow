@@ -296,6 +296,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const [variantForm, setVariantForm] = React.useState({
     variantName: "",
     sku: "",
+    unitSku: "",
     price: "",
     unit: "",
     priceTier2: "",
@@ -304,6 +305,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     priceTier5: "",
   });
   const variantSkuRef = React.useRef<HTMLInputElement>(null);
+  const variantUnitSkuRef = React.useRef<HTMLInputElement>(null);
 
   // ── "Make variant of" modal state ────────────────────────────────────────
   const [makeVariantOpen, setMakeVariantOpen] = React.useState(false);
@@ -388,6 +390,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     setEditDraft({
       name: product.name,
       sku: product.sku ?? "",
+      unitSku: product.unitSku ?? "",
       unit: product.unit,
       pricePerUnit: String(priceNumber),
       priceTier2: String(parseFloat(String(product.priceTier2 ?? priceNumber))),
@@ -428,6 +431,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
+        unitSku: draft.unitSku?.trim() || null,
         // One category axis: a regulated type's structured Category picker
         // drives `category` server-side — never send the free-text value
         // when a type is set. Clearing the type keeps the existing
@@ -566,6 +570,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       setVariantForm({
         variantName: variant.variantName ?? "",
         sku: variant.sku ?? "",
+        unitSku: variant.unitSku ?? "",
         price: String(vp),
         unit: variant.unit ?? product.unit,
         priceTier2: String(parseFloat(String((variant as any).priceTier2 ?? vp))),
@@ -578,6 +583,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       setVariantForm({
         variantName: "",
         sku: "",
+        unitSku: "",
         price: String(priceNumber),
         unit: product.unit,
         priceTier2: String(parseFloat(String((product as any).priceTier2 ?? priceNumber))),
@@ -605,6 +611,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           id: editingVariant.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
+          unitSku: variantForm.unitSku || undefined,
           // Cleared fields fall back like the create branch — never send ""
           // (rejected by @IsDecimal).
           pricePerUnit: variantForm.price || String(product.pricePerUnit),
@@ -630,6 +637,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           parentProductId: product.id,
           variantName: variantForm.variantName,
           sku: variantForm.sku || undefined,
+          unitSku: variantForm.unitSku || undefined,
           unit: variantForm.unit || product.unit,
           pricePerUnit: variantForm.price || String(product.pricePerUnit),
           priceTier2: variantForm.priceTier2 || variantForm.price || String(product.pricePerUnit),
@@ -1516,6 +1524,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     }
                   />
                   <InfoRow
+                    label="Unit code"
+                    value={
+                      isEditing ? (
+                        <input
+                          value={(editDraft.unitSku as string) ?? ""}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, unitSku: e.target.value }))}
+                          placeholder="Same as case code"
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : (
+                        (product.unitSku ?? (
+                          <span className="text-navy/30">— (same as case code)</span>
+                        ))
+                      )
+                    }
+                  />
+                  <InfoRow
                     label="Category"
                     value={
                       isEditing ? (
@@ -2069,6 +2094,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               <BarcodeScannerButton
                 onScan={(code) => setVariantForm((f) => ({ ...f, sku: code }))}
                 inputRef={variantSkuRef}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-navy/70">Unit code</label>
+            <div className="flex gap-2">
+              <input
+                ref={variantUnitSkuRef}
+                value={variantForm.unitSku}
+                onChange={(e) => setVariantForm((f) => ({ ...f, unitSku: e.target.value }))}
+                placeholder="Leave blank if it matches the case code"
+                className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <BarcodeScannerButton
+                onScan={(code) => setVariantForm((f) => ({ ...f, unitSku: code }))}
+                inputRef={variantUnitSkuRef}
               />
             </div>
           </div>

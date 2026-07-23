@@ -856,6 +856,9 @@ model Product {
   name                 String
   description          String?
   sku                  String?
+  // Optional retail-unit (inner piece) code; NULL ⇒ unit shares the case `sku`.
+  // Read sites use `unitSku ?? sku`.
+  unitSku              String?
   unit                 String
   pricePerUnit         Decimal       @db.Decimal(10, 2)
   priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
@@ -923,6 +926,7 @@ model Product {
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
+  @@unique([tenantId, unitSku])
   // Name uniqueness is enforced via two raw-SQL PARTIAL unique indexes
   // (see migrations/20260504000000_variant_name_per_parent/migration.sql):
   //   - (tenantId, name)                    WHERE parentProductId IS NULL
@@ -937,6 +941,7 @@ model Product {
   @@index([isActive])
   @@index([isFeatured])
   @@index([barcode])
+  @@index([unitSku])
   @@index([parentProductId])
   @@index([tenantId])
   @@index([tenantId, isTobacco])

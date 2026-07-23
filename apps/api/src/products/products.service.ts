@@ -104,6 +104,7 @@ export class ProductsService {
         { name: { contains: query.search, mode: "insensitive" } },
         { sku: { contains: query.search, mode: "insensitive" } },
         { barcode: { contains: query.search, mode: "insensitive" } },
+        { unitSku: { contains: query.search, mode: "insensitive" } },
       ];
     }
     if (query.category) where.category = query.category;
@@ -300,13 +301,23 @@ export class ProductsService {
     });
   }
 
-  async findByBarcode(barcode: string) {
-    const product = await this.prisma.forTenant().product.findFirst({
-      where: { barcode },
+  /**
+   * Resolves a scanned code to a product across all three scannable
+   * identities — case `barcode`, case `sku`, or the retail-unit `unitSku` —
+   * each tenant-unique, so at most 3 rows can match. Deterministic priority
+   * when a code somehow matches more than one product: barcode > sku > unitSku.
+   */
+  async findByBarcode(code: string) {
+    const matches = await this.prisma.forTenant().product.findMany({
+      where: { OR: [{ barcode: code }, { sku: code }, { unitSku: code }] },
       include: { variants: { where: { isActive: true } }, parent: true },
     });
-    if (!product) throw new NotFoundException("Product not found");
-    return product;
+    if (matches.length === 0) throw new NotFoundException("Product not found");
+    return (
+      matches.find((p) => p.barcode === code) ??
+      matches.find((p) => p.sku === code) ??
+      matches.find((p) => p.unitSku === code)!
+    );
   }
 
   async create(dto: CreateProductDto) {
@@ -343,14 +354,39 @@ export class ProductsService {
         .padStart(4, "0");
       dto.sku = `${prefix}-${suffix}`;
     } else {
-      const existing = await this.prisma.forTenant().product.findFirst({ where: { sku: dto.sku } });
+      // A case sku must not collide with another product's sku or unit code
+      // (the unit code is what the customer invoice prints, so a sku equal to it
+      // would resolve a scan to the wrong product). unitSku is a new all-null
+      // column, so this widening can't retroactively reject existing catalogs.
+      // We deliberately do NOT reject a sku that equals another product's barcode:
+      // that was always allowed, findByBarcode ranks barcode > sku so it still
+      // resolves deterministically, and blocking it would 400 edits on existing data.
+      const existing = await this.prisma.forTenant().product.findFirst({
+        where: { OR: [{ sku: dto.sku }, { unitSku: dto.sku }] },
+      });
       if (existing) throw new BadRequestException("SKU already exists");
     }
     if (dto.barcode) {
-      const existing = await this.prisma
-        .forTenant()
-        .product.findFirst({ where: { barcode: dto.barcode } });
+      // Symmetric to the sku check: reject a barcode colliding with another
+      // product's barcode or unit code, but not its case sku (pre-existing behavior).
+      const existing = await this.prisma.forTenant().product.findFirst({
+        where: { OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }] },
+      });
       if (existing) throw new BadRequestException("Barcode already exists");
+    }
+    // A unit code must not collide with ANY product's sku/barcode/unitSku — it's a
+    // scannable identity in the same namespace, so an ambiguous match would resolve
+    // to the wrong product.
+    if (dto.unitSku) {
+      const clash = await this.prisma.forTenant().product.findFirst({
+        where: { OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }] },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new BadRequestException(
+          "Unit code already used by another product's SKU, barcode, or unit code",
+        );
+      }
     }
     // Variant creation inherits the parent family's defaults for every field the
     // DTO left unset — price tiers, category, case size, costing method, standard
@@ -410,6 +446,7 @@ export class ProductsService {
         name: dto.name,
         sku: dto.sku,
         barcode: dto.barcode,
+        unitSku: dto.unitSku,
         unit: dto.unit,
         pricePerUnit: dto.pricePerUnit,
         priceTier2: dto.priceTier2 ?? (parent ? parent.priceTier2.toString() : dto.pricePerUnit),
@@ -470,16 +507,40 @@ export class ProductsService {
       }
     }
     if (dto.sku) {
+      // Reject a case sku colliding with another product's sku or unit code (see
+      // create() — unitSku widening is safe on the new column; sku↔barcode is left
+      // as-is to avoid retroactively breaking existing catalogs).
       const existing = await this.prisma.forTenant().product.findFirst({
-        where: { sku: dto.sku, id: { not: id } },
+        where: {
+          OR: [{ sku: dto.sku }, { unitSku: dto.sku }],
+          id: { not: id },
+        },
       });
       if (existing) throw new BadRequestException("SKU already exists");
     }
     if (dto.barcode) {
       const existing = await this.prisma.forTenant().product.findFirst({
-        where: { barcode: dto.barcode, id: { not: id } },
+        where: {
+          OR: [{ barcode: dto.barcode }, { unitSku: dto.barcode }],
+          id: { not: id },
+        },
       });
       if (existing) throw new BadRequestException("Barcode already exists");
+    }
+    // Same cross-namespace collision check as create() — a unit code must not
+    // collide with any OTHER product's sku/barcode/unitSku.
+    if (dto.unitSku) {
+      const clash = await this.prisma.forTenant().product.findFirst({
+        where: {
+          OR: [{ unitSku: dto.unitSku }, { sku: dto.unitSku }, { barcode: dto.unitSku }],
+          id: { not: id },
+        },
+      });
+      if (clash) {
+        throw new BadRequestException(
+          "Unit code already used by another product's SKU, barcode, or unit code",
+        );
+      }
     }
     // Keep a variant's name and variantName in sync — create() enforces
     // name === variantName, so a rename (via the generic name field, e.g. the
