@@ -67,7 +67,9 @@ describe("RoutesService", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     invoicesService = {
-      recordDeliveryPaymentInTx: jest.fn().mockResolvedValue({ applied: 0, invoiceIds: [] }),
+      recordDeliveryPaymentInTx: jest
+        .fn()
+        .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
     };
 
     gateway = {
@@ -539,11 +541,16 @@ describe("RoutesService", () => {
         id: "stop-1",
         status: "COMPLETED",
       });
+      invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+        applied: 50,
+        invoiceIds: ["inv-1"],
+        paymentIds: ["pay-1"],
+      });
 
       // The regression: mobile sends amount + method only (a client invoiceId was
       // always undefined). The server must still record the payment by resolving
       // the invoice from the delivered order — the old code silently did nothing.
-      await service.completeWithPayment(
+      const response = await service.completeWithPayment(
         "run-1",
         "stop-1",
         { payment: { amount: 50, method: "CASH" } },
@@ -559,6 +566,9 @@ describe("RoutesService", () => {
         "CASH",
         [],
       );
+      // Additive field: the driver app attaches a best-effort payment photo to
+      // paymentIds[0] after the stop completes — must be surfaced on the response.
+      expect(response.paymentIds).toEqual(["pay-1"]);
     });
 
     it("passes only the orders delivered in THIS completion as the reconcile subset", async () => {

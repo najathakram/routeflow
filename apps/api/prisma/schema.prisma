@@ -1807,6 +1807,13 @@ model InvoicePayment {
   bouncedAt    DateTime?
   nsfFeeAmount Decimal?     @db.Decimal(10, 2)
 
+  // Payment image (receipt / slip / check photo). One image per payment EVENT:
+  // grouped standalone rows share one object keyed by paymentGroupId, so these
+  // three columns are identical across a group.
+  imageKey          String?
+  imageOriginalName String?
+  imageMimeType     String?
+
   invoice        Invoice         @relation(fields: [invoiceId], references: [id])
   tenant         Tenant?         @relation(fields: [tenantId], references: [id])
   creditNote     CreditNote?     @relation(fields: [creditNoteId], references: [id])

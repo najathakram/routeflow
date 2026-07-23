@@ -63,6 +63,10 @@ export interface InvoicePayment {
   bouncedAt?: string | null;
   /** NSF fee billed to the customer when checkStatus = BOUNCED (0/absent = no fee). */
   nsfFeeAmount?: number | null;
+  /** Payment image (receipt/slip/check photo). Grouped standalone rows share one image. */
+  imageKey?: string | null;
+  imageOriginalName?: string | null;
+  imageMimeType?: string | null;
 }
 
 export interface Invoice {
@@ -175,6 +179,10 @@ export interface AllPayment {
   paymentGroupId?: string;
   paidAt?: string;
   createdAt: string;
+  /** Payment image (receipt/slip/check photo). Grouped standalone rows share one image. */
+  imageKey?: string | null;
+  imageOriginalName?: string | null;
+  imageMimeType?: string | null;
   invoice: {
     id: string;
     invoiceNumber: string;
@@ -452,7 +460,7 @@ export interface RecordInvoicePaymentDto {
 
 export function useRecordInvoicePayment() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, RecordInvoicePaymentDto>({
+  return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordInvoicePaymentDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/invoices/${id}/payments`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -495,6 +503,49 @@ export function useDeleteInvoicePayment() {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", updated.id] });
     },
+  });
+}
+
+/**
+ * Attach an image (receipt/slip/check photo) to a payment. Grouped standalone
+ * payments anchor on the group id server-side, so uploading against any
+ * allocation row's paymentId makes the image visible from all of them.
+ */
+export function useUploadPaymentImage() {
+  const qc = useQueryClient();
+  return useMutation<{ url: string }, Error, { paymentId: string; file: File }>({
+    mutationFn: ({ paymentId, file }) => {
+      const form = new FormData();
+      form.append("file", file);
+      return apiClient
+        .post(`/invoices/payments/${paymentId}/image`, form, {
+          headers: { "Content-Type": "multipart/form-data" },
+        })
+        .then((r) => r.data);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
+    },
+  });
+}
+
+export function useDeletePaymentImage() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (paymentId) =>
+      apiClient.delete(`/invoices/payments/${paymentId}/image`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
+    },
+  });
+}
+
+export function useGetPaymentImageUrl() {
+  return useMutation<{ url: string }, Error, string>({
+    mutationFn: (paymentId) =>
+      apiClient.get(`/invoices/payments/${paymentId}/image`).then((r) => r.data),
   });
 }
 

@@ -11,20 +11,30 @@ jest.mock("./invoice-pdf.service", () => ({
   })),
 }));
 
+// Payment-image attachment (clone of the expense-receipt pattern): mock
+// compressDocument so these tests never touch real sharp/image bytes.
+jest.mock("../storage/compress.util", () => ({
+  compressDocument: jest.fn(),
+}));
+
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { EmailService } from "../email/email.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { StorageService } from "../storage/storage.service";
+import { compressDocument } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
+
+const mockCompressDocument = compressDocument as jest.Mock;
 
 describe("InvoicesService", () => {
   let service: InvoicesService;
@@ -59,6 +69,12 @@ describe("InvoicesService", () => {
     settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
   };
 
+  const mockStorage = {
+    upload: jest.fn().mockResolvedValue("stored"),
+    presignedUrl: jest.fn().mockResolvedValue("https://signed/url"),
+    delete: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     prisma = createMockPrisma();
     mockMessaging.notify.mockClear();
@@ -70,6 +86,18 @@ describe("InvoicesService", () => {
     });
     mockCreditNotes.settleOrderCreditsInTx.mockClear();
     mockCreditNotes.settleOrderCreditsInTx.mockResolvedValue({ applied: 0, unapplied: 0 });
+    mockStorage.upload.mockClear();
+    mockStorage.upload.mockResolvedValue("stored");
+    mockStorage.presignedUrl.mockClear();
+    mockStorage.presignedUrl.mockResolvedValue("https://signed/url");
+    mockStorage.delete.mockClear();
+    mockStorage.delete.mockResolvedValue(undefined);
+    mockCompressDocument.mockReset();
+    mockCompressDocument.mockResolvedValue({
+      buffer: Buffer.from("compressed-bytes"),
+      mimeType: "image/jpeg",
+      ext: "jpg",
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -92,6 +120,7 @@ describe("InvoicesService", () => {
         },
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
+        { provide: StorageService, useValue: mockStorage },
       ],
     }).compile();
 
@@ -3362,6 +3391,243 @@ describe("InvoicesService", () => {
       } as any)) as any;
 
       expect(Number(invoice.shippingFee)).toBe(0);
+    });
+  });
+
+  // ─── Payment image attachment (clone of the expense-receipt pattern) ──────
+  // uploadPaymentImage/getPaymentImageUrl/deletePaymentImage + recordPayment's
+  // createdPaymentId + deletePayment's best-effort storage cleanup.
+  describe("Payment image attachment", () => {
+    describe("uploadPaymentImage", () => {
+      it("solo payment: uploads under payments/<id>/image.<ext>, updates the row by id, returns the presigned url", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({
+          id: "pay-1",
+          paymentGroupId: null,
+        });
+
+        const result = await service.uploadPaymentImage(
+          "pay-1",
+          Buffer.from("raw-bytes"),
+          "receipt.png",
+          "image/png",
+        );
+
+        expect(mockCompressDocument).toHaveBeenCalledWith(Buffer.from("raw-bytes"), "image/png");
+        expect(mockStorage.upload).toHaveBeenCalledWith(
+          "payments/pay-1/image.jpg",
+          Buffer.from("compressed-bytes"),
+          "image/jpeg",
+        );
+        expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+          where: { id: "pay-1" },
+          data: {
+            imageKey: "payments/pay-1/image.jpg",
+            imageOriginalName: "receipt.png",
+            imageMimeType: "image/jpeg",
+          },
+        });
+        expect(prisma.invoicePayment.updateMany).not.toHaveBeenCalled();
+        expect(mockStorage.presignedUrl).toHaveBeenCalledWith("payments/pay-1/image.jpg");
+        expect(result).toEqual({ url: "https://signed/url" });
+      });
+
+      it("grouped payment: keys the object by the group id and updateMany's every row in the group", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({
+          id: "pay-2",
+          paymentGroupId: "grp-1",
+        });
+
+        const result = await service.uploadPaymentImage(
+          "pay-2",
+          Buffer.from("raw-bytes"),
+          "slip.jpg",
+          "image/jpeg",
+        );
+
+        expect(mockStorage.upload).toHaveBeenCalledWith(
+          "payments/grp-1/image.jpg",
+          Buffer.from("compressed-bytes"),
+          "image/jpeg",
+        );
+        expect(prisma.invoicePayment.updateMany).toHaveBeenCalledWith({
+          where: { paymentGroupId: "grp-1" },
+          data: {
+            imageKey: "payments/grp-1/image.jpg",
+            imageOriginalName: "slip.jpg",
+            imageMimeType: "image/jpeg",
+          },
+        });
+        expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+        expect(result).toEqual({ url: "https://signed/url" });
+      });
+
+      it("throws NotFoundException for an unknown payment", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.uploadPaymentImage("missing", Buffer.from("x"), "x.jpg", "image/jpeg"),
+        ).rejects.toThrow(NotFoundException);
+        expect(mockCompressDocument).not.toHaveBeenCalled();
+        expect(mockStorage.upload).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("getPaymentImageUrl", () => {
+      it("throws NotFoundException when the payment has no image attached", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({ id: "pay-3", imageKey: null });
+
+        await expect(service.getPaymentImageUrl("pay-3")).rejects.toThrow(NotFoundException);
+        expect(mockStorage.presignedUrl).not.toHaveBeenCalled();
+      });
+
+      it("returns the presigned url for an attached image", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({
+          id: "pay-3",
+          imageKey: "payments/pay-3/image.jpg",
+        });
+
+        const result = await service.getPaymentImageUrl("pay-3");
+
+        expect(mockStorage.presignedUrl).toHaveBeenCalledWith("payments/pay-3/image.jpg");
+        expect(result).toEqual({ url: "https://signed/url" });
+      });
+    });
+
+    describe("deletePaymentImage", () => {
+      it("grouped payment: clears every row in the group and deletes the storage object once", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({
+          id: "pay-4",
+          paymentGroupId: "grp-2",
+          imageKey: "payments/grp-2/image.jpg",
+        });
+
+        const result = await service.deletePaymentImage("pay-4");
+
+        expect(prisma.invoicePayment.updateMany).toHaveBeenCalledWith({
+          where: { paymentGroupId: "grp-2" },
+          data: { imageKey: null, imageOriginalName: null, imageMimeType: null },
+        });
+        expect(prisma.invoicePayment.update).not.toHaveBeenCalled();
+        expect(mockStorage.delete).toHaveBeenCalledTimes(1);
+        expect(mockStorage.delete).toHaveBeenCalledWith("payments/grp-2/image.jpg");
+        expect(result).toEqual({ success: true });
+      });
+
+      it("throws NotFoundException when there is no image to delete", async () => {
+        prisma.invoicePayment.findUnique.mockResolvedValue({ id: "pay-5", imageKey: null });
+
+        await expect(service.deletePaymentImage("pay-5")).rejects.toThrow(NotFoundException);
+        expect(mockStorage.delete).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("deletePayment — best-effort payment-image cleanup", () => {
+      const invoiceWithImagedPayment = (paymentId: string, imageKey: string) => ({
+        id: "inv-img",
+        status: InvoiceStatus.PARTIAL,
+        total: 100,
+        dueDate: null,
+        payments: [
+          {
+            id: paymentId,
+            amount: 40,
+            status: "PAID",
+            method: "CASH",
+            imageKey,
+          },
+        ],
+      });
+
+      it("deletes the stored object when no sibling payment still references it (count 0)", async () => {
+        prisma.invoice.findUnique.mockResolvedValue(
+          invoiceWithImagedPayment("pay-img-1", "payments/grp-3/image.jpg"),
+        );
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-img",
+          invoiceNumber: "INV-IMG",
+          customerId: "cust-1",
+          total: 100,
+        });
+        prisma.invoicePayment.count.mockResolvedValue(0);
+
+        await service.deletePayment("inv-img", "pay-img-1");
+
+        expect(prisma.invoicePayment.count).toHaveBeenCalledWith({
+          where: { imageKey: "payments/grp-3/image.jpg" },
+        });
+        expect(mockStorage.delete).toHaveBeenCalledWith("payments/grp-3/image.jpg");
+      });
+
+      it("keeps the stored object when a sibling payment still references it (count 1)", async () => {
+        prisma.invoice.findUnique.mockResolvedValue(
+          invoiceWithImagedPayment("pay-img-2", "payments/grp-4/image.jpg"),
+        );
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-img",
+          invoiceNumber: "INV-IMG",
+          customerId: "cust-1",
+          total: 100,
+        });
+        prisma.invoicePayment.count.mockResolvedValue(1);
+
+        await service.deletePayment("inv-img", "pay-img-2");
+
+        expect(prisma.invoicePayment.count).toHaveBeenCalledWith({
+          where: { imageKey: "payments/grp-4/image.jpg" },
+        });
+        expect(mockStorage.delete).not.toHaveBeenCalled();
+      });
+
+      it("skips the storage lookup entirely when the deleted payment carried no image", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-1",
+          status: InvoiceStatus.PARTIAL,
+          total: 100,
+          dueDate: null,
+          payments: [{ id: "pay-plain", amount: 40, status: "PAID", method: "CASH" }],
+        });
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          customerId: "cust-1",
+          total: 100,
+        });
+
+        await service.deletePayment("inv-1", "pay-plain");
+
+        expect(prisma.invoicePayment.count).not.toHaveBeenCalled();
+        expect(mockStorage.delete).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("recordPayment — createdPaymentId", () => {
+      it("returns createdPaymentId alongside the updated invoice", async () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-1",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [],
+        });
+        prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 2 });
+        prisma.invoicePayment.create.mockResolvedValue({ id: "pay-new-1" });
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-1",
+          invoiceNumber: "INV-0001",
+          customerId: "cust-1",
+          total: 100,
+          payments: [],
+        });
+
+        const result = (await service.recordPayment("inv-1", {
+          amount: 100,
+          method: "CASH",
+        } as any)) as any;
+
+        expect(result.createdPaymentId).toBe("pay-new-1");
+        // Existing consumers reading Invoice fields off the response are unaffected.
+        expect(result.id).toBe("inv-1");
+      });
     });
   });
 });

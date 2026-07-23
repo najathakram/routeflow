@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FormField,
@@ -12,10 +15,15 @@ import { useAdminInvoice } from "../../../../../../../lib/api/admin";
 import {
   usePayment,
   useUpdatePayment,
+  useUploadPaymentImage,
+  useDeletePaymentImage,
+  useGetPaymentImageUrl,
   type EditablePaymentMethod,
 } from "../../../../../../../lib/api/payments";
+import { productImageFile } from "../../../../../../../lib/product-image";
 import { isPaymentEditable } from "../../../../../../../lib/invoices-logic";
 import { showToast } from "../../../../../../../lib/toast";
+import { confirm, chooseAction } from "../../../../../../../lib/confirm";
 
 // Advance/Credit-Note are not editable (server rejects them); the invoice list
 // gates the pencil affordance via isPaymentEditable so only these reach here.
@@ -33,6 +41,9 @@ export default function EditPaymentScreen() {
   const { data: invoice } = useAdminInvoice(id ?? "");
   const { data: payment, isLoading } = usePayment(paymentId ?? "");
   const mut = useUpdatePayment();
+  const uploadImageMut = useUploadPaymentImage();
+  const deleteImageMut = useDeletePaymentImage();
+  const getImageUrlMut = useGetPaymentImageUrl();
 
   // Amount cap = invoice total − the OTHER (non-void, non-this) payments, mirroring web.
   const others = (invoice?.payments ?? [])
@@ -71,6 +82,81 @@ export default function EditPaymentScreen() {
   // and terminal states must never be hand-edited (would corrupt reconciliation).
   const notEditable =
     !!payment && !isPaymentEditable(payment.method, payment.status, invoice?.status);
+
+  // Photo section acts immediately — the payment already exists here (unlike
+  // record-payment.tsx), so Add/Replace/Remove hit the API right away rather
+  // than staging behind the Save button.
+  const pickAndUploadPhoto = async (useCamera: boolean) => {
+    if (!paymentId) return;
+    const res =
+      useCamera && Platform.OS !== "web"
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 1 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1 });
+    if (res.canceled || !res.assets?.[0]) return;
+    try {
+      // Re-encode to JPEG: an iOS library HEIC pick returns raw HEIC bytes the
+      // server would otherwise store verbatim (see products/[id].tsx).
+      const jpeg = await manipulateAsync(res.assets[0].uri, [], {
+        compress: 0.8,
+        format: SaveFormat.JPEG,
+      });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      uploadImageMut.mutate(
+        { paymentId, file },
+        {
+          onSuccess: () => showToast(payment?.imageKey ? "Photo replaced" : "Photo added"),
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't upload the photo."),
+        },
+      );
+    } catch {
+      showToast("Couldn't process the photo.");
+    }
+  };
+
+  const onAddOrReplacePhoto = () => {
+    const actions =
+      Platform.OS === "web"
+        ? [
+            { label: "Choose photo", onPress: () => pickAndUploadPhoto(false) },
+            { label: "Cancel", style: "cancel" as const },
+          ]
+        : [
+            { label: "Take photo", onPress: () => pickAndUploadPhoto(true) },
+            { label: "Choose from library", onPress: () => pickAndUploadPhoto(false) },
+            { label: "Cancel", style: "cancel" as const },
+          ];
+    chooseAction(
+      payment?.imageKey ? "Replace receipt photo" : "Add receipt photo",
+      "Attach a photo of the receipt, slip, or check for this payment.",
+      actions,
+    );
+  };
+
+  const onViewPhoto = () => {
+    if (!paymentId) return;
+    getImageUrlMut.mutate(paymentId, {
+      onSuccess: (data) =>
+        Linking.openURL(data.url).catch(() => showToast("Couldn't open the receipt.")),
+      onError: (e: any) =>
+        showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't load the receipt."),
+    });
+  };
+
+  const onRemovePhoto = () => {
+    if (!paymentId) return;
+    confirm(
+      "Remove photo?",
+      "This photo will be removed from the payment.",
+      () =>
+        deleteImageMut.mutate(paymentId, {
+          onSuccess: () => showToast("Photo removed"),
+          onError: (e: any) =>
+            showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't remove the photo."),
+        }),
+      { confirmText: "Remove", destructive: true },
+    );
+  };
 
   const submit = () => {
     if (!id || !paymentId || !method) return;
@@ -204,6 +290,54 @@ export default function EditPaymentScreen() {
           />
         </FormField>
       </FormSection>
+
+      <FormSection title="Receipt photo">
+        {payment?.imageKey ? (
+          <View style={styles.photoRow}>
+            <Pressable
+              style={styles.photoBtn}
+              onPress={onViewPhoto}
+              disabled={getImageUrlMut.isPending}
+            >
+              <Ionicons name="image-outline" size={16} color={ios.brand} />
+              <Text style={styles.photoBtnText}>
+                {getImageUrlMut.isPending ? "Loading…" : "View"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.photoBtn}
+              onPress={onAddOrReplacePhoto}
+              disabled={uploadImageMut.isPending}
+            >
+              <Ionicons name="camera-outline" size={16} color={ios.brand} />
+              <Text style={styles.photoBtnText}>
+                {uploadImageMut.isPending ? "Uploading…" : "Replace"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.photoBtn, styles.photoBtnDanger]}
+              onPress={onRemovePhoto}
+              disabled={deleteImageMut.isPending}
+            >
+              <Ionicons name="trash-outline" size={16} color={ios.system.red} />
+              <Text style={[styles.photoBtnText, { color: ios.system.red }]}>
+                {deleteImageMut.isPending ? "Removing…" : "Remove"}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            style={styles.addPhotoBtn}
+            onPress={onAddOrReplacePhoto}
+            disabled={uploadImageMut.isPending}
+          >
+            <Ionicons name="camera-outline" size={18} color={ios.brand} />
+            <Text style={styles.addPhotoBtnText}>
+              {uploadImageMut.isPending ? "Uploading…" : "Add receipt photo"}
+            </Text>
+          </Pressable>
+        )}
+      </FormSection>
     </FormSheet>
   );
 }
@@ -217,4 +351,29 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   chipTextActive: { color: "#fff" },
   chipTextInactive: { color: ios.label },
+  photoRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  photoBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: ios.fill3,
+  },
+  photoBtnDanger: { backgroundColor: ios.system.redWash },
+  photoBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  addPhotoBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: ios.brand,
+    backgroundColor: ios.brandWash,
+  },
+  addPhotoBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });

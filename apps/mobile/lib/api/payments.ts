@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { PaymentMethod } from "./invoices"; // reuse the existing 7-value union
+import type { ImageUploadFile } from "../product-image";
 
 // ─── Types (mirror apps/web/lib/api/invoices.ts payment surface) ────────────────
 
@@ -18,6 +19,12 @@ export interface AllPayment {
   paymentGroupId?: string;
   paidAt?: string;
   createdAt: string;
+  // Payment image (receipt / slip / check photo). Grouped standalone rows
+  // share one object keyed by paymentGroupId — these three fields are
+  // identical across a group (server-anchored on upload).
+  imageKey?: string | null;
+  imageOriginalName?: string | null;
+  imageMimeType?: string | null;
   invoice: {
     id: string;
     invoiceNumber: string;
@@ -122,6 +129,59 @@ export function useUpdatePayment() {
 }
 
 // isPaymentEditable moved to lib/invoices-logic.ts (pure, unit-testable).
+
+/**
+ * Attach a receipt/slip/check photo to a payment — `POST
+ * /invoices/payments/:paymentId/image`, multipart field `file`. Clones
+ * `useUploadProductImages`'s FormData pattern (60s timeout — the server
+ * compresses the image before storing it). Grouped standalone payments
+ * anchor on the group id server-side, so uploading against any allocation
+ * row's paymentId makes the image visible from all of them.
+ */
+export function useUploadPaymentImage() {
+  const qc = useQueryClient();
+  return useMutation<{ url: string }, Error, { paymentId: string; file: ImageUploadFile }>({
+    mutationFn: ({ paymentId, file }) => {
+      const fd = new FormData();
+      fd.append("file", file as unknown as Blob);
+      return apiClient
+        .post(`/invoices/payments/${paymentId}/image`, fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 60_000,
+        })
+        .then((r) => r.data);
+    },
+    onSuccess: (_, { paymentId }) => {
+      invalidatePayments(qc, paymentId);
+      // The invoice detail screen reads payment rows off useAdminInvoice
+      // (lib/api/admin.ts), a separate cache from ["invoices", ...].
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/** Presigned URL for a payment's attached image — `GET /invoices/payments/:paymentId/image`.
+ *  A mutation (not a query) so callers fetch-on-demand (View/Open) rather than
+ *  keeping a cached URL around; mirrors web's `useGetPaymentImageUrl`. */
+export function useGetPaymentImageUrl() {
+  return useMutation<{ url: string }, Error, string>({
+    mutationFn: (paymentId) =>
+      apiClient.get(`/invoices/payments/${paymentId}/image`).then((r) => r.data),
+  });
+}
+
+/** Remove a payment's attached image — `DELETE /invoices/payments/:paymentId/image`. */
+export function useDeletePaymentImage() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (paymentId) =>
+      apiClient.delete(`/invoices/payments/${paymentId}/image`).then((r) => r.data),
+    onSuccess: (_, paymentId) => {
+      invalidatePayments(qc, paymentId);
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
 
 // Deferred (redundant with invoices/[id]/record-payment.tsx): standalone record
 // (POST /invoices/payments/record), CSV export (GET /invoices/payments/export).
