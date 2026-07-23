@@ -10,6 +10,7 @@ import {
 import { CostingMethod, StockAlertStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { compressImage } from "../storage/compress.util";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateProductDto } from "./dto/create-product.dto";
@@ -268,10 +269,10 @@ export class ProductsService {
     const product = await this.prisma.forTenant().product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException("Product not found");
 
-    const ext = originalName.split(".").pop() ?? "jpg";
+    const compressed = await compressImage(buffer, mimetype);
     const fpSuffix = encodeFocalSuffix(focal);
-    const key = `products/${id}/${crypto.randomUUID()}${fpSuffix}.${ext}`;
-    await this.storage.upload(key, buffer, mimetype);
+    const key = `products/${id}/${crypto.randomUUID()}${fpSuffix}.${compressed.ext}`;
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
 
     // Append key to the product's imageKeys array
     await this.prisma.forTenant().product.update({

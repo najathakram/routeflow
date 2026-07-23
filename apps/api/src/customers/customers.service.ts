@@ -2150,9 +2150,9 @@ export class CustomersService {
     const customer = await this.prisma.forTenant().customer.findUnique({ where: { id } });
     if (!customer) throw new NotFoundException("Customer not found");
 
-    const ext = (originalName.split(".").pop() ?? "jpg").toLowerCase();
-    const key = `customers/${id}/tax-documents/${crypto.randomUUID()}.${ext}`;
-    await this.storage.upload(key, buffer, mimetype);
+    const compressed = await compressDocument(buffer, mimetype);
+    const key = `customers/${id}/tax-documents/${crypto.randomUUID()}.${compressed.ext}`;
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
 
     await this.prisma.forTenant().customer.update({
       where: { id },
