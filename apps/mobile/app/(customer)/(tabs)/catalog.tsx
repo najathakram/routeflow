@@ -33,6 +33,7 @@ import {
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
+import { QtyTextInput } from "../../../components/QtyStepper";
 import type { PromotionRule } from "../../../lib/pricing";
 import {
   alertIdSet,
@@ -214,6 +215,7 @@ export default function CustomerCatalogScreen() {
           if (hasNextPage && !isFetchingNextPage) fetchNextPage();
         }}
         onEndReachedThreshold={0.5}
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           hiddenCategories && hiddenCategories.length > 0 ? (
             <LockedCategoriesTile categories={hiddenCategories} />
@@ -279,6 +281,7 @@ function ProductCard({
   const cartItem = useCartStore((s) => s.items.find((i) => i.productId === product.id));
   const add = useCartStore((s) => s.add);
   const step = useCartStore((s) => s.step);
+  const setUnits = useCartStore((s) => s.setUnits);
   const upb = Number(product.unitsPerBox ?? 0);
   const boxed = upb > 1;
   // Selling units in the cart: boxes for a boxed product, else pieces.
@@ -369,10 +372,14 @@ function ProductCard({
           <Pressable style={styles.qtyBtn} onPress={() => step(product.id, -1)} hitSlop={4}>
             <Ionicons name="remove" size={16} color={ios.brand} />
           </Pressable>
-          <Text style={styles.qtyText}>
-            {units}
-            {boxed ? (units === 1 ? " box" : " boxes") : ""}
-          </Text>
+          <QtyTextInput
+            value={units}
+            min={1}
+            emptyMeansZero={false}
+            onChangeQty={(n) => setUnits(product.id, n)}
+            style={[styles.qtyText, styles.qtyInputReset]}
+          />
+          {boxed ? <Text style={styles.qtyText}>{units === 1 ? " box" : " boxes"}</Text> : null}
           <Pressable style={styles.qtyBtn} onPress={() => step(product.id, 1)} hitSlop={4}>
             <Ionicons name="add" size={16} color={ios.brand} />
           </Pressable>
@@ -568,6 +575,7 @@ const styles = StyleSheet.create({
     minWidth: 20,
     textAlign: "center",
   },
+  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
   pillsRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   pill: {
     borderRadius: 20,

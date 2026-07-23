@@ -10,6 +10,7 @@ import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer"
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
+import { QtyTextInput } from "../../../components/QtyStepper";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -40,7 +41,7 @@ function addDays(n: number): string {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { items, step, clear } = useCartStore();
+  const { items, step, setUnits, clear } = useCartStore();
   const createMut = useBuyerCreateOrder();
   const { data: promotions } = useBuyerPromotions();
   const [notes, setNotes] = useState("");
@@ -107,6 +108,7 @@ export default function CartScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
       >
         {items.length === 0 ? (
           <View style={styles.empty}>
@@ -170,10 +172,16 @@ export default function CartScreen() {
                             color={units === 1 ? ios.system.redInk : ios.brand}
                           />
                         </Pressable>
-                        <Text style={styles.qtyText}>
-                          {units}
-                          {boxed ? (units === 1 ? " box" : " bx") : ""}
-                        </Text>
+                        <QtyTextInput
+                          value={units}
+                          min={1}
+                          emptyMeansZero={false}
+                          onChangeQty={(n) => setUnits(item.productId, n)}
+                          style={[styles.qtyText, styles.qtyInputReset]}
+                        />
+                        {boxed ? (
+                          <Text style={styles.qtyText}>{units === 1 ? " box" : " bx"}</Text>
+                        ) : null}
                         <Pressable
                           style={styles.qtyBtn}
                           onPress={() => step(item.productId, 1)}
@@ -353,6 +361,7 @@ const styles = StyleSheet.create({
     minWidth: 18,
     textAlign: "center",
   },
+  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
