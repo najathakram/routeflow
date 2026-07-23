@@ -8,6 +8,12 @@ export interface ProductFormValues {
   name: string;
   sku: string;
   barcode: string;
+  /**
+   * Optional retail-unit (inner piece) code. When blank, the case `sku`
+   * applies to units too (read-time fallback on the server) — leave blank
+   * unless the unit has its own scannable code.
+   */
+  unitSku: string;
   category: string;
   unit: string;
   /**
@@ -44,6 +50,7 @@ export function emptyProductForm(): ProductFormValues {
     name: "",
     sku: "",
     barcode: "",
+    unitSku: "",
     category: "",
     unit: "ea",
     unitsPerBox: "",
@@ -71,6 +78,7 @@ export function productFormFromValues(
     name: p.name ?? "",
     sku: p.sku ?? "",
     barcode: p.barcode ?? "",
+    unitSku: p.unitSku ?? "",
     category: p.category ?? "",
     unit: p.unit ?? "ea",
     unitsPerBox: p.unitsPerBox != null ? String(p.unitsPerBox) : "",
@@ -102,6 +110,7 @@ export interface SubmitPayload {
   name: string;
   sku?: string;
   barcode?: string;
+  unitSku?: string | null;
   category?: string;
   unit?: string;
   unitsPerBox?: number;
@@ -148,6 +157,7 @@ export function buildProductPayload(
     name,
     sku: form.sku.trim() || undefined,
     barcode: form.barcode.trim() || undefined,
+    unitSku: mode === "edit" ? form.unitSku.trim() || null : form.unitSku.trim() || undefined,
     category: form.category.trim() || undefined,
     unit: form.unit.trim() || undefined,
     unitsPerBox,

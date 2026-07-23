@@ -318,7 +318,7 @@ function NavGroupSection({
         onClick={() => onToggle(group.label)}
         aria-expanded={expanded}
         className={cn(
-          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-wider transition-colors",
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-xs font-semibold transition-colors",
           // /70 (5.28:1) clears WCAG AA; the old /40 inactive label was 3.23:1.
           isAnyChildActive ? "text-white" : "text-white/70 hover:text-white",
         )}

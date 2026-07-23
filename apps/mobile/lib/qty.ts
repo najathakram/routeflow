@@ -33,3 +33,22 @@ export function parseIntQty(text: string | null | undefined, fallback = 0): numb
   const n = parseInt(s, 10);
   return Number.isFinite(n) ? n : fallback;
 }
+
+/**
+ * Resolve a qty draft at commit time (blur). Returns the number to commit, or
+ * null → revert to the current value.
+ * - empty draft: 0 when emptyMeansZero (line-removal semantics), else revert.
+ * - below min (e.g. typed "0" on a min-1 surface): revert.
+ * - above max: clamp (matches the cart sheet's pieces field — no rollover).
+ */
+export function commitQtyDraft(
+  draft: string | null | undefined,
+  opts: { min?: number; max?: number; emptyMeansZero?: boolean } = {},
+): number | null {
+  const { min = 0, max, emptyMeansZero = true } = opts;
+  const clean = sanitizeIntInput(draft);
+  if (clean === "") return emptyMeansZero ? Math.max(0, min) : null;
+  const n = parseInt(clean, 10);
+  if (!Number.isFinite(n) || n < min) return null;
+  return max != null ? Math.min(max, n) : n;
+}

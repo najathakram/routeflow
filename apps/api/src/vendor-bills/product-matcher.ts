@@ -14,6 +14,7 @@ export interface CatalogProduct {
   name: string;
   sku: string | null;
   barcode: string | null;
+  unitSku?: string | null;
   parentProductId?: string | null;
   parent?: { name: string } | null;
 }
@@ -107,8 +108,10 @@ export function matchLine(
   //    scanned per-line item code.
   for (const p of products) {
     const pSku = p.sku?.toLowerCase() ?? null;
+    const pUnit = p.unitSku?.toLowerCase() ?? null;
     if (
       (pSku && (pSku === rawLower || (skuLower && pSku === skuLower))) ||
+      (pUnit && (pUnit === rawLower || (skuLower && pUnit === skuLower))) ||
       (p.barcode && (p.barcode === rawTrim || (skuStr && p.barcode === skuStr)))
     ) {
       return {

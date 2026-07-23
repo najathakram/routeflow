@@ -97,6 +97,7 @@ export function ProductCreateModal({
   const [form, setForm] = React.useState({
     name: initialName ?? "",
     sku: initialSku ?? "",
+    unitSku: "",
     unit: "",
     pricePerUnit: initialPrice != null ? initialPrice.toFixed(2) : "",
     category: "",
@@ -166,6 +167,7 @@ export function ProductCreateModal({
   const barcodeInputRef = React.useRef<HTMLInputElement>(null);
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const unitSkuInputRef = React.useRef<HTMLInputElement>(null);
 
   // Resolve a scanned barcode to a parent product for the "Variant of" field
   const handleVariantOfScan = async (code: string) => {
@@ -212,6 +214,7 @@ export function ProductCreateModal({
     setForm({
       name: "",
       sku: "",
+      unitSku: "",
       unit: "",
       pricePerUnit: "",
       category: "",
@@ -249,6 +252,7 @@ export function ProductCreateModal({
       product = await createProduct.mutateAsync({
         name: productName,
         sku: form.sku || undefined,
+        unitSku: form.unitSku.trim() || undefined,
         unit: form.unit,
         pricePerUnit: form.pricePerUnit,
         // One category axis: a regulated type's structured Category picker
@@ -424,7 +428,9 @@ export function ProductCreateModal({
                 </div>
               )}
               <div className="col-span-2">
-                <label className="mb-1 block text-sm font-medium text-navy">SKU / Barcode</label>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Case code (SKU / barcode)
+                </label>
                 <div className="flex gap-2">
                   <input
                     ref={barcodeInputRef}
@@ -439,6 +445,28 @@ export function ProductCreateModal({
                     title="Scan barcode"
                   />
                 </div>
+              </div>
+
+              <div className="col-span-2">
+                <label className="mb-1 block text-sm font-medium text-navy">Unit code</label>
+                <div className="flex gap-2">
+                  <input
+                    ref={unitSkuInputRef}
+                    value={form.unitSku}
+                    onChange={(e) => set("unitSku", e.target.value)}
+                    className="flex-1 rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder="Scan or enter the unit's own code"
+                  />
+                  <BarcodeScannerButton
+                    inputRef={unitSkuInputRef}
+                    onScan={(code) => set("unitSku", code)}
+                    title="Scan unit code"
+                  />
+                </div>
+                <p className="mt-0.5 text-xs text-navy/70">
+                  Code on the individual unit — printed on customer invoices. Leave blank if it
+                  matches the case code.
+                </p>
               </div>
 
               {/* Unit — combobox (pick from list OR type a custom value) */}

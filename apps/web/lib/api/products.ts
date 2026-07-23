@@ -93,6 +93,8 @@ export interface ApiProduct {
   id: string;
   name: string;
   sku?: string;
+  /** Optional retail-unit (inner piece) code; null/absent ⇒ unit shares the case `sku`. */
+  unitSku?: string | null;
   barcode?: string;
   category?: string;
   unit: string;

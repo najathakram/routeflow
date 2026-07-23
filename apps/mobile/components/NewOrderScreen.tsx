@@ -50,6 +50,7 @@ import {
 } from "../lib/invoice-split";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
+import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
@@ -59,7 +60,13 @@ import { useAuthStore } from "../lib/auth-store";
 import { alertInfo, chooseAction } from "../lib/confirm";
 import { BarcodeScanner } from "./BarcodeScanner";
 import { BarcodeFab } from "./BarcodeFab";
-import { incrementLine } from "../lib/sale-line";
+import {
+  decrementLine,
+  incrementLine,
+  setLineBoxes,
+  setLinePieces,
+  setLineQty,
+} from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
@@ -536,23 +543,13 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      if (isBoxed) {
-        const boxes = Math.max(0, (prev.boxes ?? 0) - 1);
-        const pieces = prev.pieces ?? 0;
-        if (boxes === 0 && pieces === 0) {
-          const next = { ...m };
-          delete next[id];
-          return next;
-        }
-        return { ...m, [id]: { qty: boxes * upb + pieces, boxes, pieces } };
-      }
-      const qty = Math.max(0, (prev.qty ?? 0) - 1);
-      if (qty === 0) {
+      const line = decrementLine(prev, isBoxed, upb);
+      if (!line) {
         const next = { ...m };
         delete next[id];
         return next;
       }
-      return { ...m, [id]: { qty } };
+      return { ...m, [id]: line };
     });
   };
 
@@ -561,15 +558,13 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
-      const b = Math.max(0, Math.floor(boxes));
-      const pieces = prev.pieces ?? 0;
-      const qty = b * upb + pieces;
-      if (qty === 0) {
+      const line = setLineBoxes(prev, boxes, upb);
+      if (!line) {
         const next = { ...m };
         delete next[id];
         return next;
       }
-      return { ...m, [id]: { qty, boxes: b, pieces } };
+      return { ...m, [id]: line };
     });
 
   const setPieces = (id: string, pieces: number) =>
@@ -577,27 +572,26 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
-      const pcs = Math.max(0, Math.floor(pieces));
-      const boxes = prev.boxes ?? 0;
-      const qty = boxes * upb + pcs;
-      if (qty === 0) {
+      const line = setLinePieces(prev, pieces, upb);
+      if (!line) {
         const next = { ...m };
         delete next[id];
         return next;
       }
-      return { ...m, [id]: { qty, boxes, pieces: pcs } };
+      return { ...m, [id]: line };
     });
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
-      const q = Math.max(0, Math.floor(qty));
-      if (q === 0) {
+      const prev = m[id] ?? { qty: 0 };
+      // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
+      const line = setLineQty(prev, qty);
+      if (!line) {
         const next = { ...m };
         delete next[id];
         return next;
       }
-      // Plain qty path — clear boxes/pieces so server doesn't try to recompute
-      return { ...m, [id]: { qty: q } };
+      return { ...m, [id]: line };
     });
 
   const removeLine = (id: string) =>
@@ -973,7 +967,11 @@ function ProductPickView({
         </Pressable>
       </View>
 
-      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Order options — notes, urgent, delivery date, order-level discount. */}
         <View style={styles.optionsWrap}>
           <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
@@ -1229,15 +1227,12 @@ function ProductPickView({
                         <Text style={styles.addBtnText}>+</Text>
                       </Pressable>
                     ) : !isBoxed ? (
-                      <View style={styles.stepper}>
-                        <Pressable style={styles.stepBtn} onPress={() => dec(p.id)}>
-                          <Text style={styles.stepBtnText}>−</Text>
-                        </Pressable>
-                        <Text style={styles.stepQty}>{q}</Text>
-                        <Pressable style={styles.stepBtn} onPress={() => inc(p.id)}>
-                          <Text style={styles.stepBtnText}>+</Text>
-                        </Pressable>
-                      </View>
+                      <QtyStepper
+                        value={q}
+                        onChangeQty={(n) => setQty(p.id, n)}
+                        onIncrement={() => inc(p.id)}
+                        onDecrement={() => dec(p.id)}
+                      />
                     ) : null}
                   </View>
 
@@ -1248,41 +1243,20 @@ function ProductPickView({
                     <View style={styles.boxedDualRow}>
                       <View style={styles.boxedQtyControl}>
                         <Text style={styles.boxedQtyLabel}>Boxes</Text>
-                        <View style={styles.miniStepper}>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setBoxes(p.id, Math.max(0, (line?.boxes ?? 0) - 1))}
-                          >
-                            <Text style={styles.miniStepText}>−</Text>
-                          </Pressable>
-                          <Text style={styles.miniStepQty}>{line?.boxes ?? 0}</Text>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setBoxes(p.id, (line?.boxes ?? 0) + 1)}
-                          >
-                            <Text style={styles.miniStepText}>+</Text>
-                          </Pressable>
-                        </View>
+                        <QtyStepper
+                          size="mini"
+                          value={line?.boxes ?? 0}
+                          onChangeQty={(n) => setBoxes(p.id, n)}
+                        />
                       </View>
                       <View style={styles.boxedQtyControl}>
                         <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "pcs"}</Text>
-                        <View style={styles.miniStepper}>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setPieces(p.id, Math.max(0, (line?.pieces ?? 0) - 1))}
-                          >
-                            <Text style={styles.miniStepText}>−</Text>
-                          </Pressable>
-                          <Text style={styles.miniStepQty}>{line?.pieces ?? 0}</Text>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() =>
-                              setPieces(p.id, Math.min(upb - 1, (line?.pieces ?? 0) + 1))
-                            }
-                          >
-                            <Text style={styles.miniStepText}>+</Text>
-                          </Pressable>
-                        </View>
+                        <QtyStepper
+                          size="mini"
+                          value={line?.pieces ?? 0}
+                          max={upb - 1}
+                          onChangeQty={(n) => setPieces(p.id, n)}
+                        />
                       </View>
                       <Pressable
                         onPress={() => removeLine(p.id)}
@@ -2408,25 +2382,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label2,
     letterSpacing: 0.3,
-  },
-  miniStepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  miniStepBtn: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
-  miniStepText: { color: ios.brand, fontSize: 16 },
-  miniStepQty: {
-    minWidth: 24,
-    textAlign: "center",
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
   },
   boxedRemoveBtn: {
     width: 28,

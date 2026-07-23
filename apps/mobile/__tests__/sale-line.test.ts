@@ -1,4 +1,10 @@
-import { incrementLine } from "../lib/sale-line";
+import {
+  decrementLine,
+  incrementLine,
+  setLineBoxes,
+  setLinePieces,
+  setLineQty,
+} from "../lib/sale-line";
 
 describe("incrementLine", () => {
   it("increments a plain line and PRESERVES unitPrice/note/noteOpen (repeat-scan field wipe fix)", () => {
@@ -41,5 +47,125 @@ describe("incrementLine", () => {
     line = incrementLine(line, false, 0);
     expect(line.qty).toBe(3);
     expect(line.unitPrice).toBe(7); // survived every increment
+  });
+});
+
+describe("decrementLine", () => {
+  it("decrements a loose line and preserves unitPrice/note/noteOpen", () => {
+    const prev = { qty: 3, unitPrice: 9.5, note: "chilled", noteOpen: true };
+    const next = decrementLine(prev, false, 0);
+    expect(next).not.toBeNull();
+    expect(next!.qty).toBe(2);
+    expect(next!.unitPrice).toBe(9.5);
+    expect(next!.note).toBe("chilled");
+    expect(next!.noteOpen).toBe(true);
+  });
+
+  it("returns null when a loose line at qty 1 is decremented to 0", () => {
+    const prev = { qty: 1, unitPrice: 5 };
+    expect(decrementLine(prev, false, 0)).toBeNull();
+  });
+
+  it("removes one box from a boxed line, keeping loose pieces and other fields", () => {
+    const prev = { qty: 27, boxes: 2, pieces: 3, unitPrice: 20, note: "n" };
+    const next = decrementLine(prev, true, 12);
+    expect(next).not.toBeNull();
+    expect(next!.boxes).toBe(1);
+    expect(next!.pieces).toBe(3);
+    expect(next!.qty).toBe(15); // 1*12 + 3
+    expect(next!.unitPrice).toBe(20);
+    expect(next!.note).toBe("n");
+  });
+
+  it("returns null for a boxed line already at 0 boxes + 0 pieces", () => {
+    const prev = { qty: 0, boxes: 0, pieces: 0 };
+    expect(decrementLine(prev, true, 12)).toBeNull();
+  });
+
+  it("returns null when a boxed line with 1 box and 0 pieces is decremented", () => {
+    const prev = { qty: 12, boxes: 1, pieces: 0 };
+    expect(decrementLine(prev, true, 12)).toBeNull();
+  });
+});
+
+describe("setLineQty", () => {
+  it("sets qty and preserves unitPrice/note", () => {
+    const prev = { qty: 1, unitPrice: 9.5, note: "chilled" };
+    const next = setLineQty(prev, 5);
+    expect(next).not.toBeNull();
+    expect(next!.qty).toBe(5);
+    expect(next!.unitPrice).toBe(9.5);
+    expect(next!.note).toBe("chilled");
+  });
+
+  it("clears boxes/pieces on set (server should not recompute from stale box split)", () => {
+    const prev = { qty: 27, boxes: 2, pieces: 3, unitPrice: 20 };
+    const next = setLineQty(prev, 5);
+    expect(next).not.toBeNull();
+    expect("boxes" in next!).toBe(false);
+    expect("pieces" in next!).toBe(false);
+    expect(next!.qty).toBe(5);
+    expect(next!.unitPrice).toBe(20);
+  });
+
+  it("returns null when qty is set to 0", () => {
+    const prev = { qty: 5, unitPrice: 9.5 };
+    expect(setLineQty(prev, 0)).toBeNull();
+  });
+
+  it("floors a fractional qty", () => {
+    const prev = { qty: 1 };
+    const next = setLineQty(prev, 4.9);
+    expect(next).not.toBeNull();
+    expect(next!.qty).toBe(4);
+  });
+
+  it("returns null for a negative qty", () => {
+    const prev = { qty: 5 };
+    expect(setLineQty(prev, -3)).toBeNull();
+  });
+});
+
+describe("setLineBoxes", () => {
+  it("sets boxes, recomputes qty, and preserves pieces + other fields", () => {
+    const prev = { qty: 15, boxes: 1, pieces: 3, unitPrice: 20, note: "n" };
+    const next = setLineBoxes(prev, 2, 12);
+    expect(next).not.toBeNull();
+    expect(next!.boxes).toBe(2);
+    expect(next!.pieces).toBe(3);
+    expect(next!.qty).toBe(27); // 2*12 + 3
+    expect(next!.unitPrice).toBe(20);
+    expect(next!.note).toBe("n");
+  });
+
+  it("keeps loose pieces when boxes change", () => {
+    const prev = { qty: 3, boxes: 0, pieces: 3 };
+    const next = setLineBoxes(prev, 1, 12);
+    expect(next).not.toBeNull();
+    expect(next!.pieces).toBe(3);
+    expect(next!.qty).toBe(15);
+  });
+
+  it("returns null when boxes and pieces both resolve to 0", () => {
+    const prev = { qty: 12, boxes: 1, pieces: 0 };
+    expect(setLineBoxes(prev, 0, 12)).toBeNull();
+  });
+});
+
+describe("setLinePieces", () => {
+  it("sets pieces, recomputes qty, and preserves boxes + other fields", () => {
+    const prev = { qty: 12, boxes: 1, pieces: 0, unitPrice: 20, note: "n" };
+    const next = setLinePieces(prev, 5, 12);
+    expect(next).not.toBeNull();
+    expect(next!.pieces).toBe(5);
+    expect(next!.boxes).toBe(1);
+    expect(next!.qty).toBe(17); // 1*12 + 5
+    expect(next!.unitPrice).toBe(20);
+    expect(next!.note).toBe("n");
+  });
+
+  it("returns null when boxes and pieces both resolve to 0", () => {
+    const prev = { qty: 0, boxes: 0, pieces: 0 };
+    expect(setLinePieces(prev, 0, 12)).toBeNull();
   });
 });

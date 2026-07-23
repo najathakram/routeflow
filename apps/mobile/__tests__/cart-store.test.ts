@@ -79,3 +79,55 @@ describe("cartStore box-awareness", () => {
     expect(useCartStore.getState().total()).toBeCloseTo(63.5, 2);
   });
 });
+
+describe("cartStore.setUnits (typed qty input)", () => {
+  it("sets a boxed line to an absolute box count (3 boxes of 6 -> qty 18)", () => {
+    const store = useCartStore.getState();
+    store.add(boxed); // 1 box
+    store.setUnits("p-box", 3);
+    const item = useCartStore.getState().items[0];
+    expect(item.boxes).toBe(3);
+    expect(item.pieces).toBe(0);
+    expect(item.qty).toBe(18);
+  });
+
+  it("sets a loose line to an absolute qty (7)", () => {
+    const store = useCartStore.getState();
+    store.add(loose); // qty 1
+    store.setUnits("p-loose", 7);
+    const item = useCartStore.getState().items[0];
+    expect(item.qty).toBe(7);
+    expect(item.boxes).toBeNull();
+    expect(item.pieces).toBeNull();
+  });
+
+  it("removes the line when set to 0", () => {
+    const store = useCartStore.getState();
+    store.add(loose);
+    store.setUnits("p-loose", 0);
+    expect(useCartStore.getState().items).toHaveLength(0);
+  });
+
+  it("removes the line when set to a negative count", () => {
+    const store = useCartStore.getState();
+    store.add(boxed);
+    store.setUnits("p-box", -1);
+    expect(useCartStore.getState().items).toHaveLength(0);
+  });
+
+  it("is a no-op for a product that isn't in the cart", () => {
+    const store = useCartStore.getState();
+    store.add(loose);
+    store.setUnits("nope", 5);
+    const items = useCartStore.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0].qty).toBe(1);
+  });
+
+  it("floors a fractional unit count", () => {
+    const store = useCartStore.getState();
+    store.add(loose);
+    store.setUnits("p-loose", 4.9);
+    expect(useCartStore.getState().items[0].qty).toBe(4);
+  });
+});

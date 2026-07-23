@@ -709,6 +709,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           name: true,
           sku: true,
           barcode: true,
+          unitSku: true,
           parentProductId: true,
           parent: { select: { name: true } },
         },

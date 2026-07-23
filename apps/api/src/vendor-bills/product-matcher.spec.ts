@@ -10,6 +10,7 @@ const product = (overrides: Partial<CatalogProduct> = {}): CatalogProduct => ({
   name: "Widget",
   sku: null,
   barcode: null,
+  unitSku: null,
   parentProductId: null,
   parent: null,
   ...overrides,
@@ -92,6 +93,28 @@ describe("matchLine — exact matches", () => {
     const result = matchLine("0123456789012", null, products, weights);
     expect(result).toMatchObject({
       matchedProductId: "p4",
+      matchedProductName: "Widget",
+      confidence: "high",
+    });
+  });
+
+  it("matches an exact unit code (case-insensitive) against the raw text → high confidence", () => {
+    const products = [product({ id: "p5", name: "Widget", unitSku: "UNIT-555" })];
+    const weights = buildTokenWeights(products);
+    const result = matchLine("unit-555", null, products, weights);
+    expect(result).toMatchObject({
+      matchedProductId: "p5",
+      matchedProductName: "Widget",
+      confidence: "high",
+    });
+  });
+
+  it("matches an exact scanned unit code (case-insensitive) → high confidence, even against unrelated raw text", () => {
+    const products = [product({ id: "p6", name: "Widget", unitSku: "UNIT-777" })];
+    const weights = buildTokenWeights(products);
+    const result = matchLine("Totally unrelated description", "unit-777", products, weights);
+    expect(result).toMatchObject({
+      matchedProductId: "p6",
       matchedProductName: "Widget",
       confidence: "high",
     });

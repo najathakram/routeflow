@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import {
   FormField,
@@ -8,8 +9,11 @@ import {
   FormSheet,
   FormTextInput,
 } from "../../../../../components/FormSheet";
+import { PhotoCapture } from "../../../../../components/PhotoCapture";
 import { useAdminInvoice } from "../../../../../lib/api/admin";
 import { useRecordInvoicePayment, type PaymentMethod } from "../../../../../lib/api/invoices";
+import { useUploadPaymentImage } from "../../../../../lib/api/payments";
+import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
@@ -28,6 +32,7 @@ export default function RecordPaymentScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: invoice } = useAdminInvoice(id ?? "");
   const mut = useRecordInvoicePayment();
+  const uploadImageMut = useUploadPaymentImage();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
   const [method, setMethod] = useState<PaymentMethod>("CASH");
@@ -36,7 +41,22 @@ export default function RecordPaymentScreen() {
   const [notes, setNotes] = useState("");
   const [bankCharges, setBankCharges] = useState("");
   const [paidAt, setPaidAt] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Best-effort: the payment is already recorded by the time this runs, so a
+  // failure here must never surface as a payment failure — just note the photo
+  // didn't attach. Re-encode to JPEG first (iOS HEIC picks aren't decodable
+  // once uploaded as-is; see products/[id].tsx for the same trap).
+  const uploadReceiptPhoto = async (uri: string, paymentId: string) => {
+    try {
+      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      await uploadImageMut.mutateAsync({ paymentId, file });
+    } catch {
+      showToast("Payment recorded, but the photo failed to upload.");
+    }
+  };
 
   const submit = () => {
     if (!id) return;
@@ -56,8 +76,11 @@ export default function RecordPaymentScreen() {
       paidAt: paidAt.trim() || undefined,
     };
     mut.mutate(dto, {
-      onSuccess: () => {
+      onSuccess: (result) => {
         showToast("Payment recorded");
+        if (photos[0] && result.createdPaymentId) {
+          uploadReceiptPhoto(photos[0], result.createdPaymentId);
+        }
         router.back();
       },
       onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
@@ -165,6 +188,16 @@ export default function RecordPaymentScreen() {
             style={{ minHeight: 72, textAlignVertical: "top" }}
           />
         </FormField>
+      </FormSection>
+
+      <FormSection title="Receipt photo">
+        <PhotoCapture
+          photos={photos}
+          onAdd={(uri) => setPhotos([uri])}
+          onRemove={(uri) => setPhotos((p) => p.filter((u) => u !== uri))}
+          maxPhotos={1}
+          label="Receipt photo"
+        />
       </FormSection>
     </FormSheet>
   );

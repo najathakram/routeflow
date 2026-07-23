@@ -47,6 +47,10 @@ export interface InvoicePayment {
   bankCharges?: number;
   paidAt: string;
   createdAt: string;
+  // Payment image (receipt / slip / check photo) — see lib/api/payments.ts AllPayment.
+  imageKey?: string | null;
+  imageOriginalName?: string | null;
+  imageMimeType?: string | null;
 }
 
 export interface Invoice {
@@ -116,8 +120,9 @@ export interface RecordPaymentDto {
 
 export function useRecordInvoicePayment() {
   const qc = useQueryClient();
-  // Backend returns the updated Invoice (not InvoicePayment)
-  return useMutation<Invoice, Error, RecordPaymentDto>({
+  // Backend returns the updated Invoice (not InvoicePayment), plus the id of
+  // the payment row it just created — needed to attach a receipt photo.
+  return useMutation<Invoice & { createdPaymentId?: string }, Error, RecordPaymentDto>({
     mutationFn: ({ invoiceId, ...body }) =>
       apiClient.post(`/invoices/${invoiceId}/payments`, body).then((r) => r.data),
     onSuccess: (_, { invoiceId }) => {

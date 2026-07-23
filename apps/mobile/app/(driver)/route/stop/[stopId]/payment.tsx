@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, SegmentedControl } from "@routeflow/ui/mobile/ios";
 import {
@@ -20,6 +21,9 @@ import {
   type RouteRunOrder,
 } from "../../../../../lib/api/routes";
 import { useOrder } from "../../../../../lib/api/orders";
+import { useUploadPaymentImage } from "../../../../../lib/api/payments";
+import { productImageFile } from "../../../../../lib/product-image";
+import { PhotoCapture } from "../../../../../components/PhotoCapture";
 import { usePodStore } from "../../../../../store/podStore";
 import { useDeliveryPlanStore } from "../../../../../store/delivery-plan-store";
 import { useRunSettlementStore } from "../../../../../store/runSettlementStore";
@@ -113,14 +117,31 @@ export default function PaymentScreen() {
   const [method, setMethod] = useState<string>("Cash");
   const [received, setReceived] = useState<string>("0");
   const [amountError, setAmountError] = useState<string | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
   const receivedNum = Number(received);
   const change = Math.max(0, receivedNum - invoiceTotal);
 
   const completeWithPaymentMut = useCompleteWithPayment();
+  const uploadImageMut = useUploadPaymentImage();
   const pod = usePodStore((s) => (stopId ? s.pods[stopId] : undefined));
   const clearPod = usePodStore((s) => s.clear);
 
   const submitting = completeWithPaymentMut.isPending;
+
+  // Best-effort: the stop is already completed by the time this runs — a
+  // failed photo attach must NEVER surface as a failed delivery/payment, so
+  // this stays silent on error (no toast) rather than interrupting the
+  // driver mid-route. HEIC-safe transcode mirrors the operator record-payment
+  // flow (products/[id].tsx has the same trap).
+  const uploadPaymentPhoto = async (uri: string, paymentId: string) => {
+    try {
+      const jpeg = await manipulateAsync(uri, [], { compress: 0.8, format: SaveFormat.JPEG });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      await uploadImageMut.mutateAsync({ paymentId, file });
+    } catch {
+      // swallow — never blocks/fails stop completion
+    }
+  };
 
   const closeStop = async () => {
     if (!stopId || !runId || !stop) return;
@@ -201,8 +222,9 @@ export default function PaymentScreen() {
     // by the offline-queue persister so a retry after a network blip cannot
     // double-charge — the server (RF-019) returns the original response.
     const idempotencyKey = `stop-${stopId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    let paymentIds: string[] | undefined;
     try {
-      await completeWithPaymentMut.mutateAsync({
+      const result = await completeWithPaymentMut.mutateAsync({
         runId,
         stopId,
         deliveries,
@@ -217,6 +239,10 @@ export default function PaymentScreen() {
         payment: collected > 0 ? { amount: collected, method: apiMethod } : undefined,
         idempotencyKey,
       });
+      // paymentIds rides on the response but isn't in RouteRunStop's type yet
+      // (routes.ts is out of scope for this change — already-returned/just-
+      // untyped, same pattern as admin.ts's orderId/invoiceGroupId).
+      paymentIds = (result as unknown as { paymentIds?: string[] }).paymentIds;
     } catch (e: any) {
       showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
       return;
@@ -231,6 +257,13 @@ export default function PaymentScreen() {
         amount: collected,
         collectedAt: Date.now(),
       });
+    }
+    // Best-effort payment photo: the delivery rows created by this stop are
+    // ungrouped, so the photo attaches to the FIRST invoice's payment row
+    // (acceptable for v1 — see plan). Fire-and-forget, never awaited: the
+    // stop is already done and must not wait on this.
+    if (photos[0] && paymentIds?.[0]) {
+      uploadPaymentPhoto(photos[0], paymentIds[0]);
     }
     showToast("Stop completed");
 
@@ -352,6 +385,19 @@ export default function PaymentScreen() {
               <Text style={styles.keyText}>{k}</Text>
             </Pressable>
           ))}
+        </View>
+
+        <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+          <Text style={styles.eyebrowSmall}>PAYMENT PHOTO (OPTIONAL)</Text>
+          <View style={{ marginTop: 8 }}>
+            <PhotoCapture
+              photos={photos}
+              onAdd={(uri) => setPhotos([uri])}
+              onRemove={(uri) => setPhotos((p) => p.filter((u) => u !== uri))}
+              maxPhotos={1}
+              label="Payment photo"
+            />
+          </View>
         </View>
 
         <View style={{ padding: 16 }}>

@@ -8,6 +8,8 @@ import {
 } from "@nestjs/common";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { StorageService } from "../storage/storage.service";
+import { compressDocument } from "../storage/compress.util";
 import {
   computeLineSubtotal,
   computeCategoryTax,
@@ -75,6 +77,7 @@ export class InvoicesService {
     private readonly authGuard: AuthorizationGuardService,
     private readonly creditNotes: CreditNotesService,
     private readonly messaging: MessagingService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Resolve the tenant's default invoice terms and corresponding due-days offset. */
@@ -3143,6 +3146,80 @@ export class InvoicesService {
     return payment;
   }
 
+  private async findPaymentOrThrow(paymentId: string) {
+    const payment = await this.prisma
+      .forTenant()
+      .invoicePayment.findUnique({ where: { id: paymentId } });
+    if (!payment) throw new NotFoundException("Payment not found");
+    return payment;
+  }
+
+  /**
+   * Attach a receipt/slip/check photo to a payment EVENT. Uses `compressDocument`
+   * (NOT `compressImage`) — like the expense-receipt endpoint, this route has no
+   * controller MIME allowlist and mobile file pickers routinely send
+   * `application/octet-stream`/empty content-type; `compressDocument` byte-sniffs
+   * via sharp (any real image → JPEG) and tolerates a PDF, so a real receipt/check
+   * photo never 500s on a generic content-type.
+   */
+  async uploadPaymentImage(
+    paymentId: string,
+    buffer: Buffer,
+    originalName: string,
+    mimeType: string,
+  ): Promise<{ url: string }> {
+    const payment = await this.findPaymentOrThrow(paymentId);
+    let compressed;
+    try {
+      compressed = await compressDocument(buffer, mimeType);
+    } catch {
+      throw new BadRequestException("File is not a decodable image or PDF");
+    }
+    // One object per payment EVENT: a grouped standalone payment (several rows
+    // sharing paymentGroupId) anchors on the group id so the same photo is
+    // reachable from every allocation row.
+    const anchor = payment.paymentGroupId ?? payment.id;
+    const key = `payments/${anchor}/image.${compressed.ext}`;
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
+    const data = {
+      imageKey: key,
+      imageOriginalName: originalName,
+      imageMimeType: compressed.mimeType,
+    };
+    if (payment.paymentGroupId) {
+      await this.prisma
+        .forTenant()
+        .invoicePayment.updateMany({ where: { paymentGroupId: payment.paymentGroupId }, data });
+    } else {
+      await this.prisma.forTenant().invoicePayment.update({ where: { id: paymentId }, data });
+    }
+    return { url: await this.storage.presignedUrl(key) };
+  }
+
+  async getPaymentImageUrl(paymentId: string): Promise<{ url: string }> {
+    const payment = await this.findPaymentOrThrow(paymentId);
+    if (!payment.imageKey) throw new NotFoundException("No image attached to this payment");
+    return { url: await this.storage.presignedUrl(payment.imageKey) };
+  }
+
+  async deletePaymentImage(paymentId: string): Promise<{ success: boolean }> {
+    const payment = await this.findPaymentOrThrow(paymentId);
+    if (!payment.imageKey) throw new NotFoundException("No image to delete");
+    const clear = { imageKey: null, imageOriginalName: null, imageMimeType: null };
+    if (payment.paymentGroupId) {
+      await this.prisma.forTenant().invoicePayment.updateMany({
+        where: { paymentGroupId: payment.paymentGroupId },
+        data: clear,
+      });
+    } else {
+      await this.prisma
+        .forTenant()
+        .invoicePayment.update({ where: { id: paymentId }, data: clear });
+    }
+    await this.storage.delete(payment.imageKey);
+    return { success: true };
+  }
+
   // ─── Payment recording ────────────────────────────────────────────────────
 
   async recordPayment(id: string, dto: RecordInvoicePaymentDto) {
@@ -3188,7 +3265,7 @@ export class InvoicesService {
       });
       const paymentNumber = `PAY-${tenantShort}-${String(counter.next - 1).padStart(4, "0")}`;
 
-      await tx.invoicePayment.create({
+      const createdPayment = await tx.invoicePayment.create({
         data: {
           invoiceId: id,
           amount: dto.amount,
@@ -3225,7 +3302,7 @@ export class InvoicesService {
         status: newStatus,
         total: Number(paid.total),
       });
-      return paid;
+      return { ...paid, createdPaymentId: createdPayment.id };
     });
   }
 
@@ -3259,12 +3336,14 @@ export class InvoicesService {
     amount: number,
     method: string,
     reconcileOrderIds?: string[],
-  ): Promise<{ applied: number; invoiceIds: string[] }> {
-    if (!(amount > 0) || orderIds.length === 0) return { applied: 0, invoiceIds: [] };
+  ): Promise<{ applied: number; invoiceIds: string[]; paymentIds: string[] }> {
+    if (!(amount > 0) || orderIds.length === 0)
+      return { applied: 0, invoiceIds: [], paymentIds: [] };
     // CREDIT_NOTE/ADVANCE must debit a source balance (see recordPayment); a driver
     // at-door collection is never one of these (On-account sends amount 0), so
     // refuse to book a phantom payment rather than bypass the source debit.
-    if (method === "CREDIT_NOTE" || method === "ADVANCE") return { applied: 0, invoiceIds: [] };
+    if (method === "CREDIT_NOTE" || method === "ADVANCE")
+      return { applied: 0, invoiceIds: [], paymentIds: [] };
 
     // Payable statuses — exclude terminal VOID/WRITTEN_OFF: a written-off bad debt
     // must not swallow the cash (recomputeStatus can't advance it), which would also
@@ -3329,11 +3408,12 @@ export class InvoicesService {
         customerId: true,
       },
     });
-    if (invoices.length === 0) return { applied: 0, invoiceIds: [] };
+    if (invoices.length === 0) return { applied: 0, invoiceIds: [], paymentIds: [] };
 
     // 3. Spread the lump-sum oldest-first, capped at each invoice's remaining.
     let remaining = roundMoney(amount);
     const invoiceIds: string[] = [];
+    const paymentIds: string[] = [];
     for (const inv of invoices) {
       if (remaining <= 0.001) break;
       // Row-lock (like recordPayment) then read paid FRESH, so a concurrent
@@ -3355,7 +3435,7 @@ export class InvoicesService {
       const baseStatus = wasDraft ? InvoiceStatus.SENT : inv.status;
 
       const paymentNumber = await this.nextPaymentNumberInTx(tx);
-      await tx.invoicePayment.create({
+      const pay = await tx.invoicePayment.create({
         data: {
           invoiceId: inv.id,
           amount: applyHere,
@@ -3390,9 +3470,10 @@ export class InvoicesService {
       });
 
       invoiceIds.push(inv.id);
+      paymentIds.push(pay.id);
       remaining = roundMoney(remaining - applyHere);
     }
-    return { applied: roundMoney(amount - remaining), invoiceIds };
+    return { applied: roundMoney(amount - remaining), invoiceIds, paymentIds };
   }
 
   /** Tenant-scoped `PAY-XXXX-####` sequence — mirrors recordPayment's counter. */
@@ -3475,7 +3556,8 @@ export class InvoicesService {
   }
 
   async deletePayment(invoiceId: string, paymentId: string) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    let imageKey: string | null = null;
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
       const inv = await tx.invoice.findUnique({
         where: { id: invoiceId },
         include: { payments: true },
@@ -3486,6 +3568,7 @@ export class InvoicesService {
 
       const payment = inv.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException("Payment not found");
+      imageKey = payment.imageKey;
       if ((payment.method as any) === "CREDIT_NOTE") {
         throw new BadRequestException(
           "This payment is an applied credit note. Un-apply it from the credit note instead (POST /credit-notes/:id/unapply) so the credit's balance is restored.",
@@ -3538,6 +3621,15 @@ export class InvoicesService {
       });
       return updated;
     });
+    // Best-effort storage cleanup AFTER the money tx commits — never do storage
+    // I/O inside the tx, and never let a storage hiccup fail the delete. Only
+    // remove the object once no sibling row (grouped standalone payment) still
+    // references it.
+    if (imageKey) {
+      const stillRef = await this.prisma.forTenant().invoicePayment.count({ where: { imageKey } });
+      if (stillRef === 0) await this.storage.delete(imageKey).catch(() => {});
+    }
+    return updated;
   }
 
   // ─── Write-off ────────────────────────────────────────────────────────────
