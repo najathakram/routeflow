@@ -5,7 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Ban, Printer } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useInvoice, useInvoicePayments, useVoidPayment } from "@/lib/api/invoices";
+import {
+  useInvoice,
+  useInvoicePayments,
+  useVoidPayment,
+  useGetPaymentImageUrl,
+} from "@/lib/api/invoices";
 import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
 import { fmt, fmtDate } from "@/lib/formatting";
 
@@ -40,6 +45,23 @@ export default function PaymentDetailPage() {
   // Enrich the "Applied Invoice" card with the invoice's own total / balance /
   // status. Guarded below for loading/undefined so the card degrades gracefully.
   const { data: invoice } = useInvoice(payment?.invoice.id ?? "");
+
+  // Receipt image (expense-viewer pattern): resolve the presigned URL once we
+  // know the payment has one attached. Called unconditionally (before the
+  // loading/not-found early returns) to respect the Rules of Hooks.
+  const getPaymentImageUrl = useGetPaymentImageUrl();
+  const [receiptUrl, setReceiptUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setReceiptUrl(null);
+    if (payment?.id && payment.imageKey) {
+      getPaymentImageUrl
+        .mutateAsync(payment.id)
+        .then((r) => setReceiptUrl(r.url))
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payment?.id, payment?.imageKey]);
 
   const handleVoid = async () => {
     if (!payment) return;
@@ -244,6 +266,22 @@ export default function PaymentDetailPage() {
               )}
             </dl>
           </Card>
+
+          {payment.imageKey && (
+            <Card title="Receipt Image">
+              {receiptUrl ? (
+                <a href={receiptUrl} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={receiptUrl}
+                    alt="Payment receipt"
+                    className="max-h-80 w-full rounded-lg border border-surface-border object-contain"
+                  />
+                </a>
+              ) : (
+                <p className="text-sm text-navy/70">Loading receipt…</p>
+              )}
+            </Card>
+          )}
 
           {status !== "VOID" && (
             <Card className="border border-danger-bg">

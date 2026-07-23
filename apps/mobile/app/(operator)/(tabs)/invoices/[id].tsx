@@ -1,5 +1,6 @@
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -24,6 +25,7 @@ import {
   useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
+import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { canWriteOff, isPaymentEditable } from "../../../../lib/invoices-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
@@ -32,6 +34,13 @@ import { confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
 import { sharePdf } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
+
+// admin.ts's AdminInvoice.payments doesn't declare the image fields even
+// though the API already returns them (findOne's `payments` include has no
+// `select` narrowing on the payment row itself) — same "already returned,
+// just untyped" situation as orderId/invoiceGroupId (P10-REG-C). Widen
+// locally rather than touching admin.ts's canonical type (out of scope here).
+type PaymentImageFields = { imageKey?: string | null };
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -93,6 +102,8 @@ export default function InvoiceDetailScreen() {
   const pdfMut = useInvoicePdf();
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
+  const getImageUrlMut = useGetPaymentImageUrl();
+  const [loadingReceiptId, setLoadingReceiptId] = useState<string | null>(null);
   const [dueDateModal, setDueDateModal] = useState(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
@@ -248,6 +259,20 @@ export default function InvoiceDetailScreen() {
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
+  };
+
+  const handleViewReceipt = (paymentId: string) => {
+    setLoadingReceiptId(paymentId);
+    getImageUrlMut.mutate(paymentId, {
+      onSuccess: (data) => {
+        setLoadingReceiptId(null);
+        Linking.openURL(data.url).catch(() => showToast("Couldn't open the receipt."));
+      },
+      onError: (e: any) => {
+        setLoadingReceiptId(null);
+        showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't load the receipt.");
+      },
+    });
   };
 
   return (
@@ -456,46 +481,61 @@ export default function InvoiceDetailScreen() {
           {invoice.payments && invoice.payments.length > 0 ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Payments</Text>
-              {invoice.payments.map((p, i) => (
-                <View
-                  key={p.id}
-                  style={[
-                    styles.payRow,
-                    i > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: ios.separator,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.payMethod}>{p.method}</Text>
-                    <Text style={styles.payMeta}>
-                      {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
-                    </Text>
-                    {p.reference ? <Text style={styles.payMeta}>Ref: {p.reference}</Text> : null}
-                    {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
-                    {/* Credit-note reason via relation (read-time, never copied). */}
-                    {p.method === "CREDIT_NOTE" && p.creditNote?.reason ? (
+              {invoice.payments.map((p, i) => {
+                const pay = p as typeof p & PaymentImageFields;
+                return (
+                  <View
+                    key={p.id}
+                    style={[
+                      styles.payRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.payMethod}>{p.method}</Text>
                       <Text style={styles.payMeta}>
-                        Credit {p.creditNote.creditNoteNumber} — {p.creditNote.reason}
+                        {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
                       </Text>
+                      {p.reference ? <Text style={styles.payMeta}>Ref: {p.reference}</Text> : null}
+                      {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
+                      {/* Credit-note reason via relation (read-time, never copied). */}
+                      {p.method === "CREDIT_NOTE" && p.creditNote?.reason ? (
+                        <Text style={styles.payMeta}>
+                          Credit {p.creditNote.creditNoteNumber} — {p.creditNote.reason}
+                        </Text>
+                      ) : null}
+                      {pay.imageKey ? (
+                        <Pressable
+                          style={styles.viewReceiptRow}
+                          onPress={() => handleViewReceipt(p.id)}
+                          hitSlop={4}
+                        >
+                          <Ionicons name="image-outline" size={13} color={ios.brand} />
+                          <Text style={styles.viewReceiptText}>
+                            {loadingReceiptId === p.id ? "Loading…" : "View receipt"}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
+                    {isPaymentEditable(p.method, p.status, invoice.status) ? (
+                      <Pressable
+                        hitSlop={8}
+                        style={styles.payEditBtn}
+                        onPress={() =>
+                          router.push(`/(operator)/invoices/${id}/payments/${p.id}/edit`)
+                        }
+                        accessibilityLabel="Edit payment"
+                      >
+                        <Ionicons name="pencil-outline" size={16} color={ios.brand} />
+                      </Pressable>
                     ) : null}
                   </View>
-                  <Text style={styles.payAmount}>+{fmtCurrency(p.amount)}</Text>
-                  {isPaymentEditable(p.method, p.status, invoice.status) ? (
-                    <Pressable
-                      hitSlop={8}
-                      style={styles.payEditBtn}
-                      onPress={() =>
-                        router.push(`/(operator)/invoices/${id}/payments/${p.id}/edit`)
-                      }
-                      accessibilityLabel="Edit payment"
-                    >
-                      <Ionicons name="pencil-outline" size={16} color={ios.brand} />
-                    </Pressable>
-                  ) : null}
-                </View>
-              ))}
+                );
+              })}
             </View>
           ) : null}
         </View>
@@ -726,6 +766,8 @@ const styles = StyleSheet.create({
     color: ios.system.greenInk,
     fontVariant: ["tabular-nums"],
   },
+  viewReceiptRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  viewReceiptText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
   payEditBtn: {
     width: 30,
     height: 30,

@@ -5,7 +5,6 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as bcrypt from "bcrypt";
-import * as path from "path";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -17,6 +16,7 @@ import { IRS_SYSTEM_CATEGORIES } from "../bookkeeping/irs-categories.constant";
 import { UpdateEmailConfigDto } from "./dto/update-email-config.dto";
 import { UpdateGoogleOAuthConfigDto } from "./dto/update-google-oauth-config.dto";
 import { UpdateBrandingDto } from "./dto/update-branding.dto";
+import { compressImage } from "../storage/compress.util";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -356,12 +356,10 @@ export class TenantsService {
     tenantId: string,
     file: Express.Multer.File,
   ): Promise<{ logoKey: string; logoUrl: string }> {
-    const ext = (path.extname(file.originalname) || ".jpg")
-      .toLowerCase()
-      .replace(/[^a-z0-9.]/g, "");
-    const key = `tenants/${tenantId}/logo${ext}`;
+    const compressed = await compressImage(file.buffer, file.mimetype, 512);
+    const key = `tenants/${tenantId}/logo.${compressed.ext}`;
 
-    await this.storage.upload(key, file.buffer, file.mimetype);
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
     await this.prisma.tenantConfig.update({ where: { tenantId }, data: { logoKey: key } });
 
     // The tenant's logo just changed — flush every cached invoice PDF so the

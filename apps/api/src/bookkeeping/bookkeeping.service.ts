@@ -15,7 +15,7 @@ import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import Anthropic from "@anthropic-ai/sdk";
-import * as sharp from "sharp";
+import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
 
 @Injectable()
@@ -548,29 +548,16 @@ export class BookkeepingService implements OnModuleInit {
   ): Promise<{ url: string }> {
     await this.findExpenseOrThrow(id);
 
-    const isPdf = mimeType === "application/pdf";
-    let finalBuffer = buffer;
-    let finalMime = mimeType;
-
-    if (!isPdf) {
-      // Compress images: resize to max 1600px wide, JPEG 80% quality
-      finalBuffer = await (sharp as any)(buffer)
-        .resize({ width: 1600, withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toBuffer();
-      finalMime = "image/jpeg";
-    }
-
-    const ext = isPdf ? "pdf" : "jpg";
-    const key = `expenses/${id}/receipt.${ext}`;
-    await this.storage.upload(key, finalBuffer, finalMime);
+    const compressed = await compressDocument(buffer, mimeType);
+    const key = `expenses/${id}/receipt.${compressed.ext}`;
+    await this.storage.upload(key, compressed.buffer, compressed.mimeType);
 
     await this.prisma.forTenant().expense.update({
       where: { id },
       data: {
         receiptKey: key,
         receiptOriginalName: originalName,
-        receiptMimeType: finalMime,
+        receiptMimeType: compressed.mimeType,
       },
     });
 

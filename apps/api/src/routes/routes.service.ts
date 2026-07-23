@@ -1344,6 +1344,7 @@ export class RoutesService {
         : null;
 
     let autoCompleted = false;
+    let paymentIds: string[] = [];
     await this.prisma.tenantTransaction(async (tx) => {
       // Phase 4 (W7b): regulated-delivery POD gate (same as completeStop).
       const db = tx as unknown as RegulatedDeliveryDb;
@@ -1429,13 +1430,15 @@ export class RoutesService {
         const deliveredOrderIds = stop.orders
           .filter((o) => o.status !== OrderStatus.CANCELLED)
           .map((o) => o.id);
-        const { applied } = await this.invoicesService.recordDeliveryPaymentInTx(
-          tx,
-          deliveredOrderIds,
-          dto.payment.amount,
-          dto.payment.method,
-          Array.from(deliveredOrderIdSet),
-        );
+        const { applied, paymentIds: recordedPaymentIds } =
+          await this.invoicesService.recordDeliveryPaymentInTx(
+            tx,
+            deliveredOrderIds,
+            dto.payment.amount,
+            dto.payment.method,
+            Array.from(deliveredOrderIdSet),
+          );
+        paymentIds = recordedPaymentIds;
         if (applied + 0.005 < dto.payment.amount) {
           this.logger.warn(
             `completeWithPayment: collected ${dto.payment.amount} but only ${applied} applied to ` +
@@ -1495,13 +1498,18 @@ export class RoutesService {
       .forTenant()
       .routeRunStop.findUniqueOrThrow({ where: { id: stopId } });
 
+    // Additive: ids of the InvoicePayment row(s) created in step 4 (empty when no
+    // payment was collected). Consumed by the driver app to attach a best-effort
+    // payment photo to paymentIds[0] after the stop completes.
+    const response = { ...result, paymentIds };
+
     // RF-019: persist idempotency key
     if (dto.idempotencyKey) {
       const scope = `completeWithPayment:${runId}:${stopId}`;
-      await this.saveIdempotencyKey(dto.idempotencyKey, scope, result);
+      await this.saveIdempotencyKey(dto.idempotencyKey, scope, response);
     }
 
-    return result;
+    return response;
   }
 
   async getRunPackingList(runId: string) {

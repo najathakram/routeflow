@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,8 +9,11 @@ import {
   Post,
   Query,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
+import { FileInterceptor } from "@nestjs/platform-express";
 import type { Response } from "express";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -86,6 +90,32 @@ export class InvoicesController {
   @Get("payments/:paymentId")
   findPayment(@Param("paymentId") paymentId: string) {
     return this.invoicesService.findPaymentById(paymentId);
+  }
+
+  @Post("payments/:paymentId/image")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  uploadPaymentImage(
+    @Param("paymentId") paymentId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException("No file uploaded");
+    return this.invoicesService.uploadPaymentImage(
+      paymentId,
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+  }
+
+  @Get("payments/:paymentId/image")
+  getPaymentImage(@Param("paymentId") paymentId: string) {
+    return this.invoicesService.getPaymentImageUrl(paymentId);
+  }
+
+  @Delete("payments/:paymentId/image")
+  deletePaymentImage(@Param("paymentId") paymentId: string) {
+    return this.invoicesService.deletePaymentImage(paymentId);
   }
 
   @Get("payments")

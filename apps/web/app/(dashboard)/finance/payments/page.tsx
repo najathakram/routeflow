@@ -2,12 +2,14 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
+import { Paperclip } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoicePayments,
   useVoidPayment,
   useExportPayments,
   useRecordPaymentStandalone,
+  useUploadPaymentImage,
   type PaymentListParams,
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
@@ -60,6 +62,7 @@ interface Allocation {
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
   const record = useRecordPaymentStandalone();
+  const uploadPaymentImage = useUploadPaymentImage();
   const { data: customersData } = useCustomers({ limit: 200 });
   const [customerId, setCustomerId] = React.useState("");
   const [totalAmount, setTotalAmount] = React.useState("");
@@ -69,6 +72,8 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [allocations, setAllocations] = React.useState<Allocation[]>([]);
+  const [file, setFile] = React.useState<File | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const { data: invoicesData } = useInvoices({
     status: "SENT,VIEWED,PARTIAL,OVERDUE",
@@ -138,11 +143,27 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       })),
     };
     try {
-      await record.mutateAsync(dto);
+      const res = await record.mutateAsync(dto);
       toast({
         title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
         variant: "success",
       });
+      // Best-effort: the payment already succeeded — an image-upload failure
+      // must never look like the payment itself failed. The server anchors the
+      // image on the group id, so uploading against the first allocation row
+      // makes it visible from every row in the group.
+      const createdPaymentId = res.payments[0]?.id;
+      if (file && createdPaymentId) {
+        try {
+          await uploadPaymentImage.mutateAsync({ paymentId: createdPaymentId, file });
+        } catch {
+          toast({
+            title: "Payment saved, image upload failed",
+            description: "You can attach it later from the payment detail page.",
+            variant: "error",
+          });
+        }
+      }
       onClose();
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -245,6 +266,43 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 className={`${fieldCls} resize-none`}
                 placeholder="Internal notes..."
               />
+            </div>
+            <div className="col-span-2">
+              <label className="mb-1.5 block text-sm font-medium text-navy">
+                Attach image (optional)
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+              {file ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-navy/70" />
+                    <span className="truncate">{file.name}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFile(null)}
+                    className="shrink-0 text-navy/50 transition-colors hover:text-danger"
+                    title="Remove attachment"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-surface-border bg-white px-3 py-2 text-sm text-navy/70 transition-colors hover:bg-surface-raised"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Attach receipt / check photo
+                </button>
+              )}
             </div>
           </div>
 
@@ -712,7 +770,16 @@ export default function FinancePaymentsPage() {
                       {METHOD_LABELS[p.method] ?? p.method}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-navy/70">{p.reference ?? "—"}</td>
+                  <td className="px-4 py-3 text-navy/70">
+                    <div className="flex items-center gap-1.5">
+                      {p.imageKey && (
+                        <span title="Has receipt image" className="inline-flex shrink-0">
+                          <Paperclip className="h-3.5 w-3.5 text-navy/50" />
+                        </span>
+                      )}
+                      <span>{p.reference ?? "—"}</span>
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
                   </td>

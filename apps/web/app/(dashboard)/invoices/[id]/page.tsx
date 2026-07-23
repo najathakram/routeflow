@@ -25,6 +25,10 @@ import {
   RotateCcw,
   Package,
   SlidersHorizontal,
+  Paperclip,
+  Eye,
+  Upload,
+  X,
 } from "lucide-react";
 import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -40,6 +44,9 @@ import {
   useWriteOffInvoice,
   useUpdateInvoicePayment,
   useDeleteInvoicePayment,
+  useUploadPaymentImage,
+  useDeletePaymentImage,
+  useGetPaymentImageUrl,
   useDownloadInvoicePdf,
   type InvoicePdfVariant,
   deriveInvoiceVariant,
@@ -313,7 +320,7 @@ function RecordPaymentModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onRecord: (data: PaymentFormState) => void;
+  onRecord: (data: PaymentFormState, file: File | null) => void;
   balanceDue: number;
   isPending: boolean;
 }) {
@@ -324,6 +331,8 @@ function RecordPaymentModal({
     notes: "",
   });
   const [amountError, setAmountError] = React.useState("");
+  const [file, setFile] = React.useState<File | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -334,6 +343,7 @@ function RecordPaymentModal({
         notes: "",
       });
       setAmountError("");
+      setFile(null);
     }
   }, [isOpen, balanceDue]);
 
@@ -345,7 +355,7 @@ function RecordPaymentModal({
       return;
     }
     setAmountError("");
-    onRecord(form);
+    onRecord(form, file);
   }
 
   return (
@@ -425,6 +435,44 @@ function RecordPaymentModal({
             className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Attach image (optional)
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+          {file ? (
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Paperclip className="h-3.5 w-3.5 shrink-0 text-navy/70" />
+                <span className="truncate">{file.name}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFile(null)}
+                className="shrink-0 text-navy/50 transition-colors hover:text-danger"
+                title="Remove attachment"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-surface-border bg-white px-3 py-2 text-sm text-navy/70 transition-colors hover:bg-surface-raised"
+            >
+              <Paperclip className="h-3.5 w-3.5" />
+              Attach receipt / check photo
+            </button>
+          )}
+        </div>
       </form>
     </Modal>
   );
@@ -447,6 +495,7 @@ function EditPaymentModal({
   maxAmount: number;
   isPending: boolean;
 }) {
+  const { toast } = useToast();
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
@@ -454,6 +503,10 @@ function EditPaymentModal({
     notes: "",
   });
   const [amountError, setAmountError] = React.useState("");
+  const imageFileInputRef = React.useRef<HTMLInputElement>(null);
+  const uploadPaymentImage = useUploadPaymentImage();
+  const deletePaymentImage = useDeletePaymentImage();
+  const getPaymentImageUrl = useGetPaymentImageUrl();
 
   React.useEffect(() => {
     if (isOpen && payment) {
@@ -466,6 +519,33 @@ function EditPaymentModal({
       setAmountError("");
     }
   }, [isOpen, payment]);
+
+  function handleViewImage() {
+    if (!payment) return;
+    getPaymentImageUrl.mutate(payment.id, {
+      onSuccess: (res) => window.open(res.url, "_blank", "noopener,noreferrer"),
+      onError: () => toast({ title: "Failed to load image", variant: "error" }),
+    });
+  }
+
+  function handleReplaceImage(newFile: File) {
+    if (!payment) return;
+    uploadPaymentImage.mutate(
+      { paymentId: payment.id, file: newFile },
+      {
+        onSuccess: () => toast({ title: "Image updated", variant: "success" }),
+        onError: () => toast({ title: "Failed to upload image", variant: "error" }),
+      },
+    );
+  }
+
+  function handleRemoveImage() {
+    if (!payment) return;
+    deletePaymentImage.mutate(payment.id, {
+      onSuccess: () => toast({ title: "Image removed", variant: "success" }),
+      onError: () => toast({ title: "Failed to remove image", variant: "error" }),
+    });
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -551,6 +631,71 @@ function EditPaymentModal({
           />
         </div>
       </form>
+
+      {/* Receipt image — View / Replace / Remove act immediately (the payment
+          already exists), independent of the Save Changes button above. */}
+      <div className="mt-4 space-y-2 border-t border-surface-border pt-4">
+        <label className="block text-sm font-medium text-navy/80">Receipt image</label>
+        <input
+          ref={imageFileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const newFile = e.target.files?.[0];
+            e.target.value = "";
+            if (newFile) handleReplaceImage(newFile);
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          {payment?.imageKey ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                leftIcon={<Eye className="h-3.5 w-3.5" />}
+                onClick={handleViewImage}
+                loading={getPaymentImageUrl.isPending}
+              >
+                View
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                leftIcon={<Upload className="h-3.5 w-3.5" />}
+                onClick={() => imageFileInputRef.current?.click()}
+                loading={uploadPaymentImage.isPending}
+              >
+                Replace
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                onClick={handleRemoveImage}
+                loading={deletePaymentImage.isPending}
+                className="text-danger"
+              >
+                Remove
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              leftIcon={<Paperclip className="h-3.5 w-3.5" />}
+              onClick={() => imageFileInputRef.current?.click()}
+              loading={uploadPaymentImage.isPending}
+            >
+              Attach image
+            </Button>
+          )}
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -1064,6 +1209,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
+  const uploadPaymentImage = useUploadPaymentImage();
+  const getPaymentImageUrl = useGetPaymentImageUrl();
   const downloadPdf = useDownloadInvoicePdf();
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
@@ -1360,7 +1507,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
-  const handleRecordPayment = (data: PaymentFormState) => {
+  const handleRecordPayment = (data: PaymentFormState, file: File | null) => {
     recordPayment.mutate(
       {
         id: invoice.id,
@@ -1370,13 +1517,29 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         notes: data.notes.trim() || undefined,
       },
       {
-        onSuccess: () => {
+        onSuccess: (updated) => {
           setIsPaymentOpen(false);
           toast({
             title: "Payment recorded",
             description: `Payment of ${fmt(parseFloat(data.amount))} recorded.`,
             variant: "success",
           });
+          // Best-effort: the payment is already recorded — an image-upload
+          // failure must never look like the payment itself failed.
+          if (file && updated.createdPaymentId) {
+            uploadPaymentImage.mutate(
+              { paymentId: updated.createdPaymentId, file },
+              {
+                onError: () => {
+                  toast({
+                    title: "Payment saved, image upload failed",
+                    description: "You can attach it later from Payment History.",
+                    variant: "error",
+                  });
+                },
+              },
+            );
+          }
         },
         onError: (err: any) => {
           toast({
@@ -1387,6 +1550,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         },
       },
     );
+  };
+
+  const handleViewPaymentImage = (paymentId: string) => {
+    getPaymentImageUrl.mutate(paymentId, {
+      onSuccess: (res) => window.open(res.url, "_blank", "noopener,noreferrer"),
+      onError: () => toast({ title: "Failed to load image", variant: "error" }),
+    });
   };
 
   const handleSavePayment = (data: PaymentFormState) => {
@@ -2194,6 +2364,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           )}
                         </div>
                         {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
+                        {pmt.imageKey && (
+                          <button
+                            type="button"
+                            onClick={() => handleViewPaymentImage(pmt.id)}
+                            className="mt-1 flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
+                          >
+                            <Paperclip className="h-3 w-3" />
+                            View receipt
+                          </button>
+                        )}
                         {pmt.method === "CREDIT_NOTE" &&
                           (() => {
                             const cnInfo = creditNoteOf(pmt);
