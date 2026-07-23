@@ -124,6 +124,7 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "moduleNameMapper": {
+      "^ioredis$": "<rootDir>/../test/__mocks__/ioredis.js",
       "^expo-server-sdk$": "<rootDir>/../test/__mocks__/expo-server-sdk.js",
       "^@react-pdf/renderer$": "<rootDir>/../test/__mocks__/react-pdf-renderer.js",
       "^../invoices/invoice-pdf-template$": "<rootDir>/../test/__mocks__/invoice-pdf-template.js",
