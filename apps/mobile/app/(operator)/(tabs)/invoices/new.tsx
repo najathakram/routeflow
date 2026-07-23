@@ -18,7 +18,7 @@ import { useAdminCustomers } from "../../../../lib/api/admin";
 import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
-import { incrementLine } from "../../../../lib/sale-line";
+import { decrementLine, incrementLine } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
@@ -315,16 +315,9 @@ function InvoiceComposer({
       const prev = m[id];
       if (!prev) return m;
       const next = { ...m };
-      if (isBoxed) {
-        const boxes = Math.max(0, (prev.boxes ?? 0) - 1);
-        const pieces = prev.pieces ?? 0;
-        if (boxes === 0 && pieces === 0) delete next[id];
-        else next[id] = { qty: boxes * upb + pieces, boxes, pieces };
-      } else {
-        const qty = Math.max(0, (prev.qty ?? 0) - 1);
-        if (qty === 0) delete next[id];
-        else next[id] = { qty };
-      }
+      const line = decrementLine(prev, isBoxed, upb);
+      if (!line) delete next[id];
+      else next[id] = line;
       return next;
     });
   };
