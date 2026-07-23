@@ -50,6 +50,7 @@ import {
 } from "../lib/invoice-split";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
+import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
 import { useAuthStore } from "../lib/auth-store";
@@ -966,7 +967,11 @@ function ProductPickView({
         </Pressable>
       </View>
 
-      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Order options — notes, urgent, delivery date, order-level discount. */}
         <View style={styles.optionsWrap}>
           <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
@@ -1222,15 +1227,12 @@ function ProductPickView({
                         <Text style={styles.addBtnText}>+</Text>
                       </Pressable>
                     ) : !isBoxed ? (
-                      <View style={styles.stepper}>
-                        <Pressable style={styles.stepBtn} onPress={() => dec(p.id)}>
-                          <Text style={styles.stepBtnText}>−</Text>
-                        </Pressable>
-                        <Text style={styles.stepQty}>{q}</Text>
-                        <Pressable style={styles.stepBtn} onPress={() => inc(p.id)}>
-                          <Text style={styles.stepBtnText}>+</Text>
-                        </Pressable>
-                      </View>
+                      <QtyStepper
+                        value={q}
+                        onChangeQty={(n) => setQty(p.id, n)}
+                        onIncrement={() => inc(p.id)}
+                        onDecrement={() => dec(p.id)}
+                      />
                     ) : null}
                   </View>
 
@@ -1241,41 +1243,20 @@ function ProductPickView({
                     <View style={styles.boxedDualRow}>
                       <View style={styles.boxedQtyControl}>
                         <Text style={styles.boxedQtyLabel}>Boxes</Text>
-                        <View style={styles.miniStepper}>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setBoxes(p.id, Math.max(0, (line?.boxes ?? 0) - 1))}
-                          >
-                            <Text style={styles.miniStepText}>−</Text>
-                          </Pressable>
-                          <Text style={styles.miniStepQty}>{line?.boxes ?? 0}</Text>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setBoxes(p.id, (line?.boxes ?? 0) + 1)}
-                          >
-                            <Text style={styles.miniStepText}>+</Text>
-                          </Pressable>
-                        </View>
+                        <QtyStepper
+                          size="mini"
+                          value={line?.boxes ?? 0}
+                          onChangeQty={(n) => setBoxes(p.id, n)}
+                        />
                       </View>
                       <View style={styles.boxedQtyControl}>
                         <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "pcs"}</Text>
-                        <View style={styles.miniStepper}>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() => setPieces(p.id, Math.max(0, (line?.pieces ?? 0) - 1))}
-                          >
-                            <Text style={styles.miniStepText}>−</Text>
-                          </Pressable>
-                          <Text style={styles.miniStepQty}>{line?.pieces ?? 0}</Text>
-                          <Pressable
-                            style={styles.miniStepBtn}
-                            onPress={() =>
-                              setPieces(p.id, Math.min(upb - 1, (line?.pieces ?? 0) + 1))
-                            }
-                          >
-                            <Text style={styles.miniStepText}>+</Text>
-                          </Pressable>
-                        </View>
+                        <QtyStepper
+                          size="mini"
+                          value={line?.pieces ?? 0}
+                          max={upb - 1}
+                          onChangeQty={(n) => setPieces(p.id, n)}
+                        />
                       </View>
                       <Pressable
                         onPress={() => removeLine(p.id)}
@@ -2401,25 +2382,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label2,
     letterSpacing: 0.3,
-  },
-  miniStepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  miniStepBtn: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
-  miniStepText: { color: ios.brand, fontSize: 16 },
-  miniStepQty: {
-    minWidth: 24,
-    textAlign: "center",
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
   },
   boxedRemoveBtn: {
     width: 28,

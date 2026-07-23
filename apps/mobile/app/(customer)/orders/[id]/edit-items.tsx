@@ -1,18 +1,11 @@
 import { useState, useMemo, useEffect } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
+import { QtyTextInput } from "../../../../components/QtyStepper";
 import {
   useBuyerOrder,
   useBuyerProducts,
@@ -154,14 +147,10 @@ export default function BuyerEditItemsScreen() {
                   >
                     <Ionicons name="remove" size={16} color={ios.brand} />
                   </Pressable>
-                  <TextInput
+                  <QtyTextInput
+                    value={item.qty}
+                    onChangeQty={(n) => setQty(item.productId, n)}
                     style={styles.qtyInput}
-                    keyboardType="number-pad"
-                    value={String(item.qty)}
-                    onChangeText={(t) => {
-                      const n = parseInt(t, 10);
-                      if (!isNaN(n)) setQty(item.productId, n);
-                    }}
                   />
                   <Pressable
                     style={styles.qtyBtn}

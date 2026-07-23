@@ -24,6 +24,10 @@ interface CartState {
   add: (item: Omit<CartItem, "qty" | "boxes" | "pieces">) => void;
   /** Step a line by whole selling units (boxes for boxed products). Removes at 0. */
   step: (productId: string, delta: number) => void;
+  /** Set a line to an absolute selling-unit count (boxes for boxed products, else
+   *  pieces) — used by the typed qty input. Removes the line at <= 0. No-op if
+   *  the product isn't in the cart. */
+  setUnits: (productId: string, units: number) => void;
   remove: (productId: string) => void;
   clear: () => void;
   total: () => number;
@@ -74,6 +78,18 @@ export const useCartStore = create<CartState>()((set, get) => ({
       return {
         items: state.items.map((i) =>
           i.productId === productId ? { ...i, ...boxedFields(i.unitsPerBox, next) } : i,
+        ),
+      };
+    }),
+
+  setUnits: (productId, units) =>
+    set((state) => {
+      const item = state.items.find((i) => i.productId === productId);
+      if (!item) return state;
+      if (units <= 0) return { items: state.items.filter((i) => i.productId !== productId) };
+      return {
+        items: state.items.map((i) =>
+          i.productId === productId ? { ...i, ...boxedFields(i.unitsPerBox, units) } : i,
         ),
       };
     }),

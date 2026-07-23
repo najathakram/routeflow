@@ -18,7 +18,7 @@ import { useAdminCustomers } from "../../../../lib/api/admin";
 import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
-import { decrementLine, incrementLine } from "../../../../lib/sale-line";
+import { decrementLine, incrementLine, setLineBoxes, setLineQty } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
@@ -26,6 +26,7 @@ import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/p
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { BarcodeFab } from "../../../../components/BarcodeFab";
+import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import type { CreatedProduct } from "../../../../lib/api/products";
 import { ScanOutcome } from "../../../../lib/scan-loop";
@@ -322,6 +323,22 @@ function InvoiceComposer({
     });
   };
 
+  // Set an absolute qty (typed input) for a line, preserving unitPrice / note via
+  // the PR B setLine* helpers; boxed products set boxes (pieces held), loose sets qty.
+  const setUnits = (id: string, n: number) => {
+    const p = productById.get(id);
+    const upb = Number(p?.unitsPerBox ?? 0);
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      const line = upb > 1 ? setLineBoxes(prev, n, upb) : setLineQty(prev, n);
+      const next = { ...m };
+      if (!line) delete next[id];
+      else next[id] = line;
+      return next;
+    });
+  };
+
   const removeLine = (id: string) =>
     setItems((m) => {
       const next = { ...m };
@@ -527,7 +544,11 @@ function InvoiceComposer({
         </Pressable>
       </View>
 
-      <ScrollView ref={scrollRef} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         <SearchBar placeholder="Search items…" value={search} onChangeText={setSearch} />
 
         {productsLoading ? (
@@ -551,9 +572,6 @@ function InvoiceComposer({
               const price = toNumber(p.pricePerUnit);
               const upb = Number(p.unitsPerBox ?? 0);
               const isBoxed = upb > 1;
-              const stepLabel = isBoxed
-                ? `${line?.boxes ?? 0}b${(line?.pieces ?? 0) > 0 ? ` + ${line?.pieces ?? 0}` : ""}`
-                : `${q}`;
               return (
                 <View
                   key={p.id}
@@ -577,15 +595,19 @@ function InvoiceComposer({
                     </Text>
                   </View>
                   {q > 0 ? (
-                    <View style={styles.stepper}>
-                      <Pressable style={styles.stepBtn} onPress={() => removeOne(p.id)}>
-                        <Text style={styles.stepBtnText}>−</Text>
-                      </Pressable>
-                      <Text style={styles.stepQty}>{stepLabel}</Text>
-                      <Pressable style={styles.stepBtn} onPress={() => addOne(p.id)}>
-                        <Text style={styles.stepBtnText}>+</Text>
-                      </Pressable>
-                    </View>
+                    <QtyStepper
+                      value={isBoxed ? (line?.boxes ?? 0) : q}
+                      onChangeQty={(n) => setUnits(p.id, n)}
+                      onIncrement={() => addOne(p.id)}
+                      onDecrement={() => removeOne(p.id)}
+                      suffix={
+                        isBoxed
+                          ? (line?.pieces ?? 0) > 0
+                            ? `b + ${line?.pieces}`
+                            : "b"
+                          : undefined
+                      }
+                    />
                   ) : (
                     <Pressable style={styles.addBtn} onPress={() => addOne(p.id)}>
                       <Text style={styles.addBtnText}>+</Text>
@@ -691,6 +713,7 @@ function InvoiceComposer({
         onRemove={removeLine}
         onIncrement={addOne}
         onDecrement={removeOne}
+        onSetUnits={setUnits}
         onSetPrice={setLinePrice}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
@@ -735,6 +758,7 @@ function ReviewSheet({
   onRemove,
   onIncrement,
   onDecrement,
+  onSetUnits,
   onSetPrice,
   onChangeUnlistedQty,
   onChangeUnlistedPrice,
@@ -750,6 +774,7 @@ function ReviewSheet({
   onRemove: (id: string) => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
+  onSetUnits: (id: string, n: number) => void;
   onSetPrice: (id: string, value: number | null) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
   onChangeUnlistedPrice: (id: string, value: number | null) => void;
@@ -781,6 +806,7 @@ function ReviewSheet({
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }}
+            keyboardShouldPersistTaps="handled"
           >
             {rows.length === 0 && unlisted.length === 0 ? (
               <View style={[styles.center, { paddingVertical: 40 }]}>
@@ -801,9 +827,6 @@ function ReviewSheet({
                   pieces: line.pieces ?? null,
                   unitsPerBox: product.unitsPerBox ?? null,
                 });
-                const stepLabel = isBoxed
-                  ? `${line.boxes ?? 0}b${(line.pieces ?? 0) > 0 ? ` + ${line.pieces ?? 0}` : ""}`
-                  : `${qty}`;
                 return (
                   <View key={id} style={styles.reviewRow}>
                     <View style={{ flex: 1 }}>
@@ -824,15 +847,15 @@ function ReviewSheet({
                         ) : null}
                       </View>
                     </View>
-                    <View style={styles.stepper}>
-                      <Pressable style={styles.stepBtn} onPress={() => onDecrement(id)}>
-                        <Text style={styles.stepBtnText}>−</Text>
-                      </Pressable>
-                      <Text style={styles.stepQty}>{stepLabel}</Text>
-                      <Pressable style={styles.stepBtn} onPress={() => onIncrement(id)}>
-                        <Text style={styles.stepBtnText}>+</Text>
-                      </Pressable>
-                    </View>
+                    <QtyStepper
+                      value={isBoxed ? (line.boxes ?? 0) : qty}
+                      onChangeQty={(n) => onSetUnits(id, n)}
+                      onIncrement={() => onIncrement(id)}
+                      onDecrement={() => onDecrement(id)}
+                      suffix={
+                        isBoxed ? ((line.pieces ?? 0) > 0 ? `b + ${line.pieces}` : "b") : undefined
+                      }
+                    />
                     <Text style={styles.reviewTotal}>${lineTotal.toFixed(2)}</Text>
                     <Pressable onPress={() => onRemove(id)} hitSlop={6} style={styles.removeBtn}>
                       <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
@@ -865,21 +888,7 @@ function ReviewSheet({
                       <Text style={styles.reviewMeta}>/ unit</Text>
                     </View>
                   </View>
-                  <View style={styles.stepper}>
-                    <Pressable
-                      style={styles.stepBtn}
-                      onPress={() => onChangeUnlistedQty(u.id, Math.max(0, u.qty - 1))}
-                    >
-                      <Text style={styles.stepBtnText}>−</Text>
-                    </Pressable>
-                    <Text style={styles.stepQty}>{u.qty}</Text>
-                    <Pressable
-                      style={styles.stepBtn}
-                      onPress={() => onChangeUnlistedQty(u.id, u.qty + 1)}
-                    >
-                      <Text style={styles.stepBtnText}>+</Text>
-                    </Pressable>
-                  </View>
+                  <QtyStepper value={u.qty} onChangeQty={(n) => onChangeUnlistedQty(u.id, n)} />
                   <Text style={styles.reviewTotal}>${lineTotal.toFixed(2)}</Text>
                   <Pressable
                     onPress={() => onRemoveUnlisted(u.id)}
@@ -1082,25 +1091,6 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: ios.label2,
     marginTop: 1,
-    fontVariant: ["tabular-nums"],
-  },
-  stepper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: ios.bgElev,
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
-  stepBtnText: { color: ios.brand, fontSize: 18 },
-  stepQty: {
-    minWidth: 28,
-    textAlign: "center",
-    fontSize: 15,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
     fontVariant: ["tabular-nums"],
   },
   addBtn: {
