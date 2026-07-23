@@ -1,20 +1,22 @@
 /**
- * Resolve a scanned barcode (or typed SKU) to a product, with the same
- * fallback ladder the web operator uses on /orders and /invoices/new:
+ * Resolve a scanned barcode (or typed SKU/unit code) to a product, with the
+ * same fallback ladder the web operator uses on /orders and /invoices/new:
  *
- *   1. Exact `Product.barcode` match           — `/products/barcode/<code>`
- *   2. Exact `Product.sku` match (case-insens) — `/products?search=<code>`
- *   3. First name/SKU substring hit             — same search, first row
- *   4. Nothing                                  — caller decides (usually
- *                                                 prompt to create a new
- *                                                 product with the scanned
- *                                                 code prefilled as SKU)
+ *   1. Exact `Product.barcode`/`sku`/`unitSku` match — `/products/barcode/<code>`
+ *      (the server endpoint itself resolves any of the three codes)
+ *   2. Exact `Product.sku` or `Product.unitSku` match (case-insens),
+ *      SKU preferred                              — `/products?search=<code>`
+ *   3. First name/SKU substring hit                — same search, first row
+ *   4. Nothing                                     — caller decides (usually
+ *                                                    prompt to create a new
+ *                                                    product with the scanned
+ *                                                    code prefilled as SKU)
  *
  * Why: the bare `/products/barcode/<code>` lookup ONLY matches when the
- * tenant has assigned that exact string to `Product.barcode`. Most
- * recently-added items don't have a barcode set yet — the operator
- * scans the printed SKU label and the lookup 404s, so the mobile UI
- * tells them "item not available" even though the product exists.
+ * tenant has assigned that exact string to `Product.barcode`, `sku`, or
+ * `unitSku`. Most recently-added items don't have a barcode set yet — the
+ * operator scans the printed SKU/unit-code label and the lookup 404s, so the
+ * mobile UI tells them "item not available" even though the product exists.
  *
  * Returns:
  *   { product, source }     — found, with `source` indicating how
@@ -25,7 +27,7 @@
  */
 import { apiClient } from "./api-client";
 
-export type BarcodeResolveSource = "barcode" | "sku" | "search";
+export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
 
 export interface BarcodeResolveHit<T = any> {
   product: T;
@@ -59,18 +61,21 @@ export async function resolveProductByCode<T = any>(
     if (status !== 404) throw err;
   }
 
-  // 2 + 3) SKU / name substring search; prefer exact SKU
+  // 2 + 3) SKU / unit-code / name substring search; prefer exact SKU, then exact unit code
   try {
     const res = await apiClient.get("/products", {
       params: { search: code, limit: 10, isActive: true, includeVariants: true },
     });
     const matches: any[] = res?.data?.data ?? res?.data ?? [];
     if (matches.length > 0) {
-      const skuExact = matches.find(
-        (p) => (p?.sku ?? "").toString().toLowerCase() === code.toLowerCase(),
+      const codeLower = code.toLowerCase();
+      const skuExact = matches.find((p) => (p?.sku ?? "").toString().toLowerCase() === codeLower);
+      const unitSkuExact = matches.find(
+        (p) => (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
       );
-      const product = skuExact ?? matches[0];
-      return { product, source: skuExact ? "sku" : "search" };
+      const product = skuExact ?? unitSkuExact ?? matches[0];
+      const source = skuExact ? "sku" : unitSkuExact ? "unitSku" : "search";
+      return { product, source };
     }
   } catch (err: any) {
     const status = err?.response?.status;

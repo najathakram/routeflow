@@ -20,6 +20,9 @@ export class CreateProductDto {
   @IsString() name: string;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
+  // Optional retail-unit (inner piece) code; unset ⇒ read sites fall back to the
+  // case `sku`. "" is treated as absent, same as a form that never touched the field.
+  @IsOptional() @Transform(emptyToUndefined) @IsString() unitSku?: string;
   @IsString() unit: string;
   // Coerce a numeric price (mobile sends a number) to the decimal string Prisma
   // wants — the tier fields below already do this; the base price was missed,

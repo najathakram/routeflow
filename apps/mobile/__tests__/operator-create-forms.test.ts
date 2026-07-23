@@ -183,6 +183,48 @@ describe("ProductForm — buildProductPayload (synchronous, no fetch)", () => {
     }
   });
 
+  it("create: sends a trimmed unitSku when provided", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      unitSku: "  UNIT-001  ",
+    };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.unitSku).toBe("UNIT-001");
+    }
+  });
+
+  it("create: omits unitSku (undefined) when blank", () => {
+    const form = { ...emptyProductForm(), name: "X", pricePerUnit: "1", unitSku: "" };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.unitSku).toBeUndefined();
+    }
+  });
+
+  it('edit (mode="edit"): sends null for unitSku when blank, to clear it', () => {
+    const form = { ...emptyProductForm(), name: "X", pricePerUnit: "1", unitSku: "" };
+    const result = buildProductPayload(form, "edit");
+    if (!("error" in result)) {
+      expect(result.unitSku).toBeNull();
+    }
+  });
+
+  it('edit (mode="edit"): sends a trimmed unitSku when provided', () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      unitSku: "  UNIT-002  ",
+    };
+    const result = buildProductPayload(form, "edit");
+    if (!("error" in result)) {
+      expect(result.unitSku).toBe("UNIT-002");
+    }
+  });
+
   it("standalone product carries no variant linkage", () => {
     const form = { ...emptyProductForm(), name: "Plain", pricePerUnit: "2" };
     const result = buildProductPayload(form);
@@ -305,6 +347,18 @@ describe("productFormFromValues — regulated tagging (REG-3)", () => {
     expect(form.trackedCategoryId).toBe("");
     expect(form.trackedCategoryName).toBeUndefined();
     expect(form.trackedSubcategoryId).toBe("");
+  });
+});
+
+describe("productFormFromValues — unitSku (dual SKU)", () => {
+  it("seeds unitSku from an existing product", () => {
+    const form = productFormFromValues({ unitSku: "UNIT-001" });
+    expect(form.unitSku).toBe("UNIT-001");
+  });
+
+  it("defaults unitSku to empty string when the product has none (matches emptyProductForm)", () => {
+    const form = productFormFromValues({});
+    expect(form.unitSku).toBe("");
   });
 });
 

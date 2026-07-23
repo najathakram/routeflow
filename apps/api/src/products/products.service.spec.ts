@@ -81,7 +81,10 @@ describe("ProductsService", () => {
       expect(prisma.product.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            OR: expect.arrayContaining([expect.objectContaining({ name: expect.any(Object) })]),
+            OR: expect.arrayContaining([
+              expect.objectContaining({ name: expect.any(Object) }),
+              expect.objectContaining({ unitSku: expect.any(Object) }),
+            ]),
           }),
         }),
       );
@@ -221,6 +224,62 @@ describe("ProductsService", () => {
     });
   });
 
+  // ─── findByBarcode ────────────────────────────────────────────────────────
+
+  describe("findByBarcode", () => {
+    it("resolves a case barcode hit", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, barcode: "BC-1" }]);
+
+      const result = await service.findByBarcode("BC-1");
+
+      expect(result).toMatchObject({ barcode: "BC-1" });
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { OR: [{ barcode: "BC-1" }, { sku: "BC-1" }, { unitSku: "BC-1" }] },
+        }),
+      );
+    });
+
+    it("resolves a unitSku-only hit (no matching barcode/sku)", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, barcode: null, sku: "TOM-001", unitSku: "UNIT-1" },
+      ]);
+
+      const result = await service.findByBarcode("UNIT-1");
+
+      expect(result).toMatchObject({ unitSku: "UNIT-1" });
+    });
+
+    it("prioritizes barcode over sku/unitSku when findMany returns rows out of order", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-unit", barcode: null, sku: null, unitSku: "SHARED" },
+        { ...MOCK_PRODUCT, id: "prod-sku", barcode: null, sku: "SHARED", unitSku: null },
+        { ...MOCK_PRODUCT, id: "prod-barcode", barcode: "SHARED", sku: null, unitSku: null },
+      ]);
+
+      const result = await service.findByBarcode("SHARED");
+
+      expect(result.id).toBe("prod-barcode");
+    });
+
+    it("prioritizes sku over unitSku when no barcode matches", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { ...MOCK_PRODUCT, id: "prod-unit", barcode: null, sku: null, unitSku: "SHARED" },
+        { ...MOCK_PRODUCT, id: "prod-sku", barcode: null, sku: "SHARED", unitSku: null },
+      ]);
+
+      const result = await service.findByBarcode("SHARED");
+
+      expect(result.id).toBe("prod-sku");
+    });
+
+    it("throws NotFoundException when no product matches any of the three codes", async () => {
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await expect(service.findByBarcode("NOPE")).rejects.toThrow(NotFoundException);
+    });
+  });
+
   // ─── create ───────────────────────────────────────────────────────────────
 
   describe("create", () => {
@@ -256,6 +315,23 @@ describe("ProductsService", () => {
 
       await expect(
         service.create({ name: "Test", sku: "TOM-001", unit: "kg", pricePerUnit: 1 } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("should throw BadRequestException when unitSku collides with another product's sku/barcode/unitSku", async () => {
+      prisma.product.findFirst
+        .mockResolvedValueOnce(null) // name check — no conflict
+        .mockResolvedValueOnce(null) // sku check — no conflict
+        .mockResolvedValueOnce({ id: "prod-2" }); // unitSku collision check — conflict
+
+      await expect(
+        service.create({
+          name: "Test",
+          sku: "TOM-001",
+          unit: "kg",
+          pricePerUnit: 1,
+          unitSku: "UNIT-1",
+        } as any),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -546,6 +622,15 @@ describe("ProductsService", () => {
       prisma.product.findFirst.mockResolvedValue({ id: "prod-2", sku: "DUP-SKU" });
 
       await expect(service.update("prod-1", { sku: "DUP-SKU" } as any)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it("should throw BadRequestException when unitSku collides with another product's sku/barcode/unitSku", async () => {
+      prisma.product.findUnique.mockResolvedValue(MOCK_PRODUCT);
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-2" });
+
+      await expect(service.update("prod-1", { unitSku: "DUP-UNIT" } as any)).rejects.toThrow(
         BadRequestException,
       );
     });

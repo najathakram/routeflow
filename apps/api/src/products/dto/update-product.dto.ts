@@ -20,6 +20,8 @@ export class UpdateProductDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
+  // "" clears it back to "same as case code" (emptyToNull ⇒ an explicit null write).
+  @IsOptional() @Transform(emptyToNull) @IsString() unitSku?: string | null;
   @IsOptional() @IsString() unit?: string;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() pricePerUnit?: string;
   @IsOptional() @IsString() category?: string;
