@@ -45,6 +45,9 @@ on:
       - "docs/**"
       - ".vscode/**"
       - "LICENSE"
+  # Manual trigger — lets you confirm CI is healthy (e.g. after an Actions billing
+  # block clears) without having to push a dummy commit.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
