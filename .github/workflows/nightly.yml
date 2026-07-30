@@ -46,6 +46,7 @@ jobs:
   api-smoke:
     name: API smoke (authenticated)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +71,7 @@ jobs:
   playwright:
     name: Playwright E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
