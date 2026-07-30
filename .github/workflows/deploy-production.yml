@@ -42,6 +42,7 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: ci
     strategy:
       matrix:
@@ -85,6 +86,7 @@ jobs:
   deploy:
     name: Deploy to Railway (Production)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: build-images
     environment: production # ← requires manual approval from reviewers
 
