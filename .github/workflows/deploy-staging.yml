@@ -7,7 +7,10 @@ name: Deploy Staging
 
 on:
   push:
-    branches: [develop]
+    # DISABLED: `develop` does not exist in this repo, so this never fires. Kept
+    # dormant deliberately — it runs `railway up` + `prisma migrate deploy`, and
+    # this repo applies prod/staging migrations MANUALLY (see deploy-production.yml).
+    branches: [__disabled_develop__]
 
 concurrency:
   group: deploy-staging
