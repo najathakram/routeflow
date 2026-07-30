@@ -145,7 +145,12 @@ export function buildOrderItemDiff(args: {
     if (u.qty <= 0 || name === "") continue;
     const noteVal = (u.notes ?? "").trim();
     if (!u.lineId) {
-      out.push({ name, qty: u.qty, unitPrice: u.unitPrice, ...(noteVal ? { notes: noteVal } : {}) });
+      out.push({
+        name,
+        qty: u.qty,
+        unitPrice: u.unitPrice,
+        ...(noteVal ? { notes: noteVal } : {}),
+      });
       continue;
     }
     const orig = byId.get(u.lineId);

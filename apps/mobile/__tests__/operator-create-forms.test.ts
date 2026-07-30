@@ -362,6 +362,61 @@ describe("productFormFromValues — unitSku (dual SKU)", () => {
   });
 });
 
+describe("ProductForm — tier price round-trip (WP5)", () => {
+  it("productFormFromValues -> buildProductPayload: populated tiers are emitted as numbers", () => {
+    const form = productFormFromValues({
+      name: "Six-pack Soda",
+      pricePerUnit: 12,
+      priceTier2: 11,
+      priceTier3: 10.5,
+      priceTier4: 10,
+      priceTier5: 9.25,
+    });
+    expect(form.priceTier2).toBe("11");
+    expect(form.priceTier3).toBe("10.5");
+    expect(form.priceTier4).toBe("10");
+    expect(form.priceTier5).toBe("9.25");
+
+    const result = buildProductPayload(form, "edit");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.priceTier2).toBe(11);
+      expect(result.priceTier3).toBe(10.5);
+      expect(result.priceTier4).toBe(10);
+      expect(result.priceTier5).toBe(9.25);
+    }
+  });
+
+  it("productFormFromValues -> buildProductPayload: blank tiers are omitted (undefined) in edit mode", () => {
+    const form = productFormFromValues({ name: "Plain", pricePerUnit: 5 });
+    expect(form.priceTier2).toBe("");
+    expect(form.priceTier3).toBe("");
+    expect(form.priceTier4).toBe("");
+    expect(form.priceTier5).toBe("");
+
+    const result = buildProductPayload(form, "edit");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.priceTier2).toBeUndefined();
+      expect(result.priceTier3).toBeUndefined();
+      expect(result.priceTier4).toBeUndefined();
+      expect(result.priceTier5).toBeUndefined();
+    }
+  });
+
+  it("create mode: blank tiers are also omitted (undefined), matching the other optional-number fields", () => {
+    const form = { ...emptyProductForm(), name: "X", pricePerUnit: "1" };
+    const result = buildProductPayload(form);
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.priceTier2).toBeUndefined();
+      expect(result.priceTier3).toBeUndefined();
+      expect(result.priceTier4).toBeUndefined();
+      expect(result.priceTier5).toBeUndefined();
+    }
+  });
+});
+
 describe("ProductForm — emptyProductForm (synchronous factory)", () => {
   it("initialises without any API call", () => {
     const form = emptyProductForm();

@@ -2,7 +2,7 @@
  * Pure returns helpers — status pill + which actions the current status allows.
  * The action flags mirror the server's transition guards exactly so the UI never
  * fires a doomed request (approve/reject only from PENDING; in-transit only from
- * APPROVED; receive only from IN_TRANSIT; refund only from RECEIVED).
+ * APPROVED; receive from APPROVED or IN_TRANSIT; refund only from RECEIVED).
  */
 
 export type ReturnPillVariant = "orange" | "brand" | "green" | "gray" | "red";
@@ -35,6 +35,12 @@ export interface ReturnActionFlags {
   canReject: boolean;
   canMarkInTransit: boolean;
   canReceive: boolean;
+  /**
+   * "Resolve without receiving": receive with restocking suppressed, then resolve
+   * straight away — same predicate as canReceive (APPROVED or IN_TRANSIT), offered
+   * as a secondary action alongside the normal physical-receipt path.
+   */
+  canResolveWithoutReceipt: boolean;
   canRefund: boolean;
   /** No further action — a terminal status. */
   terminal: boolean;
@@ -72,12 +78,21 @@ export function returnActionFlags(status: string): ReturnActionFlags {
   const canApprove = status === "PENDING";
   const canReject = status === "PENDING";
   const canMarkInTransit = status === "APPROVED";
-  const canReceive = status === "IN_TRANSIT";
+  const canReceive = status === "APPROVED" || status === "IN_TRANSIT";
+  const canResolveWithoutReceipt = canReceive;
   const canRefund = status === "RECEIVED";
   const terminal =
     status === "REFUNDED" ||
     status === "PROCESSED" ||
     status === "REJECTED" ||
     status === "CANCELLED";
-  return { canApprove, canReject, canMarkInTransit, canReceive, canRefund, terminal };
+  return {
+    canApprove,
+    canReject,
+    canMarkInTransit,
+    canReceive,
+    canResolveWithoutReceipt,
+    canRefund,
+    terminal,
+  };
 }

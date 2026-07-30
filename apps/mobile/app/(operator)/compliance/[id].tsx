@@ -19,6 +19,7 @@ import {
   treatmentLabel,
 } from "../../../lib/regulated-format";
 import { RegulatedFilingsList } from "../../../components/RegulatedFilingsList";
+import { RegulatedReportSection } from "../../../components/RegulatedReportSection";
 import { shareCsv } from "../../../lib/share-pdf";
 import { showToast } from "../../../lib/toast";
 
@@ -201,6 +202,12 @@ export default function RegulatedSectionDetailScreen() {
             )}
           </Pressable>
         </View>
+
+        <RegulatedReportSection
+          categoryId={section.id}
+          categoryName={section.name}
+          defaultTemplate={section.reportTemplate}
+        />
 
         <RegulatedFilingsList
           filings={filings}

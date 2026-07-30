@@ -275,3 +275,33 @@ export function useUpdateCustomerAddress() {
     },
   });
 }
+
+// ─── Documents (view/share/delete — upload is out of scope) ─────────────────
+
+export interface CustomerDocument {
+  id: string;
+  docType: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+  /** Freshly presigned on every list call — safe to open directly, no auth header needed. */
+  url: string;
+}
+
+export function useCustomerDocuments(customerId: string) {
+  return useQuery<CustomerDocument[]>({
+    queryKey: ["customers", customerId, "documents"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/documents`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useDeleteCustomerDocument(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: (docId) =>
+      apiClient.delete(`/customers/${customerId}/documents/${docId}`).then(() => undefined),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+  });
+}

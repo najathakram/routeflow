@@ -2,8 +2,9 @@
  * Security regression tests — RF-076 / RF-157 / RF-078
  *
  * 1. POST /products/:id/images rejects SVG (and other non-allowlisted MIMEs) with 400.
- * 2. GET  /uploads/<key> always returns Content-Disposition: attachment and
- *    X-Content-Type-Options: nosniff.
+ * 2. GET  /uploads/<key> returns Content-Disposition: inline only for the
+ *    renderable allowlist (JPEG/PNG/WEBP/PDF), attachment for everything else,
+ *    and X-Content-Type-Options: nosniff in all cases.
  */
 
 import * as os from "os";
@@ -257,16 +258,21 @@ describe("RF-078 — GET /uploads/* response headers", () => {
   });
 });
 
-// ─── Non-image MIME (PDF) keeps attachment for safety ─────────────────────────
+// ─── PDF renders inline; everything else still forces attachment ──────────────
 
-describe("RF-078 — Non-image MIME still forces attachment", () => {
+describe("RF-078 — PDF is inline, non-allowlisted MIME still forces attachment", () => {
   let app: INestApplication;
   let tmpDir: string;
   const TEST_FILENAME = "doc.pdf";
+  const SVG_FILENAME = "evil.svg";
 
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "rf078-pdf-"));
     fs.writeFileSync(path.join(tmpDir, TEST_FILENAME), Buffer.from("%PDF-1.4\n%minimal\n"));
+    fs.writeFileSync(
+      path.join(tmpDir, SVG_FILENAME),
+      Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'),
+    );
 
     const mockConfig = {
       get: (key: string) => (key === "uploadDir" ? tmpDir : undefined),
@@ -289,8 +295,16 @@ describe("RF-078 — Non-image MIME still forces attachment", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("forces attachment for application/pdf so the browser never tries to render it inline", async () => {
+  it("serves application/pdf inline so customer documents view in-app (2026-07-30)", async () => {
     const res = await request(app.getHttpServer()).get(`/uploads/${TEST_FILENAME}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toBe("inline");
+    // The nosniff guarantee is unchanged — the browser must honour application/pdf.
+    expect(res.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("still forces attachment for SVG — the inline allowlist must never widen to it", async () => {
+    const res = await request(app.getHttpServer()).get(`/uploads/${SVG_FILENAME}`);
     expect(res.status).toBe(200);
     expect(res.headers["content-disposition"]).toMatch(/^attachment/);
   });

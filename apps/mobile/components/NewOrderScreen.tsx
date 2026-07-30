@@ -24,7 +24,7 @@ import {
   type CreateOrderItemInput,
   type CustomerPriceHistory,
 } from "../lib/api/orders";
-import { useCreditNotes } from "../lib/api/credit-notes";
+import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
@@ -36,6 +36,7 @@ import {
   costPerSellingUnit,
   effectiveQty,
   getTierPrice,
+  perUnitPrice,
   priceForMarginFloor,
   roundMoney,
 } from "../lib/pricing";
@@ -66,6 +67,7 @@ import {
   setLineBoxes,
   setLinePieces,
   setLineQty,
+  setLineUnits,
 } from "../lib/sale-line";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
@@ -147,6 +149,9 @@ type LineState = {
   note?: string;
   /** Note input expanded for this row (note text survives collapse). */
   noteOpen?: boolean;
+  /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
+   *  payload always carries {qty, boxes, pieces} and the per-case unitPrice. */
+  sellBy?: "case" | "unit";
 };
 
 /**
@@ -429,10 +434,22 @@ function ProductPickView({
     status: "ISSUED",
     limit: 100,
   });
+  // Inline "New credit note" create sheet + freshly-created credits, merged
+  // into the rendered rows (deduped by id) so a just-minted credit shows up
+  // — and can be applied — before the ["credit-notes"] refetch lands.
+  const [createCreditOpen, setCreateCreditOpen] = useState(false);
+  const [justCreatedCredits, setJustCreatedCredits] = useState<CreditNote[]>([]);
+  const creditRows = useMemo(() => {
+    const rows = new Map<string, CreditNote>();
+    for (const cn of openCredits?.data ?? []) rows.set(cn.id, cn);
+    for (const cn of justCreatedCredits) if (!rows.has(cn.id)) rows.set(cn.id, cn);
+    return Array.from(rows.values());
+  }, [openCredits, justCreatedCredits]);
   // Reset the selection whenever the customer changes so a stale credit id
   // from a previous customer never rides along into this order's payload.
   useEffect(() => {
     setSelectedCreditIds([]);
+    setJustCreatedCredits([]);
   }, [customerId]);
   // Scroll the just-scanned product row into view. We track the product list's
   // top offset within the ScrollView plus each row's offset within the list.
@@ -580,6 +597,26 @@ function ProductPickView({
       }
       return { ...m, [id]: line };
     });
+
+  /** Unit mode: the operator types a TOTAL unit count; normalize it back into
+   *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose). Price is unchanged
+   *  either way because computeLineSubtotal's proration is linear. */
+  const setUnits = (id: string, units: number) =>
+    setItems((m) => {
+      const p = productById.get(id);
+      const upb = Number(p?.unitsPerBox ?? 0);
+      const prev = m[id] ?? { qty: 0 };
+      const line = setLineUnits(prev, units, upb);
+      if (!line) {
+        const next = { ...m };
+        delete next[id];
+        return next;
+      }
+      return { ...m, [id]: line };
+    });
+
+  const setSellBy = (id: string, sellBy: "case" | "unit") =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
@@ -1060,53 +1097,64 @@ function ProductPickView({
           ) : null}
         </View>
 
-        {/* Apply credit — customer-scoped open credit notes. Toggle only (no
-            amount input on mobile v1); null amount = up to remaining. */}
-        {customerId && (openCredits?.data?.length ?? 0) > 0 ? (
+        {/* Apply credit — customer-scoped open credit notes. Gated on the
+            customer alone (not credit COUNT) so the operator can create one
+            right here when none exist yet. Toggle only (no amount input on
+            mobile v1); null amount = up to remaining. */}
+        {customerId ? (
           <View style={styles.optionsWrap}>
             <View style={styles.optionsHeader}>
               <Ionicons name="pricetag-outline" size={16} color={ios.brand} />
               <Text style={styles.optionsTitle}>Apply credit</Text>
-              {selectedCreditIds.length > 0 ? (
-                <Text style={styles.optionsSummary} numberOfLines={1}>
-                  {selectedCreditIds.length} selected
-                </Text>
-              ) : null}
+              <View style={{ flex: 1 }}>
+                {selectedCreditIds.length > 0 ? (
+                  <Text style={styles.optionsSummary} numberOfLines={1}>
+                    {selectedCreditIds.length} selected
+                  </Text>
+                ) : null}
+              </View>
+              <Pressable onPress={() => setCreateCreditOpen(true)} hitSlop={6}>
+                <Text style={styles.newCreditText}>+ New credit note</Text>
+              </Pressable>
             </View>
             <View style={styles.optionsBody}>
-              {openCredits!.data.map((cn) => {
-                const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
-                const checked = selectedCreditIds.includes(cn.id);
-                return (
-                  <Pressable
-                    key={cn.id}
-                    style={styles.optionRow}
-                    onPress={() =>
-                      setSelectedCreditIds((ids) =>
-                        checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
-                      )
-                    }
-                  >
-                    <Ionicons
-                      name={checked ? "checkbox" : "square-outline"}
-                      size={20}
-                      color={checked ? ios.brand : ios.label2}
-                    />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.optionLabel} numberOfLines={1}>
-                        {cn.creditNoteNumber}
-                        {cn.reason ? ` · ${cn.reason}` : ""}
-                      </Text>
-                      {cn.expiresAt ? (
-                        <Text style={styles.optionsSummary}>
-                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+              {creditRows.length === 0 ? (
+                <Text style={styles.optionsSummary}>No open credits for this customer.</Text>
+              ) : (
+                creditRows.map((cn) => {
+                  const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
+                  const checked = selectedCreditIds.includes(cn.id);
+                  return (
+                    <Pressable
+                      key={cn.id}
+                      style={styles.optionRow}
+                      onPress={() =>
+                        setSelectedCreditIds((ids) =>
+                          checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
+                        )
+                      }
+                    >
+                      <Ionicons
+                        name={checked ? "checkbox" : "square-outline"}
+                        size={20}
+                        color={checked ? ios.brand : ios.label2}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.optionLabel} numberOfLines={1}>
+                          {cn.creditNoteNumber}
+                          {cn.reason ? ` · ${cn.reason}` : ""}
                         </Text>
-                      ) : null}
-                    </View>
-                    <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
-                  </Pressable>
-                );
-              })}
+                        {cn.expiresAt ? (
+                          <Text style={styles.optionsSummary}>
+                            Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
+                    </Pressable>
+                  );
+                })
+              )}
             </View>
           </View>
         ) : null}
@@ -1179,6 +1227,9 @@ function ProductPickView({
               const isSpecial = price < listPrice - 0.0001;
               const upb = Number(p.unitsPerBox ?? 0);
               const isBoxed = upb > 1;
+              // Display-only per-unit hint on the case price — never fed back into math.
+              const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
+              const sellBy = line?.sellBy ?? "case";
               return (
                 <View
                   key={p.id}
@@ -1219,7 +1270,8 @@ function ProductPickView({
                         <Text style={isSpecial ? styles.metaSpecial : undefined}>
                           ${price.toFixed(2)}
                         </Text>
-                        {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
+                        {isBoxed ? ` / case of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
+                        {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                       </Text>
                     </View>
                     {q === 0 ? (
@@ -1236,28 +1288,46 @@ function ProductPickView({
                     ) : null}
                   </View>
 
-                  {/* Boxed + added: dual stepper row so the operator can dial
-                      Boxes and Loose pieces independently without opening the
-                      cart sheet. (The cart sheet still works for the same edits.) */}
+                  {/* Boxed + added: a Cases/Units segmented control switches entry
+                      mode. Cases mode dials Boxes and Loose units independently
+                      without opening the cart sheet; Units mode is a single
+                      uncapped total-unit stepper routed through setLineUnits.
+                      (The cart sheet still works for the same edits.) */}
                   {isBoxed && q > 0 ? (
                     <View style={styles.boxedDualRow}>
-                      <View style={styles.boxedQtyControl}>
-                        <Text style={styles.boxedQtyLabel}>Boxes</Text>
-                        <QtyStepper
-                          size="mini"
-                          value={line?.boxes ?? 0}
-                          onChangeQty={(n) => setBoxes(p.id, n)}
-                        />
-                      </View>
-                      <View style={styles.boxedQtyControl}>
-                        <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "pcs"}</Text>
-                        <QtyStepper
-                          size="mini"
-                          value={line?.pieces ?? 0}
-                          max={upb - 1}
-                          onChangeQty={(n) => setPieces(p.id, n)}
-                        />
-                      </View>
+                      <SellByToggle value={sellBy} onChange={(v) => setSellBy(p.id, v)} />
+                      {sellBy === "unit" ? (
+                        <View style={styles.boxedQtyControl}>
+                          <Text style={styles.boxedQtyLabel}>
+                            {p.unit ? `${p.unit}s` : "Units"}
+                          </Text>
+                          <QtyStepper
+                            size="mini"
+                            value={q}
+                            onChangeQty={(n) => setUnits(p.id, n)}
+                          />
+                        </View>
+                      ) : (
+                        <>
+                          <View style={styles.boxedQtyControl}>
+                            <Text style={styles.boxedQtyLabel}>Cases</Text>
+                            <QtyStepper
+                              size="mini"
+                              value={line?.boxes ?? 0}
+                              onChangeQty={(n) => setBoxes(p.id, n)}
+                            />
+                          </View>
+                          <View style={styles.boxedQtyControl}>
+                            <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "units"}</Text>
+                            <QtyStepper
+                              size="mini"
+                              value={line?.pieces ?? 0}
+                              max={upb - 1}
+                              onChangeQty={(n) => setPieces(p.id, n)}
+                            />
+                          </View>
+                        </>
+                      )}
                       <Pressable
                         onPress={() => removeLine(p.id)}
                         hitSlop={6}
@@ -1407,6 +1477,8 @@ function ProductPickView({
         onClose={() => setCartOpen(false)}
         onChangeBoxes={setBoxes}
         onChangePieces={setPieces}
+        onChangeUnits={setUnits}
+        onChangeSellBy={setSellBy}
         onChangeQty={setQty}
         onChangePrice={setLinePrice}
         onChangeNote={setLineNote}
@@ -1438,6 +1510,18 @@ function ProductPickView({
           showToast(`Added ${name}`);
         }}
       />
+
+      <CreateCreditNoteSheet
+        visible={createCreditOpen}
+        customerId={customerId}
+        onClose={() => setCreateCreditOpen(false)}
+        onCreated={(created) => {
+          setJustCreatedCredits((prev) => [...prev, created]);
+          setSelectedCreditIds((ids) => (ids.includes(created.id) ? ids : [...ids, created.id]));
+          setCreateCreditOpen(false);
+          showToast(`Created credit ${created.creditNoteNumber}`);
+        }}
+      />
     </>
   );
 }
@@ -1465,6 +1549,8 @@ function CartModal({
   onClose,
   onChangeBoxes,
   onChangePieces,
+  onChangeUnits,
+  onChangeSellBy,
   onChangeQty,
   onChangePrice,
   onChangeNote,
@@ -1498,6 +1584,9 @@ function CartModal({
   onClose: () => void;
   onChangeBoxes: (id: string, n: number) => void;
   onChangePieces: (id: string, n: number) => void;
+  /** Unit mode: total unit count, routed through setLineUnits. */
+  onChangeUnits: (id: string, n: number) => void;
+  onChangeSellBy: (id: string, sellBy: "case" | "unit") => void;
   onChangeQty: (id: string, n: number) => void;
   onChangePrice: (id: string, value: number | null) => void;
   onChangeNote: (id: string, text: string) => void;
@@ -1568,6 +1657,8 @@ function CartModal({
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
+                    onChangeUnits={(n) => onChangeUnits(id, n)}
+                    onChangeSellBy={(v) => onChangeSellBy(id, v)}
                     onChangeQty={(n) => onChangeQty(id, n)}
                     onChangePrice={(raw) => onChangePrice(id, raw)}
                     onChangeNote={(t) => onChangeNote(id, t)}
@@ -1658,6 +1749,8 @@ function CartRow({
   historyPrice,
   onChangeBoxes,
   onChangePieces,
+  onChangeUnits,
+  onChangeSellBy,
   onChangeQty,
   onChangePrice,
   onChangeNote,
@@ -1679,6 +1772,9 @@ function CartRow({
   historyPrice?: number;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
+  /** Unit mode: total unit count, routed through setLineUnits. */
+  onChangeUnits: (n: number) => void;
+  onChangeSellBy: (sellBy: "case" | "unit") => void;
   onChangeQty: (n: number) => void;
   onChangePrice: (value: number | null) => void;
   onChangeNote: (text: string) => void;
@@ -1693,6 +1789,7 @@ function CartRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
+  const sellBy = line.sellBy ?? "case";
   const effUnit = effectiveUnitPrice(line, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
@@ -1738,7 +1835,7 @@ function CartRow({
             {displayName(product)}
           </Text>
           <Text style={styles.cartRowMeta}>
-            {isBoxed ? `box of ${upb}` : product.unit ? `per ${product.unit}` : ""}
+            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
         </View>
@@ -1751,7 +1848,7 @@ function CartRow({
           typing a lower value records a one-time override sent as the line's
           unitPrice. */}
       <View style={styles.cartPriceRow}>
-        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / box" : ""}</Text>
+        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
           <MoneyTextInput
@@ -1807,14 +1904,28 @@ function CartRow({
 
       {isBoxed ? (
         <>
-          <CartStepperRow label="Boxes" value={line.boxes ?? 0} onChange={onChangeBoxes} />
-          <CartStepperRow
-            label={`Loose ${product.unit ?? "pieces"}`}
-            value={line.pieces ?? 0}
-            onChange={onChangePieces}
-            max={upb - 1}
-            hint={`${upb} per box`}
-          />
+          <View style={{ marginBottom: 2 }}>
+            <SellByToggle value={sellBy} onChange={onChangeSellBy} />
+          </View>
+          {sellBy === "unit" ? (
+            <CartStepperRow
+              label={`Total ${product.unit ? `${product.unit}s` : "units"}`}
+              value={qty}
+              onChange={onChangeUnits}
+              hint={`${upb} per case`}
+            />
+          ) : (
+            <>
+              <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
+              <CartStepperRow
+                label={`Loose ${product.unit ?? "units"}`}
+                value={line.pieces ?? 0}
+                onChange={onChangePieces}
+                max={upb - 1}
+                hint={`${upb} per case`}
+              />
+            </>
+          )}
         </>
       ) : (
         <CartStepperRow
@@ -2143,6 +2254,132 @@ function UnlistedItemModal({
   );
 }
 
+/**
+ * Compact inline "New credit note" sheet, opened from the Apply-credit
+ * section when the operator needs a credit that doesn't exist yet — a
+ * standalone credit for this order's customer (no invoice link). Mirrors
+ * the compact-sheet structure of InlineCreateProductSheet.tsx.
+ */
+function CreateCreditNoteSheet({
+  visible,
+  customerId,
+  onClose,
+  onCreated,
+}: {
+  visible: boolean;
+  customerId: string;
+  onClose: () => void;
+  onCreated: (created: CreditNote) => void;
+}) {
+  const createMut = useCreateCreditNote();
+  const [amount, setAmount] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset fields whenever the sheet is (re)opened.
+  useEffect(() => {
+    if (visible) {
+      setAmount(null);
+      setReason("");
+      setError(null);
+    }
+  }, [visible]);
+
+  const valid = amount != null && amount > 0 && reason.trim() !== "";
+
+  const submit = () => {
+    if (!valid) return;
+    setError(null);
+    createMut.mutate(
+      { customerId, amount: amount!, reason: reason.trim() },
+      {
+        onSuccess: (created) => onCreated(created),
+        onError: (e: unknown) => {
+          const err = e as { response?: { data?: { message?: string } }; message?: string };
+          setError(err?.response?.data?.message ?? err?.message ?? "Couldn't create credit note.");
+        },
+      },
+    );
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.unlistedOverlay} onPress={onClose}>
+        <Pressable style={styles.unlistedCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.unlistedTitle}>New credit note</Text>
+          <Text style={styles.unlistedSub}>A standalone store credit for this customer.</Text>
+
+          {error ? (
+            <Text style={{ color: ios.system.redInk, fontSize: 12, marginBottom: 8 }}>{error}</Text>
+          ) : null}
+
+          <Text style={styles.unlistedFieldLabel}>Amount</Text>
+          <MoneyTextInput
+            style={styles.unlistedInput}
+            value={amount}
+            onChangeValue={setAmount}
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+            autoFocus
+          />
+
+          <Text style={styles.unlistedFieldLabel}>Reason</Text>
+          <TextInput
+            style={styles.unlistedInput}
+            value={reason}
+            onChangeText={setReason}
+            placeholder="e.g. Damaged goods"
+            placeholderTextColor={ios.label3}
+          />
+
+          <View style={[styles.modalBtns, { marginTop: 4 }]}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.modalBtnFill,
+                (!valid || createMut.isPending) && styles.modalBtnDisabled,
+              ]}
+              onPress={submit}
+              disabled={!valid || createMut.isPending}
+            >
+              <Text style={styles.modalBtnFillText}>
+                {createMut.isPending ? "Creating…" : "Create"}
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Compact Cases/Units segmented control for a case-packed line's qty entry mode. */
+function SellByToggle({
+  value,
+  onChange,
+}: {
+  value: "case" | "unit";
+  onChange: (v: "case" | "unit") => void;
+}) {
+  return (
+    <View style={styles.sellBySegment}>
+      {(["case", "unit"] as const).map((opt) => (
+        <Pressable
+          key={opt}
+          onPress={() => onChange(opt)}
+          style={[styles.sellBySegmentBtn, value === opt && styles.sellBySegmentBtnActive]}
+        >
+          <Text style={[styles.sellBySegmentText, value === opt && styles.sellBySegmentTextActive]}>
+            {opt === "case" ? "Cases" : "Units"}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
   center: { padding: 40, alignItems: "center" },
@@ -2365,6 +2602,7 @@ const styles = StyleSheet.create({
   // ── Inline boxed product editor (dual stepper) ───────────────────────────
   boxedDualRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: 10,
     marginTop: 10,
@@ -2391,6 +2629,24 @@ const styles = StyleSheet.create({
     backgroundColor: ios.system.redWash,
     borderRadius: 8,
   },
+  // Cases/Units segmented control (product row + cart sheet).
+  sellBySegment: {
+    flexDirection: "row",
+    backgroundColor: ios.bgElev,
+    borderRadius: 8,
+    padding: 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: ios.separator,
+  },
+  sellBySegmentBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  sellBySegmentBtnActive: { backgroundColor: ios.brand },
+  sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
+  sellBySegmentTextActive: { color: "#fff" },
+  newCreditText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   // ── Footer extras ─────────────────────────────────────────────────────────
   footerActions: { flexDirection: "row", alignItems: "center", gap: 8 },

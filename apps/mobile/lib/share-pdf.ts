@@ -137,3 +137,61 @@ function sanitizeCsvFilename(name: string): string {
   const base = cleaned || "export";
   return base.toLowerCase().endsWith(".csv") ? base : `${base}.csv`;
 }
+
+export interface ShareCsvTextOptions {
+  /** Raw CSV bytes, already fully serialized server-side (e.g. fetchRegulatedReportCsvText). */
+  csv: string;
+  /** Suggested file name, e.g. "acme-tobacco-tx_comptroller-2026-06-01-2026-06-30.csv". */
+  filename: string;
+  /** Share-sheet title. */
+  dialogTitle?: string;
+}
+
+/**
+ * Share CSV TEXT already in memory — the sibling of {@link shareCsv} for endpoints that
+ * need an auth header the OS share sheet can't send (e.g. the regulated reports CSV export,
+ * which is computed on demand and never gets a presigned URL). Nothing is downloaded from a
+ * URL here: the caller already has the bytes.
+ *
+ * - **Web**: wraps the string in a Blob and triggers a programmatic `<a download>`.
+ * - **Native**: writes the string to the app's CACHE directory (not the user-visible
+ *   Downloads/Photos) and presents the native share sheet via `expo-sharing`.
+ *
+ * Leaves {@link sharePdf} and {@link shareCsv} untouched — this is a standalone sibling,
+ * not a generic parameter on either.
+ */
+export async function shareCsvText({
+  csv,
+  filename,
+  dialogTitle,
+}: ShareCsvTextOptions): Promise<void> {
+  const name = sanitizeCsvFilename(filename);
+
+  if (Platform.OS === "web") {
+    if (typeof document === "undefined") return;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    return;
+  }
+
+  const target = (FileSystem.cacheDirectory ?? "") + name;
+  await FileSystem.writeAsStringAsync(target, csv, { encoding: FileSystem.EncodingType.UTF8 });
+  if (!(await Sharing.isAvailableAsync())) {
+    throw new Error("Sharing isn't available on this device.");
+  }
+  await Sharing.shareAsync(target, {
+    mimeType: "text/csv",
+    dialogTitle: dialogTitle ?? name,
+    UTI: "public.comma-separated-values-text",
+  });
+}

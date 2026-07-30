@@ -1,6 +1,8 @@
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
+  IsInt,
   IsNumber,
   IsObject,
   IsOptional,
@@ -9,6 +11,12 @@ import {
   Min,
 } from "class-validator";
 import { TrackedCategoryTaxType, InvoiceTreatment, ReportCadence } from "@prisma/client";
+import { TX_UOM_CODES } from "../../regulated/tx-report";
+
+// Flattened across item types — cross-checking a UOM against its item type is a
+// service-level concern (or left to the operator); the DTO just validates "is
+// this a real TX UOM code at all".
+const TX_UOM_ALL = Object.values(TX_UOM_CODES).flat();
 
 export class CreateTrackedCategoryDto {
   @IsString() @MaxLength(120) name: string;
@@ -21,5 +29,11 @@ export class CreateTrackedCategoryDto {
   @IsOptional() @IsBoolean() requiresLicense?: boolean;
   @IsOptional() @IsString() @MaxLength(40) reportTemplate?: string;
   @IsOptional() @IsEnum(ReportCadence) reportCadence?: ReportCadence;
+  // TX Comptroller (TX_COMPTROLLER report template) config — see schema.prisma TrackedCategory.
+  // `null` is accepted (and stored as NULL) so a non-TX template can post an explicit clear;
+  // @IsOptional() skips the other validators for null.
+  @IsOptional() @IsString() @MaxLength(20) wholesalerLicenseNo?: string | null;
+  @IsOptional() @IsInt() @IsIn([1, 2, 3]) txItemType?: number | null;
+  @IsOptional() @IsString() @IsIn(TX_UOM_ALL) txUom?: string | null;
   @IsOptional() @IsBoolean() active?: boolean;
 }

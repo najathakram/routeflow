@@ -18,7 +18,12 @@ import {
 import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/api/drafts";
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
-import { getTierPrice, computeLineSubtotal } from "@/lib/pricing";
+import {
+  getTierPrice,
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+  perUnitPrice,
+} from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -73,6 +78,9 @@ interface LineItem {
   note?: string;
   /** Note input expanded for this row (icon toggle; note text survives collapse). */
   noteOpen?: boolean;
+  /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
+   *  carries {qty, boxes, pieces} and the per-case unitPrice. */
+  sellBy?: "case" | "unit";
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -569,6 +577,22 @@ export function CreateOrderModal({
       }),
     );
   };
+
+  /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
+   *  7 units of a 6-pack -> {boxes:1, pieces:1, qty:7}. Price is unchanged either way because
+   *  computeLineSubtotal's proration is linear. */
+  const setUnitQty = (tempId: string, value: number) => {
+    setLineItems((prev) =>
+      prev.map((li) => {
+        if (li.tempId !== tempId) return li;
+        const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
+        return { ...li, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+      }),
+    );
+  };
+
+  const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
+    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -1442,7 +1466,7 @@ export function CreateOrderModal({
                         {/* Price per piece (when product has box packaging) */}
                         {li.unitsPerBox && li.unitsPerBox > 1 && (
                           <div className="mt-0.5 text-[10px] text-navy/70">
-                            ${(li.unitPrice / li.unitsPerBox).toFixed(2)} / piece
+                            ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
                           </div>
                         )}
                         {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
@@ -1454,7 +1478,9 @@ export function CreateOrderModal({
                         {/* One-time discount input (only when no special price already applied) */}
                         {li.priceType !== "SPECIAL" && (
                           <div className="mt-1 flex items-center gap-1 flex-wrap">
-                            <span className="text-[10px] text-navy/70">Price:</span>
+                            <span className="text-[10px] text-navy/70">
+                              {li.unitsPerBox && li.unitsPerBox > 1 ? "Case price:" : "Price:"}
+                            </span>
                             <MoneyInput
                               min={0}
                               placeholder={li.listPrice.toFixed(2)}
@@ -1501,32 +1527,77 @@ export function CreateOrderModal({
                     {/* Qty controls */}
                     {li.unitsPerBox ? (
                       <div className="flex flex-col gap-0.5 min-w-[190px]">
-                        <div className="flex items-center gap-1.5">
-                          <input
-                            type="number"
-                            min={0}
-                            value={li.boxes ?? 0}
-                            onChange={(e) => setBoxes(li.tempId, parseInt(e.target.value, 10))}
-                            onFocus={(e) => e.target.select()}
-                            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Number of whole boxes"
-                          />
-                          <span className="text-xs text-navy/70">boxes</span>
-                          <span className="text-xs text-navy/30">+</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={li.unitsPerBox - 1}
-                            value={li.pieces ?? 0}
-                            onChange={(e) => setPieces(li.tempId, parseInt(e.target.value, 10))}
-                            onFocus={(e) => e.target.select()}
-                            className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Extra loose pieces (less than a full box)"
-                          />
-                          <span className="text-xs text-navy/70">pcs</span>
+                        {/* Case | Unit sell-by toggle — UI-only; the payload always
+                            carries {qty, boxes, pieces} regardless of the mode. */}
+                        <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setSellBy(li.tempId, "case")}
+                            className={cn(
+                              "px-1.5 py-0.5 transition-colors",
+                              (li.sellBy ?? "case") === "case"
+                                ? "bg-brand-500 text-white"
+                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                            )}
+                          >
+                            Case
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSellBy(li.tempId, "unit")}
+                            className={cn(
+                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                              li.sellBy === "unit"
+                                ? "bg-brand-500 text-white"
+                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                            )}
+                          >
+                            Unit
+                          </button>
                         </div>
+                        {li.sellBy === "unit" ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={0}
+                              value={li.qty}
+                              onChange={(e) =>
+                                setUnitQty(li.tempId, parseInt(e.target.value, 10) || 0)
+                              }
+                              onFocus={(e) => e.target.select()}
+                              className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              title="Total units"
+                            />
+                            <span className="text-xs text-navy/70">units</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={0}
+                              value={li.boxes ?? 0}
+                              onChange={(e) => setBoxes(li.tempId, parseInt(e.target.value, 10))}
+                              onFocus={(e) => e.target.select()}
+                              className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              title="Number of whole cases"
+                            />
+                            <span className="text-xs text-navy/70">cases</span>
+                            <span className="text-xs text-navy/30">+</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={li.unitsPerBox - 1}
+                              value={li.pieces ?? 0}
+                              onChange={(e) => setPieces(li.tempId, parseInt(e.target.value, 10))}
+                              onFocus={(e) => e.target.select()}
+                              className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              title="Extra loose units (less than a full case)"
+                            />
+                            <span className="text-xs text-navy/70">units</span>
+                          </div>
+                        )}
                         <span className="text-[10px] text-navy/30">
-                          1 box = {li.unitsPerBox} pcs
+                          1 case = {li.unitsPerBox} units
                           {li.qty > 0 && (
                             <>
                               {" "}

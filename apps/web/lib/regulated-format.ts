@@ -90,3 +90,47 @@ export function treatmentLabel(t: InvoiceTreatment): string {
       ? "Sectioned on invoice"
       : "Per-line tax";
 }
+
+/** Date-range presets for the Reports panel (arbitrary-range report preview/CSV). */
+export type ReportRangePreset = "last-month" | "this-month" | "last-quarter" | "year-to-date";
+
+/**
+ * Inclusive `{from, to}` (YYYY-MM-DD, UTC) for a report date-range preset. Sibling of
+ * {@link lastCompletedPeriod}, but for the Reports panel — which runs over arbitrary
+ * date ranges rather than filing periods — so it works off calendar months/quarters
+ * relative to `today` instead of a filing cadence.
+ */
+export function presetRange(
+  preset: ReportRangePreset,
+  today: Date = new Date(),
+): { from: string; to: string } {
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth(); // 0-11
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const iso = (yy: number, mm: number, dd: number) => `${yy}-${pad(mm + 1)}-${pad(dd)}`;
+  const lastDayOfMonth = (yy: number, mm: number) => new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
+
+  switch (preset) {
+    case "this-month":
+      return { from: iso(y, m, 1), to: iso(y, m, lastDayOfMonth(y, m)) };
+    case "last-quarter": {
+      const q = Math.floor(m / 3); // current quarter, 0-3
+      const lastQ = q === 0 ? 3 : q - 1;
+      const lastQYear = q === 0 ? y - 1 : y;
+      const startMonth = lastQ * 3;
+      const endMonth = startMonth + 2;
+      return {
+        from: iso(lastQYear, startMonth, 1),
+        to: iso(lastQYear, endMonth, lastDayOfMonth(lastQYear, endMonth)),
+      };
+    }
+    case "year-to-date":
+      return { from: iso(y, 0, 1), to: iso(y, m, today.getUTCDate()) };
+    case "last-month":
+    default: {
+      const lm = m === 0 ? 11 : m - 1;
+      const lmYear = m === 0 ? y - 1 : y;
+      return { from: iso(lmYear, lm, 1), to: iso(lmYear, lm, lastDayOfMonth(lmYear, lm)) };
+    }
+  }
+}

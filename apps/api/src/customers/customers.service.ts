@@ -115,6 +115,11 @@ export class CustomersService {
         some: { tagId: query.tag },
       };
     }
+    // Customers authorized to sell regulated items — i.e. holding at least one authorization
+    // against a license-requiring tracked category. Mirrors the `tag` relation filter above.
+    if (query.regulated === "1") {
+      where.authorizations = { some: { trackedCategory: { requiresLicense: true } } };
+    }
 
     // Build orderBy. F4-002: sortBy reaches Prisma's orderBy, so it MUST be an
     // allowlisted scalar column — a free-form field name lets a caller inject an
@@ -147,6 +152,10 @@ export class CustomersService {
           user: { select: { id: true, email: true, username: true, status: true } },
           addresses: true,
           tagAssignments: { include: { tag: true } },
+          // Per-row count of regulated authorizations (badge on the "Regulated" filter).
+          _count: {
+            select: { authorizations: { where: { trackedCategory: { requiresLicense: true } } } },
+          },
         },
         skip,
         take: limit,
@@ -199,6 +208,7 @@ export class CustomersService {
       ...c,
       receivables: receivablesMap[c.id] ?? 0,
       unusedCredits: creditsMap[c.id] ?? 0,
+      regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
 
     return { data: enriched, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };

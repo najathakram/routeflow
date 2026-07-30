@@ -12,21 +12,24 @@ describe("returnActionFlags", () => {
       canReject: true,
       canMarkInTransit: false,
       canReceive: false,
+      canResolveWithoutReceipt: false,
       canRefund: false,
       terminal: false,
     });
   });
 
-  it("APPROVED → in-transit only (never jumps straight to received)", () => {
+  it("APPROVED → in-transit, receive, and resolve-without-receiving", () => {
     const f = returnActionFlags("APPROVED");
     expect(f.canMarkInTransit).toBe(true);
-    expect(f.canReceive).toBe(false);
+    expect(f.canReceive).toBe(true);
+    expect(f.canResolveWithoutReceipt).toBe(true);
     expect(f.canApprove).toBe(false);
   });
 
-  it("IN_TRANSIT → receive only", () => {
+  it("IN_TRANSIT → receive and resolve-without-receiving", () => {
     const f = returnActionFlags("IN_TRANSIT");
     expect(f.canReceive).toBe(true);
+    expect(f.canResolveWithoutReceipt).toBe(true);
     expect(f.canMarkInTransit).toBe(false);
   });
 
@@ -34,15 +37,21 @@ describe("returnActionFlags", () => {
     const f = returnActionFlags("RECEIVED");
     expect(f.canRefund).toBe(true);
     expect(f.canReceive).toBe(false);
+    expect(f.canResolveWithoutReceipt).toBe(false);
   });
 
   it("terminal statuses offer nothing", () => {
     for (const s of ["REFUNDED", "PROCESSED", "REJECTED", "CANCELLED"] as const) {
       const f = returnActionFlags(s);
       expect(f.terminal).toBe(true);
-      expect(f.canApprove || f.canReject || f.canMarkInTransit || f.canReceive || f.canRefund).toBe(
-        false,
-      );
+      expect(
+        f.canApprove ||
+          f.canReject ||
+          f.canMarkInTransit ||
+          f.canReceive ||
+          f.canResolveWithoutReceipt ||
+          f.canRefund,
+      ).toBe(false);
     }
   });
 });

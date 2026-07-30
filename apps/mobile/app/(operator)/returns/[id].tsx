@@ -11,15 +11,26 @@ import {
   useRefundReturn,
   useRejectReturn,
   useReturn,
+  type RefundMethod,
 } from "../../../lib/api/returns";
 import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
-import { confirm } from "../../../lib/confirm";
+import { chooseAction, confirm } from "../../../lib/confirm";
 
 function fmtQty(v: number | string | null | undefined): string {
   const n = Number(v ?? 0);
   return Number.isInteger(n) ? String(n) : String(n);
 }
+
+function fmtCurrency(n: number | string | null | undefined): string {
+  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
+}
+
+const REFUND_METHOD_LABELS: Record<RefundMethod, string> = {
+  CREDIT_NOTE: "Store credit (credit note)",
+  EXTERNAL_REFUND: "Refunded outside RouteFlow",
+};
 
 export default function ReturnDetailScreen() {
   const router = useRouter();
@@ -38,6 +49,48 @@ export default function ReturnDetailScreen() {
       onSuccess: () => showToast(okMsg),
       onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     });
+  };
+
+  const resolveReturn = (method: RefundMethod) => {
+    if (!id) return;
+    refundMut.mutate(
+      { id, method },
+      {
+        onSuccess: () =>
+          showToast(method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded"),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
+  };
+
+  const openResolveChoice = () => {
+    chooseAction("Resolve return", "How was this return settled with the customer?", [
+      {
+        label: "Issue store credit",
+        style: "default",
+        onPress: () => resolveReturn("CREDIT_NOTE"),
+      },
+      {
+        label: "Refunded outside app",
+        style: "default",
+        onPress: () => resolveReturn("EXTERNAL_REFUND"),
+      },
+      { label: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  // "Resolve without receiving": receive with restocking suppressed, then the same
+  // three-way choice. If the operator backs out of the choice dialog, the return
+  // simply sits at RECEIVED — nothing was minted or restocked, which is truthful.
+  const handleResolveWithoutReceiving = () => {
+    if (!id) return;
+    receiveMut.mutate(
+      { id, restock: false },
+      {
+        onSuccess: () => openResolveChoice(),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
   };
 
   if (isLoading || !ret) {
@@ -130,19 +183,20 @@ export default function ReturnDetailScreen() {
                   onPress={() => run(receiveMut, "Marked received")}
                 />
               ) : null}
+              {flags.canResolveWithoutReceipt ? (
+                <ActionTile
+                  icon="play-skip-forward-outline"
+                  label="Resolve without receiving"
+                  disabled={anyPending}
+                  onPress={handleResolveWithoutReceiving}
+                />
+              ) : null}
               {flags.canRefund ? (
                 <ActionTile
                   icon="cash-outline"
-                  label="Process refund"
+                  label="Resolve return"
                   disabled={anyPending}
-                  onPress={() =>
-                    confirm(
-                      "Process refund?",
-                      "This marks the return as Refunded. Restock was decided when the return was created.",
-                      () => run(refundMut, "Refund processed"),
-                      { confirmText: "Refund" },
-                    )
-                  }
+                  onPress={openResolveChoice}
                 />
               ) : null}
             </View>
@@ -151,6 +205,46 @@ export default function ReturnDetailScreen() {
               No further actions — this return is {pill.label.toLowerCase()}.
             </Text>
           )}
+
+          {/* Resolution — how this return was settled with the customer.
+              creditNoteId is part of the gate on purpose: returns refunded before the
+              refundMethod/refundAmount/refundedAt columns shipped carry only creditNoteId
+              (no backfill), and the credit-note link must still reach them. */}
+          {ret.refundMethod || ret.refundedAt || ret.creditNoteId ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Resolution</Text>
+              <View style={styles.resolutionRow}>
+                <Text style={styles.resolutionLabel}>Method</Text>
+                <Text style={styles.resolutionValue}>
+                  {ret.refundMethod ? REFUND_METHOD_LABELS[ret.refundMethod] : "—"}
+                </Text>
+              </View>
+              <View style={styles.resolutionRow}>
+                <Text style={styles.resolutionLabel}>Amount</Text>
+                <Text style={styles.resolutionValue}>
+                  {ret.refundAmount == null ? "—" : fmtCurrency(ret.refundAmount)}
+                </Text>
+              </View>
+              <View style={styles.resolutionRow}>
+                <Text style={styles.resolutionLabel}>Date</Text>
+                <Text style={styles.resolutionValue}>
+                  {ret.refundedAt ? new Date(ret.refundedAt).toLocaleDateString() : "—"}
+                </Text>
+              </View>
+              {ret.creditNoteId ? (
+                <Pressable
+                  style={styles.creditNoteLink}
+                  onPress={() => router.push(`/(operator)/credit-notes/${ret.creditNoteId}`)}
+                >
+                  <Ionicons name="document-text-outline" size={16} color={ios.brand} />
+                  <Text style={styles.creditNoteLinkText}>
+                    {ret.creditNote?.creditNoteNumber ?? "View credit note"}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={16} color={ios.label2} />
+                </Pressable>
+              ) : null}
+            </View>
+          ) : null}
 
           {/* Items */}
           <View style={styles.card}>
@@ -232,7 +326,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  tileLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label },
+  tileLabel: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    textAlign: "center",
+  },
   terminalNote: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",
@@ -240,6 +339,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   cardTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label2, marginBottom: 4 },
+  resolutionRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },
+  resolutionLabel: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  resolutionValue: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.label },
+  creditNoteLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  creditNoteLinkText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+  },
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },

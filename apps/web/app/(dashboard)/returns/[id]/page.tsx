@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -10,9 +9,9 @@ import {
   Truck,
   PackageCheck,
   RefreshCw,
+  SkipForward,
   Loader2,
   Clock,
-  FileText,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -26,8 +25,8 @@ import {
   type Return,
   type ReturnStatus,
   type ReturnReason,
+  type RefundMethod,
 } from "@/lib/api/returns";
-import { useCreateCreditNote } from "@/lib/api/credit-notes";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,56 +71,88 @@ const REASON_LABELS: Record<ReturnReason, string> = {
   QUALITY_ISSUE: "Quality Issue",
 };
 
-// ─── Process Refund Modal ─────────────────────────────────────────────────────
+const REFUND_METHOD_LABELS: Record<RefundMethod, string> = {
+  CREDIT_NOTE: "Store credit (credit note)",
+  EXTERNAL_REFUND: "Refunded outside RouteFlow",
+};
 
-function ProcessRefundModal({
+function fmtMoney(n: number | null | undefined): string {
+  return n == null ? "—" : `$${Number(n).toFixed(2)}`;
+}
+
+// ─── Resolve Return Modal ─────────────────────────────────────────────────────
+
+function ResolveReturnModal({
   isOpen,
   onClose,
   onConfirm,
   isPending,
+  refundEstimate,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (restock: boolean) => void;
+  onConfirm: (method: RefundMethod) => void;
   isPending: boolean;
+  refundEstimate?: number | null;
 }) {
-  const [restock, setRestock] = React.useState(false);
+  const [method, setMethod] = React.useState<RefundMethod>("CREDIT_NOTE");
 
   React.useEffect(() => {
-    if (isOpen) setRestock(false);
+    if (isOpen) setMethod("CREDIT_NOTE");
   }, [isOpen]);
+
+  const amountLabel = fmtMoney(refundEstimate);
 
   return (
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Process Refund"
-      description="Finalize this return by issuing a refund."
+      title="Resolve Return"
+      description={`Choose how the ${amountLabel} for this return is settled with the customer.`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button onClick={() => onConfirm(restock)} loading={isPending}>
-            Process Refund
+          <Button onClick={() => onConfirm(method)} loading={isPending}>
+            Resolve Return
           </Button>
         </>
       }
     >
-      <div className="space-y-4">
-        <p className="text-sm text-navy/70">
-          This will mark the return as Refunded. Make sure any credit or refund has been issued to
-          the customer outside of RouteFlow.
-        </p>
-        <label className="flex cursor-pointer items-center gap-3">
+      <div className="space-y-3">
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
           <input
-            type="checkbox"
-            checked={restock}
-            onChange={(e) => setRestock(e.target.checked)}
-            className="h-4 w-4 rounded border-surface-border text-brand-500 focus:ring-brand-500"
+            type="radio"
+            name="resolve-method"
+            checked={method === "CREDIT_NOTE"}
+            onChange={() => setMethod("CREDIT_NOTE")}
+            className="mt-0.5 accent-brand-500"
           />
-          <span className="text-sm font-medium text-navy">
-            Restock returned items back into inventory
+          <span>
+            <span className="block text-sm font-medium text-navy">
+              Issue store credit (credit note)
+            </span>
+            <span className="block text-xs text-navy/70">
+              Mints a {amountLabel} credit note for the customer, linked to this return.
+            </span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
+          <input
+            type="radio"
+            name="resolve-method"
+            checked={method === "EXTERNAL_REFUND"}
+            onChange={() => setMethod("EXTERNAL_REFUND")}
+            className="mt-0.5 accent-brand-500"
+          />
+          <span>
+            <span className="block text-sm font-medium text-navy">
+              Refunded outside RouteFlow (cash, check, transfer)
+            </span>
+            <span className="block text-xs text-navy/70">
+              Records that {amountLabel} was already returned to the customer. Nothing is minted.
+            </span>
           </span>
         </label>
       </div>
@@ -261,7 +292,6 @@ function StatusTimeline({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ReturnDetailPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
@@ -271,7 +301,6 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   const markInTransit = useMarkReturnInTransit();
   const markReceived = useMarkReturnReceived();
   const processRefund = useProcessRefund();
-  const createCreditNote = useCreateCreditNote();
 
   const [isRefundOpen, setIsRefundOpen] = React.useState(false);
   const [isApproveOpen, setIsApproveOpen] = React.useState(false);
@@ -352,66 +381,66 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   };
 
   const handleMarkReceived = () => {
-    markReceived.mutate(ret.id, {
-      onSuccess: () => {
-        toast({
-          title: "Return received",
-          description: "Items have been checked in.",
-          variant: "success",
-        });
-      },
-      onError: () => {
-        toast({
-          title: "Failed to update status",
-          description: "Please try again.",
-          variant: "error",
-        });
-      },
-    });
-  };
-
-  const handleConvertToCreditNote = () => {
-    if (!ret) return;
-    const returnTotal = ret.items.reduce((sum, item) => {
-      return sum + item.qty * (item.unitPrice ?? 0);
-    }, 0);
-    createCreditNote.mutate(
-      {
-        customerId: ret.customerId,
-        amount: returnTotal > 0 ? returnTotal : 0.01,
-        reason: `Return ${ret.returnNumber} — ${REASON_LABELS[ret.reason]}`,
-        issueDate: new Date().toISOString().split("T")[0],
-        notes: `Created from return ${ret.returnNumber}. Update the amount before issuing.`,
-      },
+    markReceived.mutate(
+      { id: ret.id },
       {
         onSuccess: () => {
           toast({
-            title: "Credit note created",
-            description: "Review and update the amount before issuing.",
-            variant: "success",
-          });
-          router.push("/credit-notes");
-        },
-        onError: () => toast({ title: "Failed to create credit note", variant: "error" }),
-      },
-    );
-  };
-
-  const handleProcessRefund = (restock: boolean) => {
-    processRefund.mutate(
-      { id: ret.id, restock },
-      {
-        onSuccess: () => {
-          setIsRefundOpen(false);
-          toast({
-            title: "Refund processed",
-            description: restock ? "Items have been restocked." : undefined,
+            title: "Return received",
+            description: "Items have been checked in.",
             variant: "success",
           });
         },
         onError: () => {
           toast({
-            title: "Failed to process refund",
+            title: "Failed to update status",
+            description: "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
+  // "Resolve without receiving": receive with restock suppressed, then fall straight
+  // into the same resolve modal. If the operator abandons that second step the return
+  // simply sits at RECEIVED, which is truthful — nothing was minted or restocked.
+  const handleResolveWithoutReceiving = () => {
+    markReceived.mutate(
+      { id: ret.id, restock: false },
+      {
+        onSuccess: () => {
+          setIsRefundOpen(true);
+        },
+        onError: () => {
+          toast({
+            title: "Failed to update status",
+            description: "Please try again.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
+  const handleResolveReturn = (method: RefundMethod) => {
+    processRefund.mutate(
+      { id: ret.id, method },
+      {
+        onSuccess: () => {
+          setIsRefundOpen(false);
+          toast({
+            title: method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded",
+            description:
+              method === "CREDIT_NOTE"
+                ? "A credit note has been minted for the customer."
+                : "The return has been marked as refunded outside RouteFlow.",
+            variant: "success",
+          });
+        },
+        onError: () => {
+          toast({
+            title: "Failed to resolve return",
             description: "Please try again.",
             variant: "error",
           });
@@ -462,46 +491,57 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           )}
 
           {status === "APPROVED" && (
-            <Button
-              size="sm"
-              leftIcon={<Truck className="h-4 w-4" />}
-              onClick={handleMarkInTransit}
-              loading={markInTransit.isPending}
-            >
-              Mark In Transit
-            </Button>
-          )}
-
-          {status === "IN_TRANSIT" && (
-            <Button
-              size="sm"
-              leftIcon={<PackageCheck className="h-4 w-4" />}
-              onClick={handleMarkReceived}
-              loading={markReceived.isPending}
-            >
-              Mark Received
-            </Button>
-          )}
-
-          {status === "RECEIVED" && (
             <>
               <Button
                 size="sm"
-                variant="secondary"
-                leftIcon={<FileText className="h-4 w-4" />}
-                onClick={handleConvertToCreditNote}
-                loading={createCreditNote.isPending}
+                leftIcon={<Truck className="h-4 w-4" />}
+                onClick={handleMarkInTransit}
+                loading={markInTransit.isPending}
               >
-                Issue Credit Note
+                Mark In Transit
               </Button>
               <Button
                 size="sm"
-                leftIcon={<RefreshCw className="h-4 w-4" />}
-                onClick={() => setIsRefundOpen(true)}
+                variant="secondary"
+                leftIcon={<SkipForward className="h-4 w-4" />}
+                onClick={handleResolveWithoutReceiving}
+                loading={markReceived.isPending}
               >
-                Process Refund
+                Resolve without receiving
               </Button>
             </>
+          )}
+
+          {status === "IN_TRANSIT" && (
+            <>
+              <Button
+                size="sm"
+                leftIcon={<PackageCheck className="h-4 w-4" />}
+                onClick={handleMarkReceived}
+                loading={markReceived.isPending}
+              >
+                Mark Received
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<SkipForward className="h-4 w-4" />}
+                onClick={handleResolveWithoutReceiving}
+                loading={markReceived.isPending}
+              >
+                Resolve without receiving
+              </Button>
+            </>
+          )}
+
+          {status === "RECEIVED" && (
+            <Button
+              size="sm"
+              leftIcon={<RefreshCw className="h-4 w-4" />}
+              onClick={() => setIsRefundOpen(true)}
+            >
+              Resolve Return
+            </Button>
           )}
 
           {(status === "REFUNDED" || status === "PROCESSED") && (
@@ -624,6 +664,46 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             <StatusTimeline currentStatus={status} logs={ret.logs} />
           </Card>
 
+          {/* Resolution — how this return was settled with the customer.
+              creditNoteId is part of the gate on purpose: returns refunded before the
+              refundMethod/refundAmount/refundedAt columns shipped carry only creditNoteId
+              (no backfill), and the credit-note link must still reach them. */}
+          {(ret.refundMethod || ret.refundedAt || ret.creditNoteId) && (
+            <Card title="Resolution">
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <dt className="text-navy/70">Method</dt>
+                  <dd className="font-medium text-navy">
+                    {ret.refundMethod ? REFUND_METHOD_LABELS[ret.refundMethod] : "—"}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-navy/70">Amount</dt>
+                  <dd className="font-medium text-navy">{fmtMoney(ret.refundAmount)}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-navy/70">Date</dt>
+                  <dd className="font-medium text-navy">
+                    {ret.refundedAt ? fmtDate(ret.refundedAt) : "—"}
+                  </dd>
+                </div>
+                {ret.creditNoteId && (
+                  <div className="flex justify-between border-t border-surface-border pt-2">
+                    <dt className="text-navy/70">Credit note</dt>
+                    <dd>
+                      <Link
+                        href={`/credit-notes/${ret.creditNoteId}`}
+                        className="font-mono text-brand-600 hover:underline"
+                      >
+                        {ret.creditNote?.creditNoteNumber ?? ret.creditNoteId}
+                      </Link>
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </Card>
+          )}
+
           {/* Quick summary */}
           <Card>
             <dl className="space-y-2 text-sm">
@@ -647,11 +727,12 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
       </div>
 
       {/* Modals */}
-      <ProcessRefundModal
+      <ResolveReturnModal
         isOpen={isRefundOpen}
         onClose={() => setIsRefundOpen(false)}
-        onConfirm={handleProcessRefund}
+        onConfirm={handleResolveReturn}
         isPending={processRefund.isPending}
+        refundEstimate={ret.refundEstimate}
       />
 
       <ConfirmActionModal

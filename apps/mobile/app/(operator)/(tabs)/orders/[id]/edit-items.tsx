@@ -15,7 +15,11 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
-import { useCreditNotes } from "../../../../../lib/api/credit-notes";
+import {
+  useCreditNotes,
+  useCreateCreditNote,
+  type CreditNote,
+} from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { useProducts } from "../../../../../lib/api/products";
@@ -27,9 +31,11 @@ import {
   computeMarginFraction,
   effectiveQty,
   getTierPrice,
+  perUnitPrice,
   priceForMarginFloor,
   roundMoney,
 } from "../../../../../lib/pricing";
+import { setLineUnits } from "../../../../../lib/sale-line";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
   buildOrderItemDiff,
@@ -86,6 +92,9 @@ type DraftItem = {
    */
   averageCost?: number | string | null;
   category?: string | null;
+  /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
+   *  diff always carries {qty, boxes, pieces} and the per-case unitPrice. */
+  sellBy?: "case" | "unit";
 };
 
 /**
@@ -188,10 +197,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     status: "ISSUED",
     limit: 100,
   });
+  // Inline "New credit note" create sheet + freshly-created credits, merged
+  // into creditRows (deduped by id) so a just-minted credit shows up — and
+  // can be applied — before the ["credit-notes"] refetch lands.
+  const [createCreditOpen, setCreateCreditOpen] = useState(false);
+  const [justCreatedCredits, setJustCreatedCredits] = useState<CreditNote[]>([]);
   // Rows to show: the customer's open credits, PLUS any credit already
   // applied to this order even if it's no longer ISSUED (e.g. fully consumed)
   // — otherwise a previously-applied credit would vanish from the list
-  // instead of showing checked.
+  // instead of showing checked — PLUS any credit just created this session.
   const creditRows = useMemo(() => {
     const rows = new Map<
       string,
@@ -227,8 +241,20 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         });
       }
     }
+    for (const cn of justCreatedCredits) {
+      if (!rows.has(cn.id)) {
+        rows.set(cn.id, {
+          id: cn.id,
+          creditNoteNumber: cn.creditNoteNumber,
+          reason: cn.reason,
+          amount: cn.amount,
+          amountUsed: cn.amountUsed,
+          expiresAt: cn.expiresAt,
+        });
+      }
+    }
     return Array.from(rows.values());
-  }, [openCredits, order]);
+  }, [openCredits, order, justCreatedCredits]);
 
   const tierPriceFor = (p: { id: string } & Parameters<typeof getTierPrice>[0]) =>
     getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
@@ -287,6 +313,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       ((order as any)?.orderCreditNotes ?? []).map((oc: any) => oc.creditNoteId),
     );
     setCreditsTouched(false);
+    setJustCreatedCredits([]);
   }, [order]);
 
   // Live total mirrors the server math (BOX-price proration when split).
@@ -371,6 +398,23 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       else next[id] = { ...cur, boxes: b, pieces: pcs, qty, boxSplit: true };
       return next;
     });
+
+  /** Unit mode: the operator types a TOTAL unit count; normalize it back into
+   *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose) via setLineUnits. */
+  const setUnits = (id: string, units: number) =>
+    setDraft((d) => {
+      const cur = d[id];
+      if (!cur) return d;
+      const upb = Number(cur.unitsPerBox ?? 0);
+      const line = setLineUnits(cur, units, upb);
+      const next = { ...d };
+      if (!line) delete next[id];
+      else next[id] = { ...line, boxSplit: true };
+      return next;
+    });
+
+  const setSellBy = (id: string, sellBy: "case" | "unit") =>
+    setDraft((d) => (d[id] ? { ...d, [id]: { ...d[id], sellBy } } : d));
 
   // "Set to floor" one-tap fix (P10-POS-1) — same price-write path as the
   // price-override modal, minus the reason (the ack itself is the record).
@@ -558,6 +602,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         }}
       />
 
+      <CreateCreditNoteModal
+        open={createCreditOpen}
+        customerId={customerId ?? ""}
+        onClose={() => setCreateCreditOpen(false)}
+        onCreated={(created) => {
+          setJustCreatedCredits((prev) => [...prev, created]);
+          setSelectedCreditIds((ids) => (ids.includes(created.id) ? ids : [...ids, created.id]));
+          setCreditsTouched(true);
+          setCreateCreditOpen(false);
+          showToast(`Created credit ${created.creditNoteNumber}`);
+        }}
+      />
+
       {/* Regulated-license guard — order exists here, so overrides are ORDER-scoped.
           No remove-lines exit (lines are removed via the qty steppers above). */}
       <LicenseGuardModal
@@ -692,54 +749,65 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         <>
           <ScrollView showsVerticalScrollIndicator={false}>
             {/* Apply credit — mirrors NewOrderScreen. Driver-gated off: drivers
-                don't manage credits. Toggle only (no amount input); null amount
-                = up to remaining, resolved server-side. */}
-            {!isDriver && creditRows.length > 0 ? (
+                don't manage credits. Gated on the customer alone (not credit
+                COUNT) so the operator can create one right here when none
+                exist yet. Toggle only (no amount input); null amount = up to
+                remaining, resolved server-side. */}
+            {!isDriver && customerId ? (
               <View style={styles.optionsWrap}>
                 <View style={styles.optionsHeader}>
                   <Ionicons name="pricetag-outline" size={16} color={ios.brand} />
                   <Text style={styles.optionsTitle}>Apply credit</Text>
-                  {selectedCreditIds.length > 0 ? (
-                    <Text style={styles.optionsSummary} numberOfLines={1}>
-                      {selectedCreditIds.length} selected
-                    </Text>
-                  ) : null}
+                  <View style={{ flex: 1 }}>
+                    {selectedCreditIds.length > 0 ? (
+                      <Text style={styles.optionsSummary} numberOfLines={1}>
+                        {selectedCreditIds.length} selected
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Pressable onPress={() => setCreateCreditOpen(true)} hitSlop={6}>
+                    <Text style={styles.newCreditText}>+ New credit note</Text>
+                  </Pressable>
                 </View>
                 <View style={styles.optionsBody}>
-                  {creditRows.map((cn) => {
-                    const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
-                    const checked = selectedCreditIds.includes(cn.id);
-                    return (
-                      <Pressable
-                        key={cn.id}
-                        style={styles.optionRow}
-                        onPress={() => {
-                          setSelectedCreditIds((ids) =>
-                            checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
-                          );
-                          setCreditsTouched(true);
-                        }}
-                      >
-                        <Ionicons
-                          name={checked ? "checkbox" : "square-outline"}
-                          size={20}
-                          color={checked ? ios.brand : ios.label2}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.optionLabel} numberOfLines={1}>
-                            {cn.creditNoteNumber}
-                            {cn.reason ? ` · ${cn.reason}` : ""}
-                          </Text>
-                          {cn.expiresAt ? (
-                            <Text style={styles.optionsSummary}>
-                              Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                  {creditRows.length === 0 ? (
+                    <Text style={styles.optionsSummary}>No open credits for this customer.</Text>
+                  ) : (
+                    creditRows.map((cn) => {
+                      const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
+                      const checked = selectedCreditIds.includes(cn.id);
+                      return (
+                        <Pressable
+                          key={cn.id}
+                          style={styles.optionRow}
+                          onPress={() => {
+                            setSelectedCreditIds((ids) =>
+                              checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
+                            );
+                            setCreditsTouched(true);
+                          }}
+                        >
+                          <Ionicons
+                            name={checked ? "checkbox" : "square-outline"}
+                            size={20}
+                            color={checked ? ios.brand : ios.label2}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.optionLabel} numberOfLines={1}>
+                              {cn.creditNoteNumber}
+                              {cn.reason ? ` · ${cn.reason}` : ""}
                             </Text>
-                          ) : null}
-                        </View>
-                        <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
-                      </Pressable>
-                    );
-                  })}
+                            {cn.expiresAt ? (
+                              <Text style={styles.optionsSummary}>
+                                Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                              </Text>
+                            ) : null}
+                          </View>
+                          <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
+                        </Pressable>
+                      );
+                    })
+                  )}
                 </View>
               </View>
             ) : null}
@@ -764,6 +832,8 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                     onSetQty={(n) => setQty(it.productId, n)}
                     onSetBoxes={(n) => setBoxes(it.productId, n)}
                     onSetPieces={(n) => setPieces(it.productId, n)}
+                    onSetUnits={(n) => setUnits(it.productId, n)}
+                    onSetSellBy={(v) => setSellBy(it.productId, v)}
                     onPressPrice={() => setPriceEditItem(it)}
                     onPressSubstitute={() => {
                       setSubstituteFor(it.productId);
@@ -860,6 +930,8 @@ function DraftItemCard({
   onSetQty,
   onSetBoxes,
   onSetPieces,
+  onSetUnits,
+  onSetSellBy,
   onPressPrice,
   onPressSubstitute,
   onRemove,
@@ -879,6 +951,9 @@ function DraftItemCard({
   onSetQty: (n: number) => void;
   onSetBoxes: (n: number) => void;
   onSetPieces: (n: number) => void;
+  /** Unit mode: total unit count, routed through setLineUnits. */
+  onSetUnits: (n: number) => void;
+  onSetSellBy: (sellBy: "case" | "unit") => void;
   onPressPrice: () => void;
   onPressSubstitute: () => void;
   onRemove: () => void;
@@ -889,6 +964,7 @@ function DraftItemCard({
   const overrideColor = isUpsell ? ios.system.greenInk : ios.system.orangeInk;
   const upb = Number(item.unitsPerBox ?? 0);
   const isBoxed = upb > 1 && canSplitBoxes;
+  const sellBy = item.sellBy ?? "case";
   const qty = effectiveQty(item, item.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: item.unitPrice,
@@ -911,6 +987,8 @@ function DraftItemCard({
       ? priceForMarginFloor(pieceCost!, marginFloor, item.unitsPerBox)
       : null;
   const below = marginClass === "belowCost" || marginClass === "belowFloor";
+  // Display-only per-unit hint on the case price — never fed back into math.
+  const perUnitHint = isBoxed ? perUnitPrice(item.unitPrice, upb) : null;
 
   return (
     <View style={styles.card}>
@@ -931,6 +1009,7 @@ function DraftItemCard({
                 <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
                   <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
@@ -951,6 +1030,7 @@ function DraftItemCard({
                 <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
+                  {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
                   <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
@@ -997,17 +1077,31 @@ function DraftItemCard({
         </View>
       ) : null}
 
-      {/* Editor */}
+      {/* Editor — a Cases/Units segmented control switches entry mode. Cases
+          mode dials Boxes and Loose units independently; Units mode is a
+          single uncapped total-unit stepper routed through setLineUnits. */}
       {isBoxed ? (
         <View style={{ gap: 8 }}>
-          <StepperRow label="Boxes" value={item.boxes ?? 0} onChange={onSetBoxes} />
-          <StepperRow
-            label={`Loose ${item.unit ?? "pieces"}`}
-            value={item.pieces ?? 0}
-            onChange={onSetPieces}
-            max={upb - 1}
-            hint={`${upb} per box`}
-          />
+          <SellByToggle value={sellBy} onChange={onSetSellBy} />
+          {sellBy === "unit" ? (
+            <StepperRow
+              label={`Total ${item.unit ? `${item.unit}s` : "units"}`}
+              value={qty}
+              onChange={onSetUnits}
+              hint={`${upb} per case`}
+            />
+          ) : (
+            <>
+              <StepperRow label="Cases" value={item.boxes ?? 0} onChange={onSetBoxes} />
+              <StepperRow
+                label={`Loose ${item.unit ?? "units"}`}
+                value={item.pieces ?? 0}
+                onChange={onSetPieces}
+                max={upb - 1}
+                hint={`${upb} per case`}
+              />
+            </>
+          )}
         </View>
       ) : (
         <StepperRow
@@ -1387,6 +1481,134 @@ function UnlistedItemModal({
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+// ─── Inline "New credit note" create modal ───────────────────────────────────
+
+/**
+ * Compact inline credit-note create sheet, opened from the Apply-credit
+ * section when the operator needs one that doesn't exist yet — a standalone
+ * credit for this order's customer (no invoice link).
+ */
+function CreateCreditNoteModal({
+  open,
+  customerId,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  customerId: string;
+  onClose: () => void;
+  onCreated: (created: CreditNote) => void;
+}) {
+  const createMut = useCreateCreditNote();
+  const [amount, setAmount] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setAmount(null);
+      setReason("");
+      setError(null);
+    }
+  }, [open]);
+
+  const valid = amount != null && amount > 0 && reason.trim() !== "";
+
+  const submit = () => {
+    if (!valid) return;
+    setError(null);
+    createMut.mutate(
+      { customerId, amount: amount!, reason: reason.trim() },
+      {
+        onSuccess: (created) => onCreated(created),
+        onError: (e: unknown) => {
+          const err = e as { response?: { data?: { message?: string } }; message?: string };
+          setError(err?.response?.data?.message ?? err?.message ?? "Couldn't create credit note.");
+        },
+      },
+    );
+  };
+
+  if (!open) return null;
+
+  return (
+    <Modal transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalOverlay} onPress={onClose}>
+        <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.modalTitle}>New credit note</Text>
+          <Text style={styles.modalSub}>A standalone store credit for this customer.</Text>
+
+          {error ? (
+            <Text style={{ color: ios.system.redInk, fontSize: 12, marginBottom: 8 }}>{error}</Text>
+          ) : null}
+
+          <Text style={styles.modalFieldLabel}>Amount</Text>
+          <MoneyTextInput
+            style={styles.modalInput}
+            value={amount}
+            onChangeValue={setAmount}
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+            autoFocus
+          />
+
+          <Text style={styles.modalFieldLabel}>Reason</Text>
+          <TextInput
+            style={styles.modalInput}
+            value={reason}
+            onChangeText={setReason}
+            placeholder="e.g. Damaged goods"
+            placeholderTextColor={ios.label3}
+          />
+
+          <View style={styles.modalBtns}>
+            <Pressable style={styles.modalBtnGhost} onPress={onClose}>
+              <Text style={styles.modalBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.modalBtnFill,
+                (!valid || createMut.isPending) && styles.modalBtnDisabled,
+              ]}
+              onPress={submit}
+              disabled={!valid || createMut.isPending}
+            >
+              <Text style={styles.modalBtnFillText}>
+                {createMut.isPending ? "Creating…" : "Create"}
+              </Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Compact Cases/Units segmented control for a case-packed line's qty entry mode. */
+function SellByToggle({
+  value,
+  onChange,
+}: {
+  value: "case" | "unit";
+  onChange: (v: "case" | "unit") => void;
+}) {
+  return (
+    <View style={styles.sellBySegment}>
+      {(["case", "unit"] as const).map((opt) => (
+        <Pressable
+          key={opt}
+          onPress={() => onChange(opt)}
+          style={[styles.sellBySegmentBtn, value === opt && styles.sellBySegmentBtnActive]}
+        >
+          <Text style={[styles.sellBySegmentText, value === opt && styles.sellBySegmentTextActive]}>
+            {opt === "case" ? "Cases" : "Units"}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -1800,6 +2022,24 @@ const styles = StyleSheet.create({
   },
   optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  newCreditText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
+
+  // ── Cases/Units segmented control ─────────────────────────────────────────
+  sellBySegment: {
+    flexDirection: "row",
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    padding: 2,
+    alignSelf: "flex-start",
+  },
+  sellBySegmentBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  sellBySegmentBtnActive: { backgroundColor: ios.brand },
+  sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
+  sellBySegmentTextActive: { color: "#fff" },
 });
 
 // Default export = the operator route (reads the [id] param). The named export

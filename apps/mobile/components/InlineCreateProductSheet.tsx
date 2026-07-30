@@ -131,7 +131,7 @@ export function InlineCreateProductSheet({
 
             <FormField
               label="Variant of (optional)"
-              hint="Pick an existing product to add this as a flavor/variety — it inherits the parent's price, box size, and category."
+              hint="Pick an existing product to add this as a flavor/variety — it inherits the parent's price, case size, and category."
             >
               <Pressable style={styles.picker} onPress={() => setParentPickerOpen(true)}>
                 <View style={styles.pickerInner}>
@@ -190,7 +190,7 @@ export function InlineCreateProductSheet({
 
             <View style={styles.row2}>
               <View style={{ flex: 1 }}>
-                <FormField label={boxed ? "Box price" : "Price"}>
+                <FormField label={boxed ? "Case price" : "Price"}>
                   <FormTextInput
                     value={form.pricePerUnit}
                     onChangeText={(v) => set("pricePerUnit", v)}
@@ -221,12 +221,12 @@ export function InlineCreateProductSheet({
             )}
 
             <FormField
-              label="Pieces per box (optional)"
+              label="Units per case (optional)"
               hint={
                 validUnitsPerBoxPrefill(initialUnitsPerBox) &&
                 form.unitsPerBox === String(initialUnitsPerBox)
                   ? "From the invoice line — verify."
-                  : "Set if 1 box holds N loose pieces — the price above is then the BOX price."
+                  : "Set if 1 case holds N loose units — the price above is then the CASE price."
               }
             >
               <FormTextInput

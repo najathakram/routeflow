@@ -148,6 +148,7 @@ only mobile work here is the subcategory create-on-type sheet.
 - **brief:**
 
 1. **New `RegulatedScopeTabs.tsx`** — the shared scope control:
+
    ```tsx
    interface RegulatedScopeTabsProps {
      /** Current ?section= value: "" | "any" | "none" | <sectionId>. */
@@ -174,6 +175,7 @@ only mobile work here is the subcategory create-on-type sheet.
    - Wrap the whole thing in a subtle container when scope !== "all"
      (`rounded-lg border border-brand-200 bg-brand-50/40 px-3 pt-1 pb-2` vs plain) so the
      isolated view is visually distinct — keep it light, not shouty.
+
 2. **`products/page.tsx`**: DELETE the Section `<select>` block (~l.1158-1173). Render
    `<RegulatedScopeTabs value={sectionFilter} onChange={(v) => setUrlFilter("section", v)} sections={activeSections.map(s => ({ id: s.id, name: s.name, productCount: s.productCount }))} />`
    directly ABOVE the toolbar container (~l.1098) — full-width, `mb-2.5`. Everything else

@@ -10,6 +10,8 @@ export class ListCustomersDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(MAX_LIST_LIMIT) limit?: number;
   @IsOptional() @IsString() tag?: string;
   @IsOptional() @IsString() customerType?: string;
+  /** "1" = only customers authorized to sell regulated items (see customers.service.findAll). */
+  @IsOptional() @IsString() regulated?: string;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortDir?: string;
 }

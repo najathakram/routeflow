@@ -1,4 +1,4 @@
-import { getTierPrice } from "./pricing";
+import { cascadeTierPrices, getTierPrice } from "./pricing";
 
 /**
  * Locks the tier ladder semantics — this 17-line function is the whole tier
@@ -50,5 +50,47 @@ describe("getTierPrice", () => {
 
   it("unparseable tier values fall back to list price", () => {
     expect(getTierPrice({ pricePerUnit: "10.00", priceTier2: "abc" }, 2)).toBe(10);
+  });
+});
+
+describe("cascadeTierPrices", () => {
+  it("copies the committed price down to every lower tier", () => {
+    expect(cascadeTierPrices("priceTier2", 9)).toEqual({
+      priceTier3: "9.00",
+      priceTier4: "9.00",
+      priceTier5: "9.00",
+    });
+  });
+
+  it("cascades only to the tiers below the edited one", () => {
+    expect(cascadeTierPrices("priceTier4", 8.5)).toEqual({ priceTier5: "8.50" });
+  });
+
+  it("tier 5 has nothing below it", () => {
+    expect(cascadeTierPrices("priceTier5", 7)).toEqual({});
+  });
+
+  it("Tier 1 / pricePerUnit is deliberately excluded from the cascade", () => {
+    expect(cascadeTierPrices("pricePerUnit", 10)).toEqual({});
+  });
+
+  it("rejects non-finite or negative input", () => {
+    expect(cascadeTierPrices("priceTier2", NaN)).toEqual({});
+    expect(cascadeTierPrices("priceTier2", -1)).toEqual({});
+  });
+
+  it("rounds half-up at the cent", () => {
+    expect(cascadeTierPrices("priceTier2", 9.005)).toEqual({
+      priceTier3: "9.01",
+      priceTier4: "9.01",
+      priceTier5: "9.01",
+    });
+  });
+
+  it("committing 0 cascades an explicit 0.00 — the tiers inherit list price again under getTierPrice's fallback", () => {
+    expect(cascadeTierPrices("priceTier3", 0)).toEqual({
+      priceTier4: "0.00",
+      priceTier5: "0.00",
+    });
   });
 });

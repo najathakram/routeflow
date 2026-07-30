@@ -100,6 +100,47 @@ describe("CustomersService", () => {
       const result = await service.findAll({ page: 1, limit: 20 });
       expect(result.meta.totalPages).toBe(3);
     });
+
+    it('applies the "sells regulated items" filter via the authorizations relation', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ regulated: "1", page: 1, limit: 20 });
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorizations: { some: { trackedCategory: { requiresLicense: true } } },
+          }),
+        }),
+      );
+    });
+
+    it('omits the regulated filter when "regulated" is not exactly "1"', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.customer.count.mockResolvedValue(0);
+
+      await service.findAll({ regulated: "0", page: 1, limit: 20 });
+
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({
+            authorizations: expect.anything(),
+          }),
+        }),
+      );
+    });
+
+    it("surfaces a per-row regulatedCount from the filtered _count projection", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { ...MOCK_CUSTOMER, _count: { authorizations: 2 } },
+      ]);
+      prisma.customer.count.mockResolvedValue(1);
+
+      const result = await service.findAll({ page: 1, limit: 20 });
+
+      expect((result.data[0] as any).regulatedCount).toBe(2);
+    });
   });
 
   // ─── findOne ──────────────────────────────────────────────────────────────

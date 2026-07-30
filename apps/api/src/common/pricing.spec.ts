@@ -2,6 +2,7 @@ import {
   computeLineSubtotal,
   roundMoney,
   normalizeBoxesPieces,
+  perUnitPrice,
   costPerSellingUnit,
   computeMarginFraction,
   priceForMarginFloor,
@@ -71,6 +72,28 @@ describe("pricing — money discipline", () => {
     it("treats unitsPerBox <= 1 as per-piece", () => {
       expect(computeLineSubtotal({ unitPrice: 5.25, qty: 4, unitsPerBox: 1 })).toBe(21);
       expect(computeLineSubtotal({ unitPrice: 5.25, qty: 4, unitsPerBox: null })).toBe(21);
+    });
+  });
+
+  describe("perUnitPrice — display-only case-price / units-per-case hint", () => {
+    it("divides the case price by units-per-case, rounded to cents", () => {
+      expect(perUnitPrice(10, 6)).toBe(1.67);
+      expect(perUnitPrice(10, 3)).toBe(3.33);
+    });
+
+    it("returns null when the product is sold as single units", () => {
+      expect(perUnitPrice(10, null)).toBeNull();
+      expect(perUnitPrice(10, 0)).toBeNull();
+      expect(perUnitPrice(10, 1)).toBeNull();
+    });
+
+    it("is display-only: the line subtotal, not perUnitPrice x pieces, is authoritative", () => {
+      // 2 loose pieces of a 3-pack at a $10 case price: the line prorates BEFORE rounding.
+      expect(
+        computeLineSubtotal({ unitPrice: 10, qty: 2, boxes: 0, pieces: 2, unitsPerBox: 3 }),
+      ).toBe(6.67);
+      // The per-unit hint rounds first, so multiplying it back is a cent off — by design.
+      expect(roundMoney(perUnitPrice(10, 3)! * 2)).toBe(6.66);
     });
   });
 

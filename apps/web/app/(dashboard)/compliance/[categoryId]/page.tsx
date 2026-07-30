@@ -26,6 +26,7 @@ import {
 } from "@/lib/api/tracked-categories";
 import { lastCompletedPeriod, taxRuleLabel, treatmentLabel } from "@/lib/regulated-format";
 import { RegulatedFilingsTable } from "@/components/RegulatedFilingsTable";
+import { RegulatedReportPanel } from "@/components/RegulatedReportPanel";
 
 export default function RegulatedSectionPage({ params }: { params: { categoryId: string } }) {
   const { setTitle } = usePageTitle();
@@ -263,6 +264,13 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
           </ul>
         )}
       </Card>
+
+      {/* Reports — arbitrary date-range preview + CSV, separate from the filings archive below */}
+      <RegulatedReportPanel
+        categoryId={params.categoryId}
+        categoryName={c.name}
+        categoryDefaultTemplate={c.reportTemplate}
+      />
 
       {/* Filings */}
       <Card title="Filings">

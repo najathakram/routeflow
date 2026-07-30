@@ -30,6 +30,46 @@ export function getTierPrice(product: TierPriceable, tier: number): number {
   }
 }
 
+/** The five tier price columns in ladder order. Index 0 (`pricePerUnit`) is Tier 1 / list. */
+export type TierField = "pricePerUnit" | "priceTier2" | "priceTier3" | "priceTier4" | "priceTier5";
+export const TIER_FIELDS: readonly TierField[] = [
+  "pricePerUnit",
+  "priceTier2",
+  "priceTier3",
+  "priceTier4",
+  "priceTier5",
+];
+
+/**
+ * Tier-edit cascade: COMMITTING a new price on tier N copies it down to every lower tier
+ * (N+1..5) unconditionally, so an operator can walk the ladder setting each break once.
+ * Returns ONLY the cascaded fields, as 2-dp decimal strings (ready for a form draft or a
+ * PATCH payload); the edited field itself stays the caller's own write.
+ *
+ * Returns {} for tier 5 (nothing below it), negative, or non-finite input.
+ *
+ * NOT used for Tier 1 / `pricePerUnit` — the list price keeps its existing "smart" behavior
+ * (only tiers that still matched the OLD list price follow it), which preserves a
+ * deliberately customized ladder when the list price is re-priced.
+ *
+ * Committing 0 cascades an explicit "0.00", which under getTierPrice's `|| fallback` guard
+ * means "these tiers inherit the list price again" — that is intended.
+ *
+ * Change detection ("the user focused and typed but did not actually change anything")
+ * belongs to the caller's commit mechanism, never to this function.
+ */
+export function cascadeTierPrices(
+  field: TierField,
+  value: number,
+): Partial<Record<TierField, string>> {
+  const idx = TIER_FIELDS.indexOf(field);
+  if (idx < 1 || !Number.isFinite(value) || value < 0) return {};
+  const v = (Math.round((Math.abs(value) + Number.EPSILON) * 100) / 100).toFixed(2);
+  const patch: Partial<Record<TierField, string>> = {};
+  for (let i = idx + 1; i < TIER_FIELDS.length; i++) patch[TIER_FIELDS[i]] = v;
+  return patch;
+}
+
 /**
  * Mobile mirror of `apps/api/src/common/pricing.ts#computeLineSubtotal` and
  * `apps/web/lib/pricing.ts#computeLineSubtotal`. Keep these three in sync —
@@ -105,6 +145,23 @@ export function computeLineSubtotal({
     return roundMoney(unitPrice * boxEquivalent);
   }
   return roundMoney(unitPrice * qty);
+}
+
+/**
+ * DISPLAY-ONLY derived per-unit price for a case-packed product: case price ÷ units-per-case,
+ * rounded to cents. Returns null when the product is sold as single units (unitsPerBox
+ * null/0/1) or the input is not a finite number.
+ *
+ * NEVER persist this, never submit it, never feed it back into line math. Lines always carry
+ * the CASE price plus boxes/pieces and are priced by computeLineSubtotal, whose proration is
+ * computed before rounding — so `perUnitPrice(p, upb) * pieces` can differ from the true line
+ * subtotal by a cent. computeLineSubtotal is authoritative; this is a shopper-facing hint.
+ */
+export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): number | null {
+  const upb = Number(unitsPerBox ?? 0);
+  const price = Number(unitPrice);
+  if (!(upb > 1) || !Number.isFinite(price)) return null;
+  return roundMoney(price / upb);
 }
 
 /**
@@ -419,6 +476,12 @@ export function effectiveBuyerPrice(
 // the order AND invoice line, but read surfaces used to render only the raw
 // piece count. One shared formatter so "2 boxes + 3 pcs" reads identically on
 // the order detail, invoice detail, and PDF. Keep all three mirrors in sync.
+//
+// DOCUMENT wording stays "boxes + pcs" deliberately (2026-07-30): it is shorter,
+// scans better in the narrow PDF qty column, and matches how wholesale paperwork
+// normally reads. The Case/Unit vocabulary is for the OPERATOR-facing setup and
+// selling UI (units-per-case field, Case|Unit toggle) — different audience.
+// `unitLabel` still overrides the loose-unit noun per product.
 
 export interface QtySplitInput {
   /** Total quantity (pieces for boxed lines). Used when no split is stored. */

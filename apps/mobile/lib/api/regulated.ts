@@ -101,3 +101,92 @@ export function useRegulatedLedger(
     enabled: options?.enabled ?? true,
   });
 }
+
+// ─── Reports (arbitrary date range, in-app preview + TX Comptroller) ─────────────
+// Mirrors apps/api/src/regulated/report-types.ts (WP11) / apps/web/lib/api/tracked-categories.ts
+// (WP12). Stateless — computed on demand server-side, nothing is persisted here.
+
+export interface RegulatedReportColumn {
+  key: string;
+  label: string;
+  align?: "right";
+}
+
+export type RegulatedReportWarningCode =
+  | "MISSING_WHOLESALER_LICENSE"
+  | "MISSING_ITEM_TYPE"
+  | "MISSING_UOM"
+  | "MISSING_TAXPAYER_ID"
+  | "INVALID_TAXPAYER_ID"
+  | "MISSING_RETAILER_LICENSE"
+  | "INVALID_RETAILER_LICENSE"
+  | "INVALID_WHOLESALER_LICENSE"
+  | "MISSING_ADDRESS"
+  | "NEGATIVE_NET_INVOICE"
+  | "FRACTIONAL_QTY"
+  | "UNLINKED_LEDGER_ROWS";
+
+export interface RegulatedReportWarning {
+  code: RegulatedReportWarningCode;
+  /** A complete human sentence, ready to render as-is. */
+  message: string;
+  invoiceId?: string;
+  customerName?: string;
+}
+
+/** One report, in the same shape the JSON preview and the CSV file are both built from. */
+export interface RegulatedReportPreview {
+  template: string;
+  title: string;
+  categoryId: string;
+  categoryName: string;
+  /** Inclusive YYYY-MM-DD range, echoed back for display. */
+  from: string;
+  to: string;
+  columns: RegulatedReportColumn[];
+  /** Fully formatted cells, in `columns` order — never re-derived from raw numbers. */
+  rows: string[][];
+  /** Aggregate templates only; null for per-sale templates like TX. */
+  totalsRow: string[] | null;
+  /** Headline figures for the preview UI (not necessarily present in the CSV). */
+  displayTotals: { label: string; value: string }[];
+  warnings: RegulatedReportWarning[];
+}
+
+export interface RegulatedReportParams {
+  category: string;
+  /** Inclusive start date, YYYY-MM-DD. */
+  from: string;
+  /** Inclusive end date, YYYY-MM-DD. */
+  to: string;
+  /** Omitted = the category's configured reportTemplate. */
+  template?: string;
+}
+
+/**
+ * JSON preview for an arbitrary date range. `params: null` (nothing chosen yet, or the
+ * operator hasn't tapped Preview) keeps the query disabled — mirrors the ledger/filings
+ * hooks above, key-namespaced with a dash like the rest of this file.
+ */
+export function useRegulatedReportPreview(params: RegulatedReportParams | null) {
+  return useQuery<RegulatedReportPreview>({
+    queryKey: ["regulated-report", params ?? {}],
+    queryFn: () =>
+      apiClient.get("/regulated/reports/preview", { params: params ?? {} }).then((r) => r.data),
+    enabled: !!params,
+  });
+}
+
+/**
+ * Fetches the report's CSV as TEXT rather than a URL — `GET /regulated/reports/csv` needs
+ * the same auth header as every other API call, which the OS share sheet cannot attach to
+ * a bare URL. `shareCsvText` (lib/share-pdf.ts) writes this string straight to disk/Blob
+ * instead of downloading from a signed link.
+ */
+export async function fetchRegulatedReportCsvText(params: RegulatedReportParams): Promise<string> {
+  const { data } = await apiClient.get<string>("/regulated/reports/csv", {
+    params,
+    responseType: "text",
+  });
+  return data;
+}

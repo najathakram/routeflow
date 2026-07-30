@@ -146,7 +146,7 @@ exists; `npx prisma generate` has been run.
      pull back this pair's money, update the row's amount (settle re-applies at the new
      request);
    - new selection → `tx.orderCreditNote.create({ data: { orderId, creditNoteId, amount:
-  s.amount ?? null, tenantId: this.prisma.getTenantId() } })`.
+s.amount ?? null, tenantId: this.prisma.getTenantId() } })`.
      "Pull back this pair's money" =
 
    ```ts

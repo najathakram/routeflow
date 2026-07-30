@@ -6,6 +6,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { ReturnsService } from "./returns.service";
+import { ReceiveReturnDto } from "./dto/receive-return.dto";
+import { ProcessRefundDto } from "./dto/process-refund.dto";
 
 @Controller("returns")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -69,14 +71,14 @@ export class ReturnsController {
 
   @Post(":id/receive")
   @Roles(UserRole.OPERATOR)
-  receive(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    return this.returnsService.receive(id, user.sub);
+  receive(@Param("id") id: string, @CurrentUser() user: JwtPayload, @Body() dto: ReceiveReturnDto) {
+    return this.returnsService.receive(id, user.sub, { restock: dto?.restock });
   }
 
   @Post(":id/refund")
   @Roles(UserRole.OPERATOR)
-  processRefund(@Param("id") id: string) {
-    return this.returnsService.processRefund(id);
+  processRefund(@Param("id") id: string, @Body() dto: ProcessRefundDto) {
+    return this.returnsService.processRefund(id, dto);
   }
 
   @Post(":id/cancel")

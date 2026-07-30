@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { FilterChipRow, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useCreditNotes, type CreditNote } from "../../../lib/api/credit-notes";
 import { creditNotePillFor } from "../../../lib/credit-notes-logic";
 
@@ -45,7 +45,12 @@ export default function CreditNotesListScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Credit Notes" />
+      <NavBar
+        largeTitle="Credit Notes"
+        trailing={
+          <NavAction label="New" bold onPress={() => router.push("/(operator)/credit-notes/new")} />
+        }
+      />
       <SearchBar placeholder="CN #, customer or invoice…" value={search} onChangeText={setSearch} />
       <FilterChipRow
         chips={FILTERS.map((f) => ({ label: f.label }))}

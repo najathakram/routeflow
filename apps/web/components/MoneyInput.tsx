@@ -50,6 +50,13 @@ export interface DecimalInputProps extends Omit<
   /** Permit a leading "-" (e.g. invoice adjustments). Default false. */
   allowNegative?: boolean;
   selectOnFocus?: boolean;
+  /**
+   * Fired once per edit session (blur, or Enter which blurs) with the committed value, and
+   * ONLY when it differs from the value the field had at focus time. Use this for side effects
+   * that must not run while the user is mid-keystroke — e.g. the product tier-price cascade.
+   * `onChange` still fires per keystroke so live totals keep working.
+   */
+  onCommit?: (value: number) => void;
 }
 
 export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps>(
@@ -57,18 +64,21 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
     {
       value,
       onChange,
+      onCommit,
       decimals = 2,
       min,
       max,
       allowNegative = false,
       selectOnFocus = true,
       className,
+      onKeyDown,
       ...rest
     },
     ref,
   ) {
     const [text, setText] = React.useState(value == null ? "" : value.toFixed(decimals));
     const focusedRef = React.useRef(false);
+    const valueAtFocusRef = React.useRef<number | null>(null);
 
     // Echo external value changes into the text ONLY while unfocused — this is
     // what replaces the old reformat-on-every-render/useEffect behavior.
@@ -98,6 +108,7 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
         value={text}
         onFocus={(e) => {
           focusedRef.current = true;
+          valueAtFocusRef.current = value;
           if (selectOnFocus) e.currentTarget.select();
         }}
         onChange={(e) => {
@@ -106,16 +117,24 @@ export const DecimalInput = React.forwardRef<HTMLInputElement, DecimalInputProps
           const parsed = sanitized === "" || sanitized === "-" ? null : parseFloat(sanitized);
           onChange(parsed == null || Number.isNaN(parsed) ? null : clamp(parsed));
         }}
+        onKeyDown={(e) => {
+          onKeyDown?.(e);
+          // Enter commits: blur runs the change-detection below.
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
         onBlur={() => {
           focusedRef.current = false;
           const parsed = text === "" || text === "-" ? null : parseFloat(text);
           if (parsed == null || Number.isNaN(parsed)) {
             setText(value == null ? "" : value.toFixed(decimals));
-          } else {
-            const clamped = clamp(parsed);
-            setText(clamped.toFixed(decimals));
-            if (clamped !== parsed) onChange(clamped);
+            return; // nothing committed — a cleared/invalid field must not fire onCommit
           }
+          const clamped = clamp(parsed);
+          setText(clamped.toFixed(decimals));
+          if (clamped !== parsed) onChange(clamped);
+          const before = valueAtFocusRef.current;
+          const changed = before == null || Math.abs(clamped - before) >= 1e-9;
+          if (changed) onCommit?.(clamped);
         }}
         className={cn(
           "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500",

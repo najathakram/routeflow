@@ -115,7 +115,19 @@ export class UploadsController {
     // so cross-origin <img> tags can render them on the buyer/operator UI.
     // Upload-time MIME validation in products.controller.ts already restricts
     // these to JPEG/PNG/WEBP, so inline rendering is safe.
-    const RENDERABLE_INLINE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    // application/pdf is ALSO allowlisted here (2026-07-30): customer document
+    // uploads are MIME-allowlisted at the customer-document endpoint to
+    // jpeg/png/webp/pdf only, the browser's built-in PDF viewer is sandboxed
+    // (no script execution against this origin), and nosniff + the signed-URL
+    // gate above are unchanged — so rendering a PDF inline carries the same
+    // guarantees as the raster types. Do NOT widen this set to any other
+    // type (e.g. SVG or HTML) — that exclusion is a deliberate XSS control.
+    const RENDERABLE_INLINE_MIMES = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ]);
     if (RENDERABLE_INLINE_MIMES.has(contentType)) {
       res.setHeader("Content-Disposition", "inline");
     } else {

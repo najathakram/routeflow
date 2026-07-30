@@ -6,6 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreditNotesService } from "./credit-notes.service";
+import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
 
 @Controller("credit-notes")
 @UseGuards(JwtAuthGuard)
@@ -15,7 +16,7 @@ export class CreditNotesController {
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  create(@Body() dto: any) {
+  create(@Body() dto: CreateCreditNoteDto) {
     return this.creditNotesService.create(dto);
   }
 

@@ -5,7 +5,18 @@
  * back to GENERIC (never throws — a bad category config must not break filing prep).
  * Every number is already roundMoney'd by the caller; nothing here re-signs or
  * clamps, so a reversal-heavy period legitimately renders negative totals.
+ *
+ * WP11: refactored into `buildAggregateReport`, which builds the shared
+ * `RegulatedReport` row model (report-types.ts) instead of CSV text directly.
+ * `buildFilingCsv` is now a thin `serializeReportCsv(buildAggregateReport(...))`
+ * wrapper — its exported signature and byte-for-byte output are UNCHANGED
+ * (filing-csv.spec.ts is the byte-identity gate and is not touched by this
+ * refactor). `buildAggregateReport` is also reused by `regulated-report.service.ts`
+ * for the stateless, arbitrary-date-range report preview/CSV endpoints.
  */
+
+import { ReportColumn, RegulatedReport } from "./report-types";
+import { serializeReportCsv } from "./report-csv";
 
 export interface FilingCsvRow {
   periodBucket: string;
@@ -36,54 +47,58 @@ export interface FilingCsvData {
   withSubcategory?: boolean;
 }
 
+/**
+ * WP11: input to `buildAggregateReport`. `periodLabel` is the human period string
+ * rendered into the CSV preamble — the legacy `periodKey` (e.g. "2026-07") for
+ * filings, or an arbitrary "YYYY-MM-DD to YYYY-MM-DD" range label for the
+ * stateless report preview. `categoryId`/`from`/`to` are ONLY known by the
+ * stateless report caller (regulated-report.service.ts); legacy filing callers
+ * omit them and get harmless placeholders — a filing is period-keyed, not
+ * date-ranged, and never renders those fields.
+ */
+export interface AggregateReportInput extends FilingCsvData {
+  periodLabel: string;
+  categoryId?: string;
+  from?: string;
+  to?: string;
+}
+
 // Coverage disclosure: the ledger only captures the order→invoice path today
 // (manual/partial/draft-edit invoice paths are deferred W5b/c follow-ups), so a
 // filing is only as complete as the ledger. Surfaced on every filing artifact.
 const DISCLOSURE = "Based on order-to-invoice sales recorded in the regulated ledger.";
 
-/** Standard CSV field escaping (identical to tobacco-report.service + customers.service). */
-function esc(v: string | null): string {
-  const s = v ?? "";
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 const money = (n: number) => n.toFixed(2);
 const qty = (n: number) => n.toFixed(3);
 
-export function buildFilingCsv(template: string, data: FilingCsvData): string {
-  const { categoryName, unitBasis, periodKey, rows, totals } = data;
+/**
+ * Build the shared RegulatedReport row model for an aggregate (period-bucket)
+ * template — CA_CDTFA / CA_ABC / CALRECYCLE / GENERIC fallback. Pure: no CSV
+ * escaping happens here (that's `serializeReportCsv`'s job) — every cell is a
+ * fully-formatted but UNESCAPED string, so the JSON preview renders it as-is.
+ */
+export function buildAggregateReport(
+  template: string,
+  data: AggregateReportInput,
+): RegulatedReport {
+  const { categoryName, unitBasis, rows, totals, periodLabel } = data;
   const unit = unitBasis || "unit";
-  // RF-3: additive "Subcategory" column, spliced in right after the Period column so the
-  // existing per-template columns keep their order. Only active when the caller opts in.
   const withSub = !!data.withSubcategory;
-  const injectHeader = (h: string): string => {
-    if (!withSub) return h;
-    const parts = h.split(",");
-    parts.splice(1, 0, "Subcategory");
-    return parts.join(",");
-  };
-  const injectRow = (cols: string[], r: FilingCsvRow): string[] => {
-    if (!withSub) return cols;
-    const c = [...cols];
-    c.splice(1, 0, esc(r.subcategoryName ?? ""));
-    return c;
-  };
-  const injectTotals = (cols: string[]): string[] => {
-    if (!withSub) return cols;
-    const c = [...cols];
-    c.splice(1, 0, "");
-    return c;
-  };
 
   let title: string;
-  let header: string;
+  let columns: ReportColumn[];
   let rowCols: (r: FilingCsvRow) => string[];
   let totalCols: string[];
 
   switch (template) {
     case "CA_CDTFA": // excise / tobacco state filing — units + excise tax
       title = "CDTFA Excise Filing";
-      header = `Period,Units (${unit}),Net Sales,Excise Tax Due`;
+      columns = [
+        { key: "period", label: "Period" },
+        { key: "units", label: `Units (${unit})` },
+        { key: "netSales", label: "Net Sales" },
+        { key: "tax", label: "Excise Tax Due" },
+      ];
       rowCols = (r) => [
         r.periodBucket,
         qty(r.unitBasisQty),
@@ -99,7 +114,12 @@ export function buildFilingCsv(template: string, data: FilingCsvData): string {
       break;
     case "CA_ABC": // alcohol — volume
       title = "ABC Alcohol Filing";
-      header = `Period,Volume (${unit}),Net Sales,Tax`;
+      columns = [
+        { key: "period", label: "Period" },
+        { key: "volume", label: `Volume (${unit})` },
+        { key: "netSales", label: "Net Sales" },
+        { key: "tax", label: "Tax" },
+      ];
       rowCols = (r) => [
         r.periodBucket,
         qty(r.unitBasisQty),
@@ -115,7 +135,12 @@ export function buildFilingCsv(template: string, data: FilingCsvData): string {
       break;
     case "CALRECYCLE": // CRV deposits — container count
       title = "CalRecycle CRV Filing";
-      header = "Period,Containers,Net Sales,CRV Deposit";
+      columns = [
+        { key: "period", label: "Period" },
+        { key: "containers", label: "Containers" },
+        { key: "netSales", label: "Net Sales" },
+        { key: "deposit", label: "CRV Deposit" },
+      ];
       rowCols = (r) => [
         r.periodBucket,
         qty(r.unitBasisQty),
@@ -132,7 +157,13 @@ export function buildFilingCsv(template: string, data: FilingCsvData): string {
     case "GENERIC":
     default: // GENERIC + any unknown/typo template — the safe fallback
       title = "Regulated Filing";
-      header = "Period,Qty,Unit Basis Qty,Net Sales,Category Tax";
+      columns = [
+        { key: "period", label: "Period" },
+        { key: "qty", label: "Qty" },
+        { key: "unitBasisQty", label: "Unit Basis Qty" },
+        { key: "netSales", label: "Net Sales" },
+        { key: "categoryTax", label: "Category Tax" },
+      ];
       rowCols = (r) => [
         r.periodBucket,
         qty(r.qty),
@@ -150,12 +181,47 @@ export function buildFilingCsv(template: string, data: FilingCsvData): string {
       break;
   }
 
-  const lines = [
-    `${title},${esc(categoryName)},${periodKey}`,
-    injectHeader(header),
-    ...rows.map((r) => injectRow(rowCols(r), r).join(",")),
-    injectTotals(totalCols).join(","),
-    `Note,${esc(DISCLOSURE)}`,
-  ];
-  return lines.join("\n") + "\n";
+  // RF-3: additive "Subcategory" column, spliced in right after Period — only when
+  // the caller opts in. Off by default → byte-identical to the pre-RF-3 CSV.
+  if (withSub) {
+    columns = [columns[0], { key: "subcategory", label: "Subcategory" }, ...columns.slice(1)];
+  }
+  const rowsOut: string[][] = rows.map((r) => {
+    const cols = rowCols(r);
+    return withSub ? [cols[0], r.subcategoryName ?? "", ...cols.slice(1)] : cols;
+  });
+  const totalsRow = withSub ? [totalCols[0], "", ...totalCols.slice(1)] : totalCols;
+
+  return {
+    template,
+    title,
+    categoryId: data.categoryId ?? "",
+    categoryName,
+    from: data.from ?? periodLabel,
+    to: data.to ?? periodLabel,
+    columns,
+    rows: rowsOut,
+    totalsRow,
+    displayTotals: [
+      { label: "Net Sales", value: money(totals.netSales) },
+      { label: "Category Tax", value: money(totals.categoryTax) },
+    ],
+    warnings: [],
+    csv: {
+      preamble: [[title, categoryName, periodLabel]],
+      includeHeader: true,
+      includeTotals: true,
+      footer: [["Note", DISCLOSURE]],
+    },
+  };
+}
+
+/**
+ * Byte-identical to the pre-WP11 implementation — filing-csv.spec.ts is the
+ * byte-identity gate and must keep passing unmodified.
+ */
+export function buildFilingCsv(template: string, data: FilingCsvData): string {
+  return serializeReportCsv(
+    buildAggregateReport(template, { ...data, periodLabel: data.periodKey }),
+  );
 }

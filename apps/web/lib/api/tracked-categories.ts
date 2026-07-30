@@ -28,6 +28,10 @@ export interface TrackedCategory {
   productCount: number;
   createdAt: string;
   updatedAt: string;
+  /** TX Comptroller (TX_COMPTROLLER template) config — null unless configured. */
+  wholesalerLicenseNo: string | null;
+  txItemType: number | null;
+  txUom: string | null;
 }
 
 export interface TrackedCategoryInput {
@@ -42,6 +46,10 @@ export interface TrackedCategoryInput {
   reportTemplate?: string;
   reportCadence?: ReportCadence;
   active?: boolean;
+  /** TX config: send `null` to clear a column — `undefined` is dropped by axios and no-ops. */
+  wholesalerLicenseNo?: string | null;
+  txItemType?: number | null;
+  txUom?: string | null;
 }
 
 const KEY = ["tracked-categories"] as const;
@@ -296,4 +304,88 @@ export function useRegulatedLedger(
         .then((r) => r.data),
     enabled: options?.enabled ?? true,
   });
+}
+
+// ─── Reports (arbitrary-range preview + CSV, WP11) ─────────────────────────────
+
+export type RegulatedReportWarningCode =
+  | "MISSING_WHOLESALER_LICENSE"
+  | "MISSING_ITEM_TYPE"
+  | "MISSING_UOM"
+  | "MISSING_TAXPAYER_ID"
+  | "INVALID_TAXPAYER_ID"
+  | "MISSING_RETAILER_LICENSE"
+  | "INVALID_RETAILER_LICENSE"
+  | "INVALID_WHOLESALER_LICENSE"
+  | "MISSING_ADDRESS"
+  | "NEGATIVE_NET_INVOICE"
+  | "FRACTIONAL_QTY"
+  | "UNLINKED_LEDGER_ROWS";
+
+export interface RegulatedReportWarning {
+  code: RegulatedReportWarningCode;
+  /** A complete human sentence, ready to render in the UI. */
+  message: string;
+  invoiceId?: string;
+  customerName?: string;
+}
+
+export interface RegulatedReportColumn {
+  key: string;
+  label: string;
+  align?: "right";
+}
+
+/**
+ * Mirrors the API's `RegulatedReport` shape (`apps/api/src/regulated/report-types.ts`).
+ * `rows` holds fully formatted cells in `columns` order, so the preview table and the
+ * downloaded CSV can't drift.
+ */
+export interface RegulatedReportPreview {
+  template: string;
+  title: string;
+  categoryId: string;
+  categoryName: string;
+  /** Inclusive YYYY-MM-DD range, echoed back for display. */
+  from: string;
+  to: string;
+  columns: RegulatedReportColumn[];
+  rows: string[][];
+  /** Aggregate templates only; null for per-sale templates like TX. */
+  totalsRow: string[] | null;
+  /** Headline figures for the preview UI (not necessarily in the CSV). */
+  displayTotals: { label: string; value: string }[];
+  warnings: RegulatedReportWarning[];
+}
+
+export interface RegulatedReportParams {
+  category: string;
+  /** Inclusive YYYY-MM-DD. */
+  from: string;
+  /** Inclusive YYYY-MM-DD. */
+  to: string;
+  /** Defaults to the category's configured reportTemplate server-side. */
+  template?: string;
+}
+
+/**
+ * Stateless report preview — computed on demand, nothing persisted. `enabled: !!params`
+ * so nothing fires until the operator has picked a range and clicked Preview.
+ */
+export function useRegulatedReportPreview(params: RegulatedReportParams | null) {
+  return useQuery<RegulatedReportPreview>({
+    queryKey: ["regulated", "report", params],
+    queryFn: () =>
+      apiClient.get("/regulated/reports/preview", { params: params! }).then((r) => r.data),
+    enabled: !!params,
+  });
+}
+
+/**
+ * Fetch the report CSV as a Blob through the authenticated client. Never `window.open`
+ * this endpoint directly — it requires the auth header, which a bare navigation can't send.
+ */
+export async function fetchRegulatedReportCsv(params: RegulatedReportParams): Promise<Blob> {
+  const r = await apiClient.get("/regulated/reports/csv", { params, responseType: "blob" });
+  return r.data;
 }

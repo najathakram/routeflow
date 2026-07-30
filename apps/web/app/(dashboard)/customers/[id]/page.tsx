@@ -1289,6 +1289,26 @@ function DocumentViewer({ doc, onClose }: { doc: CustomerDocument | null; onClos
   );
 }
 
+/**
+ * Fabricate a CustomerDocument-shaped record from a tax-exempt doc {key,url} pair so the
+ * tax-exempt lightbox can reuse DocumentViewer (image + PDF aware) instead of the old
+ * image-only <img> overlay. The tax-documents endpoint only returns {key, url} — no mimeType —
+ * so PDF-ness is inferred from the key's extension (uploadTaxDocument keeps the original
+ * extension via `compressed.ext`).
+ */
+function taxDocToViewerDoc(doc: { key: string; url: string }): CustomerDocument {
+  const isPdf = doc.key.toLowerCase().endsWith(".pdf");
+  return {
+    id: doc.key,
+    docType: "Tax Exempt Certificate",
+    originalName: doc.key.split("/").pop() || "Tax exempt document",
+    mimeType: isPdf ? "application/pdf" : "image/jpeg",
+    sizeBytes: 0,
+    createdAt: new Date().toISOString(),
+    url: doc.url,
+  };
+}
+
 const DOC_TYPES = [
   "Tax Exempt Certificate",
   "Resale Certificate",
@@ -1553,7 +1573,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const { data: taxDocs = [] } = useCustomerTaxDocuments(params.id);
   const uploadTaxDocs = useUploadCustomerTaxDocuments(params.id);
   const deleteTaxDoc = useDeleteCustomerTaxDocument(params.id);
-  const [taxDocLightbox, setTaxDocLightbox] = React.useState<string | null>(null);
+  // Routed through the same DocumentViewer used by the Documents tab (not a plain <img>
+  // lightbox) so a PDF tax-exempt document is viewable, not just images.
+  const [taxDocLightbox, setTaxDocLightbox] = React.useState<CustomerDocument | null>(null);
   const taxDocInputRef = React.useRef<HTMLInputElement>(null);
 
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
@@ -1853,11 +1875,6 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     )}
                     <InfoRow icon={Phone} label="Phone" value={customer.phone ?? "\u2014"} />
                     <InfoRow
-                      icon={Mail}
-                      label="Account Email"
-                      value={customer.user?.email ?? "\u2014"}
-                    />
-                    <InfoRow
                       icon={FileText}
                       label="Customer Since"
                       value={fmtDate(customer.createdAt)}
@@ -1937,7 +1954,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                               />
                               <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
-                                  onClick={() => setTaxDocLightbox(doc.url)}
+                                  onClick={() => setTaxDocLightbox(taxDocToViewerDoc(doc))}
                                   className="rounded-full bg-white/90 p-1.5 text-navy hover:bg-white"
                                   title="View full size"
                                 >
@@ -3503,27 +3520,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </p>
       </Modal>
 
-      {/* ── Tax document lightbox ─────────────────────────────────── */}
-      {taxDocLightbox && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setTaxDocLightbox(null)}
-        >
-          <button
-            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
-            onClick={() => setTaxDocLightbox(null)}
-          >
-            <X className="h-5 w-5" />
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={taxDocLightbox}
-            alt="Tax exempt document"
-            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      )}
+      {/* ── Tax document lightbox — routed through DocumentViewer so a PDF tax-exempt
+           document is viewable too, not just images ─────────────────────────────── */}
+      <DocumentViewer doc={taxDocLightbox} onClose={() => setTaxDocLightbox(null)} />
     </div>
   );
 }

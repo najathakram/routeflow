@@ -35,3 +35,14 @@ export function fmtDate(d?: string | null): string {
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/**
+ * True for the internal, non-routable email sentinels we mint when a customer has no address:
+ * `no-email+<uuid>@placeholder.local` (User.email is required + unique per tenant) and
+ * `<username>@imported.local` (CSV import). Never render one of these to a user.
+ */
+export function isInternalEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const e = email.toLowerCase();
+  return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
+}

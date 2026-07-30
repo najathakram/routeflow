@@ -19,6 +19,7 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { roundMoney } from "../common/pricing";
+import type { ProcessRefundDto } from "./dto/process-refund.dto";
 
 @Injectable()
 export class ReturnsService {
@@ -201,53 +202,61 @@ export class ReturnsService {
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
   }
 
-  async receive(id: string, userId: string) {
+  async receive(id: string, userId: string, opts?: { restock?: boolean }) {
     const ret = await this.prisma
       .forTenant()
       .return.findUnique({ where: { id }, include: { items: true } });
     if (!ret) throw new NotFoundException("Return not found");
-    if (ret.status !== "IN_TRANSIT")
-      throw new BadRequestException("Only IN_TRANSIT returns can be received");
+    if (!["APPROVED", "IN_TRANSIT"].includes(ret.status))
+      throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
 
     return this.prisma.tenantTransaction(async (tx) => {
-      // Concurrency guard: atomically CLAIM the IN_TRANSIT→RECEIVED transition
+      // Concurrency guard: atomically CLAIM the APPROVED/IN_TRANSIT→RECEIVED transition
       // before any restock or ledger reversal. A racing receive() (double-click,
       // retry, or two operators) matches 0 rows here and aborts, so the goods
       // can't be double-restocked or double-reversed. Under READ COMMITTED the
       // second writer re-checks the WHERE after the row lock, so exactly one wins.
       const claimed = await tx.return.updateMany({
-        where: { id, status: "IN_TRANSIT" },
+        where: { id, status: { in: ["APPROVED", "IN_TRANSIT"] } },
         data: { status: "RECEIVED" },
       });
       if (claimed.count === 0) {
-        throw new BadRequestException("Only IN_TRANSIT returns can be received");
+        throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
       }
 
-      for (const item of ret.items) {
-        if (item.restock) {
-          // Restock at the current average — leaves the average unchanged but
-          // records the cost so COGS/valuation reporting stays complete
-          const product = await tx.product.findUnique({
-            where: { id: item.productId },
-            select: { currentStock: true, averageCost: true },
-          });
-          const qty = new Prisma.Decimal(item.qty);
-          await tx.stockMovement.create({
-            data: {
-              productId: item.productId,
-              type: "RETURN",
-              quantity: qty,
-              unitCost: product?.averageCost ?? null,
-              avgCostAfter: product?.averageCost ?? null,
-              stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
-              performedById: userId,
-              reference: `RET-${ret.id.slice(0, 8)}`,
-            },
-          });
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { currentStock: { increment: qty } },
-          });
+      if (opts?.restock === false) {
+        // "We are not keeping these goods": skip restocking entirely, and persist
+        // restock=false on every item so a later cancel() — which decrements stock
+        // for every item whose restock flag is true — stays symmetric with what was
+        // actually put back on the shelf (nothing).
+        await tx.returnItem.updateMany({ where: { returnId: id }, data: { restock: false } });
+      } else {
+        for (const item of ret.items) {
+          if (item.restock) {
+            // Restock at the current average — leaves the average unchanged but
+            // records the cost so COGS/valuation reporting stays complete
+            const product = await tx.product.findUnique({
+              where: { id: item.productId },
+              select: { currentStock: true, averageCost: true },
+            });
+            const qty = new Prisma.Decimal(item.qty);
+            await tx.stockMovement.create({
+              data: {
+                productId: item.productId,
+                type: "RETURN",
+                quantity: qty,
+                unitCost: product?.averageCost ?? null,
+                avgCostAfter: product?.averageCost ?? null,
+                stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
+                performedById: userId,
+                reference: `RET-${ret.id.slice(0, 8)}`,
+              },
+            });
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { currentStock: { increment: qty } },
+            });
+          }
         }
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
@@ -271,7 +280,9 @@ export class ReturnsService {
     });
   }
 
-  async processRefund(id: string) {
+  async processRefund(id: string, dto?: ProcessRefundDto) {
+    const method = dto?.method ?? "CREDIT_NOTE";
+
     const ret = await this.prisma.forTenant().return.findUnique({
       where: { id },
       include: {
@@ -302,18 +313,28 @@ export class ReturnsService {
     }
     refundAmount = roundMoney(refundAmount);
 
-    // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition before
-    // minting any store credit. A racing processRefund (double-click, client retry,
-    // or two operators) matches 0 rows here and aborts, so a single return can never
-    // mint two credits. Mirrors receive()'s claim above — under READ COMMITTED the
-    // second writer re-checks the WHERE after the row lock, so exactly one wins.
-    const claimed = await this.prisma
-      .forTenant()
-      .return.updateMany({ where: { id, status: "RECEIVED" }, data: { status: "REFUNDED" } });
+    // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
+    // the resolution snapshot (method/amount/timestamp) in that SAME write — before
+    // minting any store credit. A racing processRefund (double-click, client retry, or
+    // two operators) matches 0 rows here and aborts, so a single return can never mint
+    // two credits or record two resolutions. Mirrors receive()'s claim above — under READ
+    // COMMITTED the second writer re-checks the WHERE after the row lock, so exactly one wins.
+    const claimed = await this.prisma.forTenant().return.updateMany({
+      where: { id, status: "RECEIVED" },
+      data: {
+        status: "REFUNDED",
+        refundMethod: method,
+        refundAmount,
+        refundedAt: new Date(),
+      },
+    });
     if (claimed.count === 0) {
       throw new BadRequestException("Only RECEIVED returns can be refunded");
     }
     const updated = await this.prisma.forTenant().return.findUnique({ where: { id } });
+
+    // EXTERNAL_REFUND: the money was returned outside RouteFlow. Record it, mint nothing.
+    if (method === "EXTERNAL_REFUND") return updated;
 
     if (refundAmount <= 0.001) return updated;
 
@@ -409,7 +430,7 @@ export class ReturnsService {
           select: {
             id: true,
             orderNumber: true,
-            lineItems: { select: { productId: true, qty: true, unitPrice: true } },
+            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
           },
         },
         customer: { select: { id: true, businessName: true } },
@@ -428,6 +449,29 @@ export class ReturnsService {
       };
     });
 
-    return { ...ret, items: enrichedItems };
+    // Surface the resolution: Return.creditNoteId is populated by processRefund but never
+    // reached a client before. There is no Prisma relation here (legacy rows may point at a
+    // deleted credit note — see WP0's schema note), so the lookup is manual and tolerant of a miss.
+    let creditNote: any = null;
+    if (ret.creditNoteId) {
+      creditNote = await this.prisma.forTenant().creditNote.findUnique({
+        where: { id: ret.creditNoteId },
+        select: { id: true, creditNoteNumber: true, amount: true, status: true },
+      });
+    }
+
+    // The same Σ qty × (subtotal/qty) figure processRefund computes, so a client can show
+    // the amount BEFORE resolving without re-deriving box-priced money itself.
+    let refundEstimate = 0;
+    for (const item of ret.items) {
+      const line = ret.order?.lineItems?.find((li) => li.productId === item.productId);
+      if (!line) continue;
+      const lineQty = Number(line.qty);
+      const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
+      refundEstimate += Number(item.qty) * perUnit;
+    }
+    refundEstimate = roundMoney(refundEstimate);
+
+    return { ...ret, items: enrichedItems, creditNote, refundEstimate };
   }
 }

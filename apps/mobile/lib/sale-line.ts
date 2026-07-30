@@ -96,3 +96,24 @@ export function setLinePieces<T extends SaleLineQty>(
   if (qty === 0) return null;
   return { ...prev, qty, boxes, pieces: pcs };
 }
+
+/**
+ * Sell-by-unit entry: the operator types a TOTAL unit count for a case-packed line, and we
+ * normalize it back into cases + loose units (7 units of a 6-pack -> 1 case + 1 loose).
+ * Every other field on the line (unitPrice override, note) is preserved — rebuilding the line
+ * from scratch is the field-wipe bug that incrementLine already exists to avoid.
+ * Returns null when the line reaches zero, matching decrementLine's remove signal.
+ */
+export function setLineUnits<
+  T extends { qty: number; boxes?: number | null; pieces?: number | null },
+>(
+  prev: T,
+  units: number,
+  unitsPerBox: number,
+): (T & { qty: number; boxes: number; pieces: number }) | null {
+  const upb = Math.trunc(Number(unitsPerBox));
+  if (!(upb > 1)) return null;
+  const total = Math.max(0, Math.trunc(Number(units) || 0));
+  if (total === 0) return null;
+  return { ...prev, qty: total, boxes: Math.floor(total / upb), pieces: total % upb };
+}

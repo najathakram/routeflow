@@ -37,7 +37,7 @@ import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
-import { computeLineSubtotal } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces, perUnitPrice } from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -387,6 +387,9 @@ interface LineItemState {
   unitsPerBox?: number; // set when product has box packaging
   boxes?: number; // whole boxes (only when unitsPerBox is set)
   pieces?: number; // extra loose pieces (only when unitsPerBox is set)
+  /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
+   *  carries {qty, boxes, pieces} and the per-case unitPrice. */
+  sellBy?: "case" | "unit";
 }
 
 function createEmptyItem(): LineItemState {
@@ -757,6 +760,23 @@ export default function NewInvoicePage() {
 
   function addItem() {
     setItems((prev) => [...prev, createEmptyItem()]);
+  }
+
+  function setLineSellBy(key: string, sellBy: "case" | "unit") {
+    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, sellBy } : it)));
+  }
+
+  /** Unit mode: the operator types a TOTAL unit count; normalize it back into cases + loose.
+   *  7 units of a 6-pack -> {boxes:1, pieces:1, qty:7}. Price is unchanged either way because
+   *  computeLineSubtotal's proration is linear. */
+  function setLineUnitQty(key: string, value: number) {
+    setItems((prev) =>
+      prev.map((it) => {
+        if (it.key !== key) return it;
+        const n = normalizeBoxesPieces({ qty: value, unitsPerBox: it.unitsPerBox });
+        return { ...it, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+      }),
+    );
   }
 
   /**
@@ -1530,84 +1550,136 @@ export default function NewInvoicePage() {
                     )}
                   >
                     {/* Description / product search */}
-                    <ProductSearchInput
-                      value={item.description}
-                      onCreateProduct={(searchTerm) => {
-                        const idx = items.findIndex((it) => it.key === item.key);
-                        const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
-                        setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
-                        setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
-                        setCreateProductTargetIdx(idx);
-                        setCreateProductOpen(true);
-                      }}
-                      onBarcodeNotFound={(barcode) => {
-                        const idx = items.findIndex((it) => it.key === item.key);
-                        setCreateProductInitialName("");
-                        setCreateProductInitialSku(barcode);
-                        setCreateProductTargetIdx(idx);
-                        setCreateProductOpen(true);
-                      }}
-                      onChange={(desc, pid, price, avgCost, unitsPerBox) => {
-                        const specialPrice = pid ? priceMap[pid] : undefined;
-                        const effectivePrice =
-                          specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
-                        const upb = unitsPerBox ?? undefined;
-                        updateItem(item.key, {
-                          description: desc,
-                          productId: pid || undefined,
-                          unitPrice: effectivePrice,
-                          regularPrice: specialPrice !== undefined ? parseFloat(price) : undefined,
-                          isSpecialPrice: specialPrice !== undefined,
-                          avgCost,
-                          unitsPerBox: upb,
-                          boxes: upb ? 1 : undefined,
-                          pieces: upb ? 0 : undefined,
-                          qty: upb ? upb : item.qty || 1,
-                        });
-                      }}
-                    />
+                    <div className="min-w-0">
+                      <ProductSearchInput
+                        value={item.description}
+                        onCreateProduct={(searchTerm) => {
+                          const idx = items.findIndex((it) => it.key === item.key);
+                          const looksLikeSku = /^\d{6,}$/.test(searchTerm.trim());
+                          setCreateProductInitialName(looksLikeSku ? "" : searchTerm);
+                          setCreateProductInitialSku(looksLikeSku ? searchTerm.trim() : "");
+                          setCreateProductTargetIdx(idx);
+                          setCreateProductOpen(true);
+                        }}
+                        onBarcodeNotFound={(barcode) => {
+                          const idx = items.findIndex((it) => it.key === item.key);
+                          setCreateProductInitialName("");
+                          setCreateProductInitialSku(barcode);
+                          setCreateProductTargetIdx(idx);
+                          setCreateProductOpen(true);
+                        }}
+                        onChange={(desc, pid, price, avgCost, unitsPerBox) => {
+                          const specialPrice = pid ? priceMap[pid] : undefined;
+                          const effectivePrice =
+                            specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
+                          const upb = unitsPerBox ?? undefined;
+                          updateItem(item.key, {
+                            description: desc,
+                            productId: pid || undefined,
+                            unitPrice: effectivePrice,
+                            regularPrice:
+                              specialPrice !== undefined ? parseFloat(price) : undefined,
+                            isSpecialPrice: specialPrice !== undefined,
+                            avgCost,
+                            unitsPerBox: upb,
+                            boxes: upb ? 1 : undefined,
+                            pieces: upb ? 0 : undefined,
+                            qty: upb ? upb : item.qty || 1,
+                          });
+                        }}
+                      />
+                      {/* Case | Unit sell-by toggle — UI-only; the payload always
+                          carries {qty, boxes, pieces} regardless of the mode. */}
+                      {item.unitsPerBox && item.unitsPerBox > 1 && (
+                        <div className="mt-1 inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setLineSellBy(item.key, "case")}
+                            className={cn(
+                              "px-1.5 py-0.5 transition-colors",
+                              (item.sellBy ?? "case") === "case"
+                                ? "bg-brand-500 text-white"
+                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                            )}
+                          >
+                            Case
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLineSellBy(item.key, "unit")}
+                            className={cn(
+                              "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+                              item.sellBy === "unit"
+                                ? "bg-brand-500 text-white"
+                                : "bg-white text-navy/70 hover:bg-surface-raised",
+                            )}
+                          >
+                            Unit
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
                     {item.unitsPerBox ? (
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-center gap-0.5">
+                      item.sellBy === "unit" ? (
+                        <div className="flex flex-col gap-0.5">
                           <input
                             type="number"
                             min={0}
-                            value={item.boxes ?? 0}
-                            onChange={(e) => {
-                              const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
-                              const pieces = item.pieces ?? 0;
-                              updateItem(item.key, {
-                                boxes,
-                                qty: boxes * item.unitsPerBox! + pieces,
-                              });
-                            }}
+                            value={item.qty}
+                            onChange={(e) =>
+                              setLineUnitQty(item.key, parseInt(e.target.value, 10) || 0)
+                            }
                             onFocus={(e) => e.target.select()}
-                            className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Boxes"
+                            className="w-full rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                            title="Total units"
                           />
-                          <span className="text-[10px] text-navy/70">b+</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={item.unitsPerBox - 1}
-                            value={item.pieces ?? 0}
-                            onChange={(e) => {
-                              const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
-                              const boxes = item.boxes ?? 0;
-                              updateItem(item.key, {
-                                pieces,
-                                qty: boxes * item.unitsPerBox! + pieces,
-                              });
-                            }}
-                            onFocus={(e) => e.target.select()}
-                            className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
-                            title="Pieces"
-                          />
+                          <span className="text-[9px] text-navy/30 text-right">units</span>
                         </div>
-                        <span className="text-[9px] text-navy/30 text-right">{item.qty} pcs</span>
-                      </div>
+                      ) : (
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-0.5">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.boxes ?? 0}
+                              onChange={(e) => {
+                                const boxes = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                const pieces = item.pieces ?? 0;
+                                updateItem(item.key, {
+                                  boxes,
+                                  qty: boxes * item.unitsPerBox! + pieces,
+                                });
+                              }}
+                              onFocus={(e) => e.target.select()}
+                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              title="Cases"
+                            />
+                            <span className="text-[10px] text-navy/70">c+</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={item.unitsPerBox - 1}
+                              value={item.pieces ?? 0}
+                              onChange={(e) => {
+                                const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                const boxes = item.boxes ?? 0;
+                                updateItem(item.key, {
+                                  pieces,
+                                  qty: boxes * item.unitsPerBox! + pieces,
+                                });
+                              }}
+                              onFocus={(e) => e.target.select()}
+                              className="w-8 rounded border border-surface-border bg-white px-1 py-1 text-center text-xs font-semibold text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
+                              title="Extra loose units"
+                            />
+                          </div>
+                          <span className="text-[9px] text-navy/30 text-right">
+                            {item.qty} units
+                          </span>
+                        </div>
+                      )
                     ) : (
                       <DecimalInput
                         decimals={3}
@@ -1633,7 +1705,7 @@ export default function NewInvoicePage() {
                       />
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
-                          ${(item.unitPrice / item.unitsPerBox).toFixed(2)}/pc
+                          ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
                         </p>
                       )}
                       {/* Live cost & margin — the negotiation floor (shared component) */}
