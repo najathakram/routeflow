@@ -1,13 +1,24 @@
 # ─── Continuous Integration ─────────────────────────────────────────────────────
 # Runs lint, type-check, and tests on every push and pull request to main.
 #
-# $0 Actions budget: GitHub Actions minutes are only free on PUBLIC repos. The
-# flow to run CI on a normally-private repo is: make the repo public → push /
-# open the PR → wait for this workflow to go green → make it private again.
+# $0 Actions budget: Actions minutes are unlimited on PUBLIC repos; a private repo
+# draws on the account's monthly free-minute allowance and then bills.
 #
-# Local fast gates (no Actions minutes spent):
-#   • pre-push hook    → `npm run check-types` + trunk-push block (.husky/pre-push)
-#   • `npm run verify` → check-types + lint + test (the fuller pre-push check)
+# NOTE (2026-07-30): the repo NO LONGER needs a public/private flip to DEPLOY —
+# Railway's GitHub App has private-repo access and redeploys master while private
+# (verified on PR #313). The flip only ever bought free CI minutes, so with the
+# repo private this workflow runs only if the account's Actions billing is healthy.
+# When it is blocked, every job fails in ~10s with 0 steps and the annotation
+# "The job was not started because recent account payments have failed…" — that is
+# a billing state, NOT a code failure. THE LOCAL GATE IS AUTHORITATIVE in that case.
+#
+# Triggers are deliberately narrow to conserve minutes: trunk pushes + PRs into
+# master only. (Until 2026-07-30 this ran on `push: ["**"]` — every branch push —
+# while `pull_request` pointed at the non-existent `main`, so PR checks never ran.)
+#
+# Local gates (no Actions minutes spent):
+#   • pre-push hook    → `npm run verify` + trunk-push block (.husky/pre-push)
+#   • `npm run verify` → check-types + lint + test (turbo-cached, so repeat runs are fast)
 #   • `npm run smoke`  → liveness probe vs a running API (SMOKE_BASE_URL=… post-deploy)
 # The Test job below already runs the api + mobile Jest suites (incl. the
 # money-math / qty / backsync regression specs) via `turbo run test`.
@@ -17,9 +28,9 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ci-${{ github.ref }}

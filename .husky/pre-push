@@ -1,9 +1,23 @@
-# Last local gate before push: types must compile, and no direct push to the trunk.
-# (Lint + full test suite run in CI — api tests need Postgres/Redis/JWT.)
-npm run check-types
+# Last local gate before push.
+#
+# GitHub Actions does not run on this repo while it is private and the account's
+# Actions billing is blocked (jobs fail in ~10s with 0 steps). So this hook — not
+# CI — is the authoritative gate, and it runs the FULL verify suite rather than
+# types alone. Turbo caches every task, so a re-push with no source changes
+# finishes in seconds; only genuinely changed workspaces are re-checked.
+#
+# Emergency escape hatch:  SKIP_VERIFY=1 git push ...
+# (Nothing downstream will catch what you skip — CI is not a safety net here.)
 
+# Cheapest check first: refuse a trunk push before spending any time verifying.
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
   echo "Direct push to $branch is blocked — open a PR from a feat/* or fix/* branch."
   exit 1
+fi
+
+if [ "$SKIP_VERIFY" = "1" ]; then
+  echo "⚠ SKIP_VERIFY=1 — skipping 'npm run verify'. CI will NOT catch this."
+else
+  npm run verify
 fi
