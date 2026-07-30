@@ -46,7 +46,7 @@ import {
 import { useCostHistory } from "@/lib/api/cost-history";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice } from "@/lib/pricing";
+import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
@@ -173,12 +173,21 @@ function MerchFlagToggle({
 // Thin wrapper over DecimalInput so price/tier fields never reformat while
 // typing (the old numeric-bound input ate decimal points mid-keystroke).
 
-function EditableNumber({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function EditableNumber({
+  value,
+  onChange,
+  onCommit,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  onCommit?: (v: number) => void;
+}) {
   return (
     <DecimalInput
       min={0}
       value={Number.isFinite(value) ? value : null}
       onChange={(v) => onChange(v ?? 0)}
+      onCommit={onCommit}
       className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
     />
   );
@@ -403,6 +412,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       variantName: product.variantName ?? "",
       trackedCategoryId: product.trackedCategory?.id ?? "",
       trackedSubcategoryId: product.trackedSubcategory?.id ?? "",
+      unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
     });
     setIsEditing(true);
   };
@@ -443,6 +453,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         priceTier3: asDecimal(draft.priceTier3),
         priceTier4: asDecimal(draft.priceTier4),
         priceTier5: asDecimal(draft.priceTier5),
+        unitsPerBox: draft.unitsPerBox?.trim() ? parseInt(draft.unitsPerBox, 10) : null,
         // Regulated tags: value to set, null to clear (server auto-nulls the
         // category when the type is cleared).
         trackedCategoryId: draft.trackedCategoryId || null,
@@ -841,6 +852,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         onError: () => toast({ title: "Failed to unlink", variant: "error" }),
       },
     );
+  };
+
+  // Display-only per-unit hint for a case-packed product's price fields (Tier 1 row + tier
+  // grid). NEVER enters a payload — perUnitPrice is a display derivation, not line math.
+  const perUnitHint = (v: number) => {
+    if (!(Number(product.unitsPerBox) > 1)) return null;
+    const pu = perUnitPrice(v, product.unitsPerBox);
+    return pu != null ? (
+      <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
+    ) : null;
   };
 
   return (
@@ -1622,15 +1643,47 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     }
                   />
                   <InfoRow
+                    label="Units per case"
+                    value={
+                      isEditing ? (
+                        <DecimalInput
+                          decimals={0}
+                          min={0}
+                          value={
+                            (editDraft.unitsPerBox as string)?.trim()
+                              ? parseFloat(editDraft.unitsPerBox as string)
+                              : null
+                          }
+                          onChange={(v) =>
+                            setEditDraft((d) => ({ ...d, unitsPerBox: v == null ? "" : String(v) }))
+                          }
+                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      ) : Number(product.unitsPerBox) > 1 ? (
+                        `${product.unitsPerBox} units`
+                      ) : (
+                        "Sold individually"
+                      )
+                    }
+                  />
+                  <InfoRow
                     label="Tier 1 Price (List)"
                     value={
                       isEditing ? (
-                        <EditableNumber
-                          value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
-                          onChange={(v) => setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))}
-                        />
+                        <>
+                          <EditableNumber
+                            value={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                            onChange={(v) =>
+                              setEditDraft((d) => ({ ...d, pricePerUnit: String(v) }))
+                            }
+                          />
+                          {perUnitHint(parseFloat(String(editDraft.pricePerUnit ?? priceNumber)))}
+                        </>
                       ) : (
-                        <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
+                        <>
+                          <span className="font-mono tabular-nums">${priceNumber.toFixed(2)}</span>
+                          {perUnitHint(priceNumber)}
+                        </>
                       )
                     }
                   />
@@ -1770,19 +1823,33 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             {warn ? " ⚠" : ""}
                           </p>
                           {isEditing ? (
-                            <EditableNumber
-                              value={curVal}
-                              onChange={(v) => setEditDraft((d) => ({ ...d, [field]: String(v) }))}
-                            />
+                            <>
+                              <EditableNumber
+                                value={curVal}
+                                onChange={(v) =>
+                                  setEditDraft((d) => ({ ...d, [field]: String(v) }))
+                                }
+                                onCommit={(v) =>
+                                  setEditDraft((d) => ({
+                                    ...d,
+                                    ...cascadeTierPrices(field as TierField, v),
+                                  }))
+                                }
+                              />
+                              {perUnitHint(curVal)}
+                            </>
                           ) : (
-                            <p className="font-mono text-sm font-medium tabular-nums text-navy">
-                              ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
-                              {inheritsList && (
-                                <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
-                                  list
-                                </span>
-                              )}
-                            </p>
+                            <>
+                              <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                                ${(inheritsList ? priceNumber : Number(productVal)).toFixed(2)}
+                                {inheritsList && (
+                                  <span className="ml-1 rounded bg-surface-raised px-1 py-0.5 text-[9px] text-navy/50">
+                                    list
+                                  </span>
+                                )}
+                              </p>
+                              {perUnitHint(inheritsList ? priceNumber : Number(productVal))}
+                            </>
                           )}
                         </div>
                       );

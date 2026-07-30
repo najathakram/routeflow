@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedService } from "./regulated.service";
+import { RegulatedReportService } from "./regulated-report.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
@@ -52,6 +53,9 @@ describe("RegulatedFilingService", () => {
     const mod = await Test.createTestingModule({
       providers: [
         RegulatedFilingService,
+        // Real instance (not mocked) — the TX_COMPTROLLER branch below exercises its
+        // manual three-step join against the same mocked `prisma`.
+        RegulatedReportService,
         { provide: PrismaService, useValue: prisma },
         { provide: RegulatedService, useValue: regulated },
         { provide: StorageService, useValue: storage },
@@ -248,6 +252,83 @@ describe("RegulatedFilingService", () => {
           meta: expect.objectContaining({ trigger: "manual", periodKey: `${pastYear}-01` }),
         }),
       );
+    });
+  });
+
+  describe("prepareFiling — TX_COMPTROLLER template (WP11)", () => {
+    const txCategory = {
+      id: "cat-tx",
+      name: "Cigarettes",
+      reportTemplate: "TX_COMPTROLLER",
+      reportCadence: "MONTHLY",
+      unitBasis: null,
+      wholesalerLicenseNo: "12345678",
+      txItemType: 1,
+      txUom: "CP",
+    };
+
+    it("stores a TX-serialized CSV (no header) and rows Json carrying txRows + warnings, while the Decimal totals stay the ledger aggregate", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue(txCategory);
+      // The four Decimal totals still come from the (category, period) ledger
+      // aggregate — unaffected by the TX branch below.
+      regulated.getLedger.mockResolvedValue({
+        rows: [ledgerRow({ trackedCategoryId: "cat-tx", categoryName: "Cigarettes" })],
+        totals: {},
+      });
+      // The TX per-invoice breakdown is a SEPARATE raw ledger query (RegulatedSalesLedger
+      // has no Prisma relations, so it's a manual three-step join).
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([
+        { invoiceId: "inv-1", unitBasisQty: 20, netSales: 100 },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          issueDate: new Date(`${pastYear}-01-05`),
+          customerId: "cust-1",
+        },
+      ]);
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          id: "cust-1",
+          businessName: "Acme Retail",
+          taxId: "12345678901",
+          tobaccoLicenseNo: null,
+          addresses: [
+            {
+              line1: "1 Main St",
+              line2: null,
+              city: "Austin",
+              state: "TX",
+              zip: "78701",
+              isDefault: true,
+              addressType: "BILLING",
+            },
+          ],
+          authorizations: [{ licenseNumber: "87654321" }],
+        },
+      ]);
+
+      const filing = await service.prepareFiling({
+        trackedCategoryId: "cat-tx",
+        year: pastYear,
+        index: 1,
+      });
+
+      expect(filing.totalNetSales).toBe(100);
+      expect(filing.totalUnitBasisQty).toBe(20);
+
+      expect(storage.upload).toHaveBeenCalledTimes(1);
+      const csvBuffer: Buffer = storage.upload.mock.calls[0][1];
+      const csv = csvBuffer.toString("utf8");
+      expect(csv).not.toContain("Wholesaler Permit #"); // no header row
+      expect(csv).not.toContain("TOTALS");
+      expect(csv).toContain("Acme Retail");
+
+      const rowsJson = filing.rows as any;
+      expect(Array.isArray(rowsJson.txRows)).toBe(true);
+      expect(rowsJson.txRows.length).toBe(1);
+      expect(Array.isArray(rowsJson.warnings)).toBe(true);
     });
   });
 

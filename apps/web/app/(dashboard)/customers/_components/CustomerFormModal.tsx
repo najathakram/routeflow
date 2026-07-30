@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { isInternalEmail } from "@/lib/formatting";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -144,10 +145,10 @@ function buildDefaultValues(
     lastName: initialData.lastName ?? "",
     phone: initialData.phone ?? "",
     mobile: initialData.mobile ?? "",
-    // Don't surface the internal placeholder minted for emailless customers.
+    // Don't surface the internal sentinel minted for emailless/CSV-imported customers.
     email:
       initialData.email ??
-      (initialData.user?.email && !initialData.user.email.endsWith("@placeholder.local")
+      (initialData.user?.email && !isInternalEmail(initialData.user.email)
         ? initialData.user.email
         : "") ??
       "",

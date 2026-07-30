@@ -32,6 +32,8 @@ export interface ReturnItem {
   restock?: boolean;
 }
 
+export type RefundMethod = "CREDIT_NOTE" | "EXTERNAL_REFUND";
+
 export interface Return {
   id: string;
   returnNumber?: string;
@@ -42,7 +44,18 @@ export interface Return {
   reason: ReturnReason;
   status: ReturnStatus;
   notes?: string;
+  /** Populated once a CREDIT_NOTE refund has minted store credit for this return. */
   creditNoteId?: string;
+  creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
+  refundAmount?: number | null;
+  refundMethod?: RefundMethod | null;
+  refundedAt?: string | null;
+  /**
+   * Server-computed Σ qty × (subtotal/qty) across the return's items — the same
+   * box-price-safe figure processRefund would mint/record. Always present so the
+   * UI can show the amount before the operator commits to a resolve method.
+   */
+  refundEstimate?: number;
   items: ReturnItem[];
   createdAt: string;
   updatedAt: string;
@@ -101,12 +114,8 @@ export function useCreateReturn() {
   });
 }
 
-function returnTransition(
-  action: "approve" | "reject" | "in-transit" | "receive" | "refund" | "cancel",
-) {
-  // These endpoints take no body — the server ignores any payload. The restock
-  // decision is fixed per-item at CREATE time (ReturnItem.restock), so there is
-  // no restock flag to send here.
+function returnTransition(action: "approve" | "reject" | "in-transit" | "cancel") {
+  // These endpoints take no body — the server ignores any payload.
   return (id: string) => apiClient.post(`/returns/${id}/${action}`).then((r) => r.data as Return);
 }
 
@@ -126,6 +135,52 @@ function useReturnTransition(action: Parameters<typeof returnTransition>[0]) {
 export const useApproveReturn = () => useReturnTransition("approve");
 export const useRejectReturn = () => useReturnTransition("reject");
 export const useMarkReturnInTransit = () => useReturnTransition("in-transit");
-export const useReceiveReturn = () => useReturnTransition("receive");
-export const useRefundReturn = () => useReturnTransition("refund");
 export const useCancelReturn = () => useReturnTransition("cancel");
+
+// ─── Receive & refund (take bodies) ────────────────────────────────────────────
+
+/**
+ * Accepts either a bare id (today's "just mark received, keep the per-item
+ * restock flags from create time" behavior — the returns list's quick action
+ * still calls it this way) or `{ id, restock }` for the "resolve without
+ * receiving" flow, which suppresses restocking entirely.
+ */
+export type ReceiveReturnInput = string | { id: string; restock?: boolean };
+
+export function useReceiveReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, ReceiveReturnInput>({
+    mutationFn: (input) => {
+      const id = typeof input === "string" ? input : input.id;
+      const restock = typeof input === "string" ? undefined : input.restock;
+      const data = restock === undefined ? {} : { restock };
+      return apiClient.post(`/returns/${id}/receive`, data).then((r) => r.data as Return);
+    },
+    onSuccess: (_, input) => {
+      const id = typeof input === "string" ? input : input.id;
+      qc.invalidateQueries({ queryKey: ["returns"] });
+      qc.invalidateQueries({ queryKey: ["returns", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+    },
+  });
+}
+
+export interface RefundReturnDto {
+  id: string;
+  /** CREDIT_NOTE (default) mints store credit; EXTERNAL_REFUND records nothing minted. */
+  method?: RefundMethod;
+}
+
+export function useRefundReturn() {
+  const qc = useQueryClient();
+  return useMutation<Return, Error, RefundReturnDto>({
+    mutationFn: ({ id, ...data }) =>
+      apiClient.post(`/returns/${id}/refund`, data).then((r) => r.data as Return),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["returns"] });
+      qc.invalidateQueries({ queryKey: ["returns", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
+    },
+  });
+}

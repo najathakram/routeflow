@@ -278,6 +278,8 @@ export function useAdminCustomers(params?: {
   status?: string;
   page?: number;
   limit?: number;
+  /** "1" = only customers holding a license for a regulated category. */
+  regulated?: string;
 }) {
   return useQuery<{ data: AdminCustomer[]; meta: PaginationMeta }>({
     queryKey: ["admin", "customers", params],

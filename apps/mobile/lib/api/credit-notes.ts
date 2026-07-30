@@ -58,12 +58,14 @@ export function useCreditNote(id: string) {
 }
 
 /**
- * Open invoices for a customer — backs the Apply-to-Invoice picker (mirrors the
- * web ApplyToInvoiceModal). `GET /invoices` supports a `customerId` filter (see
- * the invoices controller `@Query("customerId")`); this is a query-param
+ * Every invoice for a customer, any status — backs both the Apply-to-Invoice
+ * picker (mirrors the web ApplyToInvoiceModal; OPEN-status filter applied
+ * client-side there) and the new-credit-note invoice picker (which only
+ * excludes VOID/WRITTEN_OFF). `GET /invoices` supports a `customerId` filter
+ * (see the invoices controller `@Query("customerId")`); this is a query-param
  * passthrough, not a new model.
  */
-export function useOpenInvoicesForCustomer(customerId?: string) {
+export function useInvoicesForCustomer(customerId?: string) {
   return useQuery<{
     data: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
   }>({
@@ -74,7 +76,34 @@ export function useOpenInvoicesForCustomer(customerId?: string) {
   });
 }
 
-// ─── Mutations (status transitions — credit notes are create-only server-side) ──
+/** Old name kept as an alias — [id].tsx's ApplyInvoicePicker still imports this. */
+export const useOpenInvoicesForCustomer = useInvoicesForCustomer;
+
+// ─── Mutations (create + status transitions) ─────────────────────────────────
+
+export interface CreateCreditNoteInput {
+  customerId: string;
+  amount: number;
+  /** Required by the create screen's own validation; optional on the wire. */
+  reason?: string;
+  /** Optional source invoice. Absent = a standalone credit for this customer. */
+  invoiceId?: string;
+  /** ISO date; the service additionally requires it to be in the future. */
+  expiresAt?: string;
+}
+
+/**
+ * Create a standalone (or invoice-linked) credit note. The service needs no
+ * invoice and runs no "does this customer have orders" check — any customer
+ * can receive a credit — mirroring apps/web/lib/api/credit-notes.ts.
+ */
+export function useCreateCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<CreditNote, Error, CreateCreditNoteInput>({
+    mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
+  });
+}
 
 function invalidateCreditNote(qc: ReturnType<typeof useQueryClient>, id: string) {
   qc.invalidateQueries({ queryKey: ["credit-notes"] });

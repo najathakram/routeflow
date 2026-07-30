@@ -4,6 +4,7 @@ import {
   setLineBoxes,
   setLinePieces,
   setLineQty,
+  setLineUnits,
 } from "../lib/sale-line";
 
 describe("incrementLine", () => {
@@ -167,5 +168,37 @@ describe("setLinePieces", () => {
   it("returns null when boxes and pieces both resolve to 0", () => {
     const prev = { qty: 0, boxes: 0, pieces: 0 };
     expect(setLinePieces(prev, 0, 12)).toBeNull();
+  });
+});
+
+describe("setLineUnits", () => {
+  it("normalizes a total unit count into cases + loose units, preserving other fields", () => {
+    const prev = { qty: 6, boxes: 1, pieces: 0, unitPrice: 30, note: "x" };
+    const next = setLineUnits(prev, 7, 6);
+    expect(next).not.toBeNull();
+    expect(next!.qty).toBe(7);
+    expect(next!.boxes).toBe(1);
+    expect(next!.pieces).toBe(1);
+    expect(next!.unitPrice).toBe(30);
+    expect(next!.note).toBe("x");
+  });
+
+  it("returns null when the unit count resolves to 0", () => {
+    const prev = { qty: 6, boxes: 1, pieces: 0, unitPrice: 30, note: "x" };
+    expect(setLineUnits(prev, 0, 6)).toBeNull();
+  });
+
+  it("normalizes an exact multiple of the case size to 0 loose units", () => {
+    const prev = { qty: 6, boxes: 1, pieces: 0, unitPrice: 30, note: "x" };
+    const next = setLineUnits(prev, 12, 6);
+    expect(next).not.toBeNull();
+    expect(next!.qty).toBe(12);
+    expect(next!.boxes).toBe(2);
+    expect(next!.pieces).toBe(0);
+  });
+
+  it("returns null for a non-case-packed product (unitsPerBox 1)", () => {
+    const prev = { qty: 1 };
+    expect(setLineUnits(prev, 5, 1)).toBeNull();
   });
 });

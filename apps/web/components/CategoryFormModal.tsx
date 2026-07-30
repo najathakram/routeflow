@@ -24,8 +24,37 @@ const TREATMENTS: { value: InvoiceTreatment; label: string }[] = [
   { value: "SEPARATE_SECTION", label: "Sectioned on the main invoice" },
   { value: "LINE_TAX", label: "Per-line tax" },
 ];
-const TEMPLATES = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE"];
+const TEMPLATES = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE", "TX_COMPTROLLER"];
 const CADENCES: ReportCadence[] = ["MONTHLY", "QUARTERLY", "ANNUAL"];
+
+const TX_ITEM_TYPES: { value: number; label: string }[] = [
+  { value: 1, label: "Cigarettes" },
+  { value: 2, label: "Cigars" },
+  { value: 3, label: "Tobacco" },
+];
+
+/**
+ * TX Comptroller unit-of-measure codes, keyed by item type. Mirrors
+ * `apps/api/src/regulated/tx-report.ts` TX_UOM_CODES — this is UI-only label
+ * config (not money/compliance math), kept in sync manually.
+ */
+const TX_UOM_CODES: Record<number, { value: string; label: string }[]> = {
+  1: [
+    { value: "CP", label: "CP — Packs" },
+    { value: "CS", label: "CS — Sticks" },
+    { value: "CC", label: "CC — Cartons" },
+  ],
+  2: [
+    { value: "SB", label: "SB — Class B sticks" },
+    { value: "SC", label: "SC — Class C sticks" },
+    { value: "SD", label: "SD — Class D sticks" },
+    { value: "SF", label: "SF — Class F sticks" },
+  ],
+  3: [
+    { value: "WO", label: "WO — Ounces" },
+    { value: "WN", label: "WN — Number (cans/packages)" },
+  ],
+};
 
 const inputCls =
   "w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -54,6 +83,9 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
     reportTemplate: "GENERIC",
     reportCadence: "MONTHLY" as ReportCadence,
     active: true,
+    wholesalerLicenseNo: "",
+    txItemType: "" as number | "",
+    txUom: "",
   });
 
   // Hydrate the form when opening (create → blank, edit → the category's values).
@@ -71,6 +103,9 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
         reportTemplate: category.reportTemplate,
         reportCadence: category.reportCadence,
         active: category.active,
+        wholesalerLicenseNo: category.wholesalerLicenseNo ?? "",
+        txItemType: category.txItemType ?? "",
+        txUom: category.txUom ?? "",
       });
     } else {
       setForm({
@@ -84,6 +119,9 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
         reportTemplate: "GENERIC",
         reportCadence: "MONTHLY",
         active: true,
+        wholesalerLicenseNo: "",
+        txItemType: "",
+        txUom: "",
       });
     }
   }, [isOpen, category]);
@@ -92,6 +130,7 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
 
   const hasTax = form.taxType !== "NONE";
   const isPercent = form.taxType === "PERCENT_OF_SALE";
+  const isTx = form.reportTemplate === "TX_COMPTROLLER";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +150,12 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
       reportTemplate: form.reportTemplate,
       reportCadence: form.reportCadence,
       active: form.active,
+      // null, NOT undefined: axios omits undefined keys from the JSON body, so a cleared
+      // field (or a template switched away from TX) would never reach the DTO and Prisma
+      // would leave the stale value in place. null clears the nullable column.
+      wholesalerLicenseNo: isTx ? form.wholesalerLicenseNo.trim() || null : null,
+      txItemType: isTx && form.txItemType !== "" ? Number(form.txItemType) : null,
+      txUom: isTx ? form.txUom || null : null,
     };
     const onDone = (verb: string) => {
       toast({ title: `Category ${verb}`, description: name, variant: "success" });
@@ -270,6 +315,81 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
               </select>
             </div>
           </div>
+
+          {isTx && (
+            <div className="space-y-3 rounded-lg border border-surface-border bg-surface-raised/40 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/60">
+                TX Comptroller
+              </p>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy">
+                  Wholesaler license #
+                </label>
+                <input
+                  type="text"
+                  value={form.wholesalerLicenseNo}
+                  onChange={(e) => setForm((f) => ({ ...f, wholesalerLicenseNo: e.target.value }))}
+                  className={inputCls}
+                  placeholder="12345678"
+                  maxLength={20}
+                />
+                <p className="mt-1 text-[11px] text-navy/60">
+                  Your 8-digit Texas license or permit number
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy">Item type</label>
+                  <select
+                    value={form.txItemType}
+                    onChange={(e) => {
+                      const txItemType = e.target.value ? Number(e.target.value) : "";
+                      setForm((f) => {
+                        const validUoms = txItemType
+                          ? (TX_UOM_CODES[txItemType as number] ?? []).map((u) => u.value)
+                          : [];
+                        return {
+                          ...f,
+                          txItemType,
+                          txUom: validUoms.includes(f.txUom) ? f.txUom : "",
+                        };
+                      });
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="">Select…</option>
+                    {TX_ITEM_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.value} {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-navy">
+                    Unit of measure
+                  </label>
+                  <select
+                    value={form.txUom}
+                    onChange={(e) => setForm((f) => ({ ...f, txUom: e.target.value }))}
+                    className={inputCls}
+                    disabled={!form.txItemType}
+                  >
+                    <option value="">
+                      {form.txItemType ? "Select…" : "Select item type first"}
+                    </option>
+                    {(form.txItemType ? (TX_UOM_CODES[Number(form.txItemType)] ?? []) : []).map(
+                      (u) => (
+                        <option key={u.value} value={u.value}>
+                          {u.label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised/40 p-3">
             {hasTax && (

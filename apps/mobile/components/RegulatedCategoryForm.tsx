@@ -21,6 +21,15 @@ export interface RegulatedCategoryFormValues {
   reportTemplate: string;
   reportCadence: ReportCadence;
   active: boolean;
+  /**
+   * TX Comptroller (TX_COMPTROLLER template) config — optional so screens that don't yet
+   * hydrate these three columns (e.g. an `initial` literal built before this field existed)
+   * still satisfy this interface without every call site needing an update.
+   */
+  wholesalerLicenseNo?: string;
+  /** "1" | "2" | "3" (Cigarettes/Cigars/Tobacco) as a picker id — cast to a number on submit. */
+  txItemType?: string;
+  txUom?: string;
 }
 
 export function emptyRegulatedCategoryForm(): RegulatedCategoryFormValues {
@@ -35,6 +44,9 @@ export function emptyRegulatedCategoryForm(): RegulatedCategoryFormValues {
     reportTemplate: "GENERIC",
     reportCadence: "MONTHLY",
     active: true,
+    wholesalerLicenseNo: "",
+    txItemType: "",
+    txUom: "",
   };
 }
 
@@ -49,6 +61,14 @@ export interface RegulatedCategorySubmitPayload {
   reportTemplate: string;
   reportCadence: ReportCadence;
   active: boolean;
+  /**
+   * THIS tenant's own TX license/permit number (8 digits). `null` clears the column —
+   * `undefined` would be dropped from the JSON body and leave the stale value in place.
+   */
+  wholesalerLicenseNo?: string | null;
+  /** 1 = Cigarettes, 2 = Cigars, 3 = Tobacco. */
+  txItemType?: number | null;
+  txUom?: string | null;
 }
 
 const TAX_TYPES: PickerOption[] = [
@@ -63,14 +83,43 @@ const TREATMENTS: PickerOption[] = [
   { id: "SEPARATE_SECTION", label: "Sectioned on the main invoice" },
   { id: "LINE_TAX", label: "Per-line tax" },
 ];
-const TEMPLATES: PickerOption[] = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE"].map((t) => ({
-  id: t,
-  label: t,
-}));
+const TEMPLATES: PickerOption[] = [
+  "GENERIC",
+  "CA_CDTFA",
+  "CA_ABC",
+  "CALRECYCLE",
+  "TX_COMPTROLLER",
+].map((t) => ({ id: t, label: t }));
 const CADENCES: PickerOption[] = ["MONTHLY", "QUARTERLY", "ANNUAL"].map((c) => ({
   id: c,
   label: c,
 }));
+
+// TX Comptroller item types + their allowed units of measure. Mirrors
+// apps/api/src/regulated/tx-report.ts#TX_ITEM_TYPE_LABELS / TX_UOM_CODES (WP11) — kept as a
+// local copy since mobile has no shared import path into the API package.
+const TX_ITEM_TYPES: PickerOption[] = [
+  { id: "1", label: "Cigarettes" },
+  { id: "2", label: "Cigars" },
+  { id: "3", label: "Tobacco" },
+];
+const TX_UOM_OPTIONS: Record<string, PickerOption[]> = {
+  "1": [
+    { id: "CP", label: "CP — Packs" },
+    { id: "CS", label: "CS — Sticks" },
+    { id: "CC", label: "CC — Cartons" },
+  ],
+  "2": [
+    { id: "SB", label: "SB — Class B sticks" },
+    { id: "SC", label: "SC — Class C sticks" },
+    { id: "SD", label: "SD — Class D sticks" },
+    { id: "SF", label: "SF — Class F sticks" },
+  ],
+  "3": [
+    { id: "WO", label: "WO — Ounces" },
+    { id: "WN", label: "WN — Number (cans/packages)" },
+  ],
+};
 
 interface Props {
   title: string;
@@ -93,6 +142,8 @@ export function RegulatedCategoryForm({
   const [treatmentOpen, setTreatmentOpen] = React.useState(false);
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [cadenceOpen, setCadenceOpen] = React.useState(false);
+  const [txItemTypeOpen, setTxItemTypeOpen] = React.useState(false);
+  const [txUomOpen, setTxUomOpen] = React.useState(false);
 
   const set = <K extends keyof RegulatedCategoryFormValues>(
     k: K,
@@ -101,6 +152,8 @@ export function RegulatedCategoryForm({
 
   const hasTax = form.taxType !== "NONE";
   const isPercent = form.taxType === "PERCENT_OF_SALE";
+  const isTx = form.reportTemplate === "TX_COMPTROLLER";
+  const txUomOptions = form.txItemType ? (TX_UOM_OPTIONS[form.txItemType] ?? []) : [];
 
   const submit = () => {
     const name = form.name.trim();
@@ -120,6 +173,12 @@ export function RegulatedCategoryForm({
       reportTemplate: form.reportTemplate,
       reportCadence: form.reportCadence,
       active: form.active,
+      // null, NOT undefined: an undefined key is omitted from the JSON body, so a cleared
+      // field (or a template switched away from TX) would never reach the DTO and Prisma
+      // would leave the stale value in place. null clears the nullable column.
+      wholesalerLicenseNo: isTx ? form.wholesalerLicenseNo?.trim() || null : null,
+      txItemType: isTx && form.txItemType ? Number(form.txItemType) : null,
+      txUom: isTx ? form.txUom || null : null,
     });
   };
 
@@ -193,6 +252,38 @@ export function RegulatedCategoryForm({
         </FormField>
       </FormSection>
 
+      {isTx ? (
+        <FormSection title="TX Comptroller">
+          <FormField
+            label="Wholesaler license #"
+            hint="Your 8-digit Texas license or permit number"
+          >
+            <FormTextInput
+              value={form.wholesalerLicenseNo ?? ""}
+              onChangeText={(v) => set("wholesalerLicenseNo", v)}
+              placeholder="12345678"
+              keyboardType="number-pad"
+              maxLength={20}
+            />
+          </FormField>
+          <FormField label="Item type">
+            <PickerRow
+              label={TX_ITEM_TYPES.find((t) => t.id === form.txItemType)?.label ?? "Choose one"}
+              onPress={() => setTxItemTypeOpen(true)}
+            />
+          </FormField>
+          <FormField label="Unit of measure">
+            <PickerRow
+              label={
+                txUomOptions.find((u) => u.id === form.txUom)?.label ??
+                (form.txItemType ? "Choose one" : "Choose an item type first")
+              }
+              onPress={() => setTxUomOpen(true)}
+            />
+          </FormField>
+        </FormSection>
+      ) : null}
+
       <FormSection>
         <SwitchRow
           label="Requires the customer to hold a license"
@@ -249,6 +340,33 @@ export function RegulatedCategoryForm({
         onSelect={(o) => {
           set("reportCadence", o.id as ReportCadence);
           setCadenceOpen(false);
+        }}
+      />
+      <OptionPickerSheet
+        visible={txItemTypeOpen}
+        title="TX item type"
+        options={TX_ITEM_TYPES}
+        selectedId={form.txItemType}
+        onClose={() => setTxItemTypeOpen(false)}
+        onSelect={(o) => {
+          setForm((f) => ({
+            ...f,
+            txItemType: o.id,
+            // A UOM valid for the old item type may not be valid for the new one.
+            txUom: (TX_UOM_OPTIONS[o.id] ?? []).some((u) => u.id === f.txUom) ? f.txUom : "",
+          }));
+          setTxItemTypeOpen(false);
+        }}
+      />
+      <OptionPickerSheet
+        visible={txUomOpen}
+        title="Unit of measure"
+        options={txUomOptions}
+        selectedId={form.txUom}
+        onClose={() => setTxUomOpen(false)}
+        onSelect={(o) => {
+          set("txUom", o.id);
+          setTxUomOpen(false);
         }}
       />
     </FormSheet>

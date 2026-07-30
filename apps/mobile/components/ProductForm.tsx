@@ -10,6 +10,7 @@ import { OptionPickerSheet } from "./OptionPickerSheet";
 import { SubcategoryPickerSheet } from "./SubcategoryPickerSheet";
 import { useTrackedCategories, useTrackedSubcategories } from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
+import { cascadeTierPrices, perUnitPrice, type TierField } from "../lib/pricing";
 import {
   buildProductPayload,
   emptyProductForm,
@@ -66,6 +67,30 @@ export function ProductForm({
 
   const isVariant = !!form.parentProductId;
 
+  // Tier-price cascade: fires on COMMIT (onEndEditing), never per keystroke —
+  // mirrors the web DecimalInput onCommit contract (WP2/WP3), React Native
+  // style. Snapshot the value at focus time so a focus/blur with no real edit
+  // doesn't re-cascade. Tier 1 / pricePerUnit deliberately keeps its own
+  // behavior and is never wired here.
+  const tierFocusRef = React.useRef<Partial<Record<TierField, string>>>({});
+  const onTierFocus = (field: TierField) => {
+    tierFocusRef.current[field] = form[field];
+  };
+  const onTierEndEditing = (field: TierField, text: string) => {
+    const before = parseOptionalNumber(tierFocusRef.current[field] ?? "");
+    const after = parseOptionalNumber(text);
+    if (after == null) return; // cleared/invalid — nothing to cascade
+    const changed = before == null || Math.abs(after - before) >= 1e-9;
+    if (!changed) return;
+    setForm((f) => ({ ...f, ...cascadeTierPrices(field, after) }));
+  };
+
+  const unitsPerBoxNum = parseOptionalNumber(form.unitsPerBox);
+  const isBoxed = unitsPerBoxNum != null && unitsPerBoxNum > 1;
+  const priceNum = parseOptionalNumber(form.pricePerUnit);
+  const perUnitPreview =
+    isBoxed && priceNum != null ? perUnitPrice(priceNum, unitsPerBoxNum) : null;
+
   // Regulated section + subcategory pickers (both optional). The subcategory
   // list is scoped to the section currently chosen in the form; `current` uses
   // the ORIGINAL initial value (not the live form) so re-selecting a section
@@ -103,7 +128,7 @@ export function ProductForm({
       <FormSection title="Basics">
         <FormField
           label="Variant of (optional)"
-          hint="Link this as a flavor/variety of an existing product. Variants inherit the parent's price tiers, box size, and category unless you override them."
+          hint="Link this as a flavor/variety of an existing product. Variants inherit the parent's price tiers, case size, and category unless you override them."
         >
           <Pressable style={styles.picker} onPress={() => setParentPickerOpen(true)}>
             <View style={styles.pickerInner}>
@@ -255,8 +280,8 @@ export function ProductForm({
           />
         </FormField>
         <FormField
-          label="Pieces per box (optional)"
-          hint="Leave blank for products sold individually. Set to N if 1 box contains N loose pieces — orders can then be issued as boxes + loose units."
+          label="Units per case (optional)"
+          hint="Leave blank for products sold individually. Set to N if 1 case contains N loose units — orders can then be issued as cases + loose units."
         >
           <FormTextInput
             value={form.unitsPerBox}
@@ -288,14 +313,56 @@ export function ProductForm({
         <FormField
           label="Price per unit"
           hint={
-            parseOptionalNumber(form.unitsPerBox) && parseOptionalNumber(form.unitsPerBox)! > 1
-              ? "This is the BOX price. A loose piece costs price ÷ pieces-per-box."
+            isBoxed
+              ? `This is the CASE price. A loose unit costs price ÷ units-per-case.${
+                  perUnitPreview != null ? ` ≈ $${perUnitPreview.toFixed(2)} / unit` : ""
+                }`
               : undefined
           }
         >
           <FormTextInput
             value={form.pricePerUnit}
             onChangeText={(v) => set("pricePerUnit", v)}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+        </FormField>
+        <FormField label="Tier 2 price">
+          <FormTextInput
+            value={form.priceTier2}
+            onChangeText={(v) => set("priceTier2", v)}
+            onFocus={() => onTierFocus("priceTier2")}
+            onEndEditing={(e) => onTierEndEditing("priceTier2", e.nativeEvent.text)}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+        </FormField>
+        <FormField label="Tier 3 price">
+          <FormTextInput
+            value={form.priceTier3}
+            onChangeText={(v) => set("priceTier3", v)}
+            onFocus={() => onTierFocus("priceTier3")}
+            onEndEditing={(e) => onTierEndEditing("priceTier3", e.nativeEvent.text)}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+        </FormField>
+        <FormField label="Tier 4 price">
+          <FormTextInput
+            value={form.priceTier4}
+            onChangeText={(v) => set("priceTier4", v)}
+            onFocus={() => onTierFocus("priceTier4")}
+            onEndEditing={(e) => onTierEndEditing("priceTier4", e.nativeEvent.text)}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+        </FormField>
+        <FormField label="Tier 5 price">
+          <FormTextInput
+            value={form.priceTier5}
+            onChangeText={(v) => set("priceTier5", v)}
+            onFocus={() => onTierFocus("priceTier5")}
+            onEndEditing={(e) => onTierEndEditing("priceTier5", e.nativeEvent.text)}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />

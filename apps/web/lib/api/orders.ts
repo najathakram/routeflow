@@ -440,8 +440,12 @@ export function useUpdateOrderShipment() {
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/orders/${id}/shipment`, dto).then((r) => r.data),
     onSuccess: (data) => {
-      qc.setQueryData(["orders", data.id], data);
+      // NEVER setQueryData here: PATCH /orders/:id/shipment returns a BARE order row
+      // (no lineItems/customer/invoices), and writing it into the detail cache made the
+      // order page throw on order.lineItems.filter — the "Application error" full-page
+      // crash after adding a tracking number. Invalidate and let GET /orders/:id refill.
       qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["orders", data.id] });
     },
   });
 }

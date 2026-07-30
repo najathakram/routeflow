@@ -311,6 +311,19 @@ export default function CustomerDetailScreen() {
                 style={{ marginLeft: "auto" }}
               />
             </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/documents`)}
+            >
+              <Ionicons name="folder-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Documents</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
           </View>
 
           <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>

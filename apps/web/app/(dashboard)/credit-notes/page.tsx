@@ -40,8 +40,6 @@ interface CreateFormState {
   invoiceId: string;
   amount: string;
   reason: string;
-  issueDate: string;
-  notes: string;
   /** P5-13: optional — after this date the credit is excluded from the wallet
    *  and can never be applied. */
   expiresAt: string;
@@ -52,10 +50,21 @@ const EMPTY_FORM: CreateFormState = {
   invoiceId: "",
   amount: "",
   reason: "",
-  issueDate: new Date().toISOString().slice(0, 10),
-  notes: "",
   expiresAt: "",
 };
+
+/** Selected-customer chip for the debounced search combobox below — mirrors the
+ *  pattern in orders/_components/CreateOrderModal.tsx (only the fields this form needs). */
+interface SelectedCustomer {
+  id: string;
+  businessName: string;
+  contactName?: string;
+}
+
+/** Hidden from the invoice picker. Everything else — including a fully-PAID invoice —
+ *  stays selectable; the service's cumulative per-invoice credit cap (enforced on
+ *  apply, not here) is what prevents over-crediting. */
+const HIDDEN_INVOICE_STATUSES = new Set(["VOID", "WRITTEN_OFF"]);
 
 function CreateCreditNoteModal({
   isOpen,
@@ -71,18 +80,42 @@ function CreateCreditNoteModal({
   const [form, setForm] = React.useState<CreateFormState>(EMPTY_FORM);
   const [errors, setErrors] = React.useState<Partial<Record<keyof CreateFormState, string>>>({});
   const [customerSearch, setCustomerSearch] = React.useState("");
+  const [debouncedCustomerSearch, setDebouncedCustomerSearch] = React.useState("");
+  const [selectedCustomer, setSelectedCustomer] = React.useState<SelectedCustomer | null>(null);
   // Line linkage: which invoice lines this credit applies to (drives the regulated
   // ledger reversal). Keyed by invoiceItemId. Empty selection => lump-sum credit.
   const [lineSel, setLineSel] = React.useState<Record<string, boolean>>({});
   const [lineAmt, setLineAmt] = React.useState<Record<string, string>>({});
 
-  const { data: customersData } = useCustomers({ search: customerSearch || undefined });
-  const customers = customersData?.data ?? (Array.isArray(customersData) ? customersData : []);
+  // Debounce customer search (300ms) — same pattern as CreateOrderModal's combobox.
+  // Without this, every keystroke minted a fresh query key, `data` went undefined
+  // mid-flight, and the dropdown collapsed to just its placeholder while typing.
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedCustomerSearch(customerSearch), 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
 
-  const { data: invoicesData } = useInvoices(form.customerId ? { limit: 100 } : undefined);
+  // Explicit limit: with none, the API's default limit=20 silently capped this
+  // dropdown to the 20 most-recently-created customers regardless of what matched.
+  const { data: customersData } = useCustomers({
+    search: debouncedCustomerSearch || undefined,
+    limit: 50,
+  });
+  const filteredCustomers = React.useMemo(() => {
+    if (!debouncedCustomerSearch) return [];
+    return (customersData?.data ?? []).slice(0, 8);
+  }, [customersData, debouncedCustomerSearch]);
+
+  // Server-side customerId filter (ListInvoicesDto supports it) instead of fetching
+  // the newest 100 invoices tenant-wide and filtering client-side — that could leave
+  // a customer's own invoices entirely off the list. No status restriction beyond
+  // VOID/WRITTEN_OFF: a fully-paid invoice must stay selectable.
+  const { data: invoicesData } = useInvoices(
+    form.customerId ? { customerId: form.customerId, limit: 100 } : undefined,
+  );
   const invoices = React.useMemo(() => {
-    const all = invoicesData?.data ?? [];
-    return form.customerId ? all.filter((inv) => inv.customerId === form.customerId) : [];
+    if (!form.customerId) return [];
+    return (invoicesData?.data ?? []).filter((inv) => !HIDDEN_INVOICE_STATUSES.has(inv.status));
   }, [invoicesData, form.customerId]);
 
   // The selected invoice's lines (for the line picker).
@@ -103,6 +136,8 @@ function CreateCreditNoteModal({
       setForm(EMPTY_FORM);
       setErrors({});
       setCustomerSearch("");
+      setDebouncedCustomerSearch("");
+      setSelectedCustomer(null);
       setLineSel({});
       setLineAmt({});
     }
@@ -138,7 +173,6 @@ function CreateCreditNoteModal({
       if (!form.amount || isNaN(amt) || amt <= 0) e.amount = "Enter an amount greater than 0.";
     }
     if (!form.reason.trim()) e.reason = "Reason is required.";
-    if (!form.issueDate) e.issueDate = "Issue date is required.";
     if (form.expiresAt) {
       const d = new Date(form.expiresAt);
       if (isNaN(d.getTime()) || d.getTime() <= Date.now()) {
@@ -170,8 +204,9 @@ function CreateCreditNoteModal({
             }))
           : undefined,
         reason: form.reason.trim(),
-        issueDate: form.issueDate,
-        notes: form.notes.trim() || undefined,
+        // issueDate/notes are deliberately NOT sent: they have no CreditNote columns and
+        // the server only tolerates them so in-flight old bundles don't 400. Sending them
+        // from new code would keep that deprecation alive forever.
         expiresAt: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
       },
       {
@@ -219,35 +254,91 @@ function CreateCreditNoteModal({
       }
     >
       <form id="create-cn-form" onSubmit={handleSubmit} noValidate className="space-y-4">
-        {/* Customer */}
+        {/* Customer — debounced search combobox (CreateOrderModal pattern). Typing
+            300ms-debounces into an explicit-limit useCustomers query instead of racing
+            an unbounded default (which silently capped results to the 20 most-recently-
+            created customers) with no debounce (which raced every keystroke). */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Customer</label>
-          <div className="relative mb-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
-            <input
-              type="search"
-              placeholder="Search customers…"
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-              className="h-10 w-full rounded-lg border border-surface-border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <select
-            value={form.customerId}
-            onChange={(e) => setForm((f) => ({ ...f, customerId: e.target.value, invoiceId: "" }))}
-            className={inputCls(errors.customerId)}
-          >
-            <option value="">Select customer…</option>
-            {customers.map((c: { id: string; businessName: string }) => (
-              <option key={c.id} value={c.id}>
-                {c.businessName}
-              </option>
-            ))}
-          </select>
+          {selectedCustomer ? (
+            <div className="flex items-center justify-between rounded-lg border border-brand-300 bg-brand-50 px-3 py-2.5">
+              <div>
+                <span className="text-sm font-medium text-navy">
+                  {selectedCustomer.businessName}
+                </span>
+                {selectedCustomer.contactName && (
+                  <span className="ml-2 text-xs text-navy/70">{selectedCustomer.contactName}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCustomer(null);
+                  setForm((f) => ({ ...f, customerId: "", invoiceId: "" }));
+                }}
+                className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
+                title="Change customer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-navy/30" />
+              <input
+                type="search"
+                placeholder="Search by business name…"
+                value={customerSearch}
+                onChange={(e) => {
+                  setCustomerSearch(e.target.value);
+                  setErrors((er) => ({ ...er, customerId: undefined }));
+                }}
+                onKeyDown={(e) => {
+                  // This input lives inside the form — Enter must search, not submit.
+                  if (e.key === "Enter") e.preventDefault();
+                }}
+                className={cn(
+                  "h-10 w-full rounded-lg border bg-white pl-9 pr-3 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                  errors.customerId ? "border-danger" : "border-surface-border",
+                )}
+              />
+              {customerSearch &&
+                (filteredCustomers.length > 0 || debouncedCustomerSearch.length > 0) && (
+                  <ul className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-surface-border bg-white shadow-dropdown">
+                    {filteredCustomers.length === 0 && debouncedCustomerSearch.length > 0 && (
+                      <li className="px-3 py-2 text-sm text-navy/70">No customers found.</li>
+                    )}
+                    {filteredCustomers.map(
+                      (c: { id: string; businessName: string; contactName?: string }) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCustomer(c);
+                              setForm((f) => ({ ...f, customerId: c.id, invoiceId: "" }));
+                              setCustomerSearch("");
+                              setDebouncedCustomerSearch("");
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised"
+                          >
+                            <span className="font-medium">{c.businessName}</span>
+                            {c.contactName && (
+                              <span className="text-xs text-navy/70">{c.contactName}</span>
+                            )}
+                          </button>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+            </div>
+          )}
           {errors.customerId && <p className="mt-1 text-xs text-danger">{errors.customerId}</p>}
         </div>
 
-        {/* Invoice (optional) */}
+        {/* Invoice (optional) — server-filtered by customerId, any non-VOID/WRITTEN_OFF
+            status selectable (including PAID); the per-invoice credit cap is enforced
+            server-side when the credit is applied, not gated here. */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
             Invoice # <span className="text-navy/70">(optional)</span>
@@ -261,7 +352,7 @@ function CreateCreditNoteModal({
             <option value="">None</option>
             {invoices.map((inv) => (
               <option key={inv.id} value={inv.id}>
-                {inv.invoiceNumber}
+                {inv.invoiceNumber} · {inv.status}
               </option>
             ))}
           </select>
@@ -375,18 +466,6 @@ function CreateCreditNoteModal({
           {errors.reason && <p className="mt-1 text-xs text-danger">{errors.reason}</p>}
         </div>
 
-        {/* Issue Date */}
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">Issue Date</label>
-          <input
-            type="date"
-            value={form.issueDate}
-            onChange={(e) => setForm((f) => ({ ...f, issueDate: e.target.value }))}
-            className={inputCls(errors.issueDate)}
-          />
-          {errors.issueDate && <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>}
-        </div>
-
         {/* Expires (optional) */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -403,20 +482,6 @@ function CreateCreditNoteModal({
           <p className="mt-1 text-xs text-navy/60">
             After this date the credit is excluded from the wallet and can no longer be applied.
           </p>
-        </div>
-
-        {/* Notes */}
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-navy/80">
-            Notes <span className="text-navy/70">(optional)</span>
-          </label>
-          <textarea
-            rows={2}
-            placeholder="Additional notes…"
-            value={form.notes}
-            onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-            className="w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
         </div>
       </form>
     </Modal>

@@ -2289,6 +2289,13 @@ model Return {
   notes        String?
   photoUrls    String[]
   creditNoteId String?
+  // Return resolution snapshot (2026-07-30). refundMethod is "CREDIT_NOTE" (store credit was
+  // minted; see creditNoteId) or "EXTERNAL_REFUND" (money returned outside RouteFlow — nothing
+  // is minted, this is the audit trail). Kept as String? rather than an enum to avoid a
+  // CREATE TYPE migration; validated at the DTO edge.
+  refundMethod String?
+  refundAmount Decimal? @db.Decimal(10, 2)
+  refundedAt   DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   tenantId     String?
@@ -2990,6 +2997,11 @@ model TrackedCategory {
   requiresIdCheck  Boolean                @default(false)
   reportTemplate   String                 @default("GENERIC") // CA_CDTFA | CA_ABC | CALRECYCLE | GENERIC
   reportCadence    ReportCadence          @default(MONTHLY)
+  // TX Comptroller (TX_COMPTROLLER report template) config — all optional, per-program because
+  // a TX cigarette permit differs from a cigar/tobacco permit.
+  wholesalerLicenseNo String? // THIS tenant's own TX license/permit number (8 digits)
+  txItemType          Int?    // 1 = Cigarettes, 2 = Cigars, 3 = Tobacco
+  txUom               String? // CP|CS|CC (cigarettes) SB|SC|SD|SF (cigars) WO|WN (tobacco)
   active           Boolean                @default(true)
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt

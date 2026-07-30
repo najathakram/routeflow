@@ -26,6 +26,7 @@ import { useToast } from "@routeflow/ui/web";
 import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
+import { cascadeTierPrices, type TierField } from "@/lib/pricing";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
@@ -566,7 +567,7 @@ function makeTableColumns(
     },
     {
       accessorKey: "unitsPerBox",
-      header: "Per Box",
+      header: "Units / case",
       enableSorting: false,
       cell: ({ row }) => {
         const p = row.original;
@@ -739,23 +740,27 @@ export default function ProductsPage() {
         }
       }
 
-      // Cascade tier prices: when saving priceTierN, cap all higher tiers that are more expensive
+      // Committing a tier price copies it down the ladder (T3..T5 when T2 is edited, etc).
+      // The list price (pricePerUnit) deliberately keeps its smarter behavior above.
       if (field.startsWith("priceTier") && newVal) {
-        const tier = parseInt(field.replace("priceTier", ""), 10); // 2,3,4,5
-        const newPrice = parseFloat(newVal);
-        for (let m = tier + 1; m <= 5; m++) {
-          const key = `priceTier${m}` as keyof ApiProduct;
-          const tierVal = product[key];
-          const tierPrice = tierVal ? parseFloat(String(tierVal)) : 0;
-          if (!tierVal || tierPrice > newPrice) {
-            updates[`priceTier${m}`] = newVal;
-          }
-        }
+        Object.assign(updates, cascadeTierPrices(field as TierField, parseFloat(newVal)));
       }
 
       await updateProduct.mutateAsync(updates);
       toast({ title: `${field} updated`, variant: "success" });
-      setUndoStack((prev) => [...prev.slice(-19), record]);
+
+      // Push an OBJECT PATCH covering every field this save touched — not just the field
+      // the operator edited — so a cascade (pricePerUnit or priceTierN) can be undone/redone
+      // in one shot instead of leaving the cascaded tiers stranded.
+      const patchFields = Object.keys(updates).filter((k) => k !== "id");
+      const oldValue: Record<string, unknown> = {};
+      const newValue: Record<string, unknown> = {};
+      const productAsRecord = product as unknown as Record<string, unknown>;
+      for (const k of patchFields) {
+        oldValue[k] = k === field ? record.oldValue : (productAsRecord[k] ?? null);
+        newValue[k] = updates[k];
+      }
+      setUndoStack((prev) => [...prev.slice(-19), { ...record, oldValue, newValue }]);
       setRedoStack([]);
     },
     [updateProduct, toast],
@@ -790,12 +795,19 @@ export default function ProductsPage() {
     [updateProduct, toast],
   );
 
+  // A record's old/new value is either a scalar (a single field's prior/next value — the
+  // original quick-edit shape) or an object patch (several fields at once — "section" always
+  // did this; a tier-price cascade now does too). Detect by type rather than special-casing
+  // `field === "section"`, so both shapes keep working through the same code path.
+  const asPatch = (field: string, value: EditRecord["oldValue"]): Record<string, unknown> =>
+    value !== null && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : { [field]: value };
+
   const handleUndo = async () => {
     const record = undoStack[undoStack.length - 1];
     if (!record) return;
-    const value = record.oldValue;
-    const patch =
-      record.field === "section" ? (value as Record<string, unknown>) : { [record.field]: value };
+    const patch = asPatch(record.field, record.oldValue);
     await updateProduct.mutateAsync({ id: record.productId, ...patch });
     toast({ title: `Undone: ${record.productName} · ${record.field}`, variant: "success" });
     setUndoStack((prev) => prev.slice(0, -1));
@@ -805,9 +817,7 @@ export default function ProductsPage() {
   const handleRedo = async () => {
     const record = redoStack[redoStack.length - 1];
     if (!record) return;
-    const value = record.newValue;
-    const patch =
-      record.field === "section" ? (value as Record<string, unknown>) : { [record.field]: value };
+    const patch = asPatch(record.field, record.newValue);
     await updateProduct.mutateAsync({ id: record.productId, ...patch });
     toast({ title: `Redone: ${record.productName} · ${record.field}`, variant: "success" });
     setRedoStack((prev) => prev.slice(0, -1));

@@ -109,6 +109,23 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
   return roundMoney(unitPrice * qty);
 }
 
+/**
+ * DISPLAY-ONLY derived per-unit price for a case-packed product: case price ÷ units-per-case,
+ * rounded to cents. Returns null when the product is sold as single units (unitsPerBox
+ * null/0/1) or the input is not a finite number.
+ *
+ * NEVER persist this, never submit it, never feed it back into line math. Lines always carry
+ * the CASE price plus boxes/pieces and are priced by computeLineSubtotal, whose proration is
+ * computed before rounding — so `perUnitPrice(p, upb) * pieces` can differ from the true line
+ * subtotal by a cent. computeLineSubtotal is authoritative; this is a shopper-facing hint.
+ */
+export function perUnitPrice(unitPrice: number, unitsPerBox?: number | null): number | null {
+  const upb = Number(unitsPerBox ?? 0);
+  const price = Number(unitPrice);
+  if (!(upb > 1) || !Number.isFinite(price)) return null;
+  return roundMoney(price / upb);
+}
+
 // ─── Margin: the "negotiation floor" (pos-cost-roles-spec §1) ─────────────────
 // `unitCost` (Product.averageCost) is per PIECE. `unitPrice` is per SELLING UNIT
 // (a BOX when unitsPerBox > 1, else a piece). Bring cost onto the selling-unit
@@ -390,6 +407,12 @@ export function effectiveBuyerPrice(
 // the order AND invoice line, but read surfaces used to render only the raw
 // piece count. One shared formatter so "2 boxes + 3 pcs" reads identically on
 // the order detail, invoice detail, and PDF. Keep all three mirrors in sync.
+//
+// DOCUMENT wording stays "boxes + pcs" deliberately (2026-07-30): it is shorter,
+// scans better in the narrow PDF qty column, and matches how wholesale paperwork
+// normally reads. The Case/Unit vocabulary is for the OPERATOR-facing setup and
+// selling UI (units-per-case field, Case|Unit toggle) — different audience.
+// `unitLabel` still overrides the loose-unit noun per product.
 
 export interface QtySplitInput {
   /** Total quantity (pieces for boxed lines). Used when no split is stored. */

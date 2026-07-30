@@ -76,7 +76,14 @@ export interface CreateCreditNoteDto {
   invoiceId?: string;
   amount: number;
   reason: string;
-  issueDate: string;
+  /**
+   * @deprecated Neither field has a `CreditNote` column and the server accepts-and-ignores
+   * both purely so in-flight old bundles don't 400 under `forbidNonWhitelisted`. Optional
+   * here so current code never sends them — otherwise the server-side deprecation could
+   * never be retired.
+   */
+  issueDate?: string;
+  /** @deprecated See `issueDate`. */
   notes?: string;
   /**
    * Optional invoice-line linkage. Present => the credit is attributed to specific

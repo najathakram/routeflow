@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import {
+  FilterChipRow,
   NavAction,
   NavBackButton,
   NavBar,
@@ -29,6 +30,14 @@ type CustomerWithAddress = AdminCustomer & {
 
 type Tab = "Customers" | "Suppliers" | "Map";
 
+// "Sells regulated items" filter — mirrors the web customers list chip. Kept as a
+// local id/label pair like the returns-list FILTERS above.
+const REGULATED_FILTERS = [
+  { id: "ALL", label: "All" },
+  { id: "REGULATED", label: "Regulated" },
+] as const;
+type RegulatedFilterId = (typeof REGULATED_FILTERS)[number]["id"];
+
 function initialsFor(name: string): string {
   return (
     name
@@ -44,10 +53,12 @@ export default function CustomersListScreen() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("Customers");
   const [search, setSearch] = useState("");
+  const [regulatedFilter, setRegulatedFilter] = useState<RegulatedFilterId>("ALL");
 
   const customersQ = useAdminCustomers({
     search: tab === "Customers" || tab === "Map" ? search.trim() || undefined : undefined,
     limit: 100,
+    ...(regulatedFilter === "REGULATED" ? { regulated: "1" } : {}),
   });
   const suppliersQ = useSuppliers();
 
@@ -112,6 +123,18 @@ export default function CustomersListScreen() {
         value={search}
         onChangeText={setSearch}
       />
+
+      {tab !== "Suppliers" ? (
+        <FilterChipRow
+          chips={REGULATED_FILTERS.map((f) => ({ label: f.label }))}
+          value={REGULATED_FILTERS.find((f) => f.id === regulatedFilter)?.label ?? "All"}
+          onChange={(label) =>
+            setRegulatedFilter(
+              (REGULATED_FILTERS.find((f) => f.label === label)?.id ?? "ALL") as RegulatedFilterId,
+            )
+          }
+        />
+      ) : null}
 
       {tab === "Suppliers" ? (
         <ScrollView

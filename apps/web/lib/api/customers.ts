@@ -72,6 +72,8 @@ export function useCustomers(params?: {
   customerType?: string;
   sortBy?: string;
   sortDir?: string;
+  /** "1" = only customers holding a license for a regulated category. */
+  regulated?: string;
 }) {
   return useQuery({
     queryKey: ["customers", params],

@@ -6,6 +6,8 @@
 import {
   computeLineSubtotal,
   getTierPrice,
+  cascadeTierPrices,
+  perUnitPrice,
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
@@ -51,6 +53,48 @@ describe("getTierPrice (mobile mirror — must match apps/api/src/utils/pricing.
   });
 });
 
+describe("cascadeTierPrices (mobile mirror — must match apps/api/src/utils/pricing.ts)", () => {
+  it("copies the committed price down to every lower tier", () => {
+    expect(cascadeTierPrices("priceTier2", 9)).toEqual({
+      priceTier3: "9.00",
+      priceTier4: "9.00",
+      priceTier5: "9.00",
+    });
+  });
+
+  it("cascades only to the tiers below the edited one", () => {
+    expect(cascadeTierPrices("priceTier4", 8.5)).toEqual({ priceTier5: "8.50" });
+  });
+
+  it("tier 5 has nothing below it", () => {
+    expect(cascadeTierPrices("priceTier5", 7)).toEqual({});
+  });
+
+  it("Tier 1 / pricePerUnit is deliberately excluded from the cascade", () => {
+    expect(cascadeTierPrices("pricePerUnit", 10)).toEqual({});
+  });
+
+  it("rejects non-finite or negative input", () => {
+    expect(cascadeTierPrices("priceTier2", NaN)).toEqual({});
+    expect(cascadeTierPrices("priceTier2", -1)).toEqual({});
+  });
+
+  it("rounds half-up at the cent", () => {
+    expect(cascadeTierPrices("priceTier2", 9.005)).toEqual({
+      priceTier3: "9.01",
+      priceTier4: "9.01",
+      priceTier5: "9.01",
+    });
+  });
+
+  it("committing 0 cascades an explicit 0.00 — the tiers inherit list price again under getTierPrice's fallback", () => {
+    expect(cascadeTierPrices("priceTier3", 0)).toEqual({
+      priceTier4: "0.00",
+      priceTier5: "0.00",
+    });
+  });
+});
+
 describe("computeLineSubtotal (mobile mirror)", () => {
   it("220 x 2 = 440", () => {
     expect(computeLineSubtotal({ unitPrice: 220, qty: 2 })).toBe(440);
@@ -66,6 +110,28 @@ describe("computeLineSubtotal (mobile mirror)", () => {
     expect(
       computeLineSubtotal({ unitPrice: 220, qty: 21, boxes: 1, pieces: 10, unitsPerBox: 11 }),
     ).toBe(420);
+  });
+});
+
+describe("perUnitPrice (mobile mirror — display-only case-price / units-per-case hint)", () => {
+  it("divides the case price by units-per-case, rounded to cents", () => {
+    expect(perUnitPrice(10, 6)).toBe(1.67);
+    expect(perUnitPrice(10, 3)).toBe(3.33);
+  });
+
+  it("returns null when the product is sold as single units", () => {
+    expect(perUnitPrice(10, null)).toBeNull();
+    expect(perUnitPrice(10, 0)).toBeNull();
+    expect(perUnitPrice(10, 1)).toBeNull();
+  });
+
+  it("is display-only: the line subtotal, not perUnitPrice x pieces, is authoritative", () => {
+    // 2 loose pieces of a 3-pack at a $10 case price: the line prorates BEFORE rounding.
+    expect(
+      computeLineSubtotal({ unitPrice: 10, qty: 2, boxes: 0, pieces: 2, unitsPerBox: 3 }),
+    ).toBe(6.67);
+    // The per-unit hint rounds first, so multiplying it back is a cent off — by design.
+    expect(roundMoney(perUnitPrice(10, 3)! * 2)).toBe(6.66);
   });
 });
 

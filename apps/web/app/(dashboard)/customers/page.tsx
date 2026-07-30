@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Pencil,
@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  ShieldCheck,
 } from "lucide-react";
 import {
   PageHeader,
@@ -49,7 +50,8 @@ import {
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useDebounce } from "@/lib/hooks/useDebounce";
-import { fmt } from "@/lib/formatting";
+import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { fmt, isInternalEmail } from "@/lib/formatting";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -62,6 +64,8 @@ interface Customer {
   customerType?: string;
   receivables?: number;
   unusedCredits?: number;
+  /** Count of authorizations against license-requiring tracked categories (server-side, WP15). */
+  regulatedCount?: number;
   tagAssignments?: Array<{ tag: { id: string; name: string; color: string } }>;
   user: { id: string; email: string; username: string; status: string };
   addresses: any[];
@@ -230,7 +234,6 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
 
 export default function CustomersPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
 
   React.useEffect(() => {
@@ -239,7 +242,15 @@ export default function CustomersPage() {
 
   // ── Local state ──────────────────────────────────────────────────────────
   const [search, setSearch] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState<string>(searchParams.get("status") ?? "");
+  // status + regulated are URL-synced so filtered views are shareable (house pattern — see
+  // products/inventory/invoices pages). Both live in the same hook instance so neither
+  // clobbers the other's query param on change.
+  const [urlFilters, setUrlFilter, clearUrlFilters] = useUrlFilters({
+    status: "",
+    regulated: false,
+  });
+  const statusFilter = urlFilters.status;
+  const regulatedFilter = urlFilters.regulated;
   const [typeFilter, setTypeFilter] = React.useState("");
   const [tagFilter, setTagFilter] = React.useState("");
   const [unassignedOnly, setUnassignedOnly] = React.useState(false);
@@ -259,30 +270,19 @@ export default function CustomersPage() {
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
   const { toast } = useToast();
 
-  // Sync status filter to URL
-  React.useEffect(() => {
-    const url = statusFilter
-      ? `/customers?status=${encodeURIComponent(statusFilter)}`
-      : "/customers";
-    router.replace(url, { scroll: false });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
-
   // Debounce search to avoid firing API on every keystroke
   const debouncedSearch = useDebounce(search, 300);
 
   // Reset page when filters change
   React.useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, statusFilter, typeFilter, tagFilter]);
+  }, [debouncedSearch, statusFilter, typeFilter, tagFilter, regulatedFilter]);
 
   // ── API data ─────────────────────────────────────────────────────────────
-  const {
-    data: result,
-    isLoading,
-    isError,
-    refetch,
-  } = useCustomers({
+  // Built as a separate variable (not an inline literal) so the extra `regulated` param —
+  // not yet part of useCustomers' declared param type; the API side lands in WP15 — passes
+  // through without an excess-property type error. apiClient forwards it as a plain query param.
+  const customersQueryParams = {
     search: debouncedSearch || undefined,
     status: statusFilter || undefined,
     page,
@@ -291,7 +291,9 @@ export default function CustomersPage() {
     customerType: typeFilter || undefined,
     sortBy: sortBy || undefined,
     sortDir: sortBy ? sortDir : undefined,
-  });
+    regulated: regulatedFilter ? "1" : undefined,
+  };
+  const { data: result, isLoading, isError, refetch } = useCustomers(customersQueryParams);
   const customers: Customer[] = result?.data ?? [];
   const meta = result?.meta;
 
@@ -464,6 +466,14 @@ export default function CustomersPage() {
                 {initials}
               </span>
               <span className="text-navy/80">{name}</span>
+              {(row.original.regulatedCount ?? 0) > 0 && (
+                <span
+                  title="Sells regulated items"
+                  className="inline-flex shrink-0 items-center text-amber-600"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                </span>
+              )}
             </div>
           );
         },
@@ -475,7 +485,7 @@ export default function CustomersPage() {
         cell: ({ row }) => (
           <span className="text-navy/70 text-xs">
             {row.original.email ??
-              (row.original.user?.email && !row.original.user.email.endsWith("@imported.local")
+              (row.original.user?.email && !isInternalEmail(row.original.user.email)
                 ? row.original.user.email
                 : "—")}
           </span>
@@ -787,7 +797,7 @@ export default function CustomersPage() {
           ].map((o) => (
             <button
               key={o.value || "all"}
-              onClick={() => setStatusFilter(o.value)}
+              onClick={() => setUrlFilter("status", o.value)}
               className={cn(
                 "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
                 statusFilter === o.value
@@ -798,6 +808,21 @@ export default function CustomersPage() {
               {o.label}
             </button>
           ))}
+
+          {/* Regulated filter chip — customers holding at least one authorization against a
+              license-requiring tracked category (API side: WP15) */}
+          <button
+            onClick={() => setUrlFilter("regulated", !regulatedFilter)}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+              regulatedFilter
+                ? "border-navy bg-navy text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Regulated
+          </button>
 
           {/* Type filter */}
           <div className="w-32">
@@ -891,7 +916,7 @@ export default function CustomersPage() {
                     </Button>
                   }
                 />
-              ) : search || statusFilter || typeFilter || tagFilter ? (
+              ) : search || statusFilter || typeFilter || tagFilter || regulatedFilter ? (
                 <EmptyState
                   variant="customers"
                   title="No matching customers"
@@ -902,9 +927,12 @@ export default function CustomersPage() {
                       size="sm"
                       onClick={() => {
                         setSearch("");
-                        setStatusFilter("");
                         setTypeFilter("");
                         setTagFilter("");
+                        // One clearAll, not two setFilter calls: each setFilter rebuilds the
+                        // query string from the same render's searchParams, so the second
+                        // replace would restore the param the first one removed.
+                        clearUrlFilters();
                       }}
                     >
                       Clear filters

@@ -24,6 +24,15 @@ export interface TrackedCategory {
   reportTemplate: string;
   reportCadence: ReportCadence;
   active: boolean;
+  // TX Comptroller (TX_COMPTROLLER template) config. Null on every other template, and
+  // ABSENT entirely when talking to an API deployed before these columns shipped — hence
+  // optional, not just nullable. Read sites must tolerate undefined.
+  /** THIS tenant's own TX license/permit number (8 digits). */
+  wholesalerLicenseNo?: string | null;
+  /** 1 = Cigarettes, 2 = Cigars, 3 = Tobacco. */
+  txItemType?: number | null;
+  /** CP|CS|CC (cigarettes) SB|SC|SD|SF (cigars) WO|WN (tobacco). */
+  txUom?: string | null;
   productCount: number;
   createdAt: string;
   updatedAt: string;
@@ -40,6 +49,10 @@ export interface TrackedCategoryInput {
   reportTemplate?: string;
   reportCadence?: ReportCadence;
   active?: boolean;
+  /** TX config: send `null` to clear a column — `undefined` is dropped from the body and no-ops. */
+  wholesalerLicenseNo?: string | null;
+  txItemType?: number | null;
+  txUom?: string | null;
 }
 
 /**

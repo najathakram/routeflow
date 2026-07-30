@@ -4,9 +4,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
+import { RegulatedReportService } from "./regulated-report.service";
 import { roundMoney } from "../common/pricing";
 import { filingPeriod, FilingCadence } from "./period";
 import { buildFilingCsv } from "./filing-csv";
+import { serializeReportCsv } from "./report-csv";
 
 /** Round a quantity to 3 decimals — matches Decimal(12,3) + the CSV's .toFixed(3). */
 const roundQty = (n: number) => Math.round(n * 1000) / 1000;
@@ -39,6 +41,9 @@ export class RegulatedFilingService {
     private readonly storage: StorageService,
     private readonly audit: AuditService,
     private readonly regulated: RegulatedService,
+    // WP11: TX_COMPTROLLER filings store a per-invoice TX report instead of the
+    // (category, period) aggregate — see the branch in prepareFiling below.
+    private readonly reports: RegulatedReportService,
   ) {}
 
   /** Tenant-scoped list of prepared filings, newest period first. */
@@ -140,20 +145,46 @@ export class RegulatedFilingService {
     totals.netSales = roundMoney(totals.netSales);
     totals.categoryTax = roundMoney(totals.categoryTax);
 
-    // CSV artifact — columns driven by the category's reportTemplate.
-    const csv = buildFilingCsv(category.reportTemplate, {
-      categoryName: category.name,
-      unitBasis: category.unitBasis,
-      periodKey,
-      rows: rows.map((r) => ({
-        periodBucket: r.periodBucket,
-        qty: r.qty,
-        unitBasisQty: r.unitBasisQty,
-        netSales: r.netSales,
-        categoryTax: r.categoryTax,
-      })),
-      totals,
-    });
+    // CSV artifact — columns driven by the category's reportTemplate. TX_COMPTROLLER
+    // stores a per-invoice TX report instead of the (category, period) aggregate; the
+    // Decimal totals above are ALWAYS the ledger aggregate, regardless of template —
+    // only the CSV bytes + the persisted `rows` Json shape differ for TX.
+    let csv: string;
+    let rowsJson: Prisma.InputJsonValue;
+    if (category.reportTemplate === "TX_COMPTROLLER") {
+      const txReport = await this.reports.buildTxReportForRange(
+        {
+          id: category.id,
+          name: category.name,
+          wholesalerLicenseNo: category.wholesalerLicenseNo,
+          txItemType: category.txItemType,
+          txUom: category.txUom,
+        },
+        from,
+        to,
+        { from: periodKey, to: periodKey },
+      );
+      csv = serializeReportCsv(txReport);
+      rowsJson = {
+        txRows: txReport.rows,
+        warnings: txReport.warnings,
+      } as unknown as Prisma.InputJsonValue;
+    } else {
+      csv = buildFilingCsv(category.reportTemplate, {
+        categoryName: category.name,
+        unitBasis: category.unitBasis,
+        periodKey,
+        rows: rows.map((r) => ({
+          periodBucket: r.periodBucket,
+          qty: r.qty,
+          unitBasisQty: r.unitBasisQty,
+          netSales: r.netSales,
+          categoryTax: r.categoryTax,
+        })),
+        totals,
+      });
+      rowsJson = rows as unknown as Prisma.InputJsonValue;
+    }
     // Deterministic, tenant-scoped key — regeneration overwrites in place.
     const csvKey = `regulated-filings/${tenantId}/${params.trackedCategoryId}/${periodKey}.csv`;
     await this.storage.upload(csvKey, Buffer.from(csv, "utf8"), "text/csv");
@@ -176,7 +207,7 @@ export class RegulatedFilingService {
       totalUnitBasisQty: totals.unitBasisQty,
       totalNetSales: totals.netSales,
       totalCategoryTax: totals.categoryTax,
-      rows: rows as unknown as Prisma.InputJsonValue,
+      rows: rowsJson,
       csvKey,
       pdfKey: null,
       generatedAt: new Date(),

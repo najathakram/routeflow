@@ -39,6 +39,8 @@ export interface ReturnLog {
   createdAt: string;
 }
 
+export type RefundMethod = "CREDIT_NOTE" | "EXTERNAL_REFUND";
+
 export interface Return {
   id: string;
   returnNumber: string;
@@ -53,6 +55,18 @@ export interface Return {
   logs?: ReturnLog[];
   createdAt: string;
   updatedAt: string;
+  /** Populated once a CREDIT_NOTE refund has minted store credit for this return. */
+  creditNoteId?: string;
+  creditNote?: { id: string; creditNoteNumber: string; amount: number; status: string };
+  refundAmount?: number | null;
+  refundMethod?: RefundMethod | null;
+  refundedAt?: string | null;
+  /**
+   * Server-computed Σ qty × (subtotal/qty) across the return's items — the same
+   * box-price-safe figure processRefund would mint/record. Always present so the
+   * resolve modal can show the amount before the operator commits to a method.
+   */
+  refundEstimate?: number;
 }
 
 interface PaginatedResponse<T> {
@@ -141,11 +155,22 @@ export function useMarkReturnInTransit() {
   });
 }
 
+export interface MarkReceivedDto {
+  id: string;
+  /**
+   * false = "we are not keeping these goods": the server skips restocking entirely
+   * and persists restock=false on every item, so a later cancel stays symmetric.
+   * Omitted/true keeps the per-item flags chosen when the return was created.
+   */
+  restock?: boolean;
+}
+
 export function useMarkReturnReceived() {
   const qc = useQueryClient();
-  return useMutation<Return, Error, string>({
-    mutationFn: (id) => apiClient.post(`/returns/${id}/receive`).then((r) => r.data),
-    onSuccess: (_, id) => {
+  return useMutation<Return, Error, MarkReceivedDto>({
+    mutationFn: ({ id, ...data }) =>
+      apiClient.post(`/returns/${id}/receive`, data).then((r) => r.data),
+    onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
     },
@@ -154,7 +179,8 @@ export function useMarkReturnReceived() {
 
 export interface ProcessRefundDto {
   id: string;
-  restock?: boolean;
+  /** CREDIT_NOTE (default) mints store credit; EXTERNAL_REFUND records nothing minted. */
+  method?: RefundMethod;
 }
 
 export function useProcessRefund() {
@@ -165,6 +191,7 @@ export function useProcessRefund() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
+      qc.invalidateQueries({ queryKey: ["credit-notes"] });
     },
   });
 }

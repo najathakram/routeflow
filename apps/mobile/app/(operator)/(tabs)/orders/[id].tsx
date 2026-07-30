@@ -533,7 +533,7 @@ export default function OrderDetailScreen() {
                 const upbRaw = (li as any).product?.unitsPerBox;
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
                 const isBoxed = upb > 1;
-                // Show "1 box + 2 pcs · $30 / box" when split, otherwise the
+                // Show "1 box + 2 pcs · $30 / box of 12" when split, otherwise the
                 // existing "8 ea · $5.00" form. Shared formatter — reads the
                 // same on web order/invoice detail and the PDF.
                 const qtyLine =
