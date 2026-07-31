@@ -19,8 +19,6 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import {
-  BarChart,
-  Bar,
   LineChart,
   Line,
   XAxis,
@@ -59,6 +57,7 @@ import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
+import { DemandCard } from "./DemandCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
@@ -85,21 +84,6 @@ const COMMON_UNITS = [
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Deterministic 30-day demand data seeded by product ID. */
-function generateDemandData(productId: string): { day: string; units: number }[] {
-  const seed = Array.from(productId).reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const base = new Date(2026, 1, 8); // Feb 8
-  return Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(base);
-    d.setDate(d.getDate() + i);
-    const units = Math.max(
-      1,
-      Math.round(8 + ((seed * 3 + i * 7) % 14) + Math.round(Math.sin((i + seed) * 0.7) * 4)),
-    );
-    return { day: `${d.getMonth() + 1}/${d.getDate()}`, units };
-  });
-}
 
 type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
@@ -359,7 +343,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const hasActiveRegType = isEditing
     ? !!(editDraft.trackedCategoryId as string)
     : !!product?.trackedCategoryId;
-  const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
   const [selectedImages, setSelectedImages] = React.useState<Set<number>>(new Set());
@@ -436,9 +419,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   }, [product?.id]);
 
   React.useEffect(() => {
-    setIsMounted(true);
-  }, []);
-  React.useEffect(() => {
     setTitle(product?.name ?? "Product");
   }, [setTitle, product?.name]);
 
@@ -460,7 +440,6 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const priceNumber = parseFloat(String(product.pricePerUnit));
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive);
-  const demandData = generateDemandData(product.id);
 
   const startEdit = () => {
     setEditDraft({
@@ -2139,51 +2118,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               </div>
             )}
 
-            {/* 30-day demand chart */}
-            <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="border-b border-surface-border px-5 py-3.5">
-                <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
-                  30-Day Order Demand
-                </h3>
-              </div>
-              <div className="p-5">
-                <p className="mb-3 text-xs text-navy/70 italic">
-                  Demo data — historical order demand coming soon.
-                </p>
-                {isMounted ? (
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={demandData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                      <XAxis
-                        dataKey="day"
-                        tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-                        tickLine={false}
-                        axisLine={false}
-                        interval={4}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 10, fill: "#1B3A5C99" }}
-                        tickLine={false}
-                        axisLine={false}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          borderRadius: 8,
-                          border: "1px solid #e2e8f0",
-                          fontSize: 12,
-                          boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
-                        }}
-                        labelStyle={{ color: "#1B3A5C", fontWeight: 600 }}
-                        formatter={((v: number) => [`${v} units`, "Ordered"]) as any}
-                      />
-                      <Bar dataKey="units" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="h-[200px] animate-pulse rounded-lg bg-surface-raised" />
-                )}
-              </div>
-            </div>
+            {/* Sales demand — real data from invoiced sales. In its own file (unlike
+                CostHistoryCard below) because it owns range/metric state and five
+                render states; this file is already ~2.7k lines. */}
+            <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />

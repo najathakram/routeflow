@@ -1,11 +1,64 @@
 import { Injectable } from "@nestjs/common";
+import { InvoiceStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import {
+  type DemandGranularity,
+  type DemandRange,
+  bucketIndexOf,
+  demandWindow,
+} from "./demand-range";
 
 export const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
+
+/**
+ * Invoice statuses that represent a real sale — mirrors the tobacco report services.
+ * Uses the generated enum rather than string literals so a schema change can't silently
+ * drift the filter (the sibling copies use `as any` on a string array).
+ */
+const REAL_INVOICE_STATUSES = {
+  notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+};
+
+/**
+ * Quantities are `Decimal(10,3)`, so they round to 3dp — NOT through `roundMoney`,
+ * which is 2dp and would silently truncate a fractional imported qty. Money still
+ * goes through `roundMoney` per the repo's money discipline.
+ */
+function roundQty(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round((n + Number.EPSILON) * 1000) / 1000;
+}
+
+/** One bucket of the per-product demand series. Both metrics ship together. */
+export interface ProductDemandBucket {
+  /** Bucket START, "YYYY-MM-DD". Never an ISO timestamp — see demand-range.ts. */
+  date: string;
+  /** Total base units (pieces) invoiced in this bucket. */
+  units: number;
+  /** Net invoiced sales in this bucket (line subtotals, pre-tax). */
+  revenue: number;
+}
+
+export interface ProductDemandSeries {
+  productId: string;
+  range: DemandRange;
+  granularity: DemandGranularity;
+  /** ISO, inclusive. */
+  from: string;
+  /** ISO, EXCLUSIVE. */
+  to: string;
+  buckets: ProductDemandBucket[];
+  totals: { units: number; revenue: number };
+  /** False ⇒ never invoiced at any date: "never sold", not "zero this window". */
+  hasAnySales: boolean;
+  /** "YYYY-MM-DD" of this product's first / most recent invoiced sale. */
+  firstSaleAt: string | null;
+  lastSaleAt: string | null;
+}
 
 /** Invoice line slice needed to subtract tobacco revenue from an invoice total. */
 const TOBACCO_LINE_SELECT = {
@@ -351,6 +404,97 @@ export class AnalyticsService {
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
       type: m.type,
     }));
+  }
+
+  /**
+   * Per-product demand series for the product-detail chart. Units AND revenue ship in
+   * one payload so the card's metric toggle never refetches.
+   *
+   * Source is invoiced sales: `InvoiceItem` has no business date of its own, so the
+   * window filters `Invoice.issueDate`. `StockMovement type:"SALE"` — the source the
+   * inventory forecasting tab uses — is not viable here: it is only written on the
+   * route-delivery path, so a tenant that invoices directly has none at all.
+   *
+   * ⚠️ Queried THROUGH Invoice, never `invoiceItem.findMany`. Invoice lines are created
+   * as NESTED writes, which bypass the tenant extension's `data.tenantId` injection, so
+   * historical/imported lines can carry `tenantId = null` — and `forTenant()` injects
+   * `where.tenantId`, which would silently drop every one of them. On this dataset that
+   * is the large majority of the history the 6m/1y/5y ranges exist to show. Same guard
+   * and rationale as `bookkeeping.service.ts getSalesByItem`. A spec pins it.
+   *
+   * The tobacco exclusion toggle is deliberately NOT applied: this is a per-product
+   * drill-down the operator reached by opening that exact product, same carve-out as
+   * price/cost history (see the `tobaccoExclusionActive` doc comment above).
+   */
+  async getProductDemand(
+    productId: string,
+    range: DemandRange = "30d",
+  ): Promise<ProductDemandSeries> {
+    const win = demandWindow(new Date(), range);
+    // Equality on productId can never match NULL, so ad-hoc "unlisted" lines
+    // (productId = null) are excluded by this filter for free.
+    const soldWhere = { status: REAL_INVOICE_STATUSES, items: { some: { productId } } };
+
+    const [invoices, firstSale, lastSale] = await Promise.all([
+      this.prisma.forTenant().invoice.findMany({
+        where: { ...soldWhere, issueDate: { gte: win.from, lt: win.to } },
+        select: {
+          issueDate: true,
+          items: { where: { productId }, select: { qty: true, subtotal: true } },
+        },
+      }),
+      this.prisma.forTenant().invoice.findFirst({
+        where: soldWhere,
+        orderBy: { issueDate: "asc" },
+        select: { issueDate: true },
+      }),
+      this.prisma.forTenant().invoice.findFirst({
+        where: soldWhere,
+        orderBy: { issueDate: "desc" },
+        select: { issueDate: true },
+      }),
+    ]);
+
+    // Buckets are materialized up front and indexed into, so empty periods stay in the
+    // series as explicit zeros (getRevenueTrend's Record+Object.entries approach drops
+    // them and hands the client a chart with holes).
+    const units = new Array<number>(win.buckets.length).fill(0);
+    const revenue = new Array<number>(win.buckets.length).fill(0);
+
+    for (const inv of invoices) {
+      const idx = bucketIndexOf(win, inv.issueDate);
+      if (idx < 0) continue; // defensive — the half-open filter already excludes these
+      for (const item of inv.items) {
+        // qty is ALREADY the normalized base-unit total (a "2 cases + 3 packs" line
+        // with unitsPerBox 12 stores qty 27) — never re-derive it from boxes/pieces.
+        units[idx] += Number(item.qty);
+        // subtotal is authoritative. NEVER qty × unitPrice: that re-introduces the
+        // boxed-line overcharge by unitsPerBox that common/pricing.ts exists to prevent.
+        revenue[idx] += Number(item.subtotal);
+      }
+    }
+
+    const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+
+    return {
+      productId,
+      range,
+      granularity: win.granularity,
+      from: win.from.toISOString(),
+      to: win.to.toISOString(),
+      buckets: win.buckets.map((b, i) => ({
+        date: b.date,
+        units: roundQty(units[i]),
+        revenue: roundMoney(revenue[i]),
+      })),
+      totals: {
+        units: roundQty(units.reduce((s, v) => s + v, 0)),
+        revenue: roundMoney(revenue.reduce((s, v) => s + v, 0)),
+      },
+      hasAnySales: firstSale != null,
+      firstSaleAt: day(firstSale?.issueDate),
+      lastSaleAt: day(lastSale?.issueDate),
+    };
   }
 
   async getSalesByCategory(from?: string, to?: string) {
