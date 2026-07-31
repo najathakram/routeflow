@@ -111,39 +111,40 @@ Names only — see each app's example file. Never commit values.
 - Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
 
-### Canonical deploy flow: **public → merge → deploy → private** (in this exact order)
+### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 
-The repo is **private by default** (commercial source). CI (public repos = free Actions) and Railway's
-GitHub deploy (it must **clone** the repo) both need it public. The sequence — **always**:
+The repo is **private by default** (commercial source). CI (public repos = free Actions) needs it
+public; Railway's GitHub deploy does **not** (the Railway GitHub App clones private repos fine —
+proven on #244/#245 and every batch since, incl. #318 which shipped fully private). The public
+window exists ONLY to run CI, so keep it to minutes.
 
-> **UPDATE 2026-07-13 — GitHub deploys now work while PRIVATE.** PRs #244/#245 auto-deployed from a
-> `gh pr merge` to master with the repo **staying private** (BUILDING → SUCCESS) — the Railway GitHub App
-> DOES have private-repo access now, so the "Snapshot code → repository not found" clone failure below is
-> **no longer the current behavior**. In practice you can **skip steps 1 & 5** (the public/private flips):
-> apply any migration, then just `gh pr merge` and let master auto-deploy. CI (GitHub **Actions**) still
-> needs public to run checks, so private merges show `UNSTABLE`/no-CI — gate on local `npm run verify`.
-> **Note (Claude):** the assistant will NOT flip repo visibility regardless (commercial source → public
-> is a prohibited sharing-permission change) — and it turns out that's unnecessary for deploys.
-> ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master push
-> auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on #244/#245 — merge
-> both to master, don't `railway up`). The steps below are retained as the fallback if a private deploy
-> ever fails.
+> **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
+> flips as part of this routine — a brief public window for CI is an accepted trade-off. Two hard
+> rules: (1) **never leave the repo public** — flip back to private even if CI fails, the merge
+> fails, or anything else goes wrong (treat the private flip as a `finally`); (2) keep the public
+> window minimal — flip private **immediately after the merge**, never wait for the Railway
+> deploy (it clones fine while private).
 
-1. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
-2. **(schema change only)** apply the prod migration FIRST — `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
+1. **(schema change only)** apply the prod migration FIRST — fresh backup, then
+   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
+2. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
-4. **Let the deploy FINISH while still public.** Railway clones the repo during **"Snapshot code"** — wait until the new deployment is **ACTIVE / "Deployment successful"** (watch `railway deployment list --service @routeflow/{api,web}` or the dashboard), then `npm run post-deploy-check`.
-5. **Only then make it private** — `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
+4. **Make it private again, immediately** — `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
+   Do this even if CI failed or the merge was aborted.
+5. **Watch the deploy** (`railway deployment list --service @routeflow/{api,web,mobile}`) until
+   SUCCESS, then `npm run post-deploy-check`.
 
-> **Do NOT flip to private before the Railway deploy completes.** If the repo goes private mid-deploy,
-> the clone fails with **"Snapshot code → repository not found"** and the deploy dies (Railway's GitHub
-> App lacks private-repo access — see memory `project_railway_deploy_outage_2026-07`). Docs-only changes
-> (outside each service's `watchPatterns` = `apps/<svc>/**` + `packages/**`) are **SKIPPED** by Railway, so
-> there's no deploy to wait for — go private right after merge.
+> ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
+> push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on
+> #244/#245 — merge to master instead).
 >
-> **Fallback if a GitHub deploy is stuck/broken:** `railway up --service @routeflow/api --ci` then
-> `--service @routeflow/web --ci` force-deploys local source (bypasses the clone). Permanent fix for the
-> clone failure = reinstall the **Railway GitHub App** with access to the private repo on account `najathakram`.
+> **If a deploy ever fails with "Snapshot code → repository not found"**, the Railway GitHub App
+> has lost private-repo access again (see memory `project_railway_deploy_outage_2026-07`). Then
+> either stay public until the deploy finishes (the pre-2026-07-13 ordering) or force-deploy local
+> source: `railway up --service @routeflow/api --ci` then `--service @routeflow/web --ci`.
+> Permanent fix = reinstall the Railway GitHub App with private-repo access on `najathakram`.
+> Docs-only changes (outside `watchPatterns` = `apps/<svc>/**` + `packages/**`) are SKIPPED by
+> Railway — nothing to watch.
 
 ## Token Budget
 
