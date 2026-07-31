@@ -149,7 +149,10 @@ new")` (RF-203: the real create surface is the `CreateProductModal` on the list,
   and sales tracked separately for monthly tax reports" → `/tobacco`); a **variant-of banner** with
   Unlink when it has a parent; InfoRows (SKU/Barcode, Category, Unit, Tier 1 Price, Variant of,
   Flavor/variety); a **Pricing Tiers** grid (T2–T5 with "Set all to Tier 1" and ≤-previous-tier
-  warnings); Description. **30-Day Order Demand** (labelled demo data). **CostHistoryCard** (line =
+  warnings); Description. **Sales Demand** (real invoiced sales — range toggle 30D/6M/1Y/5Y ×
+  metric toggle Units/Revenue, one payload so the metric switch never refetches;
+  `GET /analytics/demand/:id?range=`; explicit never-sold and empty-window states, the latter
+  offering a jump to the smallest range containing the last sale). **CostHistoryCard** (line =
   avg cost, orange dots = purchase costs; hidden if no history; `GET /analytics/cost-history/:id`).
   **Variants** table for parents (Link existing / Add Variant; per-row toggle-active).
 - **Actions:** **Edit** (drafts → `useUpdateProduct` `PATCH /products/:id`), **Deactivate/Activate**

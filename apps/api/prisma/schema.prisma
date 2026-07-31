@@ -1741,6 +1741,11 @@ model Invoice {
   @@index([createdAt])
   @@index([tenantId])
   @@index([invoiceGroupId])
+  // issueDate is the canonical analytics date (revenue trend, gross margin, AOV,
+  // sales-by-item, tobacco monthly, per-product demand) but was unindexed — every one
+  // of those filtered tenantId + issueDate on a heap scan. Mirrors RfInvoice's
+  // @@index([tenantId, issuedAt]).
+  @@index([tenantId, issueDate])
 }
 
 model InvoiceItem {

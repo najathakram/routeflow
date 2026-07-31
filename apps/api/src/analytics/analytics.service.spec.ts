@@ -194,4 +194,171 @@ describe("AnalyticsService — signed COGS", () => {
       ]);
     });
   });
+
+  describe("getProductDemand", () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+    /** The "YYYY-MM-DD" bucket key a date lands in, for locating points by value. */
+    const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
+    it("buckets units and revenue by the invoice issue date", async () => {
+      const today = daysAgo(0);
+      const older = daysAgo(3);
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: today, items: [{ qty: D(5), subtotal: D(50) }] },
+        { issueDate: older, items: [{ qty: D(2), subtotal: D(20) }] },
+      ]);
+
+      const res = await service.getProductDemand("p1", "30d");
+
+      expect(res.buckets.find((b) => b.date === dayKey(today))).toMatchObject({
+        units: 5,
+        revenue: 50,
+      });
+      expect(res.buckets.find((b) => b.date === dayKey(older))).toMatchObject({
+        units: 2,
+        revenue: 20,
+      });
+      expect(res.totals).toEqual({ units: 7, revenue: 70 });
+      expect(res.granularity).toBe("day");
+    });
+
+    it("sums revenue from subtotal — NEVER qty × unitPrice (boxed-line overcharge)", async () => {
+      // A boxed line: 2 cases + 3 packs @ unitsPerBox 12 stores qty 27. Re-deriving
+      // revenue as qty × unitPrice would bill 1181.25 instead of the real 43.75.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: daysAgo(1),
+          items: [
+            {
+              qty: D(27),
+              unitPrice: D(43.75),
+              subtotal: D(43.75),
+              boxes: 2,
+              pieces: 3,
+              unitsPerBox: 12,
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.getProductDemand("p1", "30d");
+
+      expect(res.totals.revenue).toBe(43.75);
+      expect(res.totals.units).toBe(27);
+    });
+
+    it.each([
+      ["30d", 30],
+      ["6m", 26],
+      ["1y", 12],
+      ["5y", 60],
+    ] as const)("zero-fills every bucket for %s", async (range, count) => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      const res = await service.getProductDemand("p1", range);
+
+      expect(res.buckets).toHaveLength(count);
+      expect(res.buckets.every((b) => b.units === 0 && b.revenue === 0)).toBe(true);
+      expect(res.totals).toEqual({ units: 0, revenue: 0 });
+      expect(res.range).toBe(range);
+    });
+
+    it("filters out DRAFT/VOID/WRITTEN_OFF and matches only this product's lines", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await service.getProductDemand("p1", "30d");
+
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      expect(args.where.items).toEqual({ some: { productId: "p1" } });
+      // The nested filter is what keeps other products' (and null-productId ad-hoc)
+      // lines out of each invoice's item array.
+      expect(args.select.items.where).toEqual({ productId: "p1" });
+    });
+
+    it("queries THROUGH Invoice, never invoiceItem directly", async () => {
+      // Invoice lines are nested-created, so many carry tenantId = null; forTenant()
+      // injects where.tenantId and would silently drop them. Guards a "simplification"
+      // back to invoiceItem.findMany, which would lose most of the history.
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await service.getProductDemand("p1", "1y");
+
+      expect(prisma.forTenant).toHaveBeenCalled();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("uses a half-open window whose width matches the range", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await service.getProductDemand("p1", "30d");
+
+      const { gte, lt, lte } = prisma.invoice.findMany.mock.calls[0][0].where.issueDate;
+      expect(lte).toBeUndefined(); // half-open — no 23:59:59.999 fudge
+      expect((lt.getTime() - gte.getTime()) / 86_400_000).toBe(30);
+      const aheadMs = lt.getTime() - Date.now();
+      expect(aheadMs).toBeGreaterThan(0);
+      expect(aheadMs).toBeLessThanOrEqual(86_400_000);
+    });
+
+    it("ignores an invoice that falls outside the window", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: daysAgo(400), items: [{ qty: D(99), subtotal: D(999) }] },
+      ]);
+
+      const res = await service.getProductDemand("p1", "30d");
+
+      expect(res.totals).toEqual({ units: 0, revenue: 0 });
+    });
+
+    it("reports never-sold vs sold-but-zero-in-window", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.invoice.findFirst.mockResolvedValue(null);
+
+      const never = await service.getProductDemand("p1", "30d");
+      expect(never.hasAnySales).toBe(false);
+      expect(never.firstSaleAt).toBeNull();
+      expect(never.lastSaleAt).toBeNull();
+
+      const sold = daysAgo(200);
+      prisma.invoice.findFirst.mockResolvedValue({ issueDate: sold });
+
+      const stale = await service.getProductDemand("p1", "30d");
+      expect(stale.hasAnySales).toBe(true);
+      expect(stale.lastSaleAt).toBe(dayKey(sold));
+      expect(stale.totals.units).toBe(0);
+    });
+
+    it("rounds money to cents and quantity to 3dp", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: daysAgo(1),
+          items: [
+            { qty: D(0.333), subtotal: D(0.1) },
+            { qty: D(0.333), subtotal: D(0.2) },
+            { qty: D(0.333), subtotal: D(0.005) },
+          ],
+        },
+      ]);
+
+      const res = await service.getProductDemand("p1", "30d");
+
+      expect(res.totals.revenue).toBe(0.31); // not 0.30000000000000004
+      expect(res.totals.units).toBe(0.999); // 3dp, not roundMoney's 2dp
+    });
+
+    it("is unaffected by the tobacco exclusion toggle", async () => {
+      // Per-product drill-downs opt out, same as price/cost history.
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: daysAgo(1), items: [{ qty: D(4), subtotal: D(40) }] },
+      ]);
+
+      const res = await service.getProductDemand("p1", "30d");
+
+      expect(res.totals).toEqual({ units: 4, revenue: 40 });
+      expect(systemConfig.get).not.toHaveBeenCalled();
+    });
+  });
 });

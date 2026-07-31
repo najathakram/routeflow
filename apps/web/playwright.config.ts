@@ -145,5 +145,19 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Product demand card ────────────────────────────────────────────────────
+    // Sales Demand chart on /products/[id]; every endpoint mocked, so it reaches
+    // the never-sold and empty-window states live data cannot. Self-skips on web
+    // builds that predate the card.
+    {
+      name: "product-demand",
+      testMatch: /11-product-demand\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

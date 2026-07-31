@@ -240,18 +240,3 @@ export function getProduct(id: string): Product | undefined {
 }
 
 export const categories: Category[] = ["Beverages", "Snacks", "Cleaning Supplies"];
-
-/** Deterministic 30-day demand data seeded by product ID. */
-export function generateDemandData(productId: string): { day: string; units: number }[] {
-  const seed = Array.from(productId).reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const base = new Date(2026, 1, 8); // Feb 8
-  return Array.from({ length: 30 }, (_, i) => {
-    const d = new Date(base);
-    d.setDate(d.getDate() + i);
-    const units = Math.max(
-      1,
-      Math.round(8 + ((seed * 3 + i * 7) % 14) + Math.round(Math.sin((i + seed) * 0.7) * 4)),
-    );
-    return { day: `${d.getMonth() + 1}/${d.getDate()}`, units };
-  });
-}

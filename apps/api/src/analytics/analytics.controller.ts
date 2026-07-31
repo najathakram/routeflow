@@ -1,9 +1,10 @@
-import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
+import { BadRequestException, Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { AnalyticsService } from "./analytics.service";
+import { DEMAND_RANGES, isDemandRange } from "./demand-range";
 
 @Controller("analytics")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,6 +31,7 @@ export class AnalyticsController {
         "GET /analytics/aov",
         "GET /analytics/price-history/:productId",
         "GET /analytics/cost-history/:productId",
+        "GET /analytics/demand/:productId",
       ],
     };
   }
@@ -107,5 +109,19 @@ export class AnalyticsController {
   @Get("cost-history/:productId")
   getCostHistory(@Param("productId") id: string) {
     return this.analyticsService.getCostHistory(id);
+  }
+
+  @Get("demand/:productId")
+  getProductDemand(@Param("productId") id: string, @Query("range") range?: string) {
+    // An empty `?range=` is treated as absent, matching how the other params here read
+    // (`limit ? parseInt(limit) : 10`). Only a non-empty unrecognised value is an error.
+    const r = (range?.trim() || "30d").toLowerCase();
+    // Reject rather than silently defaulting (as getRevenueTrend's groupBy does): an
+    // unrecognised range would return a 30-day chart LABELLED 6 months, and this is a
+    // surface operators read to make reorder decisions.
+    if (!isDemandRange(r)) {
+      throw new BadRequestException(`range must be one of: ${DEMAND_RANGES.join(", ")}`);
+    }
+    return this.analyticsService.getProductDemand(id, r);
   }
 }
