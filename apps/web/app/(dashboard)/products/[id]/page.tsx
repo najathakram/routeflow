@@ -352,6 +352,13 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const activeUnitsPerBox = isEditing
     ? Number.parseFloat((editDraft.unitsPerBox as string) || "0") || 0
     : Number(product?.unitsPerBox ?? 0);
+  // Whether a regulated type is currently chosen — draft while editing (so
+  // clearing the type immediately stops the Regulatory reporting card claiming
+  // a template), the saved product otherwise. Same edit/read split as
+  // `activeProductConfig`, and they must stay in sync.
+  const hasActiveRegType = isEditing
+    ? !!(editDraft.trackedCategoryId as string)
+    : !!product?.trackedCategoryId;
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -1475,26 +1482,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   </div>
                 )}
 
-                {/* Regulated type + category (formerly "section"/"subcategory") — Phase 4.
-                    Read mode only; the live pickers render in the details grid while editing. */}
-                {!isEditing && product.trackedCategory && (
-                  <div className="mb-4 flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised/50 px-4 py-2">
-                    <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
-                    <span className="text-sm text-navy">
-                      <span className="font-medium">Regulated type:</span>{" "}
-                      {product.trackedCategory.name}
-                      {product.trackedSubcategory && (
-                        <span className="text-navy/70"> · {product.trackedSubcategory.name}</span>
-                      )}
-                    </span>
-                    <Link
-                      href={`/compliance/${product.trackedCategory.id}`}
-                      className="ml-auto text-xs font-medium text-brand-600 hover:underline"
-                    >
-                      Regulated Items →
-                    </Link>
-                  </div>
-                )}
+                {/* The regulated type/category banner that used to sit here moved into
+                    the Regulatory reporting card below, so regulated info lives in
+                    exactly one place instead of straddling two. */}
 
                 {/* Tobacco compliance banner */}
                 {(product as any).isTobacco && (
@@ -1654,162 +1644,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       )
                     }
                   />
-                  {isEditing && sectionOptions.length > 0 && (
-                    <InfoRow
-                      label="Regulated type"
-                      value={
-                        <select
-                          value={(editDraft.trackedCategoryId as string) ?? ""}
-                          onChange={(e) => {
-                            const trackedCategoryId = e.target.value;
-                            setEditDraft((d) => ({
-                              ...d,
-                              trackedCategoryId,
-                              trackedSubcategoryId: "",
-                              // Selecting a type replaces the free-text
-                              // Category row above with the structured
-                              // combobox — clear any typed value so a stale
-                              // one can't resurface if the type is cleared.
-                              category: trackedCategoryId ? "" : d.category,
-                              // Regulatory reporting config is scoped to the
-                              // section's report template — clear it whenever
-                              // the section changes (including cleared
-                              // entirely) so a stale code from a different
-                              // vocabulary can never be submitted.
-                              regItemType: "",
-                              regUomCase: "",
-                              regUomUnit: "",
-                            }));
-                          }}
-                          className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          <option value="">None (not regulated)</option>
-                          {sectionOptions.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                              {s.inactive ? " (inactive)" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      }
-                    />
-                  )}
-                  {/* Regulatory reporting (per-product) — Item type / Unit of
-                      measure / Case unit of measure. Gated on the relevant
-                      section's report template needing per-product config. */}
-                  {activeProductConfig && (
-                    <InfoRow
-                      label="Item type"
-                      value={
-                        isEditing ? (
-                          <select
-                            value={(editDraft.regItemType as string) ?? ""}
-                            onChange={(e) => {
-                              const regItemType = e.target.value;
-                              setEditDraft((d) => {
-                                const validUoms = uomsForItemType(
-                                  activeProductConfig,
-                                  regItemType,
-                                ).map((u) => u.code);
-                                return {
-                                  ...d,
-                                  regItemType,
-                                  regUomUnit: validUoms.includes((d.regUomUnit as string) ?? "")
-                                    ? d.regUomUnit
-                                    : "",
-                                  regUomCase: validUoms.includes((d.regUomCase as string) ?? "")
-                                    ? d.regUomCase
-                                    : "",
-                                };
-                              });
-                            }}
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">Select…</option>
-                            {activeProductConfig.itemTypes.map((t) => (
-                              <option key={t.code} value={t.code}>
-                                {t.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          regItemTypeLabel(activeProductConfig, product.regItemType)
-                        )
-                      }
-                    />
-                  )}
-                  {activeProductConfig && (
-                    <InfoRow
-                      label="Unit of measure (per piece)"
-                      value={
-                        isEditing ? (
-                          <select
-                            value={(editDraft.regUomUnit as string) ?? ""}
-                            onChange={(e) =>
-                              setEditDraft((d) => ({ ...d, regUomUnit: e.target.value }))
-                            }
-                            disabled={!(editDraft.regItemType as string)}
-                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
-                          >
-                            <option value="">
-                              {(editDraft.regItemType as string)
-                                ? "Select…"
-                                : "Select item type first"}
-                            </option>
-                            {uomsForItemType(
-                              activeProductConfig,
-                              (editDraft.regItemType as string) ?? "",
-                            ).map((u) => (
-                              <option key={u.code} value={u.code}>
-                                {u.label}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          regUomLabel(activeProductConfig, product.regUomUnit)
-                        )
-                      }
-                    />
-                  )}
-                  {activeProductConfig?.caseUomSupported && activeUnitsPerBox > 1 && (
-                    <InfoRow
-                      label="Case unit of measure"
-                      value={
-                        isEditing ? (
-                          <>
-                            <select
-                              value={(editDraft.regUomCase as string) ?? ""}
-                              onChange={(e) =>
-                                setEditDraft((d) => ({ ...d, regUomCase: e.target.value }))
-                              }
-                              disabled={!(editDraft.regItemType as string)}
-                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
-                            >
-                              <option value="">
-                                {(editDraft.regItemType as string)
-                                  ? "Select…"
-                                  : "Select item type first"}
-                              </option>
-                              {uomsForItemType(
-                                activeProductConfig,
-                                (editDraft.regItemType as string) ?? "",
-                              ).map((u) => (
-                                <option key={u.code} value={u.code}>
-                                  {u.label}
-                                </option>
-                              ))}
-                            </select>
-                            <p className="mt-0.5 text-xs text-navy/70">
-                              Used when this product is sold by the case. Leave blank to report
-                              every quantity in pieces.
-                            </p>
-                          </>
-                        ) : (
-                          regUomLabel(activeProductConfig, product.regUomCase)
-                        )
-                      }
-                    />
-                  )}
+                  {/* Regulated type, item type and the regulatory units of measure
+                      deliberately do NOT live in this grid — they are filing
+                      vocabulary, not catalog fields, and sitting next to the plain
+                      "Unit of Measure"/"Units per case" inputs made the two easy to
+                      confuse. They render in the Regulatory reporting card below. */}
                   <InfoRow
                     label="Unit of Measure"
                     value={
@@ -2093,6 +1932,212 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 </div>
               </div>
             </div>
+
+            {/* ── Regulatory reporting ──────────────────────────────────────────
+                Filing vocabulary only (regulated type + the codes a report files
+                under), kept in its own card so it can't be mistaken for the
+                catalog's own unit/packaging fields in Details. Rendered whenever
+                the product is regulated, or whenever editing with any regulated
+                type available to assign. */}
+            {(product.trackedCategory || (isEditing && sectionOptions.length > 0)) && (
+              <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+                <div className="flex items-center gap-2 border-b border-surface-border px-5 py-3.5">
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-brand-600" />
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    Regulatory reporting
+                  </h3>
+                  {product.trackedCategory && (
+                    <Link
+                      href={`/compliance/${product.trackedCategory.id}`}
+                      className="ml-auto text-xs font-medium text-brand-600 hover:underline"
+                    >
+                      Regulated Items →
+                    </Link>
+                  )}
+                </div>
+                <div className="p-5">
+                  <p className="mb-4 text-xs text-navy/60">
+                    How this product is filed on regulated sales reports. These codes are the filing
+                    authority&apos;s vocabulary — separate from the catalog&apos;s own unit of
+                    measure and case packaging.
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+                    <InfoRow
+                      label="Regulated type"
+                      value={
+                        isEditing && sectionOptions.length > 0 ? (
+                          <select
+                            value={(editDraft.trackedCategoryId as string) ?? ""}
+                            onChange={(e) => {
+                              const trackedCategoryId = e.target.value;
+                              setEditDraft((d) => ({
+                                ...d,
+                                trackedCategoryId,
+                                trackedSubcategoryId: "",
+                                // Selecting a type replaces the free-text Category
+                                // row in Details with the structured combobox —
+                                // clear any typed value so a stale one can't
+                                // resurface if the type is cleared.
+                                category: trackedCategoryId ? "" : d.category,
+                                // Regulatory reporting config is scoped to the
+                                // section's report template — clear it whenever the
+                                // section changes (including cleared entirely) so a
+                                // stale code from a different vocabulary can never
+                                // be submitted.
+                                regItemType: "",
+                                regUomCase: "",
+                                regUomUnit: "",
+                              }));
+                            }}
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          >
+                            <option value="">None (not regulated)</option>
+                            {sectionOptions.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                                {s.inactive ? " (inactive)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <>
+                            {product.trackedCategory?.name ?? "—"}
+                            {product.trackedSubcategory && (
+                              <span className="text-navy/70">
+                                {" "}
+                                · {product.trackedSubcategory.name}
+                              </span>
+                            )}
+                          </>
+                        )
+                      }
+                    />
+                    {activeProductConfig && (
+                      <InfoRow
+                        label="Item type"
+                        value={
+                          isEditing ? (
+                            <select
+                              value={(editDraft.regItemType as string) ?? ""}
+                              onChange={(e) => {
+                                const regItemType = e.target.value;
+                                setEditDraft((d) => {
+                                  const validUoms = uomsForItemType(
+                                    activeProductConfig,
+                                    regItemType,
+                                  ).map((u) => u.code);
+                                  return {
+                                    ...d,
+                                    regItemType,
+                                    regUomUnit: validUoms.includes((d.regUomUnit as string) ?? "")
+                                      ? d.regUomUnit
+                                      : "",
+                                    regUomCase: validUoms.includes((d.regUomCase as string) ?? "")
+                                      ? d.regUomCase
+                                      : "",
+                                  };
+                                });
+                              }}
+                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            >
+                              <option value="">Select…</option>
+                              {activeProductConfig.itemTypes.map((t) => (
+                                <option key={t.code} value={t.code}>
+                                  {t.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            regItemTypeLabel(activeProductConfig, product.regItemType)
+                          )
+                        }
+                      />
+                    )}
+                    {activeProductConfig && (
+                      <InfoRow
+                        label="Unit of measure (per piece)"
+                        value={
+                          isEditing ? (
+                            <select
+                              value={(editDraft.regUomUnit as string) ?? ""}
+                              onChange={(e) =>
+                                setEditDraft((d) => ({ ...d, regUomUnit: e.target.value }))
+                              }
+                              disabled={!(editDraft.regItemType as string)}
+                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                            >
+                              <option value="">
+                                {(editDraft.regItemType as string)
+                                  ? "Select…"
+                                  : "Select item type first"}
+                              </option>
+                              {uomsForItemType(
+                                activeProductConfig,
+                                (editDraft.regItemType as string) ?? "",
+                              ).map((u) => (
+                                <option key={u.code} value={u.code}>
+                                  {u.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            regUomLabel(activeProductConfig, product.regUomUnit)
+                          )
+                        }
+                      />
+                    )}
+                    {activeProductConfig?.caseUomSupported && activeUnitsPerBox > 1 && (
+                      <InfoRow
+                        label="Case unit of measure"
+                        value={
+                          isEditing ? (
+                            <>
+                              <select
+                                value={(editDraft.regUomCase as string) ?? ""}
+                                onChange={(e) =>
+                                  setEditDraft((d) => ({ ...d, regUomCase: e.target.value }))
+                                }
+                                disabled={!(editDraft.regItemType as string)}
+                                className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                              >
+                                <option value="">
+                                  {(editDraft.regItemType as string)
+                                    ? "Select…"
+                                    : "Select item type first"}
+                                </option>
+                                {uomsForItemType(
+                                  activeProductConfig,
+                                  (editDraft.regItemType as string) ?? "",
+                                ).map((u) => (
+                                  <option key={u.code} value={u.code}>
+                                    {u.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="mt-0.5 text-xs text-navy/70">
+                                Used when this product is sold by the case. Leave blank to report
+                                every quantity in pieces.
+                              </p>
+                            </>
+                          ) : (
+                            regUomLabel(activeProductConfig, product.regUomCase)
+                          )
+                        }
+                      />
+                    )}
+                  </div>
+                  {/* A regulated type whose report template needs no per-product
+                      codes (GENERIC, CA_*, CALRECYCLE) would otherwise render an
+                      unexplained single-field card. */}
+                  {hasActiveRegType && !activeProductConfig && (
+                    <p className="mt-4 border-t border-surface-border pt-3 text-xs text-navy/60">
+                      This regulated type&apos;s report template needs no per-product item type or
+                      unit of measure.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* 30-day demand chart */}
             <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
