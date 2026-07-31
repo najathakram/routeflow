@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, type FilterChip } from "@routeflow/ui/mobile/ios";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
+import { useRegulatedTemplates } from "../lib/api/tracked-categories";
 import {
   fetchRegulatedReportCsvText,
   useRegulatedReportPreview,
@@ -32,7 +33,9 @@ const PRESET_CHIPS: FilterChip[] = [
   { label: "Custom" },
 ];
 
-const REPORT_TEMPLATES = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE", "TX_COMPTROLLER"];
+// Loading fallback for useRegulatedTemplates() below — keeps the picker populated
+// on first render before the /regulated/templates response lands.
+const FALLBACK_TEMPLATES = ["GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE", "TX_COMPTROLLER"];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -134,9 +137,13 @@ export function RegulatedReportSection({ categoryId, categoryName, defaultTempla
     }
   };
 
+  // Report-template metadata (labels) — /regulated/templates. Falls back to the
+  // static literal while the query is loading so the picker is never empty.
+  const { data: templateDefs } = useRegulatedTemplates();
+  const templateKeys = templateDefs?.length ? templateDefs.map((t) => t.key) : FALLBACK_TEMPLATES;
   const templateOptions: PickerOption[] = [
     { id: "", label: `Category default (${defaultTemplate})` },
-    ...REPORT_TEMPLATES.map((t) => ({ id: t, label: t })),
+    ...templateKeys.map((t) => ({ id: t, label: t })),
   ];
   const templateLabel = templateOptions.find((o) => o.id === template)?.label ?? template;
 

@@ -835,6 +835,566 @@ describe("ProductsService", () => {
     });
   });
 
+  // ─── regulatory reporting config (per-product item type / UoM, WP6) ────────
+  // The vocabulary itself (item types → legal UoM codes, which templates carry
+  // per-product config) lives in regulated/template-registry.ts; item type "1"
+  // (Cigarettes) allows CP/CS/CC, item type "2" (Cigars) allows SB/SC/SD/SF —
+  // see TX_COMPTROLLER in that file for the full list.
+
+  describe("regulatory reporting config", () => {
+    const TX_CATEGORY = { name: "Tobacco", reportTemplate: "TX_COMPTROLLER" };
+    const GENERIC_CATEGORY = { name: "Produce", reportTemplate: "GENERIC" };
+
+    it("saves a product with no regulatory config with no extra trackedCategory lookup", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Plain Widget",
+        sku: "PW-2",
+        unit: "each",
+        pricePerUnit: "2",
+      } as any);
+
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("persists valid TX Comptroller codes", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Marlboro Red",
+        sku: "MAR-2",
+        unit: "pack",
+        pricePerUnit: "10",
+        trackedCategoryId: "sec-tx",
+        regItemType: "1",
+        regUomCase: "CC",
+        regUomUnit: "CP",
+      } as any);
+
+      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "sec-tx" } }),
+      );
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            regItemType: "1",
+            regUomCase: "CC",
+            regUomUnit: "CP",
+          }),
+        }),
+      );
+    });
+
+    it("rejects regulatory config with no section (short-circuits before any lookup)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-3",
+          unit: "pack",
+          pricePerUnit: "1",
+          regItemType: "1",
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects an invalid item type", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-4",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedCategoryId: "sec-tx",
+          regItemType: "99",
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a UoM that is not valid for the chosen item type", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-5",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedCategoryId: "sec-tx",
+          regItemType: "1", // Cigarettes
+          regUomUnit: "WO", // Tobacco-only UoM
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a UoM that belongs to a DIFFERENT item type when the item type is set", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-6",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedCategoryId: "sec-tx",
+          regItemType: "2", // Cigars
+          regUomCase: "CC", // valid for Cigarettes ("1"), not Cigars
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects regulatory config on a section whose template has no per-product config", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(GENERIC_CATEGORY);
+
+      await expect(
+        service.create({
+          name: "X",
+          sku: "X-7",
+          unit: "pack",
+          pricePerUnit: "1",
+          trackedCategoryId: "sec-generic",
+          regItemType: "1",
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
+
+    it("a variant inherits the parent's regulatory trio when the DTO omits the section", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.findUnique.mockResolvedValue({
+        priceTier2: 1,
+        priceTier3: 1,
+        priceTier4: 1,
+        priceTier5: 1,
+        category: "Tobacco",
+        unitsPerBox: 1,
+        costingMethod: "AVCO",
+        standardCost: 1,
+        isTobacco: false,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: "CC",
+        regUomUnit: "CP",
+      });
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Menthol",
+        variantName: "Menthol",
+        parentProductId: "parent-tx",
+        unit: "pack",
+        pricePerUnit: "10",
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            trackedCategoryId: "sec-tx",
+            regItemType: "1",
+            regUomCase: "CC",
+            regUomUnit: "CP",
+          }),
+        }),
+      );
+    });
+
+    it("an explicit DTO value on one field beats inheritance while the others still inherit", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.findUnique.mockResolvedValue({
+        priceTier2: 1,
+        priceTier3: 1,
+        priceTier4: 1,
+        priceTier5: 1,
+        category: "Tobacco",
+        unitsPerBox: 1,
+        costingMethod: "AVCO",
+        standardCost: 1,
+        isTobacco: false,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: "CC",
+        regUomUnit: "CP",
+      });
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.product.create.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.create({
+        name: "Menthol",
+        variantName: "Menthol",
+        parentProductId: "parent-tx",
+        unit: "pack",
+        pricePerUnit: "10",
+        regUomUnit: "CS", // explicit override of the parent's "CP"
+      } as any);
+
+      expect(prisma.product.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            regItemType: "1", // still inherited
+            regUomCase: "CC", // still inherited
+            regUomUnit: "CS", // explicit DTO value wins
+          }),
+        }),
+      );
+    });
+
+    it("clears all three fields on update when the section is cleared, without re-validating them", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: "CC",
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedCategoryId: null } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeNull();
+      expect(data.regUomCase).toBeNull();
+      expect(data.regUomUnit).toBeNull();
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+    });
+
+    // ─── fix round: unconditional section-clear + narrowed validation gate ────
+
+    it("clears the trio even when the request ALSO sends an explicit reg code alongside the section clear", async () => {
+      // Regression for the bug: the old auto-clear was gated on `existing.*`, so
+      // when the product had NO prior reg config, sending trackedCategoryId: null
+      // together with regItemType let the raw dto spread leak the code through.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: null,
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedCategoryId: null, regItemType: "1" } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeNull();
+      expect(data.regUomCase).toBeNull();
+      expect(data.regUomUnit).toBeNull();
+    });
+
+    it("still clears all three fields when a product that HAD reg config has its section cleared", async () => {
+      // Keep-it-green guard: the unconditional clear must not lose this
+      // previously-passing behavior for a product carrying real config.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null, // TX Comptroller commonly leaves case UoM unset
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { trackedCategoryId: null } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeNull();
+      expect(data.regUomCase).toBeNull();
+      expect(data.regUomUnit).toBeNull();
+    });
+
+    it("resolves an unrelated field edit without validating a stale trio left behind by a template change", async () => {
+      // The section's template no longer carries per-product config (GENERIC),
+      // but the product still has a leftover regItemType from before the switch.
+      // A rename must not re-validate that stale config and 400.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-generic",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null); // name-uniqueness check
+      prisma.product.update.mockResolvedValue({ ...MOCK_PRODUCT, name: "Renamed" });
+
+      await expect(service.update("prod-1", { name: "Renamed" } as any)).resolves.toBeDefined();
+
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeUndefined();
+      expect(data.regUomCase).toBeUndefined();
+      expect(data.regUomUnit).toBeUndefined();
+    });
+
+    it("still validates and persists explicit reg codes when the request touches the trio", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: null,
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { regItemType: "1", regUomUnit: "CP" } as any);
+
+      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "sec-tx" } }),
+      );
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBe("1");
+      expect(data.regUomUnit).toBe("CP");
+    });
+
+    it("still 400s when a request touching only the UoM conflicts with the product's stored item type", async () => {
+      // Proves the narrowed guard still validates against `existing.*` (not just
+      // the dto) when the request DOES touch the trio.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1", // Cigarettes — stored, not re-sent in this PATCH
+        regUomCase: "CC",
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+
+      await expect(
+        service.update("prod-1", { regUomUnit: "WO" } as any), // Tobacco-only UoM, invalid for item type "1"
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    // ─── stranded config must stay editable, and detached config must survive ──
+
+    it("rejects a section move that would strand codes under a template with no per-product config", async () => {
+      // A MOVE re-validates: the ledger keeps the OLD section but the report reads
+      // the product's codes live, so carrying them into a template that can't
+      // express them would silently restate already-filed periods. Rejected rather
+      // than auto-cleared — both forms clear the trio client-side on a section
+      // change, so an API-direct caller has to send the nulls itself.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(GENERIC_CATEGORY);
+
+      await expect(
+        service.update("prod-1", { trackedCategoryId: "sec-generic" } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("accepts a section move that also clears the trio, the way both product forms send it", async () => {
+      // The web/mobile forms reset all three codes when the section changes, so the
+      // effective trio is empty and the validator short-circuits before any lookup.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await expect(
+        service.update("prod-1", {
+          trackedCategoryId: "sec-generic",
+          regItemType: null,
+          regUomCase: null,
+          regUomUnit: null,
+        } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeNull();
+      expect(data.regUomCase).toBeNull();
+      expect(data.regUomUnit).toBeNull();
+    });
+
+    it("accepts a section move that echoes an unchanged trio still valid for the new template", async () => {
+      // Same TX Comptroller vocabulary on both sides — the move re-validates and
+      // passes, so a legitimate reshuffle between regulated sections still works.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.trackedCategory.findUnique.mockResolvedValue(TX_CATEGORY);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await expect(
+        service.update("prod-1", {
+          trackedCategoryId: "sec-tx-2",
+          regItemType: "1",
+          regUomCase: null,
+          regUomUnit: "CP",
+        } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma.trackedCategory.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "sec-tx-2" } }),
+      );
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBe("1");
+      expect(data.regUomUnit).toBe("CP");
+    });
+
+    it("moves an unconfigured product between sections with no extra trackedCategory lookup", async () => {
+      // Nothing to strand — the empty effective trio short-circuits the validator,
+      // so the move costs no extra query.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-tx",
+        trackedSubcategoryId: null,
+        regItemType: null,
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await expect(
+        service.update("prod-1", { trackedCategoryId: "sec-generic" } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("accepts the product form echoing an unchanged trio back for a stranded product", async () => {
+      // The web detail form always sends all three keys, even when the section's
+      // template makes it render none of them — an unchanged echo must never 400.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: "sec-generic",
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await expect(
+        service.update("prod-1", {
+          pricePerUnit: "12",
+          trackedCategoryId: "sec-generic",
+          regItemType: "1",
+          regUomCase: null,
+          regUomUnit: null,
+        } as any),
+      ).resolves.toBeDefined();
+
+      expect(prisma.trackedCategory.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects a reg code sent for a product that already has no section", async () => {
+      // Nothing TRANSITIONS here (null → null), so the auto-clear does not fire and
+      // there is no section whose template could validate the code — rejected rather
+      // than silently coerced to null, exactly as create() rejects the same input.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+        regItemType: null,
+        regUomCase: null,
+        regUomUnit: null,
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update("prod-1", { trackedCategoryId: null, regItemType: "1" } as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("keeps a detached product's regulatory config through an unrelated edit", async () => {
+      // Products detached from their section keep backfilled codes so their
+      // historic ledger rows still report an item type / UoM. A price edit (or the
+      // form echoing the section back as null) must not erase them.
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", { pricePerUnit: "12" } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBeUndefined();
+      expect(data.regUomCase).toBeUndefined();
+      expect(data.regUomUnit).toBeUndefined();
+    });
+
+    it("keeps a detached product's regulatory config when the form echoes it with a null section", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        ...MOCK_PRODUCT,
+        trackedCategoryId: null,
+        trackedSubcategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      });
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(MOCK_PRODUCT);
+
+      await service.update("prod-1", {
+        trackedCategoryId: null,
+        regItemType: "1",
+        regUomCase: null,
+        regUomUnit: "CP",
+      } as any);
+
+      const data = prisma.product.update.mock.calls[0][0].data;
+      expect(data.regItemType).toBe("1");
+      expect(data.regUomUnit).toBe("CP");
+    });
+  });
+
   // ─── category sync (one-category-axis rule) ─────────────────────────────────
 
   describe("category sync — create", () => {

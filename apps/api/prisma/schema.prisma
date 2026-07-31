@@ -892,6 +892,14 @@ model Product {
   // above (reporting only, no compliance semantics). Parent must equal
   // trackedCategoryId (enforced app-side; Prisma can't express the composite FK).
   trackedSubcategoryId String?
+  /// Regulatory reporting config (template-agnostic; the vocabulary is defined by
+  /// the section's reportTemplate — see regulated/template-registry.ts).
+  /// regUomUnit = UoM code for loose/unit quantities. regUomCase is OPTIONAL and
+  /// opts the product into case-level bucketing when sold by the box; leaving it
+  /// NULL makes the report pass quantities through unconverted (back-compat).
+  regItemType          String?
+  regUomCase           String?
+  regUomUnit           String?
   // Migration & Batch Import (Phase 3): a brand-new product created from a scanned
   // invoice line with only name+SKU+cost is flagged incomplete until price/units
   // are confirmed. Surfaced under a "Finish setup" filter on the import surface.
@@ -3000,8 +3008,13 @@ model TrackedCategory {
   // TX Comptroller (TX_COMPTROLLER report template) config — all optional, per-program because
   // a TX cigarette permit differs from a cigar/tobacco permit.
   wholesalerLicenseNo String? // THIS tenant's own TX license/permit number (8 digits)
+  /// DEPRECATED — txItemType/txUom are superseded by Product.regItemType/regUomUnit. Kept one release as a shadow; no reader.
   txItemType          Int?    // 1 = Cigarettes, 2 = Cigars, 3 = Tobacco
+  /// DEPRECATED — txItemType/txUom are superseded by Product.regItemType/regUomUnit. Kept one release as a shadow; no reader.
   txUom               String? // CP|CS|CC (cigarettes) SB|SC|SD|SF (cigars) WO|WN (tobacco)
+  /// Saved custom report column layout, keyed by template:
+  /// { "TX_COMPTROLLER": ["wholesalerPermit", "retailerName", ...] }
+  reportColumnPrefs   Json?
   active           Boolean                @default(true)
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt

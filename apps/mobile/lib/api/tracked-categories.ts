@@ -29,10 +29,18 @@ export interface TrackedCategory {
   // optional, not just nullable. Read sites must tolerate undefined.
   /** THIS tenant's own TX license/permit number (8 digits). */
   wholesalerLicenseNo?: string | null;
-  /** 1 = Cigarettes, 2 = Cigars, 3 = Tobacco. */
+  /**
+   * @deprecated superseded by Product.regItemType. Kept as a shadow field the API
+   * still accepts (and ignores) — no reader on either platform anymore.
+   */
   txItemType?: number | null;
-  /** CP|CS|CC (cigarettes) SB|SC|SD|SF (cigars) WO|WN (tobacco). */
+  /**
+   * @deprecated superseded by Product.regUomUnit. Kept as a shadow field the API
+   * still accepts (and ignores) — no reader on either platform anymore.
+   */
   txUom?: string | null;
+  /** Saved custom report column layout, keyed by template code. */
+  reportColumnPrefs?: Record<string, string[]> | null;
   productCount: number;
   createdAt: string;
   updatedAt: string;
@@ -51,8 +59,12 @@ export interface TrackedCategoryInput {
   active?: boolean;
   /** TX config: send `null` to clear a column — `undefined` is dropped from the body and no-ops. */
   wholesalerLicenseNo?: string | null;
+  /** @deprecated superseded by Product.regItemType. Still accepted (and ignored) by the API. */
   txItemType?: number | null;
+  /** @deprecated superseded by Product.regUomUnit. Still accepted (and ignored) by the API. */
   txUom?: string | null;
+  /** Saved custom report column layout, keyed by template code. */
+  reportColumnPrefs?: Record<string, string[]> | null;
 }
 
 /**
@@ -68,6 +80,44 @@ export interface TrackedSubcategory {
   productCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Report templates (mirrors apps/api/src/regulated/template-registry.ts /
+// apps/web/lib/api/tracked-categories.ts) — per-product regulatory vocabulary
+// (item types → their legal UoM codes) and each template's column superset. ────
+
+export interface TemplateUomOption {
+  code: string;
+  label: string;
+}
+export interface TemplateItemType {
+  code: string;
+  label: string;
+  uoms: TemplateUomOption[];
+}
+export interface TemplateColumn {
+  key: string;
+  label: string;
+  align?: "right";
+  /** In the template's official/default layout. Non-default columns make a report "custom". */
+  default: boolean;
+}
+export interface ReportTemplateDef {
+  key: string;
+  label: string;
+  kind: "per-sale" | "aggregate";
+  /** null ⇒ this template needs no per-product config. */
+  productConfig: { itemTypes: TemplateItemType[]; caseUomSupported: boolean } | null;
+  columns: TemplateColumn[];
+}
+
+/** Report-template metadata; static per deploy, so cache it for the session. */
+export function useRegulatedTemplates() {
+  return useQuery<ReportTemplateDef[]>({
+    queryKey: ["regulated-templates"],
+    queryFn: () => apiClient.get("/regulated/templates").then((r) => r.data),
+    staleTime: Infinity,
+  });
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────

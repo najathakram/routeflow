@@ -12,6 +12,7 @@ import { ListLedgerDto } from "./dto/list-ledger.dto";
 import { ListFilingsDto } from "./dto/list-filings.dto";
 import { PrepareFilingDto } from "./dto/prepare-filing.dto";
 import { ReportQueryDto } from "./dto/report-query.dto";
+import { REPORT_TEMPLATES } from "./template-registry";
 
 // Generic feature — no addon gate (mirrors tracked-categories; tobacco stays the
 // only addon-gated surface). TENANT_ADMIN satisfies OPERATOR via the RolesGuard.
@@ -34,6 +35,12 @@ export class RegulatedController {
   // Stateless: computed on demand, nothing persisted (filings below remain the
   // compliance archive). Static routes first, registered above `filings/:id/...`
   // so the static segment always wins — same route-order convention as Filings.
+
+  /** Report-template metadata (vocabulary + column supersets) for the config UIs. */
+  @Get("templates")
+  getTemplates() {
+    return REPORT_TEMPLATES;
+  }
 
   @Get("reports/preview")
   previewReport(@Query() query: ReportQueryDto) {

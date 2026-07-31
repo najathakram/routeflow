@@ -107,6 +107,15 @@ export interface ApiProduct {
   costingMethod?: CostingMethod;
   standardCost?: string | number;
   unitsPerBox?: number | null;
+  /**
+   * Regulatory reporting config (template-agnostic; vocabulary comes from the
+   * section's reportTemplate — see `useRegulatedTemplates`). `regUomCase` is
+   * optional and opts the product into case-level bucketing when sold by the
+   * box; leaving it null reports quantities unconverted.
+   */
+  regItemType?: string | null;
+  regUomCase?: string | null;
+  regUomUnit?: string | null;
   parentProductId?: string | null;
   variantName?: string | null;
   variants?: ApiProduct[];

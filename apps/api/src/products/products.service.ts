@@ -18,6 +18,7 @@ import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
+import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -408,6 +409,9 @@ export class ProductsService {
             isTobacco: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
+            regItemType: true,
+            regUomCase: true,
+            regUomUnit: true,
           },
         })
       : null;
@@ -417,20 +421,37 @@ export class ProductsService {
     // Phase 4: regulated section + subcategory. Explicit DTO wins; when the DTO
     // omits the section entirely, a variant inherits the parent family's pair
     // (kept together so they stay same-section). Absent/"" section → null.
+    // The regulatory reporting trio inherits alongside the section pair, but each
+    // of its three fields still falls back to the parent independently — a
+    // variant can override just its case UoM, say, without breaking away from
+    // the parent's section.
     const regulated =
       dto.trackedCategoryId === undefined && parent
         ? {
             trackedCategoryId: parent.trackedCategoryId ?? null,
             trackedSubcategoryId: parent.trackedSubcategoryId ?? null,
+            regItemType:
+              dto.regItemType !== undefined ? dto.regItemType : (parent.regItemType ?? null),
+            regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : (parent.regUomCase ?? null),
+            regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : (parent.regUomUnit ?? null),
           }
         : {
             trackedCategoryId: dto.trackedCategoryId ?? null,
             trackedSubcategoryId: dto.trackedSubcategoryId ?? null,
+            regItemType: dto.regItemType ?? null,
+            regUomCase: dto.regUomCase ?? null,
+            regUomUnit: dto.regUomUnit ?? null,
           };
     await this.assertSubcategoryInSection(
       regulated.trackedCategoryId,
       regulated.trackedSubcategoryId,
     );
+    await this.assertRegConfigValid({
+      trackedCategoryId: regulated.trackedCategoryId,
+      regItemType: regulated.regItemType,
+      regUomCase: regulated.regUomCase,
+      regUomUnit: regulated.regUomUnit,
+    });
     // One-category-axis rule: a regulated product's category IS its structured
     // (per-type) category name — synced server-side so every category surface
     // (filters, analytics, buyer facets) shows "Zyn", never the type name.
@@ -472,6 +493,9 @@ export class ProductsService {
         variantName: dto.variantName ?? null,
         trackedCategoryId: regulated.trackedCategoryId,
         trackedSubcategoryId: regulated.trackedSubcategoryId,
+        regItemType: regulated.regItemType,
+        regUomCase: regulated.regUomCase,
+        regUomUnit: regulated.regUomUnit,
       },
       include: { variants: true, parent: true },
     });
@@ -561,6 +585,40 @@ export class ProductsService {
           ? dto.trackedSubcategoryId
           : existing.trackedSubcategoryId;
     await this.assertSubcategoryInSection(effectiveCategoryId, effectiveSubcategoryId);
+    // Clearing the section clears the regulatory trio with it — gated on the
+    // section actually TRANSITIONING to null, so editing a product that already
+    // has no section (e.g. one detached from its section but still carrying the
+    // config its historic ledger rows are reported under) never erases it.
+    const clearingSection = existing.trackedCategoryId != null && effectiveCategoryId == null;
+    // The gate below fires on a real TRANSITION only — when this request CHANGES
+    // the trio, or MOVES the product to a different section — and never on an echo.
+    // Both product forms resend the section and all three codes on every save, even
+    // when the section's template makes them render none of them, so a presence test
+    // would 400 unrelated edits (a rename, a price change) on any product whose
+    // codes were stranded by a later template switch, with no UI able to clear them.
+    // A change to the trio re-validates the whole effective trio, so an item-type
+    // switch can't leave an orphan UoM. A move re-validates for the same reason
+    // create() rejects the end state: the ledger is append-only and keeps the OLD
+    // section, while the report resolves item type / UoM from the product row LIVE,
+    // so codes carried into a template that can't express them would silently
+    // restate already-filed periods. A move is REJECTED, never auto-cleared — both
+    // forms clear the trio client-side on a section change, so the 400 only reaches
+    // API-direct callers, which must send the nulls explicitly.
+    const regConfigChanged = (["regItemType", "regUomCase", "regUomUnit"] as const).some(
+      (field) => dto[field] !== undefined && (dto[field] ?? null) !== (existing[field] ?? null),
+    );
+    const sectionChanged = (effectiveCategoryId ?? null) !== (existing.trackedCategoryId ?? null);
+    // `!clearingSection` is load-bearing: a legitimate section clear is a move too,
+    // and validating it would 400 on "requires a regulated type" before the
+    // auto-clear below ever runs.
+    if ((regConfigChanged || sectionChanged) && !clearingSection) {
+      await this.assertRegConfigValid({
+        trackedCategoryId: effectiveCategoryId,
+        regItemType: dto.regItemType !== undefined ? dto.regItemType : existing.regItemType,
+        regUomCase: dto.regUomCase !== undefined ? dto.regUomCase : existing.regUomCase,
+        regUomUnit: dto.regUomUnit !== undefined ? dto.regUomUnit : existing.regUomUnit,
+      });
+    }
     // `data.category` needs to accept `null` below (a `string | undefined` DTO
     // field), which the spread's inferred type won't allow — loosen it like the
     // `where: any` Prisma clauses elsewhere in this file.
@@ -570,6 +628,16 @@ export class ProductsService {
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
       data.trackedSubcategoryId = null;
+    }
+    // Same auto-clear for the regulatory reporting trio — it's only meaningful
+    // within a regulated section. Unconditional over the DTO: a request that
+    // clears the section while ALSO sending reg codes must not persist config with
+    // no section to validate it against, and only the raw `{ ...dto }` spread
+    // could leak them through.
+    if (clearingSection) {
+      data.regItemType = null;
+      data.regUomCase = null;
+      data.regUomUnit = null;
     }
     // One-category-axis rule: keep Product.category in sync with the structured
     // category so filters/analytics/buyer facets never see the type name instead
@@ -623,6 +691,45 @@ export class ProductsService {
     if (!sub) throw new BadRequestException("Regulated subcategory not found.");
     if (sub.trackedCategoryId !== categoryId) {
       throw new BadRequestException("Subcategory does not belong to the chosen section.");
+    }
+  }
+
+  /**
+   * Regulatory reporting codes must belong to the section's report template. A
+   * product with no regulatory config is always valid (the common case).
+   */
+  private async assertRegConfigValid(params: {
+    trackedCategoryId: string | null;
+    regItemType: string | null;
+    regUomCase: string | null;
+    regUomUnit: string | null;
+  }): Promise<void> {
+    const { trackedCategoryId, regItemType, regUomCase, regUomUnit } = params;
+    if (!regItemType && !regUomCase && !regUomUnit) return;
+    if (!trackedCategoryId) {
+      throw new BadRequestException("Regulatory reporting configuration requires a regulated type");
+    }
+    const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+      where: { id: trackedCategoryId },
+      select: { name: true, reportTemplate: true },
+    });
+    if (!cat) throw new BadRequestException("Regulated type not found");
+    if (!templateByKey(cat.reportTemplate)?.productConfig) {
+      throw new BadRequestException(
+        `"${cat.name}" uses a report template with no per-product configuration`,
+      );
+    }
+    if (regItemType && !isValidItemType(cat.reportTemplate, regItemType)) {
+      throw new BadRequestException(
+        `"${regItemType}" is not a valid item type for ${cat.reportTemplate}`,
+      );
+    }
+    for (const uom of [regUomCase, regUomUnit]) {
+      if (uom && !isValidUom(cat.reportTemplate, regItemType ?? null, uom)) {
+        throw new BadRequestException(
+          `"${uom}" is not a valid unit of measure for ${cat.reportTemplate}`,
+        );
+      }
     }
   }
 

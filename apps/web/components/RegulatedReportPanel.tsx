@@ -5,12 +5,24 @@ import { AlertTriangle, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { Button, Card, useToast } from "@routeflow/ui/web";
 import {
   useRegulatedReportPreview,
+  useRegulatedTemplates,
+  useUpdateTrackedCategory,
   fetchRegulatedReportCsv,
   type RegulatedReportParams,
 } from "@/lib/api/tracked-categories";
 import { presetRange, type ReportRangePreset } from "@/lib/regulated-format";
+import { DateRangePicker, type DateRangeValue } from "@/components/DateRangePicker";
+import {
+  ReportColumnsPicker,
+  type ReportColumnsPickerColumn,
+} from "@/components/ReportColumnsPicker";
 
-const TEMPLATE_OPTIONS = ["TX_COMPTROLLER", "GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE"];
+const TEMPLATE_OPTIONS_FALLBACK = ["TX_COMPTROLLER", "GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE"];
+
+// Stable empty array so the seeding effect below doesn't re-fire every render
+// while the templates registry is still loading (a fresh `?? []` literal would
+// change identity on every render and defeat the dependency check).
+const EMPTY_COLUMNS: ReportColumnsPickerColumn[] = [];
 
 const PRESETS: { value: ReportRangePreset; label: string }[] = [
   { value: "last-month", label: "Last month" },
@@ -38,6 +50,8 @@ interface Props {
   categoryName: string;
   /** The category's own `reportTemplate`, shown as the "Category default" option. */
   categoryDefaultTemplate: string;
+  /** The section's saved custom report column layouts, keyed by template code. */
+  reportColumnPrefs?: Record<string, string[]> | null;
 }
 
 /**
@@ -46,24 +60,83 @@ interface Props {
  * (`GET /regulated/reports/csv`). Nothing here is persisted — this is separate from
  * the "Prepare filing" flow, which stays the period-keyed compliance archive.
  */
-export function RegulatedReportPanel({ categoryId, categoryName, categoryDefaultTemplate }: Props) {
+export function RegulatedReportPanel({
+  categoryId,
+  categoryName,
+  categoryDefaultTemplate,
+  reportColumnPrefs,
+}: Props) {
   const { toast } = useToast();
 
   const [preset, setPreset] = React.useState<ReportRangePreset | "custom">("last-month");
-  const [range, setRange] = React.useState(() => presetRange("last-month"));
+  const [range, setRange] = React.useState<DateRangeValue>(() => presetRange("last-month"));
   const [template, setTemplate] = React.useState<string>("");
+  const [selectedColumns, setSelectedColumns] = React.useState<string[] | null>(null);
   const [previewParams, setPreviewParams] = React.useState<RegulatedReportParams | null>(null);
   const [warningsExpanded, setWarningsExpanded] = React.useState(false);
   const [downloading, setDownloading] = React.useState(false);
 
-  const handlePresetChange = (value: string) => {
-    if (value === "custom") {
-      setPreset("custom");
-      return;
+  const templatesQuery = useRegulatedTemplates();
+  const templateDefs = templatesQuery.data;
+  const templateOptions: { value: string; label: string }[] = templateDefs
+    ? templateDefs.map((t) => ({ value: t.key, label: t.label }))
+    : TEMPLATE_OPTIONS_FALLBACK.map((t) => ({ value: t, label: t }));
+
+  const resolvedTemplate = template || categoryDefaultTemplate;
+  const templateDef = React.useMemo(
+    () => templateDefs?.find((t) => t.key === resolvedTemplate),
+    [templateDefs, resolvedTemplate],
+  );
+  const templateColumns: ReportColumnsPickerColumn[] = templateDef?.columns ?? EMPTY_COLUMNS;
+  const defaultKeys = React.useMemo(
+    () => templateColumns.filter((c) => c.default).map((c) => c.key),
+    [templateColumns],
+  );
+  const isCustom =
+    selectedColumns !== null &&
+    (selectedColumns.length !== defaultKeys.length ||
+      selectedColumns.some((k, i) => k !== defaultKeys[i]));
+
+  // Seed the saved layout for the active template whenever the template resolves
+  // (or the saved prefs change) — a fresh section, a template switch, and a
+  // reload of the category all funnel through here the same way.
+  React.useEffect(() => {
+    const saved = reportColumnPrefs?.[resolvedTemplate];
+    if (saved && templateColumns.length) {
+      const known = new Set(templateColumns.map((c) => c.key));
+      const filtered = saved.filter((k) => known.has(k));
+      setSelectedColumns(filtered.length ? filtered : null);
+    } else {
+      setSelectedColumns(null);
     }
-    const p = value as ReportRangePreset;
-    setPreset(p);
-    setRange(presetRange(p));
+  }, [resolvedTemplate, templateColumns, reportColumnPrefs]);
+
+  const updateCategory = useUpdateTrackedCategory();
+
+  const handleSaveColumns = () => {
+    const nextPrefs = { ...(reportColumnPrefs ?? {}) };
+    if (selectedColumns) {
+      nextPrefs[resolvedTemplate] = selectedColumns;
+    } else {
+      // "Reset to template" set the local selection back to null, but the API
+      // rejects a null/empty column list for a single key — persist the reset by
+      // removing this template's entry from the map entirely instead.
+      delete nextPrefs[resolvedTemplate];
+    }
+    updateCategory.mutate(
+      {
+        id: categoryId,
+        data: {
+          // Send null once no template keys remain, so the column clears entirely
+          // instead of persisting an empty object.
+          reportColumnPrefs: Object.keys(nextPrefs).length ? nextPrefs : null,
+        },
+      },
+      {
+        onSuccess: () => toast({ title: "Column layout saved", variant: "success" }),
+        onError: () => toast({ title: "Couldn't save the column layout", variant: "error" }),
+      },
+    );
   };
 
   const currentParams: RegulatedReportParams = {
@@ -71,6 +144,7 @@ export function RegulatedReportPanel({ categoryId, categoryName, categoryDefault
     from: range.from,
     to: range.to,
     ...(template ? { template } : {}),
+    ...(isCustom && selectedColumns ? { columns: selectedColumns.join(",") } : {}),
   };
 
   const preview = useRegulatedReportPreview(previewParams);
@@ -105,7 +179,9 @@ export function RegulatedReportPanel({ categoryId, categoryName, categoryDefault
       const usedTemplate = template || preview.data?.template || categoryDefaultTemplate;
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.download = `${slugify(categoryName)}-${slugify(usedTemplate)}-${range.from}-${range.to}.csv`;
+      a.download = `${slugify(categoryName)}-${slugify(usedTemplate)}${
+        isCustom ? "-custom" : ""
+      }-${range.from}-${range.to}.csv`;
       a.rel = "noopener noreferrer";
       document.body.appendChild(a);
       a.click();
@@ -130,54 +206,53 @@ export function RegulatedReportPanel({ categoryId, categoryName, categoryDefault
     <Card title="Reports">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-navy">Range</label>
-          <select
-            value={preset}
-            onChange={(e) => handlePresetChange(e.target.value)}
-            className={inputCls}
-          >
-            {PRESETS.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-navy">From</label>
-          <input
-            type="date"
-            value={range.from}
-            disabled={preset !== "custom"}
-            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-navy">To</label>
-          <input
-            type="date"
-            value={range.to}
-            disabled={preset !== "custom"}
-            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
-            className={inputCls}
+          <label className="mb-1 block text-xs font-medium text-navy">Date range</label>
+          <DateRangePicker
+            value={range}
+            preset={preset}
+            presets={PRESETS}
+            resolvePreset={(p) => presetRange(p as ReportRangePreset)}
+            onChange={({ preset: p, range: r }) => {
+              setPreset(p as ReportRangePreset | "custom");
+              setRange(r);
+            }}
+            maxDays={366}
           />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-navy">Template</label>
           <select
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
+            value={isCustom ? "__custom__" : template}
+            onChange={(e) => {
+              if (e.target.value === "__custom__") return;
+              setTemplate(e.target.value);
+              setSelectedColumns(null);
+            }}
             className={inputCls}
           >
             <option value="">Category default ({categoryDefaultTemplate})</option>
-            {TEMPLATE_OPTIONS.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            {templateOptions.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
               </option>
             ))}
+            {isCustom && (
+              <option value="__custom__">
+                Custom (based on {templateDef?.label ?? resolvedTemplate})
+              </option>
+            )}
           </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-navy">Columns</label>
+          <ReportColumnsPicker
+            columns={templateColumns}
+            value={selectedColumns}
+            onChange={setSelectedColumns}
+            onSave={handleSaveColumns}
+            saving={updateCategory.isPending}
+            disabled={templateColumns.length === 0}
+          />
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" loading={preview.isFetching} onClick={handlePreview}>
@@ -202,6 +277,13 @@ export function RegulatedReportPanel({ categoryId, categoryName, categoryDefault
 
       {report && (
         <div className="mt-4 space-y-3">
+          {report.custom && (
+            <p className="text-xs italic text-navy/60">
+              This is a custom column layout — the CSV includes a header row and isn&apos;t the
+              official filing layout.
+            </p>
+          )}
+
           {warnings.length > 0 && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               <div className="flex items-center gap-2 font-medium">

@@ -41,9 +41,6 @@ export default function EditRegulatedCategoryScreen() {
         reportCadence: category.reportCadence,
         active: category.active,
         wholesalerLicenseNo: category.wholesalerLicenseNo ?? "",
-        // The form's picker ids are strings; the API stores the item type as an int.
-        txItemType: category.txItemType != null ? String(category.txItemType) : "",
-        txUom: category.txUom ?? "",
       }}
       onSubmit={(payload) => {
         if (!id) return;

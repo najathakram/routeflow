@@ -7,6 +7,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  MaxLength,
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
@@ -52,4 +53,26 @@ export class CreateProductDto {
   // subcategory belongs to the chosen section.
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedCategoryId?: string | null;
   @IsOptional() @Transform(emptyToNull) @IsUUID() trackedSubcategoryId?: string | null;
+
+  /**
+   * Regulatory reporting config. The vocabulary is validated service-side against
+   * the section's reportTemplate (regulated/template-registry.ts). "" clears.
+   */
+  @IsOptional()
+  @Transform(emptyToNull)
+  @IsString()
+  @MaxLength(20)
+  regItemType?: string | null;
+
+  @IsOptional()
+  @Transform(emptyToNull)
+  @IsString()
+  @MaxLength(20)
+  regUomCase?: string | null;
+
+  @IsOptional()
+  @Transform(emptyToNull)
+  @IsString()
+  @MaxLength(20)
+  regUomUnit?: string | null;
 }

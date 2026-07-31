@@ -124,7 +124,9 @@ export type RegulatedReportWarningCode =
   | "MISSING_ADDRESS"
   | "NEGATIVE_NET_INVOICE"
   | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS";
+  | "UNLINKED_LEDGER_ROWS"
+  | "UNMATCHED_LEDGER_LINE"
+  | "UNLISTED_PRODUCT_LINE";
 
 export interface RegulatedReportWarning {
   code: RegulatedReportWarningCode;
@@ -132,6 +134,7 @@ export interface RegulatedReportWarning {
   message: string;
   invoiceId?: string;
   customerName?: string;
+  productId?: string;
 }
 
 /** One report, in the same shape the JSON preview and the CSV file are both built from. */
@@ -151,6 +154,12 @@ export interface RegulatedReportPreview {
   /** Headline figures for the preview UI (not necessarily present in the CSV). */
   displayTotals: { label: string; value: string }[];
   warnings: RegulatedReportWarning[];
+  /**
+   * True when the column layout deviates from the template's official default.
+   * Mobile never requests custom columns (it never sends `columns`), but the
+   * field is still typed here so the shared preview type matches the API's.
+   */
+  custom?: boolean;
 }
 
 export interface RegulatedReportParams {

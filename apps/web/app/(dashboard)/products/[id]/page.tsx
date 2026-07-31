@@ -44,7 +44,11 @@ import {
   type ApiProduct,
 } from "@/lib/api/products";
 import { useCostHistory } from "@/lib/api/cost-history";
-import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import {
+  useTrackedCategories,
+  useRegulatedTemplates,
+  type ReportTemplateDef,
+} from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
 import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
@@ -115,6 +119,45 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="mt-1 text-sm font-medium text-navy">{value}</div>
     </div>
   );
+}
+
+// ─── Regulatory reporting (per-product Item Type / UoM) ────────────────────
+
+/**
+ * Non-null `productConfig` shape for a report template that needs per-product
+ * regulatory config (e.g. TX Comptroller). See `regulated/template-registry.ts`.
+ */
+type RegProductConfig = NonNullable<ReportTemplateDef["productConfig"]>;
+
+/** UoM options for a chosen item type; empty until an item type is picked. */
+function uomsForItemType(
+  productConfig: RegProductConfig | null,
+  itemType: string,
+): RegProductConfig["itemTypes"][number]["uoms"] {
+  if (!productConfig || !itemType) return [];
+  return productConfig.itemTypes.find((t) => t.code === itemType)?.uoms ?? [];
+}
+
+/** Human label for an item-type code; the raw code (or an em dash) when unresolved. */
+function regItemTypeLabel(
+  productConfig: RegProductConfig | null,
+  code: string | null | undefined,
+): React.ReactNode {
+  if (!code) return <span className="text-navy/30">—</span>;
+  return productConfig?.itemTypes.find((t) => t.code === code)?.label ?? code;
+}
+
+/** Human label for a UoM code (searched across all item types); the raw code when unresolved. */
+function regUomLabel(
+  productConfig: RegProductConfig | null,
+  code: string | null | undefined,
+): React.ReactNode {
+  if (!code) return <span className="text-navy/30">—</span>;
+  for (const t of productConfig?.itemTypes ?? []) {
+    const match = t.uoms.find((u) => u.code === code);
+    if (match) return match.label;
+  }
+  return code;
 }
 
 // ─── Merchandising flag toggle (P5-01) ──────────────────────────────────────────
@@ -292,6 +335,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   // an edit never silently drops a still-applied tag — shared with the create
   // modal so the rule can't drift.
   const sectionOptions = sectionPickerOptions(regulatedSections, product?.trackedCategory);
+
+  // Regulatory reporting (Item type / UoM / Case UoM) — only rendered when the
+  // relevant section's reportTemplate resolves to a template with per-product
+  // config (e.g. TX Comptroller). Resolved off the draft's selected section
+  // while editing (so switching Regulated type updates the block live), off
+  // the product's current section otherwise.
+  const { data: reportTemplates = [] } = useRegulatedTemplates();
+  const regTemplateForSection = (sectionId: string | null | undefined) => {
+    const section = regulatedSections.find((s) => s.id === sectionId);
+    return reportTemplates.find((t) => t.key === section?.reportTemplate);
+  };
+  const activeProductConfig: RegProductConfig | null = isEditing
+    ? (regTemplateForSection(editDraft.trackedCategoryId as string)?.productConfig ?? null)
+    : (regTemplateForSection(product?.trackedCategory?.id)?.productConfig ?? null);
+  const activeUnitsPerBox = isEditing
+    ? Number.parseFloat((editDraft.unitsPerBox as string) || "0") || 0
+    : Number(product?.unitsPerBox ?? 0);
   const [isMounted, setIsMounted] = React.useState(false);
   const [activeImageIdx, setActiveImageIdx] = React.useState(0);
   const [isDragging, setIsDragging] = React.useState(false);
@@ -412,6 +472,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       variantName: product.variantName ?? "",
       trackedCategoryId: product.trackedCategory?.id ?? "",
       trackedSubcategoryId: product.trackedSubcategory?.id ?? "",
+      regItemType: product.regItemType ?? "",
+      regUomCase: product.regUomCase ?? "",
+      regUomUnit: product.regUomUnit ?? "",
       unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
     });
     setIsEditing(true);
@@ -458,6 +521,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         // category when the type is cleared).
         trackedCategoryId: draft.trackedCategoryId || null,
         trackedSubcategoryId: draft.trackedSubcategoryId || null,
+        // Regulatory reporting config: value to set, explicit null to clear.
+        regItemType: draft.regItemType || null,
+        regUomCase: draft.regUomCase || null,
+        regUomUnit: draft.regUomUnit || null,
         ...(draft.parentProductId
           ? {
               parentProductId: draft.parentProductId,
@@ -1604,6 +1671,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                               // combobox — clear any typed value so a stale
                               // one can't resurface if the type is cleared.
                               category: trackedCategoryId ? "" : d.category,
+                              // Regulatory reporting config is scoped to the
+                              // section's report template — clear it whenever
+                              // the section changes (including cleared
+                              // entirely) so a stale code from a different
+                              // vocabulary can never be submitted.
+                              regItemType: "",
+                              regUomCase: "",
+                              regUomUnit: "",
                             }));
                           }}
                           className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -1616,6 +1691,122 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             </option>
                           ))}
                         </select>
+                      }
+                    />
+                  )}
+                  {/* Regulatory reporting (per-product) — Item type / Unit of
+                      measure / Case unit of measure. Gated on the relevant
+                      section's report template needing per-product config. */}
+                  {activeProductConfig && (
+                    <InfoRow
+                      label="Item type"
+                      value={
+                        isEditing ? (
+                          <select
+                            value={(editDraft.regItemType as string) ?? ""}
+                            onChange={(e) => {
+                              const regItemType = e.target.value;
+                              setEditDraft((d) => {
+                                const validUoms = uomsForItemType(
+                                  activeProductConfig,
+                                  regItemType,
+                                ).map((u) => u.code);
+                                return {
+                                  ...d,
+                                  regItemType,
+                                  regUomUnit: validUoms.includes((d.regUomUnit as string) ?? "")
+                                    ? d.regUomUnit
+                                    : "",
+                                  regUomCase: validUoms.includes((d.regUomCase as string) ?? "")
+                                    ? d.regUomCase
+                                    : "",
+                                };
+                              });
+                            }}
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          >
+                            <option value="">Select…</option>
+                            {activeProductConfig.itemTypes.map((t) => (
+                              <option key={t.code} value={t.code}>
+                                {t.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          regItemTypeLabel(activeProductConfig, product.regItemType)
+                        )
+                      }
+                    />
+                  )}
+                  {activeProductConfig && (
+                    <InfoRow
+                      label="Unit of measure (per piece)"
+                      value={
+                        isEditing ? (
+                          <select
+                            value={(editDraft.regUomUnit as string) ?? ""}
+                            onChange={(e) =>
+                              setEditDraft((d) => ({ ...d, regUomUnit: e.target.value }))
+                            }
+                            disabled={!(editDraft.regItemType as string)}
+                            className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                          >
+                            <option value="">
+                              {(editDraft.regItemType as string)
+                                ? "Select…"
+                                : "Select item type first"}
+                            </option>
+                            {uomsForItemType(
+                              activeProductConfig,
+                              (editDraft.regItemType as string) ?? "",
+                            ).map((u) => (
+                              <option key={u.code} value={u.code}>
+                                {u.label}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          regUomLabel(activeProductConfig, product.regUomUnit)
+                        )
+                      }
+                    />
+                  )}
+                  {activeProductConfig?.caseUomSupported && activeUnitsPerBox > 1 && (
+                    <InfoRow
+                      label="Case unit of measure"
+                      value={
+                        isEditing ? (
+                          <>
+                            <select
+                              value={(editDraft.regUomCase as string) ?? ""}
+                              onChange={(e) =>
+                                setEditDraft((d) => ({ ...d, regUomCase: e.target.value }))
+                              }
+                              disabled={!(editDraft.regItemType as string)}
+                              className="w-full rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                            >
+                              <option value="">
+                                {(editDraft.regItemType as string)
+                                  ? "Select…"
+                                  : "Select item type first"}
+                              </option>
+                              {uomsForItemType(
+                                activeProductConfig,
+                                (editDraft.regItemType as string) ?? "",
+                              ).map((u) => (
+                                <option key={u.code} value={u.code}>
+                                  {u.label}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="mt-0.5 text-xs text-navy/70">
+                              Used when this product is sold by the case. Leave blank to report
+                              every quantity in pieces.
+                            </p>
+                          </>
+                        ) : (
+                          regUomLabel(activeProductConfig, product.regUomCase)
+                        )
                       }
                     />
                   )}

@@ -11,7 +11,11 @@ import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
 import { SearchableProductPicker } from "./SearchableProductPicker";
-import { useTrackedCategories } from "@/lib/api/tracked-categories";
+import {
+  useTrackedCategories,
+  useRegulatedTemplates,
+  type ReportTemplateDef,
+} from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
 
 /**
@@ -66,6 +70,21 @@ function validUnitsPerBoxPrefill(v: number | undefined): boolean {
 }
 
 /**
+ * Non-null `productConfig` shape for a report template that needs per-product
+ * regulatory config (e.g. TX Comptroller). See `regulated/template-registry.ts`.
+ */
+type RegProductConfig = NonNullable<ReportTemplateDef["productConfig"]>;
+
+/** UoM options for a chosen item type; empty until an item type is picked. */
+function uomsForItemType(
+  productConfig: RegProductConfig | null,
+  itemType: string,
+): RegProductConfig["itemTypes"][number]["uoms"] {
+  if (!productConfig || !itemType) return [];
+  return productConfig.itemTypes.find((t) => t.code === itemType)?.uoms ?? [];
+}
+
+/**
  * The full product-create form — extracted verbatim from the products page's
  * former inline `CreateProductModal` so every surface that needs to create a
  * product from a partial context (a scanned invoice line, a batch-review
@@ -109,6 +128,9 @@ export function ProductCreateModal({
     variantName: "",
     trackedCategoryId: "",
     trackedSubcategoryId: "",
+    regItemType: "",
+    regUomCase: "",
+    regUomUnit: "",
   });
 
   // Re-sync prefills whenever the modal (re)opens — covers both callers that
@@ -194,6 +216,14 @@ export function ProductCreateModal({
   const { data: sections = [] } = useTrackedCategories({ active: true });
   const sectionOptions = sectionPickerOptions(sections);
 
+  // Regulatory reporting (Item type / UoM / Case UoM) — only rendered when the
+  // selected section's reportTemplate resolves to a template with per-product
+  // config (e.g. TX Comptroller). Static per deploy, so cached for the session.
+  const { data: templates = [] } = useRegulatedTemplates();
+  const selectedSection = sections.find((s) => s.id === form.trackedCategoryId);
+  const productConfig: RegProductConfig | null =
+    templates.find((t) => t.key === selectedSection?.reportTemplate)?.productConfig ?? null;
+
   const addImages = (files: FileList | null) => {
     if (!files) return;
     const arr = Array.from(files);
@@ -226,6 +256,9 @@ export function ProductCreateModal({
       variantName: "",
       trackedCategoryId: "",
       trackedSubcategoryId: "",
+      regItemType: "",
+      regUomCase: "",
+      regUomUnit: "",
     });
     setPendingImages([]);
     setPreviews([]);
@@ -268,6 +301,9 @@ export function ProductCreateModal({
         variantName: form.variantName || undefined,
         trackedCategoryId: form.trackedCategoryId || undefined,
         trackedSubcategoryId: form.trackedSubcategoryId || undefined,
+        regItemType: form.regItemType || undefined,
+        regUomCase: form.regUomCase || undefined,
+        regUomUnit: form.regUomUnit || undefined,
       });
       toast({ title: "Product created", variant: "success" });
     } catch (err: any) {
@@ -550,6 +586,14 @@ export function ProductCreateModal({
                         // field with the structured combobox above — clear any
                         // typed value so a stale one can't be submitted.
                         category: trackedCategoryId ? "" : f.category,
+                        // Regulatory reporting config is scoped to the
+                        // section's report template — clear it whenever the
+                        // section changes (including cleared entirely) so a
+                        // stale code from a different vocabulary can never be
+                        // submitted.
+                        regItemType: "",
+                        regUomCase: "",
+                        regUomUnit: "",
                       }));
                     }}
                     className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -562,6 +606,93 @@ export function ProductCreateModal({
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+
+              {/* Regulatory reporting (per-product) — Item type / Unit of measure /
+                  Case unit of measure. Gated on the section's report template
+                  needing per-product config (e.g. TX Comptroller). */}
+              {productConfig && (
+                <div className="col-span-2 space-y-3 rounded-lg border border-surface-border bg-surface-raised/40 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-navy/60">
+                    Regulatory reporting
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-navy">Item type</label>
+                      <select
+                        value={form.regItemType}
+                        onChange={(e) => {
+                          const regItemType = e.target.value;
+                          setForm((f) => {
+                            const validUoms = uomsForItemType(productConfig, regItemType).map(
+                              (u) => u.code,
+                            );
+                            return {
+                              ...f,
+                              regItemType,
+                              regUomUnit: validUoms.includes(f.regUomUnit) ? f.regUomUnit : "",
+                              regUomCase: validUoms.includes(f.regUomCase) ? f.regUomCase : "",
+                            };
+                          });
+                        }}
+                        className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      >
+                        <option value="">Select…</option>
+                        {productConfig.itemTypes.map((t) => (
+                          <option key={t.code} value={t.code}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-navy">
+                        Unit of measure (per piece)
+                      </label>
+                      <select
+                        value={form.regUomUnit}
+                        onChange={(e) => set("regUomUnit", e.target.value)}
+                        disabled={!form.regItemType}
+                        className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                      >
+                        <option value="">
+                          {form.regItemType ? "Select…" : "Select item type first"}
+                        </option>
+                        {uomsForItemType(productConfig, form.regItemType).map((u) => (
+                          <option key={u.code} value={u.code}>
+                            {u.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {productConfig.caseUomSupported && Number(form.unitsPerBox) > 1 && (
+                      <div className="col-span-2">
+                        <label className="mb-1 block text-sm font-medium text-navy">
+                          Case unit of measure
+                        </label>
+                        <select
+                          value={form.regUomCase}
+                          onChange={(e) => set("regUomCase", e.target.value)}
+                          disabled={!form.regItemType}
+                          className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-surface-raised disabled:text-navy/40"
+                        >
+                          <option value="">
+                            {form.regItemType ? "Select…" : "Select item type first"}
+                          </option>
+                          {uomsForItemType(productConfig, form.regItemType).map((u) => (
+                            <option key={u.code} value={u.code}>
+                              {u.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-0.5 text-xs text-navy/70">
+                          Used when this product is sold by the case. Leave blank to report every
+                          quantity in pieces.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

@@ -14,3 +14,7 @@ package-lock.json
 # (hi-fi mockups, animation scenes, the design system's own JS). This is the
 # visual source of truth, NOT our source code — never reformat it.
 docs/design-package/
+
+# Playwright auth storage-state artifacts (gitignored, machine-written by
+# e2e/setup/auth.setup.ts — a local e2e run must not dirty format:check)
+apps/web/e2e/setup/.auth/

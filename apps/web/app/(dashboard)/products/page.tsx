@@ -71,6 +71,10 @@ interface ApiProduct {
   /** Regulated section + subcategory tags (Phase 4 / section isolation). */
   trackedCategoryId?: string | null;
   trackedSubcategoryId?: string | null;
+  /** Per-product report codes — template-scoped, cleared when the section changes. */
+  regItemType?: string | null;
+  regUomCase?: string | null;
+  regUomUnit?: string | null;
 }
 
 // Merchandising badge row (P5-01) — reused by grid card + table cell.
@@ -778,7 +782,35 @@ export default function ProductsPage() {
       patch: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
       prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
     ) => {
-      await updateProduct.mutateAsync({ id: product.id, ...patch });
+      // The regulatory trio (regItemType/regUomCase/regUomUnit) is vocabulary scoped to the
+      // section's report template — the API rejects a type change that would strand stale codes
+      // under a template with no per-product config. The create modal and detail form already
+      // clear the trio client-side on a section change; this cell must match. A subcategory-only
+      // change (same type) leaves the trio alone.
+      const typeChanged = (patch.trackedCategoryId ?? null) !== (prior.trackedCategoryId ?? null);
+      const fullPatch: Record<string, unknown> = typeChanged
+        ? { ...patch, regItemType: null, regUomCase: null, regUomUnit: null }
+        : patch;
+      const fullPrior: Record<string, unknown> = typeChanged
+        ? {
+            ...prior,
+            regItemType: product.regItemType ?? null,
+            regUomCase: product.regUomCase ?? null,
+            regUomUnit: product.regUomUnit ?? null,
+          }
+        : prior;
+      try {
+        await updateProduct.mutateAsync({ id: product.id, ...fullPatch });
+      } catch (err) {
+        const msg = (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message;
+        toast({
+          title: "Failed to update regulated type",
+          description: typeof msg === "string" ? msg : undefined,
+          variant: "error",
+        });
+        return;
+      }
       toast({ title: "Regulated type updated", variant: "success" });
       setUndoStack((prev) => [
         ...prev.slice(-19),
@@ -786,8 +818,8 @@ export default function ProductsPage() {
           productId: product.id,
           productName: product.name,
           field: "section",
-          oldValue: prior,
-          newValue: patch,
+          oldValue: fullPrior,
+          newValue: fullPatch,
         },
       ]);
       setRedoStack([]);

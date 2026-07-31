@@ -157,8 +157,6 @@ export class RegulatedFilingService {
           id: category.id,
           name: category.name,
           wholesalerLicenseNo: category.wholesalerLicenseNo,
-          txItemType: category.txItemType,
-          txUom: category.txUom,
         },
         from,
         to,
