@@ -263,8 +263,6 @@ describe("RegulatedFilingService", () => {
       reportCadence: "MONTHLY",
       unitBasis: null,
       wholesalerLicenseNo: "12345678",
-      txItemType: 1,
-      txUom: "CP",
     };
 
     it("stores a TX-serialized CSV (no header) and rows Json carrying txRows + warnings, while the Decimal totals stay the ledger aggregate", async () => {
@@ -276,9 +274,30 @@ describe("RegulatedFilingService", () => {
         totals: {},
       });
       // The TX per-invoice breakdown is a SEPARATE raw ledger query (RegulatedSalesLedger
-      // has no Prisma relations, so it's a manual three-step join).
+      // has no Prisma relations, so it's a manual three-step join) — now also joining
+      // through the invoice line to the product for its regulatory reporting config.
       prisma.regulatedSalesLedger.findMany.mockResolvedValue([
-        { invoiceId: "inv-1", unitBasisQty: 20, netSales: 100 },
+        { invoiceId: "inv-1", invoiceItemId: "line-1", unitBasisQty: 20, netSales: 100 },
+      ]);
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        {
+          id: "line-1",
+          productId: "prod-1",
+          qty: 20,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+        },
+      ]);
+      prisma.product.findMany.mockResolvedValue([
+        {
+          id: "prod-1",
+          name: "Acme Full Flavor",
+          unitsPerBox: null,
+          regItemType: "1",
+          regUomCase: null,
+          regUomUnit: "CP",
+        },
       ]);
       prisma.invoice.findMany.mockResolvedValue([
         {
@@ -329,6 +348,10 @@ describe("RegulatedFilingService", () => {
       expect(Array.isArray(rowsJson.txRows)).toBe(true);
       expect(rowsJson.txRows.length).toBe(1);
       expect(Array.isArray(rowsJson.warnings)).toBe(true);
+
+      // Persisted filings never pass includeOptionalColumns, so the filed CSV keeps
+      // the official 12-column layout — the custom-format pipeline never touches it.
+      expect(csv).not.toContain("-custom");
     });
   });
 

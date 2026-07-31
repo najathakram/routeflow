@@ -30,8 +30,12 @@ export interface TrackedCategory {
   updatedAt: string;
   /** TX Comptroller (TX_COMPTROLLER template) config — null unless configured. */
   wholesalerLicenseNo: string | null;
+  /** @deprecated superseded by Product.regItemType. Kept as a shadow; no reader. */
   txItemType: number | null;
+  /** @deprecated superseded by Product.regUomUnit. Kept as a shadow; no reader. */
   txUom: string | null;
+  /** Saved custom report column layout, keyed by template code. */
+  reportColumnPrefs?: Record<string, string[]> | null;
 }
 
 export interface TrackedCategoryInput {
@@ -48,8 +52,12 @@ export interface TrackedCategoryInput {
   active?: boolean;
   /** TX config: send `null` to clear a column — `undefined` is dropped by axios and no-ops. */
   wholesalerLicenseNo?: string | null;
+  /** @deprecated superseded by Product.regItemType. Kept as a shadow; no reader. */
   txItemType?: number | null;
+  /** @deprecated superseded by Product.regUomUnit. Kept as a shadow; no reader. */
   txUom?: string | null;
+  /** Saved custom report column layout, keyed by template code. */
+  reportColumnPrefs?: Record<string, string[]> | null;
 }
 
 const KEY = ["tracked-categories"] as const;
@@ -320,7 +328,9 @@ export type RegulatedReportWarningCode =
   | "MISSING_ADDRESS"
   | "NEGATIVE_NET_INVOICE"
   | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS";
+  | "UNLINKED_LEDGER_ROWS"
+  | "UNMATCHED_LEDGER_LINE"
+  | "UNLISTED_PRODUCT_LINE";
 
 export interface RegulatedReportWarning {
   code: RegulatedReportWarningCode;
@@ -328,6 +338,7 @@ export interface RegulatedReportWarning {
   message: string;
   invoiceId?: string;
   customerName?: string;
+  productId?: string;
 }
 
 export interface RegulatedReportColumn {
@@ -356,6 +367,8 @@ export interface RegulatedReportPreview {
   /** Headline figures for the preview UI (not necessarily in the CSV). */
   displayTotals: { label: string; value: string }[];
   warnings: RegulatedReportWarning[];
+  /** True when the column layout deviates from the template's official default. */
+  custom?: boolean;
 }
 
 export interface RegulatedReportParams {
@@ -366,6 +379,20 @@ export interface RegulatedReportParams {
   to: string;
   /** Defaults to the category's configured reportTemplate server-side. */
   template?: string;
+  /**
+   * Comma-separated column keys; order defines output order. Forwarded only when
+   * non-empty so default requests keep today's query shape and cache keys.
+   */
+  columns?: string;
+}
+
+/**
+ * Drop `columns` when empty so a request with no custom layout keeps today's exact
+ * query shape (and therefore today's cache key / server behavior).
+ */
+function withColumns(params: RegulatedReportParams): Record<string, unknown> {
+  const { columns, ...rest } = params;
+  return columns ? { ...rest, columns } : rest;
 }
 
 /**
@@ -373,11 +400,12 @@ export interface RegulatedReportParams {
  * so nothing fires until the operator has picked a range and clicked Preview.
  */
 export function useRegulatedReportPreview(params: RegulatedReportParams | null) {
+  const queryParams = params ? withColumns(params) : null;
   return useQuery<RegulatedReportPreview>({
-    queryKey: ["regulated", "report", params],
+    queryKey: ["regulated", "report", queryParams],
     queryFn: () =>
-      apiClient.get("/regulated/reports/preview", { params: params! }).then((r) => r.data),
-    enabled: !!params,
+      apiClient.get("/regulated/reports/preview", { params: queryParams! }).then((r) => r.data),
+    enabled: !!queryParams,
   });
 }
 
@@ -386,6 +414,45 @@ export function useRegulatedReportPreview(params: RegulatedReportParams | null) 
  * this endpoint directly — it requires the auth header, which a bare navigation can't send.
  */
 export async function fetchRegulatedReportCsv(params: RegulatedReportParams): Promise<Blob> {
-  const r = await apiClient.get("/regulated/reports/csv", { params, responseType: "blob" });
+  const r = await apiClient.get("/regulated/reports/csv", {
+    params: withColumns(params),
+    responseType: "blob",
+  });
   return r.data;
+}
+
+// ─── Report templates (registry-driven vocabulary + columns) ──────────────────
+
+export interface TemplateUomOption {
+  code: string;
+  label: string;
+}
+export interface TemplateItemType {
+  code: string;
+  label: string;
+  uoms: TemplateUomOption[];
+}
+export interface TemplateColumn {
+  key: string;
+  label: string;
+  align?: "right";
+  /** In the template's official/default layout. Non-default columns make a report "custom". */
+  default: boolean;
+}
+export interface ReportTemplateDef {
+  key: string;
+  label: string;
+  kind: "per-sale" | "aggregate";
+  /** null ⇒ this template needs no per-product config. */
+  productConfig: { itemTypes: TemplateItemType[]; caseUomSupported: boolean } | null;
+  columns: TemplateColumn[];
+}
+
+/** Report-template metadata; static per deploy, so cache it for the session. */
+export function useRegulatedTemplates() {
+  return useQuery<ReportTemplateDef[]>({
+    queryKey: ["regulated", "templates"],
+    queryFn: () => apiClient.get("/regulated/templates").then((r) => r.data),
+    staleTime: Infinity,
+  });
 }

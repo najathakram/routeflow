@@ -331,6 +331,118 @@ describe("ProductForm — buildProductPayload regulated tagging (REG-3)", () => 
   });
 });
 
+// ── Tests — regulatory reporting trio (regItemType/regUomCase/regUomUnit) ─────
+
+describe("ProductForm — buildProductPayload regulatory reporting config", () => {
+  it("create: round-trips the picked item type / case UoM / unit UoM", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "sec-1",
+      regItemType: "1",
+      regUomCase: "CC",
+      regUomUnit: "CP",
+    };
+    const result = buildProductPayload(form);
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.regItemType).toBe("1");
+      expect(result.regUomCase).toBe("CC");
+      expect(result.regUomUnit).toBe("CP");
+    }
+  });
+
+  it("edit: round-trips the picked item type / case UoM / unit UoM", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "sec-1",
+      regItemType: "1",
+      regUomCase: "CC",
+      regUomUnit: "CP",
+    };
+    const result = buildProductPayload(form, "edit");
+    expect("error" in result).toBe(false);
+    if (!("error" in result)) {
+      expect(result.regItemType).toBe("1");
+      expect(result.regUomCase).toBe("CC");
+      expect(result.regUomUnit).toBe("CP");
+    }
+  });
+
+  it("create: blank regulatory fields (section still set) are OMITTED (undefined)", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "sec-1",
+    };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.regItemType).toBeUndefined();
+      expect(result.regUomCase).toBeUndefined();
+      expect(result.regUomUnit).toBeUndefined();
+    }
+  });
+
+  it('edit (mode="edit"): blank regulatory fields (section still set) send explicit null to clear', () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "sec-1",
+      regItemType: "",
+      regUomCase: "",
+      regUomUnit: "",
+    };
+    const result = buildProductPayload(form, "edit");
+    if (!("error" in result)) {
+      expect(result.regItemType).toBeNull();
+      expect(result.regUomCase).toBeNull();
+      expect(result.regUomUnit).toBeNull();
+    }
+  });
+
+  it("create: clearing the section OMITS the trio even if the fields still carry values", () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "",
+      regItemType: "1",
+      regUomCase: "CC",
+      regUomUnit: "CP",
+    };
+    const result = buildProductPayload(form);
+    if (!("error" in result)) {
+      expect(result.regItemType).toBeUndefined();
+      expect(result.regUomCase).toBeUndefined();
+      expect(result.regUomUnit).toBeUndefined();
+    }
+  });
+
+  it('edit (mode="edit"): clearing the section forces the trio to null even if the fields still carry values', () => {
+    const form = {
+      ...emptyProductForm(),
+      name: "X",
+      pricePerUnit: "1",
+      trackedCategoryId: "",
+      regItemType: "1",
+      regUomCase: "CC",
+      regUomUnit: "CP",
+    };
+    const result = buildProductPayload(form, "edit");
+    if (!("error" in result)) {
+      expect(result.trackedCategoryId).toBeNull();
+      expect(result.regItemType).toBeNull();
+      expect(result.regUomCase).toBeNull();
+      expect(result.regUomUnit).toBeNull();
+    }
+  });
+});
+
 describe("productFormFromValues — regulated tagging (REG-3)", () => {
   it("seeds trackedCategoryId/Name and trackedSubcategoryId from a tagged product", () => {
     const form = productFormFromValues({
@@ -347,6 +459,26 @@ describe("productFormFromValues — regulated tagging (REG-3)", () => {
     expect(form.trackedCategoryId).toBe("");
     expect(form.trackedCategoryName).toBeUndefined();
     expect(form.trackedSubcategoryId).toBe("");
+  });
+});
+
+describe("productFormFromValues — regulatory reporting trio", () => {
+  it("seeds regItemType/regUomCase/regUomUnit from a configured product", () => {
+    const form = productFormFromValues({
+      regItemType: "1",
+      regUomCase: "CC",
+      regUomUnit: "CP",
+    });
+    expect(form.regItemType).toBe("1");
+    expect(form.regUomCase).toBe("CC");
+    expect(form.regUomUnit).toBe("CP");
+  });
+
+  it("defaults to empty regulatory fields when the product has no config (matches emptyProductForm)", () => {
+    const form = productFormFromValues({});
+    expect(form.regItemType).toBe("");
+    expect(form.regUomCase).toBe("");
+    expect(form.regUomUnit).toBe("");
   });
 });
 

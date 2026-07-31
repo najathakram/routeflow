@@ -18,7 +18,9 @@ export type ReportWarningCode =
   | "MISSING_ADDRESS"
   | "NEGATIVE_NET_INVOICE"
   | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS";
+  | "UNLINKED_LEDGER_ROWS"
+  | "UNMATCHED_LEDGER_LINE"
+  | "UNLISTED_PRODUCT_LINE";
 
 export interface ReportWarning {
   code: ReportWarningCode;
@@ -26,6 +28,7 @@ export interface ReportWarning {
   message: string;
   invoiceId?: string;
   customerName?: string;
+  productId?: string;
 }
 
 export interface ReportColumn {
@@ -54,6 +57,8 @@ export interface RegulatedReport {
   /** Headline figures for the preview UI (not necessarily in the CSV). */
   displayTotals: { label: string; value: string }[];
   warnings: ReportWarning[];
+  /** True when the column layout deviates from the template's official default. */
+  custom?: boolean;
   csv: {
     preamble: string[][];
     includeHeader: boolean;

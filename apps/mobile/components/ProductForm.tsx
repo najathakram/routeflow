@@ -8,7 +8,11 @@ import { CategoryInput } from "./CategoryInput";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { OptionPickerSheet } from "./OptionPickerSheet";
 import { SubcategoryPickerSheet } from "./SubcategoryPickerSheet";
-import { useTrackedCategories, useTrackedSubcategories } from "../lib/api/tracked-categories";
+import {
+  useTrackedCategories,
+  useTrackedSubcategories,
+  useRegulatedTemplates,
+} from "../lib/api/tracked-categories";
 import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated-format";
 import { cascadeTierPrices, perUnitPrice, type TierField } from "../lib/pricing";
 import {
@@ -61,6 +65,9 @@ export function ProductForm({
   const [parentPickerOpen, setParentPickerOpen] = React.useState(false);
   const [sectionPickerOpen, setSectionPickerOpen] = React.useState(false);
   const [subcategoryPickerOpen, setSubcategoryPickerOpen] = React.useState(false);
+  const [itemTypePickerOpen, setItemTypePickerOpen] = React.useState(false);
+  const [uomUnitPickerOpen, setUomUnitPickerOpen] = React.useState(false);
+  const [uomCasePickerOpen, setUomCasePickerOpen] = React.useState(false);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -105,6 +112,20 @@ export function ProductForm({
       : null,
   );
   const subcategoryOptions = subcategoryPickerOptions(subcategories, form.trackedSubcategoryId);
+
+  // Regulatory reporting config (Item type / Unit of measure / Case unit of
+  // measure) — driven by the selected section's reportTemplate. The block only
+  // renders when that template resolves to one with a productConfig (mirrors
+  // web's ProductCreateModal / product detail page, WP9).
+  const { data: templates = [] } = useRegulatedTemplates();
+  const selectedSection = sections.find((s) => s.id === form.trackedCategoryId);
+  const templateDef = selectedSection
+    ? templates.find((t) => t.key === selectedSection.reportTemplate)
+    : undefined;
+  const productConfig = templateDef?.productConfig ?? null;
+  const itemTypeOptions = productConfig?.itemTypes ?? [];
+  const selectedItemTypeUoms = itemTypeOptions.find((t) => t.code === form.regItemType)?.uoms ?? [];
+  const showCaseUom = !!productConfig?.caseUomSupported && isBoxed;
 
   const submit = () => {
     const result = buildProductPayload(form, mode);
@@ -306,6 +327,68 @@ export function ProductForm({
               </View>
             </Pressable>
           </FormField>
+          {productConfig ? (
+            <>
+              <FormField label="Item type">
+                <Pressable style={styles.picker} onPress={() => setItemTypePickerOpen(true)}>
+                  <View style={styles.pickerInner}>
+                    <Text
+                      style={[styles.pickerText, !form.regItemType && styles.pickerPlaceholder]}
+                      numberOfLines={1}
+                    >
+                      {itemTypeOptions.find((t) => t.code === form.regItemType)?.label ?? "Not set"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color={ios.label3} />
+                  </View>
+                </Pressable>
+              </FormField>
+              <FormField label="Unit of measure (per piece)">
+                <Pressable
+                  style={[styles.picker, !form.regItemType && styles.pickerDisabled]}
+                  onPress={() => setUomUnitPickerOpen(true)}
+                  disabled={!form.regItemType}
+                >
+                  <View style={styles.pickerInner}>
+                    <Text
+                      style={[styles.pickerText, !form.regUomUnit && styles.pickerPlaceholder]}
+                      numberOfLines={1}
+                    >
+                      {form.regItemType
+                        ? (selectedItemTypeUoms.find((u) => u.code === form.regUomUnit)?.label ??
+                          "Not set")
+                        : "Select an item type first"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={14} color={ios.label3} />
+                  </View>
+                </Pressable>
+              </FormField>
+              {showCaseUom ? (
+                <FormField
+                  label="Case unit of measure"
+                  hint="Used when this product is sold by the case. Leave blank to report every quantity in pieces."
+                >
+                  <Pressable
+                    style={[styles.picker, !form.regItemType && styles.pickerDisabled]}
+                    onPress={() => setUomCasePickerOpen(true)}
+                    disabled={!form.regItemType}
+                  >
+                    <View style={styles.pickerInner}>
+                      <Text
+                        style={[styles.pickerText, !form.regUomCase && styles.pickerPlaceholder]}
+                        numberOfLines={1}
+                      >
+                        {form.regItemType
+                          ? (selectedItemTypeUoms.find((u) => u.code === form.regUomCase)?.label ??
+                            "None (report in pieces)")
+                          : "Select an item type first"}
+                      </Text>
+                      <Ionicons name="chevron-down" size={14} color={ios.label3} />
+                    </View>
+                  </Pressable>
+                </FormField>
+              ) : null}
+            </>
+          ) : null}
         </FormSection>
       ) : null}
 
@@ -455,8 +538,20 @@ export function ProductForm({
         nullLabel="None (not regulated)"
         onClose={() => setSectionPickerOpen(false)}
         onSelect={(opt) => {
+          // The sheet fires on EVERY row press, including the already-checked one, so
+          // re-tapping the current type must be a pure dismiss — otherwise just opening
+          // the sheet to look wipes the product's saved item type / units of measure.
+          if ((opt.id || "") === (form.trackedCategoryId || "")) {
+            setSectionPickerOpen(false);
+            return;
+          }
           set("trackedCategoryId", opt.id);
           set("trackedSubcategoryId", "");
+          // The regulatory vocabulary is template-scoped, so codes chosen under the
+          // previous regulated type are meaningless (and rejected) under a new one.
+          set("regItemType", "");
+          set("regUomCase", "");
+          set("regUomUnit", "");
           // Category becomes ONE axis when a regulated type is picked: the free-text
           // value is cleared so buildProductPayload naturally omits `category` — the
           // server syncs it from the structured category the user picks next.
@@ -473,6 +568,63 @@ export function ProductForm({
           set("trackedSubcategoryId", id);
         }}
       />
+
+      <OptionPickerSheet
+        visible={itemTypePickerOpen}
+        title="Item type"
+        options={itemTypeOptions.map((t) => ({ id: t.code, label: t.label }))}
+        selectedId={form.regItemType}
+        nullable
+        nullLabel="Not set"
+        onClose={() => setItemTypePickerOpen(false)}
+        onSelect={(opt) => {
+          // Same re-tap guard: keep the saved UoMs untouched when nothing actually changed.
+          if ((opt.id || "") === (form.regItemType || "")) {
+            setItemTypePickerOpen(false);
+            return;
+          }
+          setForm((f) => {
+            // A UoM valid for the old item type may not be valid for the new one.
+            const newUoms = itemTypeOptions.find((t) => t.code === opt.id)?.uoms ?? [];
+            const stillValid = (v: string) => !v || newUoms.some((u) => u.code === v);
+            return {
+              ...f,
+              regItemType: opt.id,
+              regUomUnit: stillValid(f.regUomUnit) ? f.regUomUnit : "",
+              regUomCase: stillValid(f.regUomCase) ? f.regUomCase : "",
+            };
+          });
+          setItemTypePickerOpen(false);
+        }}
+      />
+      <OptionPickerSheet
+        visible={uomUnitPickerOpen}
+        title="Unit of measure"
+        options={selectedItemTypeUoms.map((u) => ({ id: u.code, label: u.label }))}
+        selectedId={form.regUomUnit}
+        nullable
+        nullLabel="Not set"
+        onClose={() => setUomUnitPickerOpen(false)}
+        onSelect={(opt) => {
+          set("regUomUnit", opt.id);
+          setUomUnitPickerOpen(false);
+        }}
+      />
+      {showCaseUom ? (
+        <OptionPickerSheet
+          visible={uomCasePickerOpen}
+          title="Case unit of measure"
+          options={selectedItemTypeUoms.map((u) => ({ id: u.code, label: u.label }))}
+          selectedId={form.regUomCase}
+          nullable
+          nullLabel="None (report in pieces)"
+          onClose={() => setUomCasePickerOpen(false)}
+          onSelect={(opt) => {
+            set("regUomCase", opt.id);
+            setUomCasePickerOpen(false);
+          }}
+        />
+      ) : null}
     </FormSheet>
   );
 }
@@ -509,4 +661,5 @@ const styles = StyleSheet.create({
   pickerInner: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   pickerText: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label, flex: 1 },
   pickerPlaceholder: { color: ios.label3 },
+  pickerDisabled: { opacity: 0.5 },
 });

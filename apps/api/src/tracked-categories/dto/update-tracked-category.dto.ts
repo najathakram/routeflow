@@ -33,7 +33,14 @@ export class UpdateTrackedCategoryDto {
   // `null` is an explicit CLEAR (the columns are nullable and @IsOptional() skips validation for
   // it); clients must send null rather than omitting the key, which would leave the old value.
   @IsOptional() @IsString() @MaxLength(20) wholesalerLicenseNo?: string | null;
+  // DEPRECATED — superseded by Product.regItemType/regUomUnit. Still ACCEPTED (and
+  // ignored) so an older mobile build's category save is not rejected by
+  // forbidNonWhitelisted. Remove next release.
   @IsOptional() @IsInt() @IsIn([1, 2, 3]) txItemType?: number | null;
   @IsOptional() @IsString() @IsIn(TX_UOM_ALL) txUom?: string | null;
   @IsOptional() @IsBoolean() active?: boolean;
+  /** Saved custom report column layout, keyed by template code. */
+  @IsOptional()
+  @IsObject()
+  reportColumnPrefs?: Record<string, string[]> | null;
 }

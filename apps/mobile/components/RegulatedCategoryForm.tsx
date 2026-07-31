@@ -4,10 +4,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
-import type {
-  InvoiceTreatment,
-  ReportCadence,
-  TrackedCategoryTaxType,
+import {
+  useRegulatedTemplates,
+  type InvoiceTreatment,
+  type ReportCadence,
+  type TrackedCategoryTaxType,
 } from "../lib/api/tracked-categories";
 
 export interface RegulatedCategoryFormValues {
@@ -23,13 +24,10 @@ export interface RegulatedCategoryFormValues {
   active: boolean;
   /**
    * TX Comptroller (TX_COMPTROLLER template) config — optional so screens that don't yet
-   * hydrate these three columns (e.g. an `initial` literal built before this field existed)
+   * hydrate this column (e.g. an `initial` literal built before this field existed)
    * still satisfy this interface without every call site needing an update.
    */
   wholesalerLicenseNo?: string;
-  /** "1" | "2" | "3" (Cigarettes/Cigars/Tobacco) as a picker id — cast to a number on submit. */
-  txItemType?: string;
-  txUom?: string;
 }
 
 export function emptyRegulatedCategoryForm(): RegulatedCategoryFormValues {
@@ -45,8 +43,6 @@ export function emptyRegulatedCategoryForm(): RegulatedCategoryFormValues {
     reportCadence: "MONTHLY",
     active: true,
     wholesalerLicenseNo: "",
-    txItemType: "",
-    txUom: "",
   };
 }
 
@@ -66,9 +62,6 @@ export interface RegulatedCategorySubmitPayload {
    * `undefined` would be dropped from the JSON body and leave the stale value in place.
    */
   wholesalerLicenseNo?: string | null;
-  /** 1 = Cigarettes, 2 = Cigars, 3 = Tobacco. */
-  txItemType?: number | null;
-  txUom?: string | null;
 }
 
 const TAX_TYPES: PickerOption[] = [
@@ -83,7 +76,9 @@ const TREATMENTS: PickerOption[] = [
   { id: "SEPARATE_SECTION", label: "Sectioned on the main invoice" },
   { id: "LINE_TAX", label: "Per-line tax" },
 ];
-const TEMPLATES: PickerOption[] = [
+// Loading fallback for useRegulatedTemplates() below — keeps the picker populated
+// on first render before the /regulated/templates response lands.
+const FALLBACK_TEMPLATES: PickerOption[] = [
   "GENERIC",
   "CA_CDTFA",
   "CA_ABC",
@@ -94,32 +89,6 @@ const CADENCES: PickerOption[] = ["MONTHLY", "QUARTERLY", "ANNUAL"].map((c) => (
   id: c,
   label: c,
 }));
-
-// TX Comptroller item types + their allowed units of measure. Mirrors
-// apps/api/src/regulated/tx-report.ts#TX_ITEM_TYPE_LABELS / TX_UOM_CODES (WP11) — kept as a
-// local copy since mobile has no shared import path into the API package.
-const TX_ITEM_TYPES: PickerOption[] = [
-  { id: "1", label: "Cigarettes" },
-  { id: "2", label: "Cigars" },
-  { id: "3", label: "Tobacco" },
-];
-const TX_UOM_OPTIONS: Record<string, PickerOption[]> = {
-  "1": [
-    { id: "CP", label: "CP — Packs" },
-    { id: "CS", label: "CS — Sticks" },
-    { id: "CC", label: "CC — Cartons" },
-  ],
-  "2": [
-    { id: "SB", label: "SB — Class B sticks" },
-    { id: "SC", label: "SC — Class C sticks" },
-    { id: "SD", label: "SD — Class D sticks" },
-    { id: "SF", label: "SF — Class F sticks" },
-  ],
-  "3": [
-    { id: "WO", label: "WO — Ounces" },
-    { id: "WN", label: "WN — Number (cans/packages)" },
-  ],
-};
 
 interface Props {
   title: string;
@@ -142,8 +111,6 @@ export function RegulatedCategoryForm({
   const [treatmentOpen, setTreatmentOpen] = React.useState(false);
   const [templateOpen, setTemplateOpen] = React.useState(false);
   const [cadenceOpen, setCadenceOpen] = React.useState(false);
-  const [txItemTypeOpen, setTxItemTypeOpen] = React.useState(false);
-  const [txUomOpen, setTxUomOpen] = React.useState(false);
 
   const set = <K extends keyof RegulatedCategoryFormValues>(
     k: K,
@@ -153,7 +120,13 @@ export function RegulatedCategoryForm({
   const hasTax = form.taxType !== "NONE";
   const isPercent = form.taxType === "PERCENT_OF_SALE";
   const isTx = form.reportTemplate === "TX_COMPTROLLER";
-  const txUomOptions = form.txItemType ? (TX_UOM_OPTIONS[form.txItemType] ?? []) : [];
+
+  // Report-template metadata (labels) — /regulated/templates. Falls back to the
+  // static literal while the query is loading so the picker is never empty.
+  const { data: templateDefs } = useRegulatedTemplates();
+  const templateOptions: PickerOption[] = templateDefs?.length
+    ? templateDefs.map((t) => ({ id: t.key, label: t.label }))
+    : FALLBACK_TEMPLATES;
 
   const submit = () => {
     const name = form.name.trim();
@@ -177,8 +150,6 @@ export function RegulatedCategoryForm({
       // field (or a template switched away from TX) would never reach the DTO and Prisma
       // would leave the stale value in place. null clears the nullable column.
       wholesalerLicenseNo: isTx ? form.wholesalerLicenseNo?.trim() || null : null,
-      txItemType: isTx && form.txItemType ? Number(form.txItemType) : null,
-      txUom: isTx ? form.txUom || null : null,
     });
   };
 
@@ -245,7 +216,13 @@ export function RegulatedCategoryForm({
 
       <FormSection title="Reporting">
         <FormField label="Report template">
-          <PickerRow label={form.reportTemplate} onPress={() => setTemplateOpen(true)} />
+          <PickerRow
+            label={
+              templateOptions.find((t) => t.id === form.reportTemplate)?.label ??
+              form.reportTemplate
+            }
+            onPress={() => setTemplateOpen(true)}
+          />
         </FormField>
         <FormField label="Report cadence">
           <PickerRow label={form.reportCadence} onPress={() => setCadenceOpen(true)} />
@@ -266,21 +243,9 @@ export function RegulatedCategoryForm({
               maxLength={20}
             />
           </FormField>
-          <FormField label="Item type">
-            <PickerRow
-              label={TX_ITEM_TYPES.find((t) => t.id === form.txItemType)?.label ?? "Choose one"}
-              onPress={() => setTxItemTypeOpen(true)}
-            />
-          </FormField>
-          <FormField label="Unit of measure">
-            <PickerRow
-              label={
-                txUomOptions.find((u) => u.id === form.txUom)?.label ??
-                (form.txItemType ? "Choose one" : "Choose an item type first")
-              }
-              onPress={() => setTxUomOpen(true)}
-            />
-          </FormField>
+          <Text style={styles.helperText}>
+            Item type and unit of measure are configured per product.
+          </Text>
         </FormSection>
       ) : null}
 
@@ -323,7 +288,7 @@ export function RegulatedCategoryForm({
       <OptionPickerSheet
         visible={templateOpen}
         title="Report template"
-        options={TEMPLATES}
+        options={templateOptions}
         selectedId={form.reportTemplate}
         onClose={() => setTemplateOpen(false)}
         onSelect={(o) => {
@@ -340,33 +305,6 @@ export function RegulatedCategoryForm({
         onSelect={(o) => {
           set("reportCadence", o.id as ReportCadence);
           setCadenceOpen(false);
-        }}
-      />
-      <OptionPickerSheet
-        visible={txItemTypeOpen}
-        title="TX item type"
-        options={TX_ITEM_TYPES}
-        selectedId={form.txItemType}
-        onClose={() => setTxItemTypeOpen(false)}
-        onSelect={(o) => {
-          setForm((f) => ({
-            ...f,
-            txItemType: o.id,
-            // A UOM valid for the old item type may not be valid for the new one.
-            txUom: (TX_UOM_OPTIONS[o.id] ?? []).some((u) => u.id === f.txUom) ? f.txUom : "",
-          }));
-          setTxItemTypeOpen(false);
-        }}
-      />
-      <OptionPickerSheet
-        visible={txUomOpen}
-        title="Unit of measure"
-        options={txUomOptions}
-        selectedId={form.txUom}
-        onClose={() => setTxUomOpen(false)}
-        onSelect={(o) => {
-          set("txUom", o.id);
-          setTxUomOpen(false);
         }}
       />
     </FormSheet>
@@ -430,4 +368,5 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   switchLabel: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label, flex: 1 },
+  helperText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
 });

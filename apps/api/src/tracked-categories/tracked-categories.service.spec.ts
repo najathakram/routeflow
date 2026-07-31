@@ -102,6 +102,80 @@ describe("TrackedCategoriesService", () => {
     });
   });
 
+  describe("reportColumnPrefs validation", () => {
+    it("persists a valid reportColumnPrefs map generically via toData()", async () => {
+      prisma.trackedCategory.create.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        _count: { products: 0 },
+      });
+      await service.create({
+        name: "Tobacco",
+        reportColumnPrefs: { TX_COMPTROLLER: ["itemType", "uom", "quantity"] },
+      } as any);
+      expect(prisma.trackedCategory.create).toHaveBeenCalledWith({
+        data: {
+          name: "Tobacco",
+          tenantId: "test-tenant",
+          reportColumnPrefs: { TX_COMPTROLLER: ["itemType", "uom", "quantity"] },
+        },
+        include: { _count: { select: { products: true } } },
+      });
+    });
+
+    it("400s on an unknown template key", async () => {
+      await expect(
+        service.create({
+          name: "Tobacco",
+          reportColumnPrefs: { NOT_A_TEMPLATE: ["itemType"] },
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+    });
+
+    it("400s on an unknown column key for a valid template", async () => {
+      await expect(
+        service.create({
+          name: "Tobacco",
+          reportColumnPrefs: { TX_COMPTROLLER: ["itemType", "notARealColumn"] },
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+    });
+
+    it("400s on an empty column array", async () => {
+      await expect(
+        service.create({
+          name: "Tobacco",
+          reportColumnPrefs: { TX_COMPTROLLER: [] },
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+    });
+
+    it("allows null to clear reportColumnPrefs on update", async () => {
+      prisma.trackedCategory.findUnique.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        active: true,
+        _count: { products: 0 },
+      });
+      prisma.trackedCategory.update.mockResolvedValue({
+        id: "c1",
+        name: "Tobacco",
+        reportColumnPrefs: null,
+        _count: { products: 0 },
+      });
+      await service.update("c1", { reportColumnPrefs: null } as any);
+      // Prisma clears a nullable Json column with `Prisma.DbNull`, not a bare null.
+      expect(prisma.trackedCategory.update).toHaveBeenCalledWith({
+        where: { id: "c1" },
+        data: { reportColumnPrefs: Prisma.DbNull },
+        include: { _count: { select: { products: true } } },
+      });
+    });
+  });
+
   describe("toggle", () => {
     it("flips the active flag", async () => {
       prisma.trackedCategory.findUnique.mockResolvedValue({

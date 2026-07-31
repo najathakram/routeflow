@@ -74,6 +74,16 @@ export interface CreateProductDto {
   trackedCategoryId?: string | null;
   /** Regulated subcategory tag (must belong to trackedCategoryId). Same null-to-clear rule. */
   trackedSubcategoryId?: string | null;
+  /**
+   * Regulatory reporting config (mirrors apps/web/lib/api/products.ts). The vocabulary
+   * is validated service-side against the section's reportTemplate
+   * (apps/api/src/regulated/template-registry.ts). Same null-to-clear rule as above.
+   */
+  regItemType?: string | null;
+  /** Case/carton UoM — opts the product into case-level report bucketing when sold by the box. */
+  regUomCase?: string | null;
+  /** Loose/unit UoM. */
+  regUomUnit?: string | null;
 }
 
 /**

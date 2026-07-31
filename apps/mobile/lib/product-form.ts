@@ -48,6 +48,16 @@ export interface ProductFormValues {
   trackedCategoryName?: string;
   /** Regulated subcategory id, "" = none. */
   trackedSubcategoryId: string;
+  /**
+   * Regulatory reporting config (mirrors apps/web/lib/api/products.ts). The
+   * vocabulary is validated service-side against the section's reportTemplate
+   * (apps/api/src/regulated/template-registry.ts). "" = unset.
+   */
+  regItemType: string;
+  /** Case/carton UoM — opts the product into case-level report bucketing when sold by the box. */
+  regUomCase: string;
+  /** Loose/unit UoM. */
+  regUomUnit: string;
 }
 
 export function emptyProductForm(): ProductFormValues {
@@ -76,6 +86,9 @@ export function emptyProductForm(): ProductFormValues {
     trackedCategoryId: "",
     trackedCategoryName: undefined,
     trackedSubcategoryId: "",
+    regItemType: "",
+    regUomCase: "",
+    regUomUnit: "",
   };
 }
 
@@ -109,6 +122,9 @@ export function productFormFromValues(
     trackedCategoryId: p.trackedCategory?.id ?? p.trackedCategoryId ?? "",
     trackedCategoryName: p.trackedCategory?.name,
     trackedSubcategoryId: p.trackedSubcategory?.id ?? p.trackedSubcategoryId ?? "",
+    regItemType: p.regItemType ?? "",
+    regUomCase: p.regUomCase ?? "",
+    regUomUnit: p.regUomUnit ?? "",
   };
 }
 
@@ -142,6 +158,9 @@ export interface SubmitPayload {
   variantName?: string;
   trackedCategoryId?: string | null;
   trackedSubcategoryId?: string | null;
+  regItemType?: string | null;
+  regUomCase?: string | null;
+  regUomUnit?: string | null;
 }
 
 export function buildProductPayload(
@@ -170,6 +189,13 @@ export function buildProductPayload(
   const upbRaw = parseOptionalNumber(form.unitsPerBox);
   const unitsPerBox =
     upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1 ? Math.floor(upbRaw) : undefined;
+  // Regulatory reporting config lives on the product but only makes sense under a
+  // regulated section. Clearing the section (trackedCategoryId blank) must clear all
+  // three, even if the caller didn't already reset them in form state — mirrors the
+  // trackedCategoryId/trackedSubcategoryId clear-on-blank behavior below.
+  const clearedValue = mode === "edit" ? null : undefined;
+  const sectionCleared = !form.trackedCategoryId.trim();
+  const regTrio = (v: string) => (sectionCleared ? clearedValue : v.trim() || clearedValue);
   return {
     name,
     sku: form.sku.trim() || undefined,
@@ -199,5 +225,8 @@ export function buildProductPayload(
       mode === "edit"
         ? form.trackedSubcategoryId.trim() || null
         : form.trackedSubcategoryId.trim() || undefined,
+    regItemType: regTrio(form.regItemType),
+    regUomCase: regTrio(form.regUomCase),
+    regUomUnit: regTrio(form.regUomUnit),
   };
 }

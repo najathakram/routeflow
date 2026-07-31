@@ -9,7 +9,11 @@ import {
   TxCustomerInfo,
   TxInvoiceInfo,
   TxLedgerRow,
+  TxLineInfo,
+  TxProductConfig,
 } from "./tx-report";
+import { allColumnKeys, defaultColumnKeys } from "./template-registry";
+import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -69,6 +73,7 @@ export class RegulatedReportService {
     from: string;
     to: string;
     template?: string;
+    columns?: string;
   }): Promise<RegulatedReport> {
     const { fromDate, toExclusive } = this.parseRange(params.from, params.to);
 
@@ -79,52 +84,92 @@ export class RegulatedReportService {
 
     const template = params.template || category.reportTemplate;
 
+    // Resolve the requested layout against the template's registry superset.
+    const requestedKeys = (params.columns ?? "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    let optionalKeys: string[] = [];
+    let isCustom = false;
+    if (requestedKeys.length) {
+      const known = allColumnKeys(template);
+      if (!known.length) {
+        throw new BadRequestException(`Template ${template} has no configurable columns`);
+      }
+      const unknown = requestedKeys.filter((k) => !known.includes(k));
+      if (unknown.length) {
+        throw new BadRequestException(`Unknown column(s) for ${template}: ${unknown.join(", ")}`);
+      }
+      const defaults = defaultColumnKeys(template);
+      // Ordered comparison — a pure reorder is also a non-official layout.
+      isCustom =
+        requestedKeys.length !== defaults.length || requestedKeys.some((k, i) => k !== defaults[i]);
+      optionalKeys = requestedKeys.filter((k) => !defaults.includes(k));
+    }
+
+    let report: RegulatedReport;
     if (template === "TX_COMPTROLLER") {
-      return this.buildTxReportForRange(
+      report = await this.buildTxReportForRange(
         {
           id: category.id,
           name: category.name,
           wholesalerLicenseNo: category.wholesalerLicenseNo,
-          txItemType: category.txItemType,
-          txUom: category.txUom,
         },
         fromDate,
         toExclusive,
         { from: params.from, to: params.to },
+        optionalKeys,
       );
+    } else {
+      const ledger = await this.regulated.getLedger(
+        {
+          category: params.category,
+          from: fromDate.toISOString(),
+          to: toExclusive.toISOString(),
+        },
+        { exclusiveTo: true },
+      );
+      const totals = ledger.rows.reduce(
+        (t, r) => ({
+          qty: t.qty + r.qty,
+          unitBasisQty: t.unitBasisQty + r.unitBasisQty,
+          netSales: t.netSales + r.netSales,
+          categoryTax: t.categoryTax + r.categoryTax,
+        }),
+        { qty: 0, unitBasisQty: 0, netSales: 0, categoryTax: 0 },
+      );
+
+      report = buildAggregateReport(template, {
+        categoryName: category.name,
+        unitBasis: category.unitBasis,
+        periodKey: `${params.from} to ${params.to}`,
+        periodLabel: `${params.from} to ${params.to}`,
+        rows: ledger.rows.map((r) => ({
+          periodBucket: r.periodBucket,
+          qty: r.qty,
+          unitBasisQty: r.unitBasisQty,
+          netSales: r.netSales,
+          categoryTax: r.categoryTax,
+        })),
+        totals,
+        categoryId: category.id,
+        from: params.from,
+        to: params.to,
+      });
     }
 
-    const ledger = await this.regulated.getLedger(
-      { category: params.category, from: fromDate.toISOString(), to: toExclusive.toISOString() },
-      { exclusiveTo: true },
-    );
-    const totals = ledger.rows.reduce(
-      (t, r) => ({
-        qty: t.qty + r.qty,
-        unitBasisQty: t.unitBasisQty + r.unitBasisQty,
-        netSales: t.netSales + r.netSales,
-        categoryTax: t.categoryTax + r.categoryTax,
-      }),
-      { qty: 0, unitBasisQty: 0, netSales: 0, categoryTax: 0 },
-    );
+    if (requestedKeys.length) {
+      report = projectReportColumns(report, requestedKeys);
+      if (isCustom) {
+        report.custom = true;
+        // The official TX layout is deliberately headerless (filing-ready). A custom
+        // layout is NOT the official filing, so it gets a header row to stay legible
+        // and visibly distinct from a submittable export.
+        report.csv = { ...report.csv, includeHeader: true };
+      }
+    }
 
-    return buildAggregateReport(template, {
-      categoryName: category.name,
-      unitBasis: category.unitBasis,
-      periodKey: `${params.from} to ${params.to}`,
-      periodLabel: `${params.from} to ${params.to}`,
-      rows: ledger.rows.map((r) => ({
-        periodBucket: r.periodBucket,
-        qty: r.qty,
-        unitBasisQty: r.unitBasisQty,
-        netSales: r.netSales,
-        categoryTax: r.categoryTax,
-      })),
-      totals,
-      categoryId: category.id,
-      from: params.from,
-      to: params.to,
-    });
+    return report;
   }
 
   /**
@@ -139,16 +184,66 @@ export class RegulatedReportService {
     fromDate: Date,
     toExclusive: Date,
     labels: { from: string; to: string },
+    includeOptionalColumns?: string[],
   ): Promise<RegulatedReport> {
     const ledgerRows = await this.prisma.forTenant().regulatedSalesLedger.findMany({
       where: { trackedCategoryId: category.id, soldAt: { gte: fromDate, lt: toExclusive } },
-      select: { invoiceId: true, unitBasisQty: true, netSales: true },
+      select: { invoiceId: true, invoiceItemId: true, unitBasisQty: true, netSales: true },
     });
     const txLedgerRows: TxLedgerRow[] = ledgerRows.map((r) => ({
       invoiceId: r.invoiceId,
+      invoiceItemId: r.invoiceItemId,
       unitBasisQty: Number(r.unitBasisQty),
       netSales: Number(r.netSales),
     }));
+
+    const itemIds = [
+      ...new Set(txLedgerRows.map((r) => r.invoiceItemId).filter((id): id is string => !!id)),
+    ];
+    const lines = itemIds.length
+      ? await this.prisma.forTenant().invoiceItem.findMany({
+          where: { id: { in: itemIds } },
+          select: {
+            id: true,
+            productId: true,
+            qty: true,
+            boxes: true,
+            pieces: true,
+            unitsPerBox: true,
+          },
+        })
+      : [];
+    const linesById = new Map<string, TxLineInfo>(
+      lines.map((l: any) => [
+        l.id,
+        {
+          id: l.id,
+          productId: l.productId,
+          qty: Number(l.qty),
+          boxes: l.boxes,
+          pieces: l.pieces,
+          unitsPerBox: l.unitsPerBox,
+        },
+      ]),
+    );
+
+    const productIds = [
+      ...new Set(lines.map((l: any) => l.productId).filter((id: any): id is string => !!id)),
+    ];
+    const products = productIds.length
+      ? await this.prisma.forTenant().product.findMany({
+          where: { id: { in: productIds } },
+          select: {
+            id: true,
+            name: true,
+            unitsPerBox: true,
+            regItemType: true,
+            regUomCase: true,
+            regUomUnit: true,
+          },
+        })
+      : [];
+    const productsById = new Map<string, TxProductConfig>(products.map((p: any) => [p.id, p]));
 
     const invoiceIds = [
       ...new Set(txLedgerRows.map((r) => r.invoiceId).filter((id): id is string => !!id)),
@@ -203,10 +298,13 @@ export class RegulatedReportService {
     return buildTxReport({
       category,
       ledgerRows: txLedgerRows,
+      linesById,
+      productsById,
       invoicesById,
       customersById,
       from: labels.from,
       to: labels.to,
+      includeOptionalColumns,
     });
   }
 
@@ -237,10 +335,11 @@ export class RegulatedReportService {
     from: string;
     to: string;
     template?: string;
+    columns?: string;
   }): Promise<{ csv: string; filename: string }> {
     const report = await this.buildReport(params);
     const csv = serializeReportCsv(report);
-    const filename = `${this.slugify(report.categoryName)}-${this.safeToken(report.template)}-${params.from}-${params.to}.csv`;
+    const filename = `${this.slugify(report.categoryName)}-${this.safeToken(report.template)}${report.custom ? "-custom" : ""}-${params.from}-${params.to}.csv`;
     return { csv, filename };
   }
 }

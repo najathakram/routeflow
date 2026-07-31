@@ -131,5 +131,19 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Regulated compliance smoke ─────────────────────────────────────────────
+    // Report-panel UX on /compliance/[categoryId] with every regulated endpoint
+    // mocked — no mutations reach any tenant. Self-skips on web builds that
+    // predate the report-panel UX, so it is safe to run before the deploy.
+    {
+      name: "regulated-compliance",
+      testMatch: /09-regulated-compliance\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

@@ -18,4 +18,16 @@ export class ReportQueryDto {
   @IsString()
   @MaxLength(40)
   template?: string;
+
+  /**
+   * Comma-separated column keys; order defines output order. Absent ⇒ the
+   * template's default layout (byte-identical to the pre-custom-format output).
+   * Keys are validated against the template's registry superset in the service.
+   */
+  @IsOptional()
+  @Matches(/^[A-Za-z][A-Za-z0-9]*(,[A-Za-z][A-Za-z0-9]*)*$/, {
+    message: "columns must be a comma-separated list of column keys",
+  })
+  @MaxLength(400)
+  columns?: string;
 }

@@ -11,6 +11,7 @@ import { UpdateTrackedCategoryDto } from "./dto/update-tracked-category.dto";
 import { ListTrackedCategoriesDto } from "./dto/list-tracked-categories.dto";
 import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
+import { templateByKey, allColumnKeys } from "../regulated/template-registry";
 
 /**
  * CRUD for tenant-defined regulated ("tracked") categories — the generic system
@@ -75,12 +76,45 @@ export class TrackedCategoriesService {
     }
   }
 
+  /**
+   * `reportColumnPrefs` is a free-form `{ [templateKey]: string[] }` map, but it must
+   * only ever reference real templates/columns — otherwise a stale template rename or
+   * a typo'd column key would silently produce an unprojectable report layout later.
+   * `null` clears the override (falls back to the template default) and is allowed.
+   */
+  private assertValidReportColumnPrefs(prefs: unknown): void {
+    if (prefs === undefined || prefs === null) return;
+    if (typeof prefs !== "object" || Array.isArray(prefs)) {
+      throw new BadRequestException("reportColumnPrefs must be an object keyed by template key.");
+    }
+    for (const [templateKey, columns] of Object.entries(prefs as Record<string, unknown>)) {
+      const template = templateByKey(templateKey);
+      if (!template) {
+        throw new BadRequestException(`Unknown report template "${templateKey}".`);
+      }
+      if (!Array.isArray(columns) || columns.length === 0) {
+        throw new BadRequestException(
+          `reportColumnPrefs for "${templateKey}" must be a non-empty array of column keys.`,
+        );
+      }
+      const valid = new Set(allColumnKeys(templateKey));
+      for (const col of columns) {
+        if (typeof col !== "string" || !valid.has(col)) {
+          throw new BadRequestException(
+            `Unknown column "${String(col)}" for report template "${templateKey}".`,
+          );
+        }
+      }
+    }
+  }
+
   async create(dto: CreateTrackedCategoryDto) {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a category.");
     }
     this.assertSupportedTaxConfig(dto.taxType, dto.rate, dto.priceIncludesTax);
+    this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
       const row = await this.prisma
         .forTenant()
@@ -103,6 +137,7 @@ export class TrackedCategoriesService {
       dto.rate ?? (existing as any).rate,
       dto.priceIncludesTax ?? (existing as any).priceIncludesTax,
     );
+    this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
       const row = await this.prisma
         .forTenant()
@@ -117,16 +152,25 @@ export class TrackedCategoriesService {
   }
 
   /**
-   * Normalize a DTO into Prisma data. `appliesScope` is a free-form JSON object
-   * in the DTO but Prisma's Json input type is stricter, so cast it explicitly
-   * (omitted when the DTO didn't provide it).
+   * Normalize a DTO into Prisma data. `appliesScope` and `reportColumnPrefs` are
+   * free-form JSON objects in the DTO but Prisma's Json input type is stricter, so
+   * cast them explicitly (omitted when the DTO didn't provide them). A nullable Json
+   * column cannot be cleared with a bare `null` — Prisma requires `Prisma.DbNull`.
    */
   private toData<T extends CreateTrackedCategoryDto | UpdateTrackedCategoryDto>(dto: T) {
-    const { appliesScope, ...rest } = dto;
+    const { appliesScope, reportColumnPrefs, ...rest } = dto;
     return {
       ...rest,
       ...(appliesScope !== undefined
         ? { appliesScope: appliesScope as Prisma.InputJsonValue }
+        : {}),
+      ...(reportColumnPrefs !== undefined
+        ? {
+            reportColumnPrefs:
+              reportColumnPrefs === null
+                ? Prisma.DbNull
+                : (reportColumnPrefs as Prisma.InputJsonValue),
+          }
         : {}),
     };
   }

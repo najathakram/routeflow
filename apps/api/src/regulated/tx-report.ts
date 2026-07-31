@@ -1,13 +1,26 @@
 /**
- * WP11: TX Comptroller (TX_COMPTROLLER report template) row builder — pure,
- * no Prisma/Nest dependency. Consumed by `regulated-report.service.ts` (the
+ * TX Comptroller (TX_COMPTROLLER report template) row builder — pure, no
+ * Prisma/Nest dependency. Consumed by `regulated-report.service.ts` (the
  * stateless preview/CSV endpoints) and `regulated-filing.service.ts`
  * (`prepareFiling`'s persisted TX filing).
  *
+ * Item type and unit of measure are resolved PER PRODUCT (`Product.regItemType`/
+ * `regUomCase`/`regUomUnit`), not per category — a single regulated section can
+ * legitimately hold cigarettes, cigars and loose tobacco products at once, and a
+ * product's selling unit (case vs. loose) determines which UoM bucket its
+ * quantity lands in. See `./template-registry.ts` for the vocabulary this report
+ * validates item types/UoMs against.
+ *
  * Ledger rows are pre-signed (REVERSAL rows are negative and carry the sibling
- * invoice's `invoiceId`), so grouping+summing signed `unitBasisQty`/`netSales` per
- * `invoiceId` nets credit notes and returns automatically — no separate
- * reversal-matching logic is needed here.
+ * invoice's `invoiceId`), so summing signed `unitBasisQty`/`netSales` per
+ * (invoice, item type, UoM[, product]) bucket nets credit notes and returns
+ * automatically — no separate reversal-matching logic is needed here.
+ *
+ * BACK-COMPAT INVARIANT: when a product's `regUomCase` is null, its ledger rows'
+ * signed `unitBasisQty` passes through RAW and UNCONVERTED into a single bucket
+ * per invoice — never multiplied by `unitsPerBox`. This is what makes backfilled
+ * tenants (whose products all have `regUomCase` NULL) reproduce today's report
+ * numbers byte-for-byte. Case/unit splitting is strictly a per-product opt-in.
  *
  * IDs (wholesaler license, retailer license, taxpayer ID) are emitted DIGITS-ONLY
  * AS STORED — never zero-padded, never fabricated. A wrong length raises a
@@ -16,6 +29,7 @@
  */
 
 import { ReportColumn, RegulatedReport, ReportWarning, ReportWarningCode } from "./report-types";
+import { itemTypeLabel } from "./template-registry";
 
 /** TX Comptroller unit-of-measure codes, keyed by item type. */
 export const TX_UOM_CODES = {
@@ -32,10 +46,35 @@ export const TX_ITEM_TYPE_LABELS: Record<number, string> = {
 
 export interface TxLedgerRow {
   invoiceId: string | null;
+  /** Ledger rows carry the invoice line they were booked from; may dangle (no FK). */
+  invoiceItemId: string | null;
   /** Signed: REVERSAL rows are negative. */
   unitBasisQty: number;
   netSales: number;
 }
+
+/** The invoice line a ledger row was booked from — the case/unit split lives here. */
+export interface TxLineInfo {
+  id: string;
+  productId: string | null;
+  /** Line total in the LINE'S qty basis: pieces when boxes != null, else cases/units. */
+  qty: number;
+  boxes: number | null;
+  pieces: number | null;
+  /** Sale-time snapshot of the product's box size. */
+  unitsPerBox: number | null;
+}
+
+/** Per-product regulatory reporting config. */
+export interface TxProductConfig {
+  id: string;
+  name: string;
+  unitsPerBox: number | null;
+  regItemType: string | null;
+  regUomCase: string | null;
+  regUomUnit: string | null;
+}
+
 export interface TxInvoiceInfo {
   id: string;
   invoiceNumber: string;
@@ -64,8 +103,7 @@ export interface TxCategoryConfig {
   id: string;
   name: string;
   wholesalerLicenseNo: string | null;
-  txItemType: number | null;
-  txUom: string | null;
+  // txItemType / txUom REMOVED — config now lives on the product.
 }
 
 const WHOLESALER_LICENSE_LEN = 8;
@@ -90,6 +128,17 @@ const TX_COLUMNS: ReportColumn[] = [
   { key: "uom", label: "Unit of Measure" },
   { key: "quantity", label: "Quantity", align: "right" },
   { key: "invoiceAmount", label: "Invoice Amount", align: "right" },
+];
+
+/**
+ * Non-default columns a caller may opt into via `includeOptionalColumns`, in
+ * canonical registry order. Appended after the 12 base columns above, never
+ * reordered relative to each other.
+ */
+const TX_OPTIONAL_COLUMNS: ReportColumn[] = [
+  { key: "itemDescription", label: "Item Description" },
+  { key: "invoiceNumber", label: "Invoice #" },
+  { key: "invoiceDate", label: "Invoice Date" },
 ];
 
 /** Digits only — IDs are emitted as stored, never padded or invented. */
@@ -118,14 +167,20 @@ const EPSILON = 1e-9;
 export function buildTxReport(input: {
   category: TxCategoryConfig;
   ledgerRows: TxLedgerRow[];
+  linesById: Map<string, TxLineInfo>;
+  productsById: Map<string, TxProductConfig>;
   invoicesById: Map<string, TxInvoiceInfo>;
   customersById: Map<string, TxCustomerInfo>;
   from: string;
   to: string;
+  /** Optional non-default column keys to append, in canonical registry order. */
+  includeOptionalColumns?: string[];
 }): RegulatedReport {
-  const { category, ledgerRows, invoicesById, customersById, from, to } = input;
+  const { category, ledgerRows, linesById, productsById, invoicesById, customersById, from, to } =
+    input;
   const warnings: ReportWarning[] = [];
 
+  // ── 1. Resolve category config once ─────────────────────────────────────
   // Category-level config issues apply to every row identically — emit each
   // MISSING_*/INVALID_* code exactly once, no matter how many invoices are in range.
   const seenCategoryWarnings = new Set<ReportWarningCode>();
@@ -135,27 +190,6 @@ export function buildTxReport(input: {
     warnings.push({ code, message });
   };
 
-  // ── 1. Group signed sums by invoiceId; null-invoiceId rows are excluded ────
-  const sums = new Map<string, { qty: number; net: number }>();
-  let unlinkedCount = 0;
-  for (const row of ledgerRows) {
-    if (!row.invoiceId) {
-      unlinkedCount++;
-      continue;
-    }
-    const cur = sums.get(row.invoiceId) ?? { qty: 0, net: 0 };
-    cur.qty += Number(row.unitBasisQty);
-    cur.net += Number(row.netSales);
-    sums.set(row.invoiceId, cur);
-  }
-  if (unlinkedCount > 0) {
-    warnings.push({
-      code: "UNLINKED_LEDGER_ROWS",
-      message: `${unlinkedCount} regulated ledger row(s) had no linked invoice and were excluded from this report.`,
-    });
-  }
-
-  // ── 2. Resolve category config once ─────────────────────────────────────
   const wholesalerLicense = digitsOnly(category.wholesalerLicenseNo);
   if (!wholesalerLicense) {
     addCategoryWarning(
@@ -168,64 +202,236 @@ export function buildTxReport(input: {
       `The configured wholesaler license "${wholesalerLicense}" is not ${WHOLESALER_LICENSE_LEN} digits.`,
     );
   }
-  const itemTypeLabel =
-    category.txItemType != null ? (TX_ITEM_TYPE_LABELS[category.txItemType] ?? "") : "";
-  if (category.txItemType == null) {
-    addCategoryWarning("MISSING_ITEM_TYPE", "This category has no TX item type configured.");
+
+  // ── 2. Bucket signed ledger rows by (invoice, item type, UoM[, product]) ────
+  const optional = new Set(input.includeOptionalColumns ?? []);
+  const withItemDescription = optional.has("itemDescription");
+
+  interface Bucket {
+    invoiceId: string;
+    itemType: string; // code; "" when unconfigured
+    uom: string; // code; "" when unconfigured
+    productName: string;
+    qty: number;
+    net: number;
   }
-  const uom = category.txUom ?? "";
-  if (!uom) {
-    addCategoryWarning("MISSING_UOM", "This category has no TX unit of measure configured.");
+  const buckets = new Map<string, Bucket>();
+  let unlinkedCount = 0;
+  let unmatchedLineCount = 0;
+  const unlistedInvoices = new Set<string>();
+  // Product-level config warnings are per product, not per row.
+  const seenProductWarnings = new Set<string>();
+
+  const warnProduct = (p: TxProductConfig, code: ReportWarningCode, message: string) => {
+    const key = `${code}|${p.id}`;
+    if (seenProductWarnings.has(key)) return;
+    seenProductWarnings.add(key);
+    warnings.push({ code, message, productId: p.id });
+  };
+
+  const addBucket = (
+    invoiceId: string,
+    product: TxProductConfig | undefined,
+    itemType: string,
+    uom: string,
+    qty: number,
+    net: number,
+  ) => {
+    // Adding the product name to the layout means rows must be per product, or the
+    // description cell would be ambiguous.
+    const key = withItemDescription
+      ? `${invoiceId}|${product?.id ?? ""}|${itemType}|${uom}`
+      : `${invoiceId}|${itemType}|${uom}`;
+    const cur = buckets.get(key);
+    if (cur) {
+      cur.qty += qty;
+      cur.net += net;
+      return;
+    }
+    buckets.set(key, {
+      invoiceId,
+      itemType,
+      uom,
+      productName: product?.name ?? "",
+      qty,
+      net,
+    });
+  };
+
+  for (const row of ledgerRows) {
+    if (!row.invoiceId) {
+      unlinkedCount++;
+      continue;
+    }
+    const line = row.invoiceItemId ? linesById.get(row.invoiceItemId) : undefined;
+    const product = line?.productId ? productsById.get(line.productId) : undefined;
+
+    const qty = Number(row.unitBasisQty);
+    const net = Number(row.netSales);
+
+    const itemType = product?.regItemType ?? "";
+    const uomUnit = product?.regUomUnit ?? "";
+    const uomCase = product?.regUomCase ?? null;
+
+    if (product) {
+      if (!product.regItemType) {
+        warnProduct(
+          product,
+          "MISSING_ITEM_TYPE",
+          `"${product.name}" has no regulatory item type configured.`,
+        );
+      }
+      if (!product.regUomUnit) {
+        warnProduct(
+          product,
+          "MISSING_UOM",
+          `"${product.name}" has no regulatory unit of measure configured.`,
+        );
+      }
+    }
+    if (row.invoiceItemId && !line) unmatchedLineCount++;
+    if (line && !line.productId) unlistedInvoices.add(row.invoiceId);
+
+    // ── BACK-COMPAT PATH ──────────────────────────────────────────────────────
+    // No case UoM configured ⇒ raw passthrough, one bucket, NO unit conversion.
+    // This is what reproduces today's per-invoice numbers exactly. Do not "fix"
+    // it by multiplying cases by unitsPerBox — that would restate filed history.
+    if (uomCase == null || !line || !(line.qty > 0)) {
+      addBucket(row.invoiceId, product, itemType, uomUnit, qty, net);
+      continue;
+    }
+
+    if (line.boxes != null) {
+      // SPLIT LINE: line.qty is TOTAL PIECES; boxes may legitimately be 0.
+      const upb = line.unitsPerBox ?? product?.unitsPerBox ?? 1;
+      const boxes = line.boxes ?? 0;
+      const pieces = line.pieces ?? 0;
+      // factor: +1 for a SALE, -1 for a full reversal, ±fraction for a partial return.
+      const factor = qty / line.qty;
+      const caseQty = factor * boxes;
+      const unitQty = factor * pieces;
+      // Money splits linearly by piece-equivalents; the unit share takes the
+      // remainder so rounding never leaks a cent.
+      const rawShare = upb > 0 ? (boxes * upb) / line.qty : 0;
+      const caseShare = Math.min(1, Math.max(0, rawShare));
+      const caseNet = net * caseShare;
+      const unitNet = net - caseNet;
+      if (caseQty !== 0 || caseNet !== 0) {
+        addBucket(row.invoiceId, product, itemType, uomCase, caseQty, caseNet);
+      }
+      if (unitQty !== 0 || unitNet !== 0) {
+        addBucket(row.invoiceId, product, itemType, uomUnit, unitQty, unitNet);
+      }
+      continue;
+    }
+
+    const effUpb = line.unitsPerBox ?? product?.unitsPerBox ?? 0;
+    if (effUpb > 1) {
+      // LEGACY NO-SPLIT BOXED LINE: qty is already in CASES — do NOT multiply.
+      addBucket(row.invoiceId, product, itemType, uomCase, qty, net);
+      continue;
+    }
+    // Non-boxed product: everything is units.
+    addBucket(row.invoiceId, product, itemType, uomUnit, qty, net);
   }
 
-  // ── 3. One row per invoice ───────────────────────────────────────────────
-  type BuiltRow = { cells: string[]; issueDate: Date; invoiceNumber: string };
+  if (unlinkedCount > 0) {
+    warnings.push({
+      code: "UNLINKED_LEDGER_ROWS",
+      message: `${unlinkedCount} regulated ledger row(s) had no linked invoice and were excluded from this report.`,
+    });
+  }
+  if (unmatchedLineCount > 0) {
+    warnings.push({
+      code: "UNMATCHED_LEDGER_LINE",
+      message: `${unmatchedLineCount} regulated ledger row(s) reference an invoice line that no longer exists; their quantities are reported without case/unit splitting.`,
+    });
+  }
+  for (const invoiceId of unlistedInvoices) {
+    warnings.push({
+      code: "UNLISTED_PRODUCT_LINE",
+      message:
+        "This invoice has a regulated line with no catalog product, so it has no item type or unit of measure.",
+      invoiceId,
+    });
+  }
+
+  // ── 3. Emit one row per bucket ───────────────────────────────────────────
+  type BuiltRow = {
+    cells: string[];
+    issueDate: Date;
+    invoiceNumber: string;
+    invoiceId: string;
+    itemType: string;
+    uom: string;
+    productName: string;
+    roundedQty: number;
+    roundedNet: number;
+  };
   const built: BuiltRow[] = [];
 
-  for (const [invoiceId, sum] of sums) {
-    const roundedQty = Math.round(sum.qty);
-    const roundedNet = Math.round(sum.net);
-    // A fully reversed invoice (SALE + its own REVERSAL, or credited to zero) nets
+  // Per-invoice warnings must dedupe per invoice now that one invoice can yield
+  // several bucket rows.
+  const seenInvoiceWarnings = new Set<string>();
+  const warnInvoiceOnce = (
+    code: ReportWarningCode,
+    invoiceId: string,
+    message: string,
+    customerName?: string,
+  ) => {
+    const key = `${code}|${invoiceId}`;
+    if (seenInvoiceWarnings.has(key)) return;
+    seenInvoiceWarnings.add(key);
+    warnings.push({ code, message, invoiceId, customerName });
+  };
+
+  for (const bucket of buckets.values()) {
+    const roundedQty = Math.round(bucket.qty);
+    const roundedNet = Math.round(bucket.net);
+    // A fully reversed bucket (SALE + its own REVERSAL, or credited to zero) nets
     // to nothing on this line — drop it rather than emit a dead $0/0 row.
     if (roundedQty === 0 && roundedNet === 0) continue;
 
-    const invoice = invoicesById.get(invoiceId);
+    const invoice = invoicesById.get(bucket.invoiceId);
     const customer = invoice ? customersById.get(invoice.customerId) : undefined;
     const customerName = customer?.businessName;
 
-    if (Math.abs(sum.qty - roundedQty) > EPSILON) {
+    if (Math.abs(bucket.qty - roundedQty) > EPSILON) {
+      // Per bucket (it is per row), not deduped per invoice — include the UoM so
+      // a fan-out invoice's several fractional buckets are each identifiable.
+      const uomSuffix = bucket.uom ? ` ${bucket.uom}` : "";
       warnings.push({
         code: "FRACTIONAL_QTY",
-        message: `Invoice quantity ${sum.qty} is not a whole number; rounded to ${roundedQty}.`,
-        invoiceId,
+        message: `Invoice quantity ${bucket.qty}${uomSuffix} is not a whole number; rounded to ${roundedQty}.`,
+        invoiceId: bucket.invoiceId,
         customerName,
       });
     }
     if (roundedNet < 0) {
-      warnings.push({
-        code: "NEGATIVE_NET_INVOICE",
-        message: `Invoice ${invoice?.invoiceNumber ?? invoiceId} nets to a negative amount after returns/credits.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "NEGATIVE_NET_INVOICE",
+        bucket.invoiceId,
+        `Invoice ${invoice?.invoiceNumber ?? bucket.invoiceId} nets to a negative amount after returns/credits.`,
         customerName,
-      });
+      );
     }
 
     // Retailer taxpayer ID.
     const taxpayerId = digitsOnly(customer?.taxId ?? null);
     if (!taxpayerId) {
-      warnings.push({
-        code: "MISSING_TAXPAYER_ID",
-        message: `${customerName ?? "This customer"} has no taxpayer ID on file.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "MISSING_TAXPAYER_ID",
+        bucket.invoiceId,
+        `${customerName ?? "This customer"} has no taxpayer ID on file.`,
         customerName,
-      });
+      );
     } else if (taxpayerId.length !== TAXPAYER_ID_LEN) {
-      warnings.push({
-        code: "INVALID_TAXPAYER_ID",
-        message: `${customerName ?? "This customer"}'s taxpayer ID "${taxpayerId}" is not ${TAXPAYER_ID_LEN} digits.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "INVALID_TAXPAYER_ID",
+        bucket.invoiceId,
+        `${customerName ?? "This customer"}'s taxpayer ID "${taxpayerId}" is not ${TAXPAYER_ID_LEN} digits.`,
         customerName,
-      });
+      );
     }
 
     // Retailer license: this category's CustomerAuthorization first, else the
@@ -233,30 +439,30 @@ export function buildTxReport(input: {
     const retailerLicenseRaw = customer?.authLicenseNumber || customer?.tobaccoLicenseNo || null;
     const retailerLicense = digitsOnly(retailerLicenseRaw);
     if (!retailerLicense) {
-      warnings.push({
-        code: "MISSING_RETAILER_LICENSE",
-        message: `${customerName ?? "This customer"} has no retailer license on file for this category.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "MISSING_RETAILER_LICENSE",
+        bucket.invoiceId,
+        `${customerName ?? "This customer"} has no retailer license on file for this category.`,
         customerName,
-      });
+      );
     } else if (retailerLicense.length !== RETAILER_LICENSE_LEN) {
-      warnings.push({
-        code: "INVALID_RETAILER_LICENSE",
-        message: `${customerName ?? "This customer"}'s retailer license "${retailerLicense}" is not ${RETAILER_LICENSE_LEN} digits.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "INVALID_RETAILER_LICENSE",
+        bucket.invoiceId,
+        `${customerName ?? "This customer"}'s retailer license "${retailerLicense}" is not ${RETAILER_LICENSE_LEN} digits.`,
         customerName,
-      });
+      );
     }
 
     // Address: default+BILLING -> any BILLING -> any default -> first.
     const address = customer ? pickReportAddress(customer.addresses) : null;
     if (!address) {
-      warnings.push({
-        code: "MISSING_ADDRESS",
-        message: `${customerName ?? "This customer"} has no address on file.`,
-        invoiceId,
+      warnInvoiceOnce(
+        "MISSING_ADDRESS",
+        bucket.invoiceId,
+        `${customerName ?? "This customer"} has no address on file.`,
         customerName,
-      });
+      );
     }
 
     const name = truncate(customer?.businessName ?? "", NAME_MAX);
@@ -265,35 +471,61 @@ export function buildTxReport(input: {
     const state = (address?.state ?? "").toUpperCase().slice(0, STATE_MAX);
     const zip = digitsOnly(address?.zip ?? "").slice(0, ZIP_MAX);
 
+    const cells = [
+      wholesalerLicense,
+      taxpayerId,
+      name,
+      street,
+      city,
+      state,
+      zip,
+      retailerLicense,
+      itemTypeLabel("TX_COMPTROLLER", bucket.itemType || null),
+      bucket.uom,
+      String(roundedQty),
+      String(roundedNet),
+    ];
+    // Optional cells, appended after the 12 base cells in canonical registry order.
+    if (withItemDescription) cells.push(bucket.productName);
+    if (optional.has("invoiceNumber")) cells.push(invoice?.invoiceNumber ?? "");
+    if (optional.has("invoiceDate")) {
+      cells.push(invoice ? invoice.issueDate.toISOString().slice(0, 10) : "");
+    }
+
     built.push({
-      cells: [
-        wholesalerLicense,
-        taxpayerId,
-        name,
-        street,
-        city,
-        state,
-        zip,
-        retailerLicense,
-        itemTypeLabel,
-        uom,
-        String(roundedQty),
-        String(roundedNet),
-      ],
+      cells,
       issueDate: invoice?.issueDate ?? new Date(0),
       invoiceNumber: invoice?.invoiceNumber ?? "",
+      invoiceId: bucket.invoiceId,
+      itemType: bucket.itemType,
+      uom: bucket.uom,
+      productName: bucket.productName,
+      roundedQty,
+      roundedNet,
     });
   }
 
-  // Rows sort by invoice issue date, then invoice number.
+  // Rows sort by invoice issue date, then invoice number, then item type code,
+  // then UoM code, then product name — so a fan-out invoice's rows are
+  // deterministically ordered.
   built.sort((a, b) => {
     const byDate = a.issueDate.getTime() - b.issueDate.getTime();
     if (byDate !== 0) return byDate;
-    return a.invoiceNumber.localeCompare(b.invoiceNumber);
+    const byInvoiceNumber = a.invoiceNumber.localeCompare(b.invoiceNumber);
+    if (byInvoiceNumber !== 0) return byInvoiceNumber;
+    const byItemType = a.itemType.localeCompare(b.itemType);
+    if (byItemType !== 0) return byItemType;
+    const byUom = a.uom.localeCompare(b.uom);
+    if (byUom !== 0) return byUom;
+    return a.productName.localeCompare(b.productName);
   });
 
-  const totalQty = built.reduce((t, r) => t + Number(r.cells[10]), 0);
-  const totalAmount = built.reduce((t, r) => t + Number(r.cells[11]), 0);
+  const distinctInvoiceIds = new Set(built.map((r) => r.invoiceId));
+  const totalQty = built.reduce((t, r) => t + r.roundedQty, 0);
+  const totalAmount = built.reduce((t, r) => t + r.roundedNet, 0);
+
+  const optionalColumnDefs = TX_OPTIONAL_COLUMNS.filter((c) => optional.has(c.key));
+  const columns = [...TX_COLUMNS, ...optionalColumnDefs];
 
   return {
     template: "TX_COMPTROLLER",
@@ -302,12 +534,13 @@ export function buildTxReport(input: {
     categoryName: category.name,
     from,
     to,
-    columns: TX_COLUMNS,
+    columns,
     rows: built.map((b) => b.cells),
     // Per-sale template — no aggregate totals row in the CSV.
     totalsRow: null,
     displayTotals: [
-      { label: "Invoices", value: String(built.length) },
+      { label: "Invoices", value: String(distinctInvoiceIds.size) },
+      { label: "Rows", value: String(built.length) },
       { label: "Total Quantity", value: String(totalQty) },
       { label: "Total Invoice Amount", value: String(totalAmount) },
     ],

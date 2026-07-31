@@ -33,7 +33,14 @@ export class CreateTrackedCategoryDto {
   // `null` is accepted (and stored as NULL) so a non-TX template can post an explicit clear;
   // @IsOptional() skips the other validators for null.
   @IsOptional() @IsString() @MaxLength(20) wholesalerLicenseNo?: string | null;
+  // DEPRECATED — superseded by Product.regItemType/regUomUnit. Still ACCEPTED (and
+  // ignored) so an older mobile build's category save is not rejected by
+  // forbidNonWhitelisted. Remove next release.
   @IsOptional() @IsInt() @IsIn([1, 2, 3]) txItemType?: number | null;
   @IsOptional() @IsString() @IsIn(TX_UOM_ALL) txUom?: string | null;
   @IsOptional() @IsBoolean() active?: boolean;
+  /** Saved custom report column layout, keyed by template code. */
+  @IsOptional()
+  @IsObject()
+  reportColumnPrefs?: Record<string, string[]> | null;
 }

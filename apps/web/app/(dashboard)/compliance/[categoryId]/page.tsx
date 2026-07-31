@@ -129,33 +129,17 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Regulated Items
         </Link>
-        <div className="mt-1 flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5 text-brand-600" />
-              <h1 className="text-2xl font-bold text-navy">{c.name}</h1>
-              {c.requiresLicense && <Badge variant="warning" label="License" />}
-              {!c.active && <Badge variant="neutral" label="Off" />}
-            </div>
-            <p className="mt-1 text-sm text-navy/70">
-              {taxRuleLabel(c)} · {treatmentLabel(c.invoiceTreatment)} ·{" "}
-              {c.reportCadence.toLowerCase()} filings
-            </p>
+        <div className="mt-1">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-brand-600" />
+            <h1 className="text-2xl font-bold text-navy">{c.name}</h1>
+            {c.requiresLicense && <Badge variant="warning" label="License" />}
+            {!c.active && <Badge variant="neutral" label="Off" />}
           </div>
-          <Button
-            variant="secondary"
-            leftIcon={
-              preparing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4" />
-              )
-            }
-            onClick={handlePrepare}
-            disabled={preparing}
-          >
-            Prepare filing
-          </Button>
+          <p className="mt-1 text-sm text-navy/70">
+            {taxRuleLabel(c)} · {treatmentLabel(c.invoiceTreatment)} ·{" "}
+            {c.reportCadence.toLowerCase()} filings
+          </p>
         </div>
       </div>
 
@@ -270,20 +254,32 @@ export default function RegulatedSectionPage({ params }: { params: { categoryId:
         categoryId={params.categoryId}
         categoryName={c.name}
         categoryDefaultTemplate={c.reportTemplate}
+        reportColumnPrefs={c.reportColumnPrefs}
       />
 
       {/* Filings */}
       <Card title="Filings">
-        <RegulatedFilingsTable
-          filings={filings}
-          emptyHint={
-            <>
-              No filings prepared yet. Use{" "}
-              <span className="font-medium text-navy">Prepare filing</span> above to generate one
-              for the last completed period.
-            </>
-          }
-        />
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs text-navy/60">
+            Filings for closed periods are prepared automatically overnight.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={
+              preparing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )
+            }
+            onClick={handlePrepare}
+            disabled={preparing}
+          >
+            Prepare last period
+          </Button>
+        </div>
+        <RegulatedFilingsTable filings={filings} />
       </Card>
     </div>
   );
