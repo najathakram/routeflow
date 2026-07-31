@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from "@nes
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
+import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -761,20 +762,29 @@ export class InventoryService {
   }
 
   // ── Forecasting ──
+  /**
+   * 30-day demand per product, from invoiced sales windowed on
+   * Invoice.issueDate. `StockMovement type:"SALE"` is not viable: its only
+   * writer (the route-delivery recordSale call) was removed in c5f579c2, so
+   * movement rows read as zero demand for every tenant. Line `qty` is the
+   * same denomination order-create decrements `currentStock` by, so
+   * `daysRemaining = currentStock / avgDaily` stays unit-consistent. See
+   * common/invoiced-sales.ts for the through-Invoice rule.
+   */
   async getForecasting() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
-    const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE", createdAt: { gte: thirtyDaysAgo } },
-      select: { productId: true, quantity: true },
+    const lines = await fetchInvoicedSaleLines(this.prisma.forTenant(), {
+      from: thirtyDaysAgo,
+      to: new Date(),
+      dateBasis: "issueDate",
     });
 
     const usageMap = new Map<string, number>();
-    for (const m of movements) {
-      // SALE rows are negative; compensating reversals (reopened stops) are
-      // positive SALE rows — signed sum nets them out of usage.
-      usageMap.set(m.productId, (usageMap.get(m.productId) ?? 0) + -Number(m.quantity));
+    for (const line of lines) {
+      if (!line.productId) continue;
+      usageMap.set(line.productId, (usageMap.get(line.productId) ?? 0) + line.qty);
     }
 
     return products.map((p) => {
@@ -789,7 +799,7 @@ export class InventoryService {
         unit: p.unit,
         currentStock,
         avgDailySales: Math.round(avgDailyUsage * 100) / 100,
-        totalUsed30Days: totalUsed30,
+        totalUsed30Days: roundQty(totalUsed30),
         daysRemaining,
         reorderPoint: p.reorderPoint,
         reorderQty: p.reorderQty,

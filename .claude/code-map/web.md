@@ -84,7 +84,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   edit path AND `CreateOrderModal` (inline dup removed); with a `productId` the cost text opens a
   **cost-history popover** (portaled to `<body>` to clear the modal's transform+overflow) via
   **`lib/api/cost-history.ts`** `useCostHistory(productId)` (also backs products/[id] `CostHistoryCard`;
-  `GET /analytics/cost-history/:id`). Analytics **Gross Margin** card states the configured costing method.
+  `GET /analytics/cost-history/:id`). Analytics **Gross Margin** card caption (2026-07-31): static "COGS is estimated from each product's average cost at the time of sale" — the per-costing-method caption (and its `useMarginConfig` call) was dropped when API COGS became an invoice-sourced point-in-time average estimate (see api `common/invoiced-sales.ts`). Top Products' `{unitsSold,totalRevenue}` columns and Turnover/Forecasting/P&L populate from the same re-sourcing with zero web changes.
 - **Minimize & resume drafts (Phase 2 §2, pos-cost-roles-spec).** `lib/api/drafts.ts` — `useDrafts`/
   `useDraft(id)`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft` over `/drafts` (per-user,
   tenant-scoped; OPERATOR/DRIVER, TENANT_ADMIN satisfies OPERATOR). `lib/drafts.ts` — `OrderDraftPayload`

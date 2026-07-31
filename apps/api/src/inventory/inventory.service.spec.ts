@@ -554,4 +554,61 @@ describe("InventoryService", () => {
       expect(prisma.product.update).not.toHaveBeenCalled();
     });
   });
+
+  // ─── getForecasting ─────────────────────────────────────────────────────────
+
+  describe("getForecasting", () => {
+    it("computes 30-day usage from invoiced sales, not stock movements", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ sku: "FL-25", unit: "bag", reorderPoint: 15, reorderQty: 40 }),
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date(),
+          paidAt: null,
+          items: [
+            {
+              productId: "prod-1",
+              qty: D(45),
+              subtotal: D(90),
+              product: { name: "Flour 25lb", isTobacco: false },
+            },
+            {
+              productId: "prod-1",
+              qty: D(15),
+              subtotal: D(30),
+              product: { name: "Flour 25lb", isTobacco: false },
+            },
+            { productId: null, qty: D(99), subtotal: D(1), product: null }, // ad-hoc — ignored
+          ],
+        },
+      ]);
+
+      const [row] = await service.getForecasting();
+
+      expect(row.totalUsed30Days).toBe(60);
+      expect(row.avgDailySales).toBe(2); // 60 / 30
+      expect(row.daysRemaining).toBe(5); // floor(10 / 2)
+      expect(row.needsReorder).toBe(true); // stock 10 < reorderPoint 15
+      // Invoiced sales windowed ~30 days on issueDate; the dead sources untouched.
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      const windowDays =
+        (args.where.issueDate.lte.getTime() - args.where.issueDate.gte.getTime()) / 86_400_000;
+      expect(Math.round(windowDays)).toBe(30);
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("reports zero demand and null daysRemaining when nothing was invoiced", async () => {
+      prisma.product.findMany.mockResolvedValue([product({ reorderPoint: null })]);
+
+      const [row] = await service.getForecasting();
+
+      expect(row.avgDailySales).toBe(0);
+      expect(row.totalUsed30Days).toBe(0);
+      expect(row.daysRemaining).toBeNull();
+      expect(row.needsReorder).toBe(false);
+    });
+  });
 });
