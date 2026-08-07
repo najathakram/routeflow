@@ -35,6 +35,12 @@ const METHODS: { id: EditablePaymentMethod; label: string }[] = [
   { id: "OTHER", label: "Other" },
 ];
 
+// Distinct from paidAt (the recorded payment date) and from the server-stamped
+// check-lifecycle clearedAt: this is when the funds hit the account.
+const BANK_DATE_LABEL = "Money received in bank";
+const BANK_DATE_HELP =
+  "When the funds actually landed — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
 export default function EditPaymentScreen() {
   const router = useRouter();
   const { id, paymentId } = useLocalSearchParams<{ id: string; paymentId: string }>();
@@ -57,6 +63,7 @@ export default function EditPaymentScreen() {
   const [notes, setNotes] = useState<string | null>(null);
   const [bankCharges, setBankCharges] = useState<string | null>(null);
   const [paidAt, setPaidAt] = useState<string | null>(null);
+  const [settledAt, setSettledAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Seed the form once from the loaded payment (keyed on its id so a background
@@ -74,6 +81,7 @@ export default function EditPaymentScreen() {
     setNotes(payment.notes ?? "");
     setBankCharges(payment.bankCharges != null ? String(payment.bankCharges) : "");
     setPaidAt(payment.paidAt ? payment.paidAt.slice(0, 10) : "");
+    setSettledAt(payment.settledAt ? payment.settledAt.slice(0, 10) : "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payment?.id]);
 
@@ -186,6 +194,8 @@ export default function EditPaymentScreen() {
         notes: (notes ?? "").trim() || undefined,
         bankCharges: (bankCharges ?? "").trim() ? Number(bankCharges) || undefined : undefined,
         paidAt: (paidAt ?? "").trim() || undefined,
+        // Always sent: an emptied field has to clear the stored bank date.
+        settledAt: (settledAt ?? "").trim() || null,
       },
       {
         onSuccess: () => {
@@ -275,6 +285,14 @@ export default function EditPaymentScreen() {
           <FormTextInput
             value={paidAt ?? ""}
             onChangeText={setPaidAt}
+            placeholder="YYYY-MM-DD"
+            keyboardType="numbers-and-punctuation"
+          />
+        </FormField>
+        <FormField label={BANK_DATE_LABEL} hint={BANK_DATE_HELP}>
+          <FormTextInput
+            value={settledAt ?? ""}
+            onChangeText={setSettledAt}
             placeholder="YYYY-MM-DD"
             keyboardType="numbers-and-punctuation"
           />

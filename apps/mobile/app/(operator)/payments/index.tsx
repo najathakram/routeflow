@@ -135,6 +135,11 @@ function Row({ payment, onPress }: { payment: AllPayment; onPress: () => void })
           {payment.invoice.invoiceNumber}
         </Text>
       </View>
+      {payment.settledAt ? (
+        <Text style={styles.bankDate} numberOfLines={1}>
+          Bank date {new Date(payment.settledAt).toLocaleDateString()}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -157,4 +162,5 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   footText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  bankDate: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 3 },
 });

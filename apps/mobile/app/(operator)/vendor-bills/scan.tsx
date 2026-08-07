@@ -18,20 +18,26 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import {
   useScanInvoice,
+  useCheckVendorBillDuplicate,
   useCreateVendorBill,
   useSaveProductMapping,
+  getDuplicateVendorBillError,
+  type DuplicateVendorBillInfo,
   type ScanResult,
   type ScannedItem,
 } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import {
   buildBillDtoFromScan,
+  duplicateBillPrompt,
   mappingsFromScan,
+  scanBillTotal,
   unmatchedCount,
   linkScanItem,
+  type ScanBillDto,
 } from "../../../lib/vendor-bill-scan";
 import { showToast } from "../../../lib/toast";
-import { confirm } from "../../../lib/confirm";
+import { chooseAction, confirm } from "../../../lib/confirm";
 import { roundMoney } from "../../../lib/pricing";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../components/InlineCreateProductSheet";
@@ -48,6 +54,7 @@ export default function ScanInvoiceScreen() {
 
   const scanMut = useScanInvoice();
   const createMut = useCreateVendorBill();
+  const checkDuplicateMut = useCheckVendorBillDuplicate();
   const saveMappingMut = useSaveProductMapping();
   const { data: suppliers } = useSuppliers();
 
@@ -88,7 +95,42 @@ export default function ScanInvoiceScreen() {
     });
   };
 
-  const onSave = () => {
+  const promptDuplicate = (duplicate: DuplicateVendorBillInfo, dto: ScanBillDto) => {
+    const { message, destructive } = duplicateBillPrompt(duplicate);
+    chooseAction("Already scanned", message, [
+      {
+        label: "Open existing bill",
+        onPress: () => router.replace(`/(operator)/vendor-bills/${duplicate.billId}`),
+      },
+      {
+        label: "Create anyway",
+        style: destructive ? "destructive" : "default",
+        onPress: () => submitBill(dto, true),
+      },
+      { label: "Cancel", style: "cancel" },
+    ]);
+  };
+
+  const submitBill = (dto: ScanBillDto, allowDuplicate?: boolean) => {
+    createMut.mutate(allowDuplicate ? { ...dto, allowDuplicate: true } : dto, {
+      onSuccess: (bill) => {
+        showToast("Vendor bill created");
+        router.replace(`/(operator)/vendor-bills/${bill.id}`);
+      },
+      onError: (e: any) => {
+        // Covers the race the pre-flight probe can't see: a matching bill
+        // created between the check and this POST.
+        const dup = getDuplicateVendorBillError(e);
+        if (dup) {
+          promptDuplicate(dup.duplicate, dto);
+          return;
+        }
+        showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+      },
+    });
+  };
+
+  const onSave = async () => {
     if (!editedResult) return;
 
     // Save product mappings for AI to learn from
@@ -97,14 +139,27 @@ export default function ScanInvoiceScreen() {
     }
 
     const dto = buildBillDtoFromScan(editedResult, suppliers);
+    const identifiable = !!dto.supplierInvoiceNumber || !!(dto.supplierId && dto.billDate);
 
-    createMut.mutate(dto, {
-      onSuccess: (bill) => {
-        showToast("Vendor bill created");
-        router.replace(`/(operator)/vendor-bills/${bill.id}`);
-      },
-      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-    });
+    if (identifiable) {
+      try {
+        const { duplicate } = await checkDuplicateMut.mutateAsync({
+          supplierId: dto.supplierId,
+          supplierInvoiceNumber: dto.supplierInvoiceNumber,
+          total: scanBillTotal(dto),
+          billDate: dto.billDate,
+        });
+        if (duplicate) {
+          promptDuplicate(duplicate, dto);
+          return;
+        }
+      } catch {
+        // A failed probe must never block the operator — create() re-checks
+        // server-side and 409s, which submitBill handles.
+      }
+    }
+
+    submitBill(dto);
   };
 
   return (
@@ -140,6 +195,7 @@ export default function ScanInvoiceScreen() {
           onChange={setEditedResult}
           onSave={onSave}
           saving={createMut.isPending}
+          checking={checkDuplicateMut.isPending}
           imageUri={imageUri}
         />
       ) : null}
@@ -218,12 +274,14 @@ function ReviewStep({
   onChange,
   onSave,
   saving,
+  checking,
   imageUri,
 }: {
   result: ScanResult;
   onChange: (r: ScanResult) => void;
   onSave: () => void;
   saving: boolean;
+  checking: boolean;
   imageUri: string | null;
 }) {
   // Row index whose "link existing product" picker / "create product" sheet is
@@ -350,9 +408,11 @@ function ReviewStep({
       ) : null}
 
       <View style={{ paddingHorizontal: 16, paddingBottom: 32 }}>
-        <Pressable style={styles.saveBtn} onPress={onSave} disabled={saving}>
+        <Pressable style={styles.saveBtn} onPress={onSave} disabled={saving || checking}>
           <Ionicons name="checkmark" size={16} color="#fff" />
-          <Text style={styles.saveBtnText}>{saving ? "Creating bill…" : "Create vendor bill"}</Text>
+          <Text style={styles.saveBtnText}>
+            {checking ? "Checking…" : saving ? "Creating bill…" : "Create vendor bill"}
+          </Text>
         </Pressable>
       </View>
 

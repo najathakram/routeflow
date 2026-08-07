@@ -92,6 +92,12 @@ export default function PaymentDetailScreen() {
               value={payment.invoice.customer?.businessName ?? "Customer"}
             />
             <KVRow label="Payment date" value={new Date(received).toLocaleDateString()} />
+            {payment.settledAt ? (
+              <KVRow
+                label="Money received in bank"
+                value={new Date(payment.settledAt).toLocaleDateString()}
+              />
+            ) : null}
             <KVRow label="Payment mode" value={m.label} icon={m.icon} />
             {payment.reference ? <KVRow label="Reference" value={payment.reference} /> : null}
             {payment.bankCharges && payment.bankCharges > 0 ? (
