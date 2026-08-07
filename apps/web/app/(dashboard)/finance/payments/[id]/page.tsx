@@ -24,6 +24,9 @@ const METHOD_LABELS: Record<string, string> = {
   ADVANCE: "Advance",
 };
 
+const BANK_DATE_HELP =
+  "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
 export default function PaymentDetailPage() {
   const { setTitle } = usePageTitle();
   const { id } = useParams<{ id: string }>();
@@ -173,6 +176,16 @@ export default function PaymentDetailPage() {
               <span className="text-navy/70">Payment date</span>
               <span className="text-right font-medium text-navy">{date}</span>
             </div>
+            {payment.settledAt && (
+              <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+                <span className="text-navy/70" title={BANK_DATE_HELP}>
+                  Money received in bank
+                </span>
+                <span className="text-right font-medium text-navy">
+                  {fmtDate(payment.settledAt)}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
               <span className="text-navy/70">Payment mode</span>
               <span className="text-right font-medium text-navy">

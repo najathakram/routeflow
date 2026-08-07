@@ -320,6 +320,7 @@ export function CreateOrderModal({
     setCustomQty("1");
     setCustomError("");
     setRequestedDeliveryDate("");
+    setOrderDate("");
     setOrderDiscount("");
     setShippingFeeInput("");
     setAppliedCredits([]);
@@ -642,6 +643,10 @@ export function CreateOrderModal({
   // ── Submit ────────────────────────────────────────────────────────────────
 
   const [requestedDeliveryDate, setRequestedDeliveryDate] = React.useState("");
+  // Business date of the order (blank = today).
+  const [orderDate, setOrderDate] = React.useState("");
+  // The server's upper bound is the end of the current UTC day (parseOrderDate).
+  const maxOrderDate = new Date().toISOString().slice(0, 10);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
 
@@ -653,6 +658,7 @@ export function CreateOrderModal({
       orderDiscount,
       shippingFee: shippingFeeInput,
       requestedDeliveryDate,
+      orderDate,
       notes: notesValue ?? "",
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
@@ -663,6 +669,7 @@ export function CreateOrderModal({
       orderDiscount,
       shippingFeeInput,
       requestedDeliveryDate,
+      orderDate,
       notesValue,
       isUrgent,
       floorAcked,
@@ -769,16 +776,19 @@ export function CreateOrderModal({
     setOrderDiscount(p.orderDiscount ?? "");
     setShippingFeeInput(p.shippingFee ?? "");
     setRequestedDeliveryDate(p.requestedDeliveryDate ?? "");
+    setOrderDate(p.orderDate ?? "");
     setFloorAcked(new Set(p.floorAcked ?? []));
     reset({ notes: p.notes ?? "", urgent: !!p.urgent });
     setActiveDraftId(loadedDraft.id);
-    // Seed the autosave baseline so hydration itself never triggers a write.
+    // Seed the autosave baseline so hydration itself never triggers a write. Key
+    // order must match `draftPayload` — the comparison is on the JSON string.
     lastSavedRef.current = JSON.stringify({
       customer: p.customer ?? null,
       lineItems: Array.isArray(p.lineItems) ? p.lineItems : [],
       orderDiscount: p.orderDiscount ?? "",
       shippingFee: p.shippingFee ?? "",
       requestedDeliveryDate: p.requestedDeliveryDate ?? "",
+      orderDate: p.orderDate ?? "",
       notes: p.notes ?? "",
       urgent: !!p.urgent,
       floorAcked: p.floorAcked ?? [],
@@ -870,6 +880,7 @@ export function CreateOrderModal({
         notes: data.notes,
         urgent: data.urgent,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
+        orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
         ...(shippingAmt > 0 ? { shippingFee: shippingAmt } : {}),
         ...(asDraft ? { status: "DRAFT" as const } : {}),
@@ -1754,17 +1765,37 @@ export function CreateOrderModal({
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">Options</p>
 
-            {/* Requested Delivery Date */}
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">
-                Requested Delivery Date <span className="font-normal text-navy/70">(optional)</span>
-              </label>
-              <input
-                type="date"
-                value={requestedDeliveryDate}
-                onChange={(e) => setRequestedDeliveryDate(e.target.value)}
-                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+            {/* Dates */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="delivery-date">
+                  Requested Delivery Date{" "}
+                  <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <input
+                  id="delivery-date"
+                  type="date"
+                  value={requestedDeliveryDate}
+                  onChange={(e) => setRequestedDeliveryDate(e.target.value)}
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70" htmlFor="order-date">
+                  Order date <span className="font-normal text-navy/70">(optional)</span>
+                </label>
+                <input
+                  id="order-date"
+                  type="date"
+                  max={maxOrderDate}
+                  value={orderDate}
+                  onChange={(e) => setOrderDate(e.target.value)}
+                  className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <p className="text-[11px] leading-snug text-navy/70">
+                  The day the order actually happened. Leave blank for today.
+                </p>
+              </div>
             </div>
 
             <Textarea
@@ -1824,15 +1855,21 @@ export function CreateOrderModal({
         title="Open order exists"
         description={
           mergePrompt
-            ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
+            ? orderDate
+              ? `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merging files these items under that order's date, so a backdated order has to be created separately.`
+              : `This customer already has an open ${mergePrompt.status.toLowerCase()} order. Merge these items into it, or create a fully separate order?`
             : undefined
         }
         className="max-w-md"
         footer={
           mergePrompt ? (
             <div className="flex w-full flex-col gap-2">
+              {/* Merging routes through the existing order, which keeps its own
+                  orderDate — the backdate would be dropped, so it is not offered. */}
               <Button
                 type="button"
+                variant={orderDate ? "secondary" : "primary"}
+                disabled={!!orderDate}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)
@@ -1846,7 +1883,7 @@ export function CreateOrderModal({
               </Button>
               <Button
                 type="button"
-                variant="secondary"
+                variant={orderDate ? "primary" : "secondary"}
                 loading={createOrder.isPending}
                 onClick={() => {
                   if (pendingFormValuesRef.current)

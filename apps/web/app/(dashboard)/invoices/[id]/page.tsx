@@ -63,7 +63,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtDate, todayIso } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -307,8 +307,21 @@ function WhatsNextBanner({
 interface PaymentFormState {
   method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: string;
+  /** YYYY-MM-DD. */
+  paidAt: string;
+  /** YYYY-MM-DD, empty when unknown. Never capped — a post-dated check settles in the future. */
+  settledAt: string;
   reference: string;
   notes: string;
+}
+
+const BANK_DATE_LABEL = "Money received in bank";
+const BANK_DATE_HELP =
+  "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
+/** YYYY-MM-DD slice of a stored timestamp, for a native date input. */
+function dateInputValue(iso?: string | null): string {
+  return iso ? new Date(iso).toISOString().slice(0, 10) : "";
 }
 
 function RecordPaymentModal({
@@ -327,6 +340,8 @@ function RecordPaymentModal({
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
+    paidAt: todayIso(),
+    settledAt: "",
     reference: "",
     notes: "",
   });
@@ -339,6 +354,8 @@ function RecordPaymentModal({
       setForm({
         method: "ACH",
         amount: balanceDue > 0 ? balanceDue.toFixed(2) : "",
+        paidAt: todayIso(),
+        settledAt: "",
         reference: "",
         notes: "",
       });
@@ -410,6 +427,26 @@ function RecordPaymentModal({
             )}
           />
           {amountError && <p className="mt-1 text-xs text-danger">{amountError}</p>}
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment date</label>
+          <input
+            type="date"
+            value={form.paidAt}
+            onChange={(e) => setForm((f) => ({ ...f, paidAt: e.target.value }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <label className="mb-1.5 mt-3 block text-sm font-medium text-navy/60">
+            {BANK_DATE_LABEL} (optional)
+          </label>
+          <input
+            type="date"
+            value={form.settledAt}
+            onChange={(e) => setForm((f) => ({ ...f, settledAt: e.target.value }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1 text-xs text-navy/50">{BANK_DATE_HELP}</p>
         </div>
 
         <div>
@@ -499,6 +536,8 @@ function EditPaymentModal({
   const [form, setForm] = React.useState<PaymentFormState>({
     method: "ACH",
     amount: "",
+    paidAt: todayIso(),
+    settledAt: "",
     reference: "",
     notes: "",
   });
@@ -513,6 +552,8 @@ function EditPaymentModal({
       setForm({
         method: payment.method as PaymentFormState["method"],
         amount: Number(payment.amount).toFixed(2),
+        paidAt: dateInputValue(payment.paidAt ?? payment.createdAt),
+        settledAt: dateInputValue(payment.settledAt),
         reference: payment.reference ?? "",
         notes: payment.notes ?? "",
       });
@@ -609,6 +650,25 @@ function EditPaymentModal({
             )}
           />
           {amountError && <p className="mt-1 text-xs text-danger">{amountError}</p>}
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Payment date</label>
+          <input
+            type="date"
+            value={form.paidAt}
+            onChange={(e) => setForm((f) => ({ ...f, paidAt: e.target.value }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <label className="mb-1.5 mt-3 block text-sm font-medium text-navy/60">
+            {BANK_DATE_LABEL} (optional)
+          </label>
+          <input
+            type="date"
+            value={form.settledAt}
+            onChange={(e) => setForm((f) => ({ ...f, settledAt: e.target.value }))}
+            className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          <p className="mt-1 text-xs text-navy/50">{BANK_DATE_HELP}</p>
         </div>
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">
@@ -1513,6 +1573,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         id: invoice.id,
         method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
         amount: parseFloat(data.amount),
+        paidAt: data.paidAt || undefined,
+        settledAt: data.settledAt || undefined,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
       },
@@ -1567,6 +1629,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         paymentId: editingPayment.id,
         method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
         amount: parseFloat(data.amount),
+        paidAt: data.paidAt || undefined,
+        // Explicit null so emptying the field clears the stored bank date.
+        settledAt: data.settledAt || null,
         reference: data.reference.trim() || undefined,
         notes: data.notes.trim() || undefined,
       },
@@ -2328,7 +2393,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             {fmt(Number(pmt.amount))}
                           </span>
                           <div className="flex items-center gap-1">
-                            <span className="text-xs text-navy/70">{fmtDate(pmt.createdAt)}</span>
+                            <span className="text-xs text-navy/70">
+                              {fmtDate(pmt.paidAt ?? pmt.createdAt)}
+                              {pmt.settledAt && (
+                                <span className="text-navy/40">
+                                  {" "}
+                                  · landed {fmtDate(pmt.settledAt)}
+                                </span>
+                              )}
+                            </span>
                             {isEditable && (
                               <>
                                 <button

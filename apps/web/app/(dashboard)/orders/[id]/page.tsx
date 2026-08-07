@@ -1214,6 +1214,19 @@ function displayLineStatus(
   return li.status as BadgeStatus;
 }
 
+/**
+ * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
+ * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
+ */
+function formatDateOnly(iso: string): string {
+  const [y, m, d] = iso.split("T")[0].split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 /** Map the order's stored credit-note intents into the picker's selection shape. */
 function creditSelectionsFromOrder(o: {
   orderCreditNotes?: Array<{ creditNoteId: string; amount?: number | string | null }>;
@@ -1753,21 +1766,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 year: "numeric",
               })}
             </span>
+            {order.orderDate && (
+              <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-surface-border bg-white px-2.5 text-xs font-medium text-navy">
+                <Calendar className="h-3.5 w-3.5 text-navy/40" />
+                Order date: {formatDateOnly(order.orderDate)}
+              </span>
+            )}
             {order.requestedDeliveryDate && (
               <span className="inline-flex h-6 items-center gap-1.5 rounded-full border border-surface-border bg-white px-2.5 text-xs font-medium text-navy">
                 <Calendar className="h-3.5 w-3.5 text-navy/40" />
-                Delivery:{" "}
-                {(() => {
-                  const [y, m, d] = order
-                    .requestedDeliveryDate!.split("T")[0]
-                    .split("-")
-                    .map(Number);
-                  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  });
-                })()}
+                Delivery: {formatDateOnly(order.requestedDeliveryDate)}
               </span>
             )}
           </div>
@@ -2640,21 +2648,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
+              {order.orderDate && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Order date</dt>
+                  <dd className="font-medium text-navy">{formatDateOnly(order.orderDate)}</dd>
+                </div>
+              )}
               {order.requestedDeliveryDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Delivery date</dt>
                   <dd className="font-medium text-navy">
-                    {(() => {
-                      const [y, m, d] = order
-                        .requestedDeliveryDate!.split("T")[0]
-                        .split("-")
-                        .map(Number);
-                      return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      });
-                    })()}
+                    {formatDateOnly(order.requestedDeliveryDate)}
                   </dd>
                 </div>
               )}

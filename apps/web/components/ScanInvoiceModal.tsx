@@ -17,6 +17,8 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
+  ExternalLink,
+  Undo2,
 } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
 import {
@@ -27,15 +29,19 @@ import {
 } from "@/lib/api/invoice-scan";
 import { useSuppliers } from "@/lib/api/inventory";
 import {
+  useCheckVendorBillDuplicate,
   useCreateVendorBill,
   useReceiveVendorBill,
   useSaveProductMapping,
+  getDuplicateVendorBillError,
+  type DuplicateVendorBillInfo,
 } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
+import { fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
 
@@ -130,6 +136,11 @@ interface InvoiceGroup {
   /** Idempotency guards: a retried "Create" never re-posts what already succeeded. */
   createdBillId: string | null;
   expenseCreated: boolean;
+  /** An existing bill this invoice matches — from the pre-flight probe or a create 409. */
+  duplicate: DuplicateVendorBillInfo | null;
+  duplicateCheckPending: boolean;
+  /** Operator chose to record it anyway; also lifts the batch skip. */
+  allowDuplicate: boolean;
 }
 
 const emptyReviewItem = (): ReviewItem => ({
@@ -171,6 +182,9 @@ const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
   expenseNotes: "",
   createdBillId: null,
   expenseCreated: false,
+  duplicate: null,
+  duplicateCheckPending: false,
+  allowDuplicate: false,
 });
 
 /**
@@ -337,14 +351,21 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   // Bill fields
   const supplierId = active?.supplierId ?? "";
-  const setSupplierId = (v: string) =>
-    updateActive({ supplierId: v, supplierMatchAmbiguous: false });
+  // Both identity fields feed the duplicate probe, so editing either re-checks
+  // and drops any override the operator had granted for the previous identity.
+  const setSupplierId = (v: string) => {
+    updateActive({ supplierId: v, supplierMatchAmbiguous: false, allowDuplicate: false });
+    if (active) scheduleDuplicateCheck(active.id);
+  };
   const billDate = active?.billDate ?? new Date().toISOString().slice(0, 10);
   const setBillDate = (v: string) => updateActive({ billDate: v });
   const dueDate = active?.dueDate ?? "";
   const setDueDate = (v: string) => updateActive({ dueDate: v });
   const invoiceNumber = active?.invoiceNumber ?? "";
-  const setInvoiceNumber = (v: string) => updateActive({ invoiceNumber: v });
+  const setInvoiceNumber = (v: string) => {
+    updateActive({ invoiceNumber: v, allowDuplicate: false });
+    if (active) scheduleDuplicateCheck(active.id);
+  };
 
   // Expense fields
   const expenseCategoryId = active?.expenseCategoryId ?? "";
@@ -446,12 +467,21 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const receiveBill = useReceiveVendorBill();
   const createExpense = useCreateExpense();
   const saveMapping = useSaveProductMapping();
+  const checkDuplicate = useCheckVendorBillDuplicate();
+
+  // Pending debounced re-checks, keyed by invoice id.
+  const dupTimersRef = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const clearDuplicateTimers = () => {
+    dupTimersRef.current.forEach((t) => clearTimeout(t));
+    dupTimersRef.current.clear();
+  };
 
   // Abort in-flight scans, revoke every live object URL, drop all invoices.
   const discardSession = () => {
     runIdRef.current++;
     abortersRef.current.forEach((c) => c.abort());
     abortersRef.current.clear();
+    clearDuplicateTimers();
     invoicesRef.current.forEach((inv) =>
       inv.pagePreviews.forEach((p) => URL.revokeObjectURL(p.url)),
     );
@@ -474,15 +504,17 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   // The modal is permanently mounted at its entry points (only gated by
   // `open`), but if a parent ever unmounts it, in-flight scans and object
   // URLs must not leak.
-  React.useEffect(
-    () => () => {
+  React.useEffect(() => {
+    const timers = dupTimersRef.current;
+    return () => {
       abortersRef.current.forEach((c) => c.abort());
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
       invoicesRef.current.forEach((inv) =>
         inv.pagePreviews.forEach((p) => URL.revokeObjectURL(p.url)),
       );
-    },
-    [],
-  );
+    };
+  }, []);
 
   /** Seed an invoice's review state from its scan result. */
   const applyScan = (id: string, result: ScanResult) => {
@@ -526,7 +558,13 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       );
       if (catMatch) patch.expenseCategoryId = catMatch.id;
     }
+    patch.duplicate = null;
+    patch.allowDuplicate = false;
     patchInvoiceById(id, patch);
+    // Merge locally rather than re-reading invoicesRef: React may not have
+    // flushed the patch yet, and the probe needs the just-scanned identity.
+    const base = invoicesRef.current.find((x) => x.id === id);
+    if (base) void runDuplicateCheck(id, { ...base, ...patch }, runIdRef.current);
   };
 
   /**
@@ -876,6 +914,69 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   const computedTotal = active ? invoiceTotalOf(active) : 0;
 
+  /**
+   * Ask the server whether this supplier invoice was already recorded. Mirrors
+   * what createOne() will post, so the answer matches the create-time guard:
+   * the totals must agree for the supplier+date fallback match to line up.
+   */
+  const runDuplicateCheck = async (invoiceId: string, inv: InvoiceGroup, runId: number) => {
+    const number = inv.invoiceNumber.trim();
+    if (!number && !(inv.supplierId && inv.billDate)) {
+      patchInvoiceById(invoiceId, { duplicate: null, duplicateCheckPending: false });
+      return;
+    }
+    // Responses can land out of order while the operator retypes, so a result
+    // only applies if the identity it was probed for is still the current one.
+    const stale = () => {
+      const current = invoicesRef.current.find((x) => x.id === invoiceId);
+      return (
+        runId !== runIdRef.current ||
+        !current ||
+        current.invoiceNumber.trim() !== number ||
+        current.supplierId !== inv.supplierId
+      );
+    };
+    patchInvoiceById(invoiceId, { duplicateCheckPending: true });
+    try {
+      const { duplicate } = await checkDuplicate.mutateAsync({
+        supplierId: inv.supplierId || undefined,
+        supplierInvoiceNumber: number || undefined,
+        total: roundMoney(invoiceTotalOf(inv) + (inv.scanResult?.tax ?? 0)),
+        billDate: inv.billDate || undefined,
+      });
+      if (stale()) return;
+      patchInvoiceById(invoiceId, { duplicate, duplicateCheckPending: false });
+    } catch {
+      // A failed probe must never block the operator — create() re-checks
+      // server-side and 409s, which the create path handles.
+      if (stale()) return;
+      patchInvoiceById(invoiceId, { duplicate: null, duplicateCheckPending: false });
+    }
+  };
+
+  /**
+   * A duplicate only matters when this invoice would actually create a bill —
+   * an expense-only invoice restocks nothing, so it posts as normal.
+   */
+  const blockingDuplicateOf = (inv: InvoiceGroup) =>
+    inv.createMode !== "expense" && !inv.allowDuplicate ? inv.duplicate : null;
+
+  /** Debounced re-check while the operator retypes the invoice # or swaps supplier. */
+  const scheduleDuplicateCheck = (invoiceId: string) => {
+    const existing = dupTimersRef.current.get(invoiceId);
+    if (existing) clearTimeout(existing);
+    const runId = runIdRef.current;
+    dupTimersRef.current.set(
+      invoiceId,
+      setTimeout(() => {
+        dupTimersRef.current.delete(invoiceId);
+        if (runId !== runIdRef.current) return;
+        const inv = invoicesRef.current.find((x) => x.id === invoiceId);
+        if (inv) void runDuplicateCheck(invoiceId, inv, runId);
+      }, 500),
+    );
+  };
+
   // A row is "valid" if either (a) it has a description + qty, or
   // (b) it's been split and at least one split has qty > 0.
   const validItemsOf = (inv: InvoiceGroup) =>
@@ -931,9 +1032,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
    * succeeded (a "both"-mode expense failure must not duplicate the bill).
    * Reads the invoice fresh from invoicesRef so retries see prior progress.
    */
-  const createOne = async (invoiceId: string): Promise<{ ok: boolean; notes: string[] }> => {
+  const createOne = async (
+    invoiceId: string,
+  ): Promise<{ ok: boolean; duplicate: boolean; notes: string[] }> => {
     const inv = invoicesRef.current.find((x) => x.id === invoiceId);
-    if (!inv) return { ok: false, notes: [] };
+    if (!inv) return { ok: false, duplicate: false, notes: [] };
     const wantsBill = inv.createMode === "bill" || inv.createMode === "both";
     const wantsExpense = inv.createMode === "expense" || inv.createMode === "both";
     const notes: string[] = [];
@@ -951,6 +1054,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           // Persist the supplier's own invoice number — it's how the operator
           // reconciles against the supplier statement later.
           notes: inv.invoiceNumber ? `Supplier invoice #${inv.invoiceNumber}` : undefined,
+          supplierInvoiceNumber: inv.invoiceNumber.trim() || undefined,
+          allowDuplicate: inv.allowDuplicate || undefined,
           // Sales tax is owed too; the server folds it into totalOwed (line
           // items only carry the pre-tax unit costs).
           taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
@@ -1003,15 +1108,27 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       }
 
       patchInvoiceById(invoiceId, { status: "created", error: null });
-      return { ok: true, notes };
+      return { ok: true, duplicate: false, notes };
     } catch (err: any) {
+      // The pre-flight probe can't see a bill created moments ago by an earlier
+      // invoice in this same batch, so the server's 409 is the only signal that
+      // the number repeats within the batch. Stamp it and let the loop go on.
+      const dup = getDuplicateVendorBillError(err);
+      if (dup) {
+        patchInvoiceById(invoiceId, {
+          duplicate: dup.duplicate,
+          duplicateCheckPending: false,
+          error: null,
+        });
+        return { ok: false, duplicate: true, notes };
+      }
       const msg =
         err?.response?.data?.message ||
         err?.message ||
         "Failed to create records. Please try again.";
       // Keep status "scanned" so the invoice stays editable + creatable.
       patchInvoiceById(invoiceId, { error: msg });
-      return { ok: false, notes };
+      return { ok: false, duplicate: false, notes };
     }
   };
 
@@ -1021,8 +1138,31 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       .filter(({ inv }) => inv.status === "scanned");
     if (targets.length === 0 || isSubmittingAll) return;
 
+    // A known duplicate is left alone rather than blocking the batch: the rest
+    // of the invoices still post, and the operator resolves it afterwards from
+    // the banner (open the existing bill, or override with "Create anyway").
+    const postable = targets.filter(({ inv }) => !blockingDuplicateOf(inv));
+    if (postable.length === 0) {
+      const firstDup = invoices.findIndex(
+        (inv) => inv.status === "scanned" && !!blockingDuplicateOf(inv),
+      );
+      if (firstDup >= 0) {
+        setActiveIndex(firstDup);
+        setCreateFromRow(null);
+      }
+      toast({
+        title:
+          targets.length === 1
+            ? "This invoice was already recorded"
+            : `All ${targets.length} invoices were already recorded`,
+        description: "Open the existing bill, or choose Create anyway to record it a second time.",
+        variant: "warning",
+      });
+      return;
+    }
+
     // Pre-validate everything up front: nothing posts until every target is valid.
-    for (const { inv, index } of targets) {
+    for (const { inv, index } of postable) {
       const problem = invoiceValidationError(inv);
       if (problem) {
         setActiveIndex(index);
@@ -1038,7 +1178,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     // Unlinked lines never restock — make skipping them an EXPLICIT choice
     // instead of silently acknowledging on the operator's behalf. One
     // aggregated confirm across the batch; Cancel aborts before anything posts.
-    const unlinked = targets
+    const unlinked = postable
       .filter(({ inv }) => inv.createMode === "bill" || inv.createMode === "both")
       .map(({ inv }) => ({
         inv,
@@ -1064,10 +1204,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     try {
       let created = 0;
       let failed = 0;
+      let skipped = targets.length - postable.length;
       const allNotes: string[] = [];
-      for (const { inv } of targets) {
-        const { ok, notes } = await createOne(inv.id);
+      for (const { inv } of postable) {
+        const { ok, duplicate, notes } = await createOne(inv.id);
         if (ok) created++;
+        else if (duplicate) skipped++;
         else failed++;
         allNotes.push(...notes);
       }
@@ -1076,7 +1218,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const leftBehind = invoicesRef.current.filter(
         (x) => x.status === "failed" || x.status === "scanning",
       ).length;
-      if (failed === 0 && leftBehind === 0) {
+      if (failed === 0 && skipped === 0 && leftBehind === 0) {
         toast({
           title:
             targets.length === 1
@@ -1087,7 +1229,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         });
         onCreated?.();
         onClose();
-      } else if (failed === 0) {
+      } else if (failed === 0 && skipped === 0) {
         // NOTE: onCreated is deliberately NOT called on the keep-open branches —
         // both entry points close the modal in that callback, which would strand
         // the not-yet-posted invoices. The mutation hooks already invalidate the
@@ -1098,18 +1240,33 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           variant: "warning",
         });
       } else {
-        // Keep the modal open: failed invoices stay editable, succeeded ones
-        // are marked created and will be skipped on the next attempt.
-        const firstFailed = invoicesRef.current.findIndex((x) => x.status === "scanned");
-        if (firstFailed >= 0) {
-          setActiveIndex(firstFailed);
+        // Keep the modal open: skipped duplicates and failed invoices stay
+        // editable, succeeded ones are marked created and will be skipped on
+        // the next attempt.
+        const firstUnposted = invoicesRef.current.findIndex((x) => x.status === "scanned");
+        if (firstUnposted >= 0) {
+          setActiveIndex(firstUnposted);
           setCreateFromRow(null);
         }
+        const tail = [
+          skipped > 0 ? `${skipped} skipped as duplicate${skipped === 1 ? "" : "s"}` : "",
+          failed > 0 ? `${failed} failed` : "",
+        ]
+          .filter(Boolean)
+          .join(", ");
         toast({
-          title: `Created ${created} of ${targets.length} — ${failed} failed`,
-          description:
-            "Fix the failed invoices and click Create again. Already-created bills won't be duplicated.",
-          variant: created > 0 ? "warning" : "error",
+          title: `Created ${created} of ${targets.length} — ${tail}`,
+          description: [
+            skipped > 0
+              ? "Duplicates weren't recorded — open the existing bill, or use Create anyway to record one a second time."
+              : "",
+            failed > 0
+              ? "Fix the failed invoices and click Create again. Already-created bills won't be duplicated."
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+          variant: failed > 0 && created === 0 ? "error" : "warning",
         });
       }
     } finally {
@@ -1500,6 +1657,16 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                               placeholder="From the invoice — saved for reconciliation"
                               className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
                             />
+                            {active && createMode !== "expense" && (
+                              <DuplicateBanner
+                                duplicate={active.duplicate}
+                                pending={active.duplicateCheckPending}
+                                allowDuplicate={active.allowDuplicate}
+                                disabled={isPending}
+                                onAllow={() => updateActive({ allowDuplicate: true })}
+                                onUndo={() => updateActive({ allowDuplicate: false })}
+                              />
+                            )}
                           </div>
                         </div>
                         {createMode === "bill" || createMode === "both" ? (
@@ -2174,6 +2341,114 @@ const STATUS_DOT: Record<InvoiceStatus, { cls: string; label: string }> = {
 };
 
 /**
+ * Warns that this supplier invoice is already in the system. Two shapes,
+ * because the recovery differs: a DRAFT match is resumable (finish that bill),
+ * an already-received match is not (a second one would double stock).
+ */
+function DuplicateBanner({
+  duplicate,
+  pending,
+  allowDuplicate,
+  disabled,
+  onAllow,
+  onUndo,
+}: {
+  duplicate: DuplicateVendorBillInfo | null;
+  pending: boolean;
+  allowDuplicate: boolean;
+  disabled?: boolean;
+  onAllow: () => void;
+  onUndo: () => void;
+}) {
+  if (!duplicate) {
+    return pending ? (
+      <p className="mt-1.5 flex items-center gap-1.5 text-[11px] text-navy/60">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        Checking whether this invoice is already recorded…
+      </p>
+    ) : null;
+  }
+
+  if (allowDuplicate) {
+    return (
+      <div
+        className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-surface-border bg-white px-2.5 py-2"
+        data-testid="duplicate-override"
+      >
+        <p className="text-xs text-navy/70">
+          Recording a second bill anyway — {duplicate.billNumber} already exists.
+        </p>
+        <button
+          type="button"
+          onClick={onUndo}
+          disabled={disabled}
+          className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+          Undo
+        </button>
+      </div>
+    );
+  }
+
+  const resumable = duplicate.resumable;
+  const seenOn = duplicate.receivedDate ?? duplicate.billDate;
+  return (
+    <div
+      className={cn(
+        "mt-2 flex items-start gap-2 rounded-lg border p-2.5",
+        resumable ? "border-amber-200 bg-amber-50" : "border-danger/30 bg-danger-bg",
+      )}
+      data-testid="duplicate-banner"
+    >
+      <AlertCircle
+        className={cn("mt-0.5 h-4 w-4 shrink-0", resumable ? "text-amber-600" : "text-danger")}
+      />
+      <div className="min-w-0 flex-1">
+        <p className={cn("text-xs", resumable ? "text-amber-800" : "text-danger")}>
+          {resumable ? (
+            <>
+              <span className="font-semibold">
+                A draft bill for this invoice already exists — {duplicate.billNumber},{" "}
+                {fmt(duplicate.totalOwed)}.
+              </span>{" "}
+              Finish that one instead of creating a second bill.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">
+                Already imported as {duplicate.billNumber}
+                {seenOn ? ` on ${fmtDate(seenOn)}` : ""}.
+              </span>{" "}
+              Creating it again would double stock and the amount owed.
+            </>
+          )}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <a
+            href={`/vendor-bills/${duplicate.billId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View existing bill
+          </a>
+          <button
+            type="button"
+            onClick={onAllow}
+            disabled={disabled}
+            className="rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Create anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Batch navigator: prominent ◀ ▶ buttons to move between the scanned
  * invoices (one per PDF). Switching moves BOTH the preview panel and the
  * whole review form. Status dots jump straight to an invoice.
@@ -2209,6 +2484,9 @@ function InvoiceNavigator({
   }
   const isDuplicate =
     !!active?.invoiceNumber && (numberCounts.get(norm(active.invoiceNumber)) ?? 0) > 1;
+  // Cross-session duplicate: matched against a bill recorded before this batch.
+  const existingBill =
+    active && active.createMode !== "expense" && !active.allowDuplicate ? active.duplicate : null;
 
   return (
     <div className="flex items-center gap-3 border-b border-surface-border bg-surface-raised px-4 py-2">
@@ -2234,6 +2512,18 @@ function InvoiceNavigator({
             <span className="font-medium text-amber-600">
               {" "}
               — same invoice # as another file in this batch
+            </span>
+          )}
+          {existingBill && (
+            <span
+              className={cn(
+                "font-medium",
+                existingBill.resumable ? "text-amber-600" : "text-danger",
+              )}
+            >
+              {" "}
+              — already {existingBill.resumable ? "saved as draft" : "imported as"}{" "}
+              {existingBill.billNumber}
             </span>
           )}
         </p>

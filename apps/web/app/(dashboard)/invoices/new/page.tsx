@@ -70,6 +70,11 @@ function getDaysForTerms(terms: string): number | null {
   }
 }
 
+/** Current UTC calendar day — the bound the API applies to a backdated sale. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // ─── Customer search dropdown ─────────────────────────────────────────────────
 
 function CustomerSearch({
@@ -652,7 +657,7 @@ export default function NewInvoicePage() {
   const [reference, setReference] = React.useState("");
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
-  const [issueDate, setIssueDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [issueDate, setIssueDate] = React.useState(todayIso);
   const [dueDate, setDueDate] = React.useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -1158,6 +1163,11 @@ export default function NewInvoicePage() {
       return;
     }
 
+    // Only a genuinely backdated sale carries orderDate: on a deliveredNow sale the
+    // server uses it as deliveredAt, so an untouched date must stay unsent to keep
+    // deliveredAt at the full current timestamp rather than midnight UTC.
+    const backdatedTo = issueDate && issueDate !== todayIso() ? issueDate : undefined;
+
     createSale.mutate(
       {
         customerId: customer!.id,
@@ -1165,6 +1175,7 @@ export default function NewInvoicePage() {
         deliveredNow,
         notes: notes.trim() || undefined,
         ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
+        ...(backdatedTo ? { orderDate: backdatedTo } : {}),
         send,
       },
       {
@@ -1349,11 +1360,12 @@ export default function NewInvoicePage() {
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">
-                      Issue Date *
+                      {isSale ? "Sale date" : "Issue Date *"}
                     </label>
                     <input
                       type="date"
                       value={issueDate}
+                      max={isSale ? todayIso() : undefined}
                       onChange={(e) => handleIssueDateChange(e.target.value)}
                       className={cn(
                         "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
@@ -1362,6 +1374,11 @@ export default function NewInvoicePage() {
                     />
                     {errors.issueDate && (
                       <p className="mt-1 text-xs text-danger">{errors.issueDate}</p>
+                    )}
+                    {isSale && !errors.issueDate && (
+                      <p className="mt-1 text-xs text-navy/70">
+                        The day the sale happened. Defaults to today.
+                      </p>
                     )}
                   </div>
                   <div>

@@ -7,6 +7,7 @@ import {
   Eye,
   Calendar,
   X,
+  AlertCircle,
   Loader2,
   FileText,
   Trash2,
@@ -37,9 +38,11 @@ import {
   useVendorBills,
   useCreateVendorBill,
   useBulkDeleteVendorBills,
+  getDuplicateVendorBillError,
   type VendorBill,
   type VendorBillStatus,
   type CreateVendorBillItem,
+  type DuplicateVendorBillInfo,
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
@@ -308,6 +311,80 @@ function ProductCombobox({
   );
 }
 
+// ─── Duplicate bill banner ────────────────────────────────────────────────────
+
+/**
+ * Shown when `POST /vendor-bills` answers 409 DUPLICATE_VENDOR_BILL. Two shapes,
+ * because the recovery differs: a DRAFT match is resumable (finish that bill), an
+ * already-received match is not (a second one would double stock). Mirrors the
+ * banner in ScanInvoiceModal so both entry points read the same.
+ */
+function DuplicateBillBanner({
+  duplicate,
+  disabled,
+  onCreateAnyway,
+}: {
+  duplicate: DuplicateVendorBillInfo;
+  disabled?: boolean;
+  onCreateAnyway: () => void;
+}) {
+  const resumable = duplicate.resumable;
+  const seenOn = duplicate.receivedDate ?? duplicate.billDate;
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-lg border p-2.5",
+        resumable ? "border-amber-200 bg-amber-50" : "border-danger/30 bg-danger-bg",
+      )}
+      data-testid="duplicate-banner"
+    >
+      <AlertCircle
+        className={cn("mt-0.5 h-4 w-4 shrink-0", resumable ? "text-amber-600" : "text-danger")}
+      />
+      <div className="min-w-0 flex-1">
+        <p className={cn("text-xs", resumable ? "text-amber-800" : "text-danger")}>
+          {resumable ? (
+            <>
+              <span className="font-semibold">
+                A draft bill for this invoice already exists — {duplicate.billNumber},{" "}
+                {fmt(duplicate.totalOwed)}.
+              </span>{" "}
+              Finish that one instead of creating a second bill.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">
+                Already recorded as {duplicate.billNumber}
+                {seenOn ? ` on ${fmtDate(seenOn)}` : ""}.
+              </span>{" "}
+              Creating it again would double stock and the amount owed.
+            </>
+          )}
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <a
+            href={`/vendor-bills/${duplicate.billId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View existing bill
+          </a>
+          <button
+            type="button"
+            onClick={onCreateAnyway}
+            disabled={disabled}
+            className="rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Create anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Create Bill Modal ────────────────────────────────────────────────────────
 
 function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
@@ -325,6 +402,9 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const [notes, setNotes] = React.useState("");
   const [lineItems, setLineItems] = React.useState<LineItemRow[]>([emptyLineItem()]);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  // The bill the server matched this one against (409). Cleared on every submit so
+  // an edited form is judged fresh.
+  const [duplicate, setDuplicate] = React.useState<DuplicateVendorBillInfo | null>(null);
   const [createProductOpen, setCreateProductOpen] = React.useState(false);
   const [createProductForIndex, setCreateProductForIndex] = React.useState<number>(-1);
   const [createProductSearch, setCreateProductSearch] = React.useState("");
@@ -404,6 +484,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setNotes("");
       setLineItems([emptyLineItem()]);
       setErrors({});
+      setDuplicate(null);
       if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
     }
   }, [isOpen]);
@@ -441,14 +522,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     return errs;
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const errs = validate();
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      return;
-    }
-    setErrors({});
+  function postBill(allowDuplicate: boolean) {
     const items: CreateVendorBillItem[] = lineItems.map((row) => ({
       description: row.description.trim(),
       qty: parseFloat(row.qty),
@@ -463,6 +537,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         dueDate,
         items,
         notes: notes.trim() || undefined,
+        ...(allowDuplicate ? { allowDuplicate: true } : {}),
       },
       {
         onSuccess: () => {
@@ -470,15 +545,36 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           toast({ title: "Vendor bill created", variant: "success" });
           onClose();
         },
-        onError: () => {
+        onError: (err: unknown) => {
+          // A match against an existing bill is recoverable in the form (open that
+          // bill, or override) — everything else is the server's own explanation.
+          const dup = getDuplicateVendorBillError(err);
+          if (dup) {
+            setDuplicate(dup.duplicate);
+            return;
+          }
+          const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response
+            ?.data?.message;
           toast({
             title: "Failed to create vendor bill",
-            description: "Please try again.",
+            description: (Array.isArray(raw) ? raw.join(" ") : raw) || "Please try again.",
             variant: "error",
           });
         },
       },
     );
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const errs = validate();
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      return;
+    }
+    setErrors({});
+    setDuplicate(null);
+    postBill(false);
   }
 
   return (
@@ -500,6 +596,13 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         }
       >
         <form id="create-bill-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+          {duplicate && (
+            <DuplicateBillBanner
+              duplicate={duplicate}
+              disabled={createBill.isPending}
+              onCreateAnyway={() => postBill(true)}
+            />
+          )}
           {/* ── Barcode scan strip ── */}
           <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
             <span className="text-xs font-medium text-brand-600 shrink-0">Scan item:</span>
