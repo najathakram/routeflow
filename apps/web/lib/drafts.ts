@@ -42,6 +42,8 @@ export interface OrderDraftPayload {
   orderDiscount: string;
   shippingFee: string;
   requestedDeliveryDate: string;
+  /** Business date of the order (yyyy-mm-dd). Blank = the API stamps today. */
+  orderDate: string;
   notes: string;
   urgent: boolean;
   /** tempIds the operator chose "Sell anyway" on (below-floor acks). */

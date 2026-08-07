@@ -18,6 +18,8 @@ export interface AllPayment {
   status?: PaymentStatus;
   paymentGroupId?: string;
   paidAt?: string;
+  /** When the money actually landed in the bank. May be a future date. */
+  settledAt?: string | null;
   createdAt: string;
   // Payment image (receipt / slip / check photo). Grouped standalone rows
   // share one object keyed by paymentGroupId — these three fields are
@@ -108,6 +110,8 @@ export interface UpdatePaymentDto {
   method: EditablePaymentMethod;
   amount: number;
   paidAt?: string;
+  /** Omit to keep the stored bank date; send null to clear it. */
+  settledAt?: string | null;
   bankCharges?: number;
   reference?: string;
   notes?: string;

@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
 import { ImportFileStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -63,6 +69,34 @@ function matchSupplier(detected: string, suppliers: SupplierCandidate[]): Suppli
     return n.includes(d) || d.includes(n);
   });
   return contains.length === 1 ? contains[0] : null;
+}
+
+/**
+ * The `duplicate` payload VendorBillsService.create attaches to its 409.
+ * `matchedBy`/`billNumber` are optional because the parse is defensive over a
+ * plain 409 body; a payload without `matchedBy` is treated as NOT identity.
+ */
+interface DuplicateVendorBill {
+  billId: string;
+  billNumber?: string;
+  resumable: boolean;
+  matchedBy?: "number" | "fuzzy";
+}
+
+function duplicateVendorBillConflict(err: unknown): DuplicateVendorBill | null {
+  if (!(err instanceof ConflictException)) return null;
+  const response = err.getResponse() as { code?: string; duplicate?: DuplicateVendorBill };
+  if (response?.code !== "DUPLICATE_VENDOR_BILL" || !response.duplicate?.billId) return null;
+  return response.duplicate;
+}
+
+/** receive()'s own idempotency guard — exactly what a resumed bill can race into. */
+function isAlreadyReceived(err: unknown): boolean {
+  if (!(err instanceof ConflictException)) return false;
+  const response = err.getResponse();
+  const message =
+    typeof response === "string" ? response : (response as { message?: unknown })?.message;
+  return typeof message === "string" && message.toLowerCase().includes("already received");
 }
 
 /**
@@ -395,6 +429,11 @@ export class BatchImportService {
    * receive it (stock + costing via the existing path). Non-product lines are
    * acknowledged (acknowledgeUnlinked) once mapped. Idempotent per item (skips
    * already-POSTED ones).
+   *
+   * `posted` counts bills this run actually created; `adopted` counts items
+   * resolved onto a bill that already existed, and `duplicates` counts items
+   * handed back for a human decision. The three are reported separately so the
+   * client never claims to have posted a bill it did not write.
    */
   async postBatch(id: string, performedById?: string) {
     await this.getBatchOrThrow(id);
@@ -403,6 +442,8 @@ export class BatchImportService {
     });
 
     let posted = 0;
+    let adopted = 0;
+    let duplicates = 0;
     for (const item of clean) {
       const payload = (item.extractedPayload ?? {}) as ExtractedInvoice;
       // Map scan lines to the vendor-bill item shape: the scanner emits the
@@ -423,25 +464,74 @@ export class BatchImportService {
       const notes = item.invoiceNumber
         ? formatSupplierInvoiceNote(item.invoiceNumber)
         : "Batch import";
-      const bill = await this.vendorBills.create({
-        requireSupplier: false,
-        supplierId: item.supplierMatchId ?? undefined,
-        totalOwed: item.total != null ? Number(item.total) : undefined,
-        billDate,
-        items: billItems,
-        notes,
-      });
-      const billId = (bill as { id: string }).id;
-      await this.vendorBills.receive(billId, { acknowledgeUnlinked: true }, performedById);
+      let billId: string;
+      let existing: DuplicateVendorBill | null = null;
+      try {
+        const bill = await this.vendorBills.create({
+          requireSupplier: false,
+          supplierId: item.supplierMatchId ?? undefined,
+          supplierInvoiceNumber: item.invoiceNumber ?? undefined,
+          totalOwed: item.total != null ? Number(item.total) : undefined,
+          billDate,
+          items: billItems,
+          notes,
+        });
+        billId = (bill as { id: string }).id;
+      } catch (err) {
+        // A retry after the create landed but the POSTED update never ran finds
+        // its OWN bill here. Adopting it is what makes posting resumable
+        // instead of creating a second bill (and a second restock); one
+        // duplicate must never abort the rest of the batch either.
+        existing = duplicateVendorBillConflict(err);
+        if (!existing) throw err;
+        // Adopt ONLY on an identity-grade match. A weaker match is a guess, and
+        // acting on a guess either posts this item's reviewed lines onto a
+        // stranger's bill or drops them silently — so hand it back instead.
+        if (existing.matchedBy !== "number") {
+          const document = existing.billNumber ?? existing.billId;
+          await this.prisma.forTenant().importQueueItem.update({
+            where: { id: item.id },
+            data: {
+              status: "DUPLICATE",
+              duplicateOfInvoiceId: existing.billId,
+              errorMessage:
+                `Matches existing bill ${document} on supplier, date and total but not on an ` +
+                "invoice number — confirm this is a separate delivery before posting it.",
+            },
+          });
+          duplicates++;
+          continue;
+        }
+        billId = existing.billId;
+        this.logger.warn(
+          `postBatch: queue item ${item.id} matched existing bill ${billId} — adopting it`,
+        );
+      }
+
+      if (!existing) {
+        await this.vendorBills.receive(billId, { acknowledgeUnlinked: true }, performedById);
+      } else if (existing.resumable) {
+        try {
+          await this.vendorBills.receive(billId, { acknowledgeUnlinked: true }, performedById);
+        } catch (err) {
+          if (!isAlreadyReceived(err)) throw err;
+        }
+      }
+
       await this.prisma.forTenant().importQueueItem.update({
         where: { id: item.id },
-        data: { status: "POSTED", vendorBillId: billId },
+        data: {
+          status: "POSTED",
+          vendorBillId: billId,
+          ...(existing ? { duplicateOfInvoiceId: existing.billId } : {}),
+        },
       });
-      posted++;
+      if (existing) adopted++;
+      else posted++;
     }
 
     const batch = await this.recomputeBatch(id);
-    return { posted, batchStatus: batch.status };
+    return { posted, adopted, duplicates, batchStatus: batch.status };
   }
 
   // ── internals ──────────────────────────────────────────────────────────────

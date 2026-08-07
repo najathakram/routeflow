@@ -8,6 +8,7 @@ import {
   Param,
   Query,
   UseGuards,
+  BadRequestException,
   ConflictException,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
@@ -73,6 +74,15 @@ export class OrdersController {
           });
         }
         if (choice === "merge") {
+          // The merge writes items onto the existing order, whose own business date
+          // stays authoritative — OrdersService.create (the only place orderDate is
+          // parsed and stored) never runs on this branch, so accepting a date here
+          // would silently drop it.
+          if (dto.orderDate) {
+            throw new BadRequestException(
+              "A backdated order cannot be merged. Enter it as a separate order.",
+            );
+          }
           const mergedMap = new Map<string, number>();
           // Unlisted lines (no productId) can't be keyed by product — pass them
           // through as their own line items so a merge never drops them.

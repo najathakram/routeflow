@@ -16,6 +16,27 @@ import { roundMoney } from "../common/pricing";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
+import {
+  DuplicateMatchService,
+  extractSupplierInvoiceNumber,
+  type VendorBillDuplicateMatch,
+} from "../import/duplicate-match.service";
+import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
+
+/** What clients render when a bill is blocked as a duplicate. */
+export interface VendorBillDuplicatePayload {
+  billId: string;
+  billNumber: string;
+  status: string;
+  resumable: boolean;
+  totalOwed: number;
+  billDate: Date | null;
+  receivedDate: Date | null;
+  supplierName: string | null;
+  itemCount: number;
+  matchedBy: "number" | "fuzzy";
+  totalMatches: boolean;
+}
 
 @Injectable()
 export class VendorBillsService {
@@ -25,6 +46,7 @@ export class VendorBillsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly duplicateMatch: DuplicateMatchService,
   ) {}
 
   private async nextBillNumber() {
@@ -61,13 +83,42 @@ export class VendorBillsService {
     // monetary write, so round it.
     totalOwed = roundMoney(totalOwed + (Number(dto.taxAmount) || 0));
 
+    const supplierInvoiceNumber = this.resolveSupplierInvoiceNumber(dto);
+    const billDate = this.parseDate(dto.billDate);
+
+    // Re-scanning the same supplier invoice must not create a second bill (and
+    // a second restock). Only checkable when the document is identifiable —
+    // otherwise every plausible bill would be blocked.
+    if (!dto.allowDuplicate && (supplierInvoiceNumber || (supplierId && billDate))) {
+      const match = await this.duplicateMatch.findVendorBillDuplicate({
+        supplierId,
+        number: supplierInvoiceNumber,
+        total: totalOwed,
+        issueDate: billDate,
+      });
+      // A number match is document identity; a fuzzy match (supplier + date +
+      // total, no number) is only a hint for a human — two separate same-day
+      // deliveries from one supplier for the same amount are legitimate and must
+      // stay enterable. `checkDuplicate` still reports the fuzzy hit so a client
+      // can warn before the operator commits.
+      if (match?.matchedBy === "number") {
+        const duplicate = await this.toDuplicatePayload(match);
+        throw new ConflictException({
+          code: "DUPLICATE_VENDOR_BILL",
+          message: this.duplicateMessage(supplierInvoiceNumber, match),
+          duplicate,
+        });
+      }
+    }
+
     const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
         ...(supplierId ? { supplierId } : {}),
         status: "DRAFT",
         totalOwed,
-        billDate: dto.billDate ? new Date(dto.billDate) : null,
+        ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
+        billDate,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         notes: dto.notes,
         items:
@@ -93,6 +144,84 @@ export class VendorBillsService {
     });
 
     return bill;
+  }
+
+  /**
+   * Read-only duplicate probe for clients that want to warn before the operator
+   * has finished keying a bill. Same matcher, same payload as the create guard.
+   */
+  async checkDuplicate(
+    dto: CheckVendorBillDuplicateDto,
+  ): Promise<{ duplicate: VendorBillDuplicatePayload | null }> {
+    const number = this.resolveSupplierInvoiceNumber(dto);
+    const supplierId = dto.supplierId?.trim() ? dto.supplierId.trim() : null;
+    const billDate = this.parseDate(dto.billDate);
+    const total = dto.total != null ? Number(dto.total) : null;
+
+    if (!number && !(supplierId && billDate)) return { duplicate: null };
+
+    const match = await this.duplicateMatch.findVendorBillDuplicate({
+      supplierId,
+      number,
+      total,
+      issueDate: billDate,
+    });
+    return { duplicate: match ? await this.toDuplicatePayload(match) : null };
+  }
+
+  /**
+   * The supplier's own invoice number, normalized. The `notes` fallback keeps
+   * clients that only send the "Supplier invoice #N" phrase (older web/mobile
+   * bundles, and every row written before the column existed) inside the guard.
+   */
+  private resolveSupplierInvoiceNumber(dto: {
+    supplierInvoiceNumber?: string | null;
+    notes?: string | null;
+  }): string | null {
+    const raw = dto.supplierInvoiceNumber ?? extractSupplierInvoiceNumber(dto.notes);
+    if (!raw) return null;
+    const normalized = this.duplicateMatch.normalizeNumber(raw);
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private parseDate(value?: string | Date | null): Date | null {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  private async toDuplicatePayload(
+    match: VendorBillDuplicateMatch,
+  ): Promise<VendorBillDuplicatePayload> {
+    const supplier = match.supplierId
+      ? await this.prisma
+          .forTenant()
+          .supplier.findUnique({ where: { id: match.supplierId }, select: { name: true } })
+      : null;
+    return {
+      billId: match.id,
+      billNumber: match.billNumber,
+      status: match.status,
+      resumable: match.status === "DRAFT",
+      totalOwed: match.totalOwed,
+      billDate: match.billDate,
+      receivedDate: match.receivedDate,
+      supplierName: supplier?.name ?? null,
+      itemCount: match.itemCount,
+      matchedBy: match.matchedBy,
+      totalMatches: match.totalMatches,
+    };
+  }
+
+  /**
+   * Clients that predate the structured `duplicate` payload surface
+   * `response.data.message` verbatim, so the sentence has to stand alone.
+   */
+  private duplicateMessage(number: string | null, match: VendorBillDuplicateMatch): string {
+    const document = number ? `Supplier invoice ${number}` : "This supplier invoice";
+    return match.status === "DRAFT"
+      ? `${document} is already saved as draft bill ${match.billNumber} — open it to finish receiving instead of creating a second bill.`
+      : `${document} was already recorded as bill ${match.billNumber} — creating it again would double stock and amounts owed.`;
   }
 
   async update(id: string, dto: any) {
@@ -127,6 +256,11 @@ export class VendorBillsService {
           }),
           ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
+          ...(dto.supplierInvoiceNumber !== undefined && {
+            supplierInvoiceNumber: this.resolveSupplierInvoiceNumber({
+              supplierInvoiceNumber: dto.supplierInvoiceNumber,
+            }),
+          }),
           ...(totalOwed !== undefined && { totalOwed }),
           ...(dto.items !== undefined && dto.items.length > 0
             ? {

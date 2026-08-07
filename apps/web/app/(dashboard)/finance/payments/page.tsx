@@ -43,6 +43,10 @@ const METHOD_COLORS: Record<string, string> = {
 const fieldCls =
   "w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500";
 
+const BANK_DATE_LABEL = "Money received in bank";
+const BANK_DATE_HELP =
+  "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
 // ─── Sort helper ───────────────────────────────────────────────────────────────
 
 function SortIcon({ col, sortBy, sortDir }: { col: string; sortBy: string; sortDir: string }) {
@@ -68,6 +72,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [totalAmount, setTotalAmount] = React.useState("");
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
+  const [settledAt, setSettledAt] = React.useState("");
   const [method, setMethod] = React.useState("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
@@ -133,6 +138,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       totalAmount: total,
       method: method as any,
       paidAt,
+      settledAt: settledAt || undefined,
       bankCharges: bankCharges ? parseFloat(bankCharges) : undefined,
       reference: reference || undefined,
       notes: notes || undefined,
@@ -232,6 +238,16 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 onChange={(e) => setPaidAt(e.target.value)}
                 className={fieldCls}
               />
+              <label className="mb-1.5 mt-3 block text-sm font-medium text-navy/60">
+                {BANK_DATE_LABEL}
+              </label>
+              <input
+                type="date"
+                value={settledAt}
+                onChange={(e) => setSettledAt(e.target.value)}
+                className={fieldCls}
+              />
+              <p className="mt-1 text-xs text-navy/50">{BANK_DATE_HELP}</p>
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
@@ -678,6 +694,13 @@ export default function FinancePaymentsPage() {
                   Date <SortIcon col="paidAt" sortBy={sortBy} sortDir={sortDir} />
                 </th>
                 <th
+                  onClick={() => toggleSort("settledAt")}
+                  title={BANK_DATE_HELP}
+                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                >
+                  Bank date <SortIcon col="settledAt" sortBy={sortBy} sortDir={sortDir} />
+                </th>
+                <th
                   onClick={() => toggleSort("paymentNumber")}
                   className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
                 >
@@ -705,7 +728,7 @@ export default function FinancePaymentsPage() {
             <tbody className="divide-y divide-surface-border">
               {payments.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="p-0">
+                  <td colSpan={10} className="p-0">
                     {search || method || status || dateFrom || dateTo || customerId ? (
                       <EmptyState
                         variant="invoices"
@@ -750,6 +773,9 @@ export default function FinancePaymentsPage() {
                   className={`cursor-pointer hover:bg-surface-raised/50 transition-colors ${p.status === "VOID" ? "opacity-50" : ""}`}
                 >
                   <td className="px-4 py-3 text-navy">{fmtDate(p.paidAt ?? p.createdAt)}</td>
+                  <td className="px-4 py-3 text-navy/70">
+                    {p.settledAt ? fmtDate(p.settledAt) : "—"}
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-navy">
                     {p.paymentNumber ?? "—"}
                   </td>

@@ -29,6 +29,7 @@ jest.mock("../notifications/notifications.service", () => ({
 import { Reflector } from "@nestjs/core";
 import { OrdersService } from "./orders.service";
 import { OrdersController } from "./orders.controller";
+import { ChangeRequestsService } from "./change-requests.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -69,6 +70,9 @@ const MOCK_ORDER = {
   updatedAt: new Date(),
   customer: { businessName: "Test Business" },
 };
+
+/** "YYYY-MM-DD" offset from today — negative n yields a future date. */
+const isoDaysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
 const operatorPayload = {
   sub: "user-op",
@@ -1213,6 +1217,213 @@ describe("OrdersService", () => {
       await service.createSale({ ...baseDto, deliveredNow: false, send: true }, user);
       expect(invoices.send).not.toHaveBeenCalled();
     });
+
+    it("backdated van sale threads orderDate through and delivers on that date, not today", async () => {
+      const businessDate = isoDaysAgo(5);
+      await service.createSale({ ...baseDto, deliveredNow: true, orderDate: businessDate }, user);
+
+      expect(service.create).toHaveBeenCalledWith(
+        expect.objectContaining({ orderDate: businessDate }),
+        user,
+        { skipAutoMerge: true },
+      );
+      expect(prisma.forTenant().order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: OrderStatus.DELIVERED,
+            deliveredAt: new Date(businessDate),
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── Backdated orders (orderDate) ─────────────────────────────────────────
+
+  describe("create — orderDate", () => {
+    const seedStaffCreate = () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        user: { status: "ACTIVE" },
+      });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+    };
+
+    it("persists the staff-supplied business date", async () => {
+      seedStaffCreate();
+      const businessDate = isoDaysAgo(4);
+
+      await service.create(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }], orderDate: businessDate },
+        operatorPayload,
+      );
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ orderDate: new Date(businessDate) }),
+        }),
+      );
+    });
+
+    it("rejects a buyer-supplied order date (403)", async () => {
+      await expect(
+        service.create(
+          { items: [{ productId: "prod-1", qty: 1 }], orderDate: isoDaysAgo(4) },
+          customerPayload,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("rejects a driver-supplied order date (403)", async () => {
+      const driverPayload = { ...operatorPayload, role: "DRIVER" as const };
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            orderDate: isoDaysAgo(4),
+          },
+          driverPayload,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it("rejects a future order date", async () => {
+      seedStaffCreate();
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            orderDate: isoDaysAgo(-3),
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(/future/i);
+    });
+
+    it("rejects an order date more than 2 years old", async () => {
+      seedStaffCreate();
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            orderDate: isoDaysAgo(1000),
+          },
+          operatorPayload,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("refuses to backdate when the order would auto-merge into an open one", async () => {
+      seedStaffCreate();
+      // findActiveOrder resolves a merge target — folding in would drop the date.
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-open", lineItems: [] });
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            orderDate: isoDaysAgo(4),
+          },
+          operatorPayload,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it("allows a backdated order when the caller already chose a separate order", async () => {
+      seedStaffCreate();
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-open", lineItems: [] });
+
+      await expect(
+        service.create(
+          {
+            customerId: "cust-1",
+            items: [{ productId: "prod-1", qty: 1 }],
+            orderDate: isoDaysAgo(4),
+          },
+          operatorPayload,
+          { skipAutoMerge: true },
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it("stores a dated order as skipAutoMerge even when the caller didn't ask for it", async () => {
+      seedStaffCreate();
+
+      await service.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          orderDate: isoDaysAgo(4),
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ skipAutoMerge: true }) }),
+      );
+    });
+
+    it("an undated order keeps the caller's merge preference", async () => {
+      seedStaffCreate();
+      const dto = { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1 }] };
+
+      await service.create(dto, operatorPayload);
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ skipAutoMerge: false }) }),
+      );
+
+      prisma.order.create.mockClear();
+      await service.create(dto, operatorPayload, { skipAutoMerge: true });
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ skipAutoMerge: true }) }),
+      );
+    });
+
+    it("a dated order is not a merge candidate — the consolidation never deletes it", async () => {
+      const order = (id: string, skipAutoMerge: boolean) => ({
+        id,
+        customerId: "cust-1",
+        status: "PENDING",
+        skipAutoMerge,
+        lineItems: [],
+      });
+      // Apply the service's own where-filter to a fixture set, the way the DB would.
+      prisma.order.findMany.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          [order("ord-dated", true), order("ord-a", false), order("ord-b", false)].filter(
+            (o) => o.skipAutoMerge === where.skipAutoMerge,
+          ),
+        ),
+      );
+
+      await service.mergeAllPendingForCustomer("cust-1");
+
+      const deleted = prisma.order.delete.mock.calls.map((c: any[]) => c[0].where.id);
+      expect(deleted).toEqual(["ord-b"]);
+      expect(deleted).not.toContain("ord-dated");
+    });
+
+    it("the pending sweep only groups orders that are merge participants", async () => {
+      prisma.order.groupBy.mockResolvedValue([]);
+
+      await service.sweepAllPendingOrders();
+
+      expect(prisma.order.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ skipAutoMerge: false }) }),
+      );
+    });
   });
 
   // ─── changeStatus ─────────────────────────────────────────────────────────
@@ -1263,6 +1474,41 @@ describe("OrdersService", () => {
 
       expect(invoices.reconcileOrderDraftInvoice).toHaveBeenCalledWith("ord-1", { basis: "order" });
       expect(invoices.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+    });
+
+    it("marking DELIVERED stamps deliveredAt from the order's business date", async () => {
+      const businessDate = new Date(isoDaysAgo(6));
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        orderDate: businessDate,
+        deliveredAt: null,
+      });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: "ord-1" },
+        data: { status: "DELIVERED", deliveredAt: businessDate },
+      });
+    });
+
+    it("marking DELIVERED without a business date stamps now (it used to stamp nothing)", async () => {
+      const before = Date.now();
+      prisma.order.findUnique.mockResolvedValue({
+        ...MOCK_ORDER,
+        status: "CONFIRMED",
+        orderDate: null,
+        deliveredAt: null,
+      });
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "DELIVERED" });
+
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload);
+
+      const stamped = (prisma.order.update.mock.calls[0][0] as any).data.deliveredAt as Date;
+      expect(stamped).toBeInstanceOf(Date);
+      expect(stamped.getTime()).toBeGreaterThanOrEqual(before);
     });
 
     // ─── WP3: best-effort credit-note settle on DELIVERED ──────────────────
@@ -3724,5 +3970,103 @@ describe("OrdersService", () => {
       expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null }, 0)).toBe(8);
       expect(pieceQty({ qty: 8, boxes: null, unitsPerBox: null })).toBe(8);
     });
+  });
+});
+
+// ─── Controller: the merge-choice branch bypasses OrdersService.create ───────
+
+describe("OrdersController — merge choice vs orderDate", () => {
+  let controller: OrdersController;
+  let ordersService: {
+    findActiveOrder: jest.Mock;
+    updateOrderItems: jest.Mock;
+    mergeAllPendingForCustomer: jest.Mock;
+    findOne: jest.Mock;
+    create: jest.Mock;
+  };
+
+  const activeOrder = {
+    id: "ord-open",
+    orderNumber: "ORD-00009",
+    status: "PENDING",
+    total: 10,
+    createdAt: new Date(),
+    lineItems: [{ productId: "prod-1", qty: 2, unitPrice: 5, name: null }],
+  };
+
+  beforeEach(async () => {
+    ordersService = {
+      findActiveOrder: jest.fn().mockResolvedValue(activeOrder),
+      updateOrderItems: jest.fn().mockResolvedValue(undefined),
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      findOne: jest.fn().mockResolvedValue(activeOrder),
+      create: jest.fn().mockResolvedValue({ id: "ord-new", customerId: "cust-1" }),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [OrdersController],
+      providers: [
+        { provide: OrdersService, useValue: ordersService },
+        { provide: ChangeRequestsService, useValue: {} },
+      ],
+    }).compile();
+
+    controller = module.get<OrdersController>(OrdersController);
+  });
+
+  it("rejects merge + orderDate before any items are folded in", async () => {
+    await expect(
+      controller.create(
+        {
+          customerId: "cust-1",
+          items: [{ productId: "prod-1", qty: 1 }],
+          mergeChoice: "merge",
+          orderDate: isoDaysAgo(4),
+        } as any,
+        operatorPayload,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+    expect(ordersService.mergeAllPendingForCustomer).not.toHaveBeenCalled();
+    expect(ordersService.create).not.toHaveBeenCalled();
+  });
+
+  it("still merges an undated order into the open one", async () => {
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "merge",
+      } as any,
+      operatorPayload,
+    );
+
+    expect(ordersService.updateOrderItems).toHaveBeenCalledWith(
+      "ord-open",
+      expect.objectContaining({ items: [{ productId: "prod-1", qty: 3 }] }),
+      operatorPayload,
+    );
+  });
+
+  it("a dated order chosen as separate goes through create()", async () => {
+    const orderDate = isoDaysAgo(4);
+
+    await controller.create(
+      {
+        customerId: "cust-1",
+        items: [{ productId: "prod-1", qty: 1 }],
+        mergeChoice: "separate",
+        orderDate,
+      } as any,
+      operatorPayload,
+    );
+
+    expect(ordersService.updateOrderItems).not.toHaveBeenCalled();
+    expect(ordersService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ orderDate }),
+      operatorPayload,
+      { skipAutoMerge: true },
+    );
   });
 });

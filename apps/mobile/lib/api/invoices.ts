@@ -46,6 +46,8 @@ export interface InvoicePayment {
   status?: string;
   bankCharges?: number;
   paidAt: string;
+  /** When the money actually landed in the bank. May be a future date. */
+  settledAt?: string | null;
   createdAt: string;
   // Payment image (receipt / slip / check photo) — see lib/api/payments.ts AllPayment.
   imageKey?: string | null;
@@ -116,6 +118,8 @@ export interface RecordPaymentDto {
   notes?: string;
   bankCharges?: number;
   paidAt?: string;
+  /** Bank landing date. May be in the future; omit when unknown. */
+  settledAt?: string | null;
 }
 
 export function useRecordInvoicePayment() {
@@ -147,6 +151,8 @@ export interface CreateInvoiceItem {
 export interface CreateInvoiceDto {
   customerId: string;
   items: CreateInvoiceItem[];
+  /** Business date of the invoice (YYYY-MM-DD); defaults to today server-side. */
+  issueDate?: string;
   dueDate?: string;
   terms?: string;
   notes?: string;

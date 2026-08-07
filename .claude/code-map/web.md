@@ -304,6 +304,41 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
 
 ## Components & shared
 
+- **Duplicate-invoice UX in `ScanInvoiceModal.tsx` (2026-08-07):** `InvoiceGroup` gained
+  `duplicate` / `duplicateCheckPending` / `allowDuplicate`. A check fires from `applyScan` for every
+  invoice in a batch and again (500ms debounce, keyed by invoice id, cleared on discard + unmount)
+  whenever the Supplier Invoice # or supplier changes — both of which also reset `allowDuplicate`.
+  The posted `total` is the SAME `roundMoney(invoiceTotal + scannedTax)` figure `createOne` sends, so
+  the server's supplier+date+total fallback can actually line up. A banner under the Supplier
+  Invoice # field distinguishes **resumable** (existing bill is DRAFT — finish it) from **hard**
+  (already received — a second bill would double stock), each offering "View existing bill" (new tab,
+  so the modal survives) and "Create anyway". **Duplicates are SKIPPED, never batch-blocking**:
+  `invoiceValidationError` is deliberately NOT the vehicle (that pre-validation loop aborts the whole
+  batch) — `handleCreateAll` partitions targets, posts only the clean ones, and reports
+  "Created X of Y — N skipped as duplicates". A skipped duplicate is not a failure and gets no
+  `inv.error`. `createOne` also re-parses a 409 in its catch, which covers the same number appearing
+  twice inside ONE batch (invoice 1 creates the bill, invoice 3 then 409s) without aborting the loop.
+- **Date fields (2026-08-07):** `CreateOrderModal.tsx` has an optional "Order date" (`max=today`)
+  beside Requested Delivery Date; `invoices/new/page.tsx` relabels its issue-date field "Sale date" in
+  SALE mode and sends `orderDate` ONLY when it differs from today (so the default path stays
+  byte-identical and `deliveredAt` keeps a full `now()` timestamp); `orders/[id]` and the orders list
+  render `orderDate ?? createdAt`, the list marking a backdated row where the two UTC days differ.
+  `invoices/[id]/page.tsx`'s RecordPaymentModal gained BOTH a "Payment date" (it previously had NO
+  date at all — the server stamped now) and the optional "Money received in bank"; EditPaymentModal
+  clears the latter by sending `null`; the payment-history row switched from `createdAt` to `paidAt`
+  (it disagreed with every other surface and already misreported a backdated payment) and appends
+  "· landed {date}". `finance/payments` gained the field, a sortable "Bank date" column, and the
+  detail display; date FILTERS stay on `paidAt`. Buyer surfaces untouched — settlement is internal.
+  **`orderDate` must survive the two places it used to vanish:** it is part of `OrderDraftPayload`
+  (`lib/drafts.ts`) plus the `draftPayload` memo AND its dependency array, the hydration effect and the
+  `lastSavedRef` autosave baseline — `handleDismiss` auto-parks on Cancel/backdrop/Escape, so a missing
+  key silently discarded the date without the operator choosing to discard anything (and a stale memo
+  emits no autosave PATCH at all). And when a date is set the merge prompt DISABLES "Merge into …"
+  (demoted to secondary, "Create as separate" promoted to primary) because that branch merges via
+  `updateOrderItems` server-side and never carries the date; the API rejects the combination anyway.
+  `finance/expenses`'s CreateBillModal now parses 409s with `getDuplicateVendorBillError` and renders
+  the same duplicate banner (amber resumable / danger hard, "View existing bill" + "Create anyway" →
+  re-post with `allowDuplicate`) instead of swallowing the server message in a generic toast.
 - `tenant-provider.tsx` (branding CSS vars), `CommandPalette.tsx` (Cmd+K nav/search),
   `BarcodeScannerButton.tsx`, `DocumentLetterhead.tsx` (PDF header), `ScanInvoiceModal.tsx` (OCR),
   `BatchItemReviewModal.tsx` (`settings/batch-import` — per-line product remap + supplier link;

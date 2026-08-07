@@ -1,8 +1,8 @@
 import * as React from "react";
 import { StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
-import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
-import { gateScan, ScanGateState, ScanOutcome, ScanFeedback } from "../lib/scan-loop";
+import type { ScanOutcome, ScanFeedback } from "../lib/scan-loop";
+import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const WINDOW_SIZE = SCREEN_WIDTH * 0.7;
@@ -19,19 +19,12 @@ interface Props {
   continuous?: boolean;
 }
 
+/** Full-screen scanning overlay: permission UI, viewfinder chrome and feedback
+ *  pill around a {@link ScanCamera}. */
 export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props) {
-  const [permission, requestPermission] = useCameraPermissions();
-  const firedRef = React.useRef(false);
-  const gateRef = React.useRef<ScanGateState | null>(null);
-  const busyRef = React.useRef(false);
+  const { granted, request } = useScanCameraPermission();
   const [feedback, setFeedback] = React.useState<ScanFeedback | null>(null);
   const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  React.useEffect(() => {
-    if (!permission?.granted) {
-      requestPermission();
-    }
-  }, []);
 
   React.useEffect(
     () => () => {
@@ -46,46 +39,21 @@ export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props
     feedbackTimer.current = setTimeout(() => setFeedback(null), 2500);
   };
 
-  const handleBarCodeScanned = async ({ data }: { data: string }) => {
-    if (!continuous) {
-      if (firedRef.current) return;
-      firedRef.current = true;
-      onScanned(data);
+  const handleOutcome = (outcome: ScanOutcome) => {
+    if (outcome?.close) {
+      onClose();
       return;
     }
-    // Continuous: gate out per-frame repeats, then keep scanning after each add.
-    if (busyRef.current) return;
-    const gated = gateScan(data, gateRef.current, Date.now());
-    gateRef.current = gated.state;
-    if (!gated.accept) return;
-    busyRef.current = true;
-    try {
-      const outcome = await onScanned(data);
-      if (outcome?.close) {
-        onClose();
-        return;
-      }
-      if (outcome?.feedback) showFeedback(outcome.feedback);
-    } finally {
-      // While onScanned was awaited, every camera frame short-circuited at the
-      // busyRef guard WITHOUT calling gateScan, so the sliding window's lastAt
-      // stayed frozen at scan-start. If the lookup outran the cooldown, the next
-      // in-frame decode of the SAME code would be re-accepted → double-add.
-      // Re-anchor the cooldown to completion so a held item can't re-add until
-      // it leaves the frame for a full window. A different code still differs
-      // from `data` and is accepted immediately.
-      gateRef.current = { lastCode: data, lastAt: Date.now() };
-      busyRef.current = false;
-    }
+    if (outcome?.feedback) showFeedback(outcome.feedback);
   };
 
-  if (!permission?.granted) {
+  if (!granted) {
     return (
       <View style={styles.overlay}>
         <View style={styles.permissionBox}>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionBody}>Allow camera access to scan barcodes.</Text>
-          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+          <TouchableOpacity style={styles.permissionButton} onPress={request}>
             <Text style={styles.permissionButtonText}>Grant Access</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onClose} style={{ marginTop: 12 }}>
@@ -98,12 +66,11 @@ export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props
 
   return (
     <View style={StyleSheet.absoluteFill}>
-      <CameraView
+      <ScanCamera
         style={StyleSheet.absoluteFill}
-        barcodeScannerSettings={{
-          barcodeTypes: ["ean13", "ean8", "code128", "qr", "upc_a", "upc_e", "code39"],
-        }}
-        onBarcodeScanned={handleBarCodeScanned}
+        onScanned={onScanned}
+        onOutcome={handleOutcome}
+        continuous={continuous}
       />
 
       {/* Dark surround */}

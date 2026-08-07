@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   CheckStatus,
   InvoiceStatus,
+  Prisma,
   TxnStatus,
   PaymentStatus,
   CreditNoteStatus,
@@ -17,6 +18,13 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import Anthropic from "@anthropic-ai/sdk";
 import { compressDocument } from "../storage/compress.util";
 import { IRS_SYSTEM_CATEGORIES } from "./irs-categories.constant";
+
+// Cash-basis window on InvoicePayment: the settled (bank) date when one is recorded,
+// otherwise the recorded payment date — legacy rows carry no settledAt and therefore
+// keep reporting on paidAt.
+const settledDateFilter = (from: Date, to: Date): Prisma.InvoicePaymentWhereInput => ({
+  OR: [{ settledAt: { gte: from, lte: to } }, { settledAt: null, paidAt: { gte: from, lte: to } }],
+});
 
 @Injectable()
 export class BookkeepingService implements OnModuleInit {
@@ -802,7 +810,7 @@ export class BookkeepingService implements OnModuleInit {
     const CfPayStatus = PaymentStatus;
     const [payments, expenses, bills] = await Promise.all([
       this.prisma.forTenant().invoicePayment.findMany({
-        where: { status: CfPayStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
+        where: { status: CfPayStatus.PAID, ...settledDateFilter(fromDate, toDate) },
         orderBy: { paidAt: "asc" },
       }),
       this.prisma.forTenant().expense.findMany({
@@ -1413,7 +1421,7 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
     const payments = await this.prisma.forTenant().invoicePayment.findMany({
-      where: { status: PaymentStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
+      where: { status: PaymentStatus.PAID, ...settledDateFilter(fromDate, toDate) },
       include: {
         invoice: {
           select: {
@@ -1426,10 +1434,12 @@ export class BookkeepingService implements OnModuleInit {
       },
       orderBy: { paidAt: "desc" },
     });
+    const effectiveDate = (p: (typeof payments)[number]) => p.settledAt ?? p.paidAt ?? p.createdAt;
+    payments.sort((a, b) => effectiveDate(b).getTime() - effectiveDate(a).getTime());
     return {
       data: payments.map((p) => ({
         id: p.id,
-        createdAt: p.paidAt ?? p.createdAt,
+        createdAt: effectiveDate(p),
         amount: Number(p.amount),
         method: p.method,
         reference: p.reference,

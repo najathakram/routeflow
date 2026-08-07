@@ -1057,9 +1057,48 @@ export class OrdersService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Resolve the staff-supplied business date of an order. A bare "YYYY-MM-DD"
+   * parses to midnight UTC, matching how requestedDeliveryDate/issueDate are handled.
+   * The upper bound is the END of the current UTC day so an operator in a timezone
+   * ahead of UTC can still enter today.
+   */
+  private parseOrderDate(raw: string | undefined, role: UserRole): Date | undefined {
+    if (raw == null) return undefined;
+    // POST /orders is reachable by CUSTOMER and DRIVER — only staff may backdate.
+    if (role !== UserRole.OPERATOR && role !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Only staff can set an order date");
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid order date");
+
+    const now = new Date();
+    const endOfToday = Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+    if (parsed.getTime() > endOfToday) {
+      throw new BadRequestException("Order date cannot be in the future");
+    }
+    const earliest = new Date(now);
+    earliest.setUTCFullYear(earliest.getUTCFullYear() - 2);
+    if (parsed.getTime() < earliest.getTime()) {
+      throw new BadRequestException("Order date cannot be more than 2 years in the past");
+    }
+    return parsed;
+  }
+
   async create(dto: CreateOrderDto, user: JwtPayload, options: { skipAutoMerge?: boolean } = {}) {
     // Resolve which customer this order is for
     let customerId: string;
+
+    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
 
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     if (isStaffRole) {
@@ -1088,6 +1127,18 @@ export class OrdersService implements OnApplicationBootstrap {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer) throw new ForbiddenException("Customer record not found");
       customerId = customer.id;
+    }
+
+    // An auto-merge folds these items into an EXISTING order whose own business
+    // date stays authoritative, so a supplied orderDate would be silently dropped.
+    // Refuse instead — the operator can re-submit as a separate order.
+    if (orderDate && !options.skipAutoMerge) {
+      const mergeTarget = await this.findActiveOrder(customerId);
+      if (mergeTarget) {
+        throw new BadRequestException(
+          "This customer has an open order. Enter a backdated order as a separate order.",
+        );
+      }
     }
 
     // Credit-note selections: validate up-front (bad/expired/cross-customer/VOID
@@ -1481,12 +1532,17 @@ export class OrdersService implements OnApplicationBootstrap {
               shippingFee: orderShippingFee,
               notes: dto.notes,
               urgent: dto.urgent ?? false,
-              skipAutoMerge: options.skipAutoMerge ?? false,
+              // A dated order records a past business day, so it must stay out of the
+              // merge set in BOTH directions regardless of what the caller asked for:
+              // as a loser the sweep hard-deletes it (its orderDate and order number
+              // are gone), as a winner it absorbs items that belong to another day.
+              skipAutoMerge: orderDate != null || (options.skipAutoMerge ?? false),
               // Phase 4 (W4): denormalized flag — true when any line is regulated.
               hasRegulated: lineItemsData.some((li) => li.trackedCategoryId != null),
               requestedDeliveryDate: dto.requestedDeliveryDate
                 ? new Date(dto.requestedDeliveryDate)
                 : undefined,
+              orderDate,
               lineItems: { create: lineItemsData },
             },
             include: {
@@ -1580,6 +1636,8 @@ export class OrdersService implements OnApplicationBootstrap {
    * existing open order.
    */
   async createSale(dto: CreateSaleDto, user: JwtPayload) {
+    const orderDate = this.parseOrderDate(dto.orderDate, user.role);
+
     // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement).
     const order = await this.create(
       {
@@ -1589,6 +1647,7 @@ export class OrdersService implements OnApplicationBootstrap {
         discountAmount: dto.discountAmount,
         shippingFee: dto.shippingFee,
         requestedDeliveryDate: dto.requestedDeliveryDate,
+        orderDate: dto.orderDate,
         status: "PENDING",
         appliedCreditNotes: dto.appliedCreditNotes,
       },
@@ -1602,7 +1661,7 @@ export class OrdersService implements OnApplicationBootstrap {
     if (dto.deliveredNow) {
       await this.prisma.forTenant().order.update({
         where: { id: order.id },
-        data: { status: OrderStatus.DELIVERED, deliveredAt: new Date() },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: orderDate ?? new Date() },
       });
     }
 
@@ -1717,6 +1776,11 @@ export class OrdersService implements OnApplicationBootstrap {
       where: { id },
       data: {
         status: dto.status,
+        // A backdated order was delivered on its business date, not on the day
+        // staff got around to marking it.
+        ...(dto.status === OrderStatus.DELIVERED
+          ? { deliveredAt: order.deliveredAt ?? order.orderDate ?? new Date() }
+          : {}),
         ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
       },
     });

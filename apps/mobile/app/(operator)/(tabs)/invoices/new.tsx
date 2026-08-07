@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -13,37 +14,58 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../../../../lib/api/admin";
 import { useProducts } from "../../../../lib/api/products";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
-import { decrementLine, incrementLine, setLineBoxes, setLineQty } from "../../../../lib/sale-line";
+import {
+  decrementLine,
+  incrementLine,
+  setLineBoxes,
+  setLinePieces,
+  setLineQty,
+  setLineUnits,
+} from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, roundMoney } from "../../../../lib/pricing";
+import {
+  computeLineSubtotal,
+  effectiveQty,
+  normalizeBoxesPieces,
+  roundMoney,
+} from "../../../../lib/pricing";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
-import { BarcodeFab } from "../../../../components/BarcodeFab";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
+import { InlineToast, useInlineToast } from "../../../../components/InlineToast";
+import { ProductRow } from "../../../../components/ProductRow";
+import { ScanOrderSheet } from "../../../../components/ScanOrderSheet";
 import type { CreatedProduct } from "../../../../lib/api/products";
 import { ScanOutcome } from "../../../../lib/scan-loop";
+import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../../../../lib/scan-tray";
+import {
+  NO_PENDING_SCROLL,
+  requestScroll,
+  stepPendingScroll,
+  type PendingScrollState,
+} from "../../../../lib/pending-scroll";
 import { withCartRows } from "../../../../lib/visible-cart";
+import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
+import { sanitizeIntInput } from "../../../../lib/qty";
 
 /**
  * Standalone invoice composer for the mobile operator UI.
  *
- * Mirrors the new-order flow (customer picker → product list with cart
- * → terms/due-date → save) so operators have a familiar UI on both sides.
- * Posts to POST /invoices (not from-order/partial) — for splitting an
- * existing order into invoices, use the order detail's "Split into
- * invoice" entry.
+ * Shares the new-order flow's parts (customer picker → catalog list with
+ * inline steppers → review sheet → save) so the two builders stay identical:
+ * ProductRow rows in a FlatList, ScanOrderSheet as the only scan entry point,
+ * pending-scroll for scroll-to-added.
  *
- * The screen also surfaces the floating BarcodeFab so an operator scrolling
- * the product list can scan-to-add without scrolling back up to the
- * SearchBar.
+ * Posts to POST /invoices (not from-order/partial) — for splitting an existing
+ * order into invoices, use the order detail's "Split into invoice" entry.
  */
 
 const TERM_DAYS: Record<string, number> = {
@@ -55,11 +77,22 @@ const TERM_DAYS: Record<string, number> = {
 };
 
 const TERM_OPTIONS = Object.keys(TERM_DAYS);
+const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 const DEFAULT_TERMS = "Net 30";
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function todayPlusDays(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Due date = issue date (today when blank) + the term's day count, as web does. */
+function dueDateFor(issueDate: string, terms: string): string {
+  const days = TERM_DAYS[terms] ?? 30;
+  if (!ISO_DATE.test(issueDate)) return todayPlusDays(days);
+  const d = new Date(`${issueDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
@@ -79,6 +112,7 @@ type Product = {
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
+  category?: string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
@@ -103,6 +137,37 @@ function newLocalId(): string {
 /** The effective per-unit price for a line: the override, else the catalog price. */
 function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
   return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
+}
+
+const productKey = (p: Product) => p.id;
+
+function RowSpacer() {
+  return <View style={styles.rowSpacer} />;
+}
+
+/** One-line "2 cases + 1 loose · $54.00" for an added case-packed catalog row. */
+function boxedLineSummary(line: LineState, product: Product, unitPrice: number): string {
+  const split = normalizeBoxesPieces({
+    boxes: line.boxes,
+    pieces: line.pieces,
+    qty: line.qty,
+    unitsPerBox: product.unitsPerBox,
+  });
+  const boxes = split.boxes ?? 0;
+  const pieces = split.pieces ?? 0;
+  const parts: string[] = [];
+  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
+  if (pieces > 0) parts.push(`${pieces} loose`);
+  // Raw line fields, exactly as the footer memo passes them — the two totals
+  // must be byte-identical.
+  const subtotal = computeLineSubtotal({
+    unitPrice,
+    qty: split.qty,
+    boxes: line.boxes ?? null,
+    pieces: line.pieces ?? null,
+    unitsPerBox: product.unitsPerBox ?? null,
+  });
+  return `${parts.join(" + ") || "0"} · $${subtotal.toFixed(2)}`;
 }
 
 export default function NewInvoiceScreen() {
@@ -240,41 +305,34 @@ function InvoiceComposer({
   onChangeCustomer: () => void;
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
 }) {
-  const router = useRouter();
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
   const [items, setItems] = useState<Record<string, LineState>>({});
   // Ad-hoc lines not in the catalog (no productId on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
+  // Name to prefill the unlisted-item composer with (from an empty search).
+  const [unlistedPrefill, setUnlistedPrefill] = useState("");
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
-  // Scroll the just-scanned product row into view as the operator scans.
-  const scrollRef = useRef<ScrollView>(null);
-  const listTopRef = useRef(0);
-  const rowYRef = useRef<Map<string, number>>(new Map());
-  const [scrollToId, setScrollToId] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
+  // only: the invoice payload never reads them.
+  const [scanOrder, setScanOrder] = useState<string[]>([]);
+  const [scanFlash, setScanFlash] = useState<ScanFlash | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
-  // See NewOrderScreen: pending target survives so a freshly-pinned scanned row
-  // can finish the scroll from its own onLayout (which fires after this effect).
-  const scrollToIdRef = useRef<string | null>(null);
-  const scrollToRow = (id: string) => {
-    const y = rowYRef.current.get(id);
-    if (y == null) return false;
-    scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
-    return true;
-  };
-  useEffect(() => {
-    if (!scrollToId) return;
-    scrollToIdRef.current = scrollToId;
-    if (scrollToRow(scrollToId)) {
-      scrollToIdRef.current = null;
-      setScrollToId(null);
-    }
-  }, [scrollToId, items]);
+  // Scroll the just-added row into view. The target is kept as an ID and
+  // re-resolved against whatever the list renders each pass — a cached row
+  // offset goes stale the moment clearing the search swaps the rendered list.
+  const listRef = useRef<FlatList<Product>>(null);
+  const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
+  const { toast, show: showInline, dismiss: dismissInline } = useInlineToast();
   const [terms, setTerms] = useState(DEFAULT_TERMS);
-  const [dueDate, setDueDate] = useState(() => todayPlusDays(TERM_DAYS[DEFAULT_TERMS] ?? 30));
+  // Business date of the invoice (YYYY-MM-DD); blank = today, stamped server-side.
+  const [issueDate, setIssueDate] = useState("");
+  const [dueDate, setDueDate] = useState(() => dueDateFor("", DEFAULT_TERMS));
   const [send, setSend] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
 
   const { data: productsData, isLoading: productsLoading } = useProducts({
     search: search.trim() || undefined,
@@ -297,7 +355,7 @@ function InvoiceComposer({
     const isBoxed = upb > 1;
     setItems((m) => {
       const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice + note.
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice.
       return { ...m, [id]: incrementLine(prev, isBoxed, upb) };
     });
     // Always retain the snapshot (see NewOrderScreen): the empty-search query
@@ -323,21 +381,45 @@ function InvoiceComposer({
     });
   };
 
-  // Set an absolute qty (typed input) for a line, preserving unitPrice / note via
-  // the PR B setLine* helpers; boxed products set boxes (pieces held), loose sets qty.
-  const setUnits = (id: string, n: number) => {
-    const p = productById.get(id);
-    const upb = Number(p?.unitsPerBox ?? 0);
+  const setBoxes = (id: string, boxes: number) =>
     setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const line = upb > 1 ? setLineBoxes(prev, n, upb) : setLineQty(prev, n);
+      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
+      const line = setLineBoxes(m[id] ?? { qty: 0 }, boxes, upb);
       const next = { ...m };
       if (!line) delete next[id];
       else next[id] = line;
       return next;
     });
-  };
+
+  const setPieces = (id: string, pieces: number) =>
+    setItems((m) => {
+      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
+      const line = setLinePieces(m[id] ?? { qty: 0 }, pieces, upb);
+      const next = { ...m };
+      if (!line) delete next[id];
+      else next[id] = line;
+      return next;
+    });
+
+  /** Total unit count for a case-packed line, re-split into cases + loose. */
+  const setUnits = (id: string, units: number) =>
+    setItems((m) => {
+      const upb = Number(productById.get(id)?.unitsPerBox ?? 0);
+      const line = setLineUnits(m[id] ?? { qty: 0 }, units, upb);
+      const next = { ...m };
+      if (!line) delete next[id];
+      else next[id] = line;
+      return next;
+    });
+
+  const setQty = (id: string, qty: number) =>
+    setItems((m) => {
+      const line = setLineQty(m[id] ?? { qty: 0 }, qty);
+      const next = { ...m };
+      if (!line) delete next[id];
+      else next[id] = line;
+      return next;
+    });
 
   const removeLine = (id: string) =>
     setItems((m) => {
@@ -372,10 +454,31 @@ function InvoiceComposer({
     });
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
-  // Continuous-scan handler: the scanner overlay stays open between items and
-  // renders the returned feedback; only the create-product hand-off (and the
-  // Done button) closes it.
-  const handleScanned = async (code: string): Promise<ScanOutcome> => {
+  /** Newest scanned line to the top of the tray, and flash it. */
+  const bumpScanned = (id: string) => {
+    setScanOrder((order) => bumpScanOrder(order, id));
+    setScanFlash((prev) => nextFlash(prev, id));
+  };
+
+  /**
+   * Land a resolved product on the invoice. In scan mode the tray row IS the
+   * confirmation, so no banner and no search reset (which would swap the list
+   * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
+   */
+  const acceptScannedProduct = (product: Product): ScanOutcome => {
+    addOne(product.id, product);
+    if (scanOpen) {
+      bumpScanned(product.id);
+      return;
+    }
+    setSearch(""); // an active search would hide the added row (web clears too)
+    setPendingScroll((s) => requestScroll(s, product.id));
+    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+  };
+
+  // Continuous-scan handler: the scan sheet stays open between items; only the
+  // create-product hand-off (and Done) closes it.
+  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
     const lower = trimmed.toLowerCase();
@@ -385,19 +488,11 @@ function InvoiceComposer({
         (p.sku ?? "").toLowerCase() === lower ||
         (p.id ?? "").toLowerCase() === lower,
     );
-    if (local) {
-      addOne(local.id, local);
-      setSearch(""); // an active search would hide the added row (web clears too)
-      setScrollToId(local.id);
-      return { feedback: { kind: "added", text: `Added ${displayName(local)}` } };
-    }
+    if (local) return acceptScannedProduct(local);
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
-        addOne(result.product.id, result.product);
-        setSearch("");
-        setScrollToId(result.product.id);
-        return { feedback: { kind: "added", text: `Added ${displayName(result.product)}` } };
+        return acceptScannedProduct(result.product);
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
@@ -424,22 +519,48 @@ function InvoiceComposer({
       barcode: product.barcode ?? null,
       unit: product.unit,
       pricePerUnit: product.pricePerUnit,
+      category: product.category ?? null,
       unitsPerBox: product.unitsPerBox ?? null,
       parentProductId: product.parentProductId ?? null,
       parent: null,
     };
     addOne(product.id, snapshot);
-    setScrollToId(product.id);
+    bumpScanned(product.id);
+    setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
-    showToast(`Added ${displayName(snapshot as any, products as any)}`);
+    showInline(`Added ${displayName(snapshot, products)}`);
   };
 
+  const categoryChips = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of products) if (p.category) set.add(p.category);
+    return [{ label: "All" }, ...Array.from(set).map((label) => ({ label }))];
+  }, [products]);
+
   const filtered = useMemo(() => {
-    // While browsing (no active search), pin cart lines the catalog page would
-    // hide so every scanned item keeps a visible row.
-    if (search.trim()) return products;
-    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
-  }, [products, search, items, productById]);
+    const term = search.trim();
+    // The chip row is hidden while a search is active, so the category must not
+    // keep narrowing results behind a control the operator can no longer see.
+    const base =
+      term || category === "All" ? products : products.filter((p) => p.category === category);
+    // While browsing (no active search), pin cart lines the filter would hide
+    // so every scanned item keeps a visible row.
+    if (term) return base;
+    return withCartRows(base, Object.keys(items), (id) => productById.get(id));
+  }, [products, category, search, items, productById]);
+
+  // Resolve a queued scroll against the ids the list renders THIS pass. A
+  // just-scanned product is often absent for a render or two while it refetches.
+  useEffect(() => {
+    if (!pendingScroll.targetId) return;
+    const { state, scrollIndex } = stepPendingScroll(
+      pendingScroll,
+      filtered.map((p) => p.id),
+    );
+    if (scrollIndex == null) return;
+    setPendingScroll(state);
+    listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
+  }, [pendingScroll, filtered]);
 
   const { total, totalItems } = useMemo(() => {
     let total = 0;
@@ -467,12 +588,170 @@ function InvoiceComposer({
     return { total: roundMoney(total), totalItems };
   }, [items, productById, unlisted]);
 
+  // Newest-first "invoice so far" for the scan tray. Same inputs as the total
+  // memo, so the tray and the footer cannot disagree.
+  const trayRows = useMemo(
+    () =>
+      trayRowsFrom({
+        items,
+        unlisted,
+        scanOrder,
+        lookup: (id) => productById.get(id),
+        priceFor: (p) => toNumber(productById.get(p.id)?.pricePerUnit),
+      }),
+    [items, unlisted, scanOrder, productById],
+  );
+
+  /**
+   * Catalog rows and tray rows are memoized, so their callbacks must keep a
+   * stable identity or every row re-renders on each scan. This ref always holds
+   * the current render's closures behind that stable identity.
+   */
+  const rowActions = {
+    add: addOne,
+    remove: removeOne,
+    setQty,
+    setBoxes,
+    setUnits,
+    removeLine,
+    isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
+    unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
+    updateUnlistedQty,
+    removeUnlisted,
+    unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
+  };
+  const actionsRef = useRef(rowActions);
+  actionsRef.current = rowActions;
+
+  const onRowAdd = useCallback((id: string) => actionsRef.current.add(id), []);
+  const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
+  const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
+  const onRowChangeQty = useCallback(
+    (id: string, n: number) => actionsRef.current.setQty(id, n),
+    [],
+  );
+  const onRowChangeBoxes = useCallback(
+    (id: string, n: number) => actionsRef.current.setBoxes(id, n),
+    [],
+  );
+  const openReview = useCallback(() => setReviewOpen(true), []);
+  const openUnlistedModal = useCallback((prefill: string) => {
+    setUnlistedPrefill(prefill);
+    setUnlistedModalOpen(true);
+  }, []);
+
+  // Tray steppers hand back a TOTAL unit count; a case-packed line has to go
+  // through setLineUnits so the cases/loose split is re-derived from it.
+  const onTrayChangeQty = useCallback((id: string, qty: number) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, qty);
+    else if (a.unitsPerBox(id) > 1) a.setUnits(id, qty);
+    else a.setQty(id, qty);
+  }, []);
+  const onTrayIncrement = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, a.unlistedQty(id) + 1);
+    else a.add(id);
+  }, []);
+  const onTrayDecrement = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, a.unlistedQty(id) - 1);
+    else a.remove(id);
+  }, []);
+  const onTrayRemove = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.removeUnlisted(id);
+    else a.removeLine(id);
+  }, []);
+
+  // Boxed rows have variable height, so there's no getItemLayout to make
+  // scrollToIndex exact — estimate, then retry once the cells have laid out.
+  const scrollRetryRef = useRef(false);
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, info.averageItemLength * info.index),
+        animated: true,
+      });
+      if (scrollRetryRef.current) return;
+      scrollRetryRef.current = true;
+      requestAnimationFrame(() => {
+        scrollRetryRef.current = false;
+        listRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.12, animated: true });
+      });
+    },
+    [],
+  );
+
+  /**
+   * An added case-packed row keeps exactly three controls: a case stepper, the
+   * resulting split + line total, and a way into the review sheet, which owns
+   * the full per-line editor (price override, loose units).
+   */
+  const renderProduct = useCallback(
+    ({ item: p }: { item: Product }) => {
+      const line = items[p.id];
+      const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
+      const price = toNumber(p.pricePerUnit);
+      const band =
+        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
+          <>
+            <View style={styles.boxedControl}>
+              <Text style={styles.boxedQtyLabel}>Cases</Text>
+              <QtyStepper
+                size="mini"
+                value={line.boxes ?? 0}
+                onChangeQty={(n) => onRowChangeBoxes(p.id, n)}
+              />
+            </View>
+            <Text style={styles.boxedSummary} numberOfLines={1}>
+              {boxedLineSummary(line, p, effectiveUnitPrice(line, p))}
+            </Text>
+            <Pressable
+              onPress={openReview}
+              hitSlop={8}
+              style={styles.boxedEditBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${displayName(p)}`}
+            >
+              <Text style={styles.boxedEditText}>Edit</Text>
+            </Pressable>
+          </>
+        ) : null;
+
+      return (
+        <ProductRow
+          id={p.id}
+          name={displayName(p)}
+          sku={p.sku}
+          unit={p.unit}
+          unitsPerBox={p.unitsPerBox}
+          price={price}
+          listPrice={price}
+          qty={qty}
+          onAdd={onRowAdd}
+          onChangeQty={onRowChangeQty}
+          onIncrement={onRowIncrement}
+          onDecrement={onRowDecrement}
+        >
+          {band}
+        </ProductRow>
+      );
+    },
+    [items, onRowAdd, onRowChangeQty, onRowIncrement, onRowDecrement, onRowChangeBoxes, openReview],
+  );
+
   const createMut = useCreateInvoice();
   const canSave = totalItems > 0 && !createMut.isPending;
 
   const onTermsChange = (t: string) => {
     setTerms(t);
-    setDueDate(todayPlusDays(TERM_DAYS[t] ?? 30));
+    setDueDate(dueDateFor(issueDate, t));
+  };
+
+  const onIssueDateChange = (v: string) => {
+    setIssueDate(v);
+    if (ISO_DATE.test(v)) setDueDate(dueDateFor(v, terms));
   };
 
   const onSave = () => {
@@ -480,8 +759,13 @@ function InvoiceComposer({
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
+    if (!ISO_DATE.test(dueDate)) {
       alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
+      return;
+    }
+    const issueTrim = issueDate.trim();
+    if (issueTrim && !ISO_DATE.test(issueTrim)) {
+      alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
       return;
     }
     const payload: CreateInvoiceItem[] = [];
@@ -505,7 +789,14 @@ function InvoiceComposer({
       payload.push({ description: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
     }
     createMut.mutate(
-      { customerId, items: payload, dueDate, terms, send },
+      {
+        customerId,
+        items: payload,
+        dueDate,
+        terms,
+        send,
+        ...(issueTrim ? { issueDate: issueTrim } : {}),
+      },
       {
         onSuccess: (inv) => {
           onSaved(inv.id, inv.invoiceNumber);
@@ -520,19 +811,21 @@ function InvoiceComposer({
     );
   };
 
+  const searchTerm = search.trim();
+  // The review sheet's copy of this opener is unreachable until the invoice has
+  // a line, so the catalog list owns the only zero-item path to an ad-hoc item.
+  const unlistedPlacement = unlistedAffordancePlacement({
+    rowCount: filtered.length,
+    loading: productsLoading,
+  });
+  const unlistedLabel = searchTerm
+    ? `Add "${searchTerm}" as an unlisted item`
+    : "Add an unlisted item";
+
   return (
     <>
-      <NavBar
-        inlineTitle="New invoice"
-        leading={<NavBackButton label="Back" onPress={onBack} />}
-        trailing={
-          <NavAction
-            label={createMut.isPending ? "Saving…" : "Save"}
-            bold
-            onPress={canSave ? onSave : undefined}
-          />
-        }
-      />
+      {/* One save trigger only — the footer Create. */}
+      <NavBar inlineTitle="New invoice" leading={<NavBackButton label="Back" onPress={onBack} />} />
 
       <View style={styles.customerChipWrap}>
         <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
@@ -544,135 +837,88 @@ function InvoiceComposer({
         </Pressable>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        <SearchBar placeholder="Search items…" value={search} onChangeText={setSearch} />
-
-        {productsLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : filtered.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
-          </View>
-        ) : (
-          <View
-            style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}
-            onLayout={(e) => {
-              listTopRef.current = e.nativeEvent.layout.y;
-            }}
+      {/* Find: search + categories, pinned so they never scroll away. */}
+      <SearchBar
+        placeholder="Search items…"
+        value={search}
+        onChangeText={setSearch}
+        trailing={
+          <Pressable
+            onPress={() => setScanOpen(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Scan items"
           >
-            {filtered.map((p) => {
-              const line = items[p.id];
-              const q = line ? effectiveQty(line, p.unitsPerBox) : 0;
-              const price = toNumber(p.pricePerUnit);
-              const upb = Number(p.unitsPerBox ?? 0);
-              const isBoxed = upb > 1;
-              return (
-                <View
-                  key={p.id}
-                  onLayout={(e) => {
-                    rowYRef.current.set(p.id, e.nativeEvent.layout.y);
-                    if (scrollToIdRef.current === p.id && scrollToRow(p.id)) {
-                      scrollToIdRef.current = null;
-                      setScrollToId(null);
-                    }
-                  }}
-                  style={styles.productRow}
-                >
-                  <View style={styles.productImg} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.productName} numberOfLines={1}>
-                      {displayName(p)}
-                    </Text>
-                    <Text style={styles.productMeta}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${price.toFixed(2)}
-                      {isBoxed ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
-                    </Text>
-                  </View>
-                  {q > 0 ? (
-                    <QtyStepper
-                      value={isBoxed ? (line?.boxes ?? 0) : q}
-                      onChangeQty={(n) => setUnits(p.id, n)}
-                      onIncrement={() => addOne(p.id)}
-                      onDecrement={() => removeOne(p.id)}
-                      suffix={
-                        isBoxed
-                          ? (line?.pieces ?? 0) > 0
-                            ? `b + ${line?.pieces}`
-                            : "b"
-                          : undefined
-                      }
-                    />
-                  ) : (
-                    <Pressable style={styles.addBtn} onPress={() => addOne(p.id)}>
-                      <Text style={styles.addBtnText}>+</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Add an ad-hoc line that isn't in the catalog (free-text + price). */}
-        <View style={styles.unlistedCtaWrap}>
-          <Pressable style={styles.unlistedCta} onPress={() => setUnlistedModalOpen(true)}>
-            <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
-            <Text style={styles.unlistedCtaText}>Add unlisted item</Text>
+            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
           </Pressable>
-          {unlisted.length > 0 ? (
-            <Text style={styles.unlistedCount}>
-              {unlisted.length} custom line{unlisted.length === 1 ? "" : "s"}
-            </Text>
-          ) : null}
-        </View>
+        }
+      />
 
-        {/* Terms + due date — always shown so the operator can tweak before save */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Payment terms</Text>
-          <View style={styles.termsRow}>
-            {TERM_OPTIONS.map((t) => {
-              const active = t === terms;
-              return (
-                <Pressable
-                  key={t}
-                  style={[styles.termPill, active && styles.termPillActive]}
-                  onPress={() => onTermsChange(t)}
-                >
-                  <Text style={[styles.termPillText, active && styles.termPillTextActive]}>
-                    {t}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Text style={styles.dueLabel}>Due date</Text>
-          <TextInput
-            value={dueDate}
-            onChangeText={setDueDate}
-            placeholder="YYYY-MM-DD"
-            style={styles.dueInput}
-          />
-          <Pressable style={styles.sendRow} onPress={() => setSend((s) => !s)}>
-            <View style={[styles.checkbox, send && styles.checkboxOn]}>
-              {send ? <Text style={styles.checkboxTick}>✓</Text> : null}
+      {searchTerm === "" && categoryChips.length > 1 ? (
+        <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+      ) : null}
+
+      <FlatList
+        ref={listRef}
+        style={styles.catalogList}
+        data={filtered}
+        keyExtractor={productKey}
+        renderItem={renderProduct}
+        extraData={items}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={7}
+        removeClippedSubviews
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        onScrollToIndexFailed={onScrollToIndexFailed}
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={RowSpacer}
+        ListEmptyComponent={
+          unlistedPlacement === "empty-state" ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>
+                No products{searchTerm ? " match your search" : " yet"}.
+              </Text>
+              <Pressable
+                style={styles.emptyUnlistedBtn}
+                onPress={() => openUnlistedModal(searchTerm)}
+                accessibilityRole="button"
+              >
+                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                <Text style={styles.emptyUnlistedText} numberOfLines={2}>
+                  {unlistedLabel}
+                </Text>
+              </Pressable>
             </View>
-            <Text style={styles.sendLabel}>Send immediately on create</Text>
-          </Pressable>
-        </View>
-
-        <View style={{ height: 16 }} />
-      </ScrollView>
+          ) : (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          )
+        }
+        ListFooterComponent={
+          unlistedPlacement === "list-footer" ? (
+            <Pressable
+              style={styles.listUnlistedBtn}
+              onPress={() => openUnlistedModal(searchTerm)}
+              accessibilityRole="button"
+              accessibilityLabel={unlistedLabel}
+              hitSlop={4}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+              <Text style={styles.listUnlistedText} numberOfLines={1}>
+                {unlistedLabel}
+              </Text>
+            </Pressable>
+          ) : null
+        }
+      />
 
       <View style={styles.footer}>
         <Pressable
           style={styles.footerTotalTap}
-          onPress={totalItems > 0 ? () => setReviewOpen(true) : undefined}
+          onPress={totalItems > 0 ? openReview : undefined}
           disabled={totalItems === 0}
           hitSlop={6}
         >
@@ -683,18 +929,22 @@ function InvoiceComposer({
         </Pressable>
         <View style={styles.footerActions}>
           {totalItems > 0 ? (
-            <Pressable style={styles.viewBtn} onPress={() => setReviewOpen(true)} hitSlop={4}>
+            <Pressable
+              style={styles.viewBtn}
+              onPress={openReview}
+              accessibilityRole="button"
+              accessibilityLabel="View and edit invoice"
+              hitSlop={4}
+            >
               <Ionicons name="list-outline" size={14} color={ios.brand} />
               <Text style={styles.viewBtnText}>View / edit</Text>
             </Pressable>
           ) : null}
           <Pressable
-            style={[
-              styles.confirmBtn,
-              (!canSave || createMut.isPending) && styles.confirmBtnDisabled,
-            ]}
+            style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
             disabled={!canSave}
             onPress={onSave}
+            accessibilityState={{ disabled: !canSave }}
           >
             <Text style={styles.confirmBtnText}>{createMut.isPending ? "Saving…" : "Create"}</Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
@@ -702,39 +952,74 @@ function InvoiceComposer({
         </View>
       </View>
 
-      {/* Review sheet — same UX as new-order's cart sheet */}
+      <InlineToast toast={toast} onDismiss={dismissInline} bottom={96} />
+
+      {/* Scan mode: camera over the live invoice. The sheet owns the scan
+          haptics and the tray scroll; this screen only mutates the lines. */}
+      <ScanOrderSheet
+        visible={scanOpen}
+        rows={trayRows}
+        flash={scanFlash}
+        totalItems={totalItems}
+        total={total}
+        onScanned={handleBarcodeScanned}
+        onChangeQty={onTrayChangeQty}
+        onIncrement={onTrayIncrement}
+        onDecrement={onTrayDecrement}
+        onRemove={onTrayRemove}
+        onReview={() => {
+          setScanOpen(false);
+          setReviewOpen(true);
+        }}
+        onDone={() => setScanOpen(false)}
+      />
+
       <ReviewSheet
         open={reviewOpen}
-        onClose={() => setReviewOpen(false)}
         items={items}
         productById={productById}
         unlisted={unlisted}
         total={total}
-        onRemove={removeLine}
+        totalItems={totalItems}
+        saving={createMut.isPending}
+        onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
         onDecrement={removeOne}
-        onSetUnits={setUnits}
-        onSetPrice={setLinePrice}
+        onChangeQty={setQty}
+        onChangeBoxes={setBoxes}
+        onChangePieces={setPieces}
+        onChangePrice={setLinePrice}
+        onRemove={removeLine}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
         onRemoveUnlisted={removeUnlisted}
-        onAddUnlisted={() => {
+        onAddUnlisted={() => openUnlistedModal("")}
+        details={{
+          terms,
+          onChangeTerms: onTermsChange,
+          issueDate,
+          onChangeIssueDate: onIssueDateChange,
+          dueDate,
+          onChangeDueDate: setDueDate,
+          send,
+          onToggleSend: () => setSend((s) => !s),
+        }}
+        onSave={() => {
           setReviewOpen(false);
-          setUnlistedModalOpen(true);
+          onSave();
         }}
       />
 
       <UnlistedItemModal
         open={unlistedModalOpen}
+        initialName={unlistedPrefill}
         onClose={() => setUnlistedModalOpen(false)}
         onAdd={(name, unitPrice, qty) => {
           addUnlisted(name, unitPrice, qty);
           setUnlistedModalOpen(false);
-          showToast(`Added ${name}`);
+          showInline(`Added ${name}`);
         }}
       />
-
-      <BarcodeFab continuous onScanned={handleScanned} hidden={reviewOpen || unlistedModalOpen} />
 
       <InlineCreateProductSheet
         visible={createCode != null}
@@ -748,47 +1033,74 @@ function InvoiceComposer({
 
 // ─── Review sheet ────────────────────────────────────────────────────────────
 
+/** Invoice-level fields, owned by the composer and edited inside the sheet. */
+interface InvoiceDetails {
+  terms: string;
+  onChangeTerms: (v: string) => void;
+  /** Business date (YYYY-MM-DD); blank = today. */
+  issueDate: string;
+  onChangeIssueDate: (v: string) => void;
+  dueDate: string;
+  onChangeDueDate: (v: string) => void;
+  send: boolean;
+  onToggleSend: () => void;
+}
+
 function ReviewSheet({
   open,
-  onClose,
   items,
   productById,
   unlisted,
   total,
-  onRemove,
+  totalItems,
+  saving,
+  onClose,
   onIncrement,
   onDecrement,
-  onSetUnits,
-  onSetPrice,
+  onChangeQty,
+  onChangeBoxes,
+  onChangePieces,
+  onChangePrice,
+  onRemove,
   onChangeUnlistedQty,
   onChangeUnlistedPrice,
   onRemoveUnlisted,
   onAddUnlisted,
+  details,
+  onSave,
 }: {
   open: boolean;
-  onClose: () => void;
   items: Record<string, LineState>;
   productById: Map<string, Product>;
   unlisted: UnlistedLine[];
   total: number;
-  onRemove: (id: string) => void;
+  totalItems: number;
+  saving: boolean;
+  onClose: () => void;
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
-  onSetUnits: (id: string, n: number) => void;
-  onSetPrice: (id: string, value: number | null) => void;
+  onChangeQty: (id: string, n: number) => void;
+  onChangeBoxes: (id: string, n: number) => void;
+  onChangePieces: (id: string, n: number) => void;
+  onChangePrice: (id: string, value: number | null) => void;
+  onRemove: (id: string) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
   onChangeUnlistedPrice: (id: string, value: number | null) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
+  details: InvoiceDetails;
+  onSave: () => void;
 }) {
+  // Insertion order = scan order (a repeat scan updates the key in place), which
+  // is the order the operator added the lines in and the order they land on the
+  // invoice — an alphabetical re-sort made scanned lines hard to verify.
   const rows = useMemo(() => {
     const list: { id: string; product: Product; line: LineState }[] = [];
     for (const [id, line] of Object.entries(items)) {
-      const p = productById.get(id);
-      if (!p) continue;
-      list.push({ id, product: p, line });
+      const product = productById.get(id);
+      if (!product) continue;
+      list.push({ id, product, line });
     }
-    list.sort((a, b) => displayName(a.product).localeCompare(displayName(b.product)));
     return list;
   }, [items, productById]);
 
@@ -801,113 +1113,334 @@ function ReviewSheet({
               <Ionicons name="chevron-down" size={22} color={ios.label2} />
             </Pressable>
             <Text style={styles.sheetTitle}>Review invoice</Text>
-            <Text style={styles.sheetCount}>${total.toFixed(2)}</Text>
+            <Text style={styles.sheetCount}>
+              {totalItems} item{totalItems === 1 ? "" : "s"}
+            </Text>
           </View>
+
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 16, gap: 10 }}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
             {rows.length === 0 && unlisted.length === 0 ? (
               <View style={[styles.center, { paddingVertical: 40 }]}>
                 <Text style={styles.emptyText}>No items.</Text>
               </View>
             ) : (
-              rows.map(({ id, product, line }) => {
-                const upb = Number(product.unitsPerBox ?? 0);
-                const isBoxed = upb > 1;
-                const qty = effectiveQty(line, product.unitsPerBox);
-                const catalogPrice = toNumber(product.pricePerUnit);
-                const effUnit = effectiveUnitPrice(line, product);
-                const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
-                const lineTotal = computeLineSubtotal({
-                  unitPrice: effUnit,
-                  qty,
-                  boxes: line.boxes ?? null,
-                  pieces: line.pieces ?? null,
-                  unitsPerBox: product.unitsPerBox ?? null,
-                });
-                return (
-                  <View key={id} style={styles.reviewRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.reviewName}>{displayName(product)}</Text>
-                      <View style={styles.priceEditRow}>
-                        <Text style={styles.priceCurrency}>$</Text>
-                        <MoneyTextInput
-                          value={line.unitPrice ?? null}
-                          onChangeValue={(v) => onSetPrice(id, v)}
-                          placeholder={catalogPrice.toFixed(2)}
-                          style={[styles.priceInput, isOverridden && styles.priceInputActive]}
-                        />
-                        <Text style={styles.reviewMeta}>
-                          {isBoxed ? `/ box of ${upb}` : product.unit ? `/ ${product.unit}` : ""}
-                        </Text>
-                        {isOverridden ? (
-                          <Text style={styles.priceWas}>was ${catalogPrice.toFixed(2)}</Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <QtyStepper
-                      value={isBoxed ? (line.boxes ?? 0) : qty}
-                      onChangeQty={(n) => onSetUnits(id, n)}
-                      onIncrement={() => onIncrement(id)}
-                      onDecrement={() => onDecrement(id)}
-                      suffix={
-                        isBoxed ? ((line.pieces ?? 0) > 0 ? `b + ${line.pieces}` : "b") : undefined
-                      }
-                    />
-                    <Text style={styles.reviewTotal}>${lineTotal.toFixed(2)}</Text>
-                    <Pressable onPress={() => onRemove(id)} hitSlop={6} style={styles.removeBtn}>
-                      <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-                    </Pressable>
-                  </View>
-                );
-              })
+              <>
+                {rows.map(({ id, product, line }) => (
+                  <ReviewRow
+                    key={id}
+                    product={product}
+                    line={line}
+                    onIncrement={() => onIncrement(id)}
+                    onDecrement={() => onDecrement(id)}
+                    onChangeQty={(n) => onChangeQty(id, n)}
+                    onChangeBoxes={(n) => onChangeBoxes(id, n)}
+                    onChangePieces={(n) => onChangePieces(id, n)}
+                    onChangePrice={(v) => onChangePrice(id, v)}
+                    onRemove={() => onRemove(id)}
+                  />
+                ))}
+                {unlisted.map((u) => (
+                  <UnlistedReviewRow
+                    key={u.id}
+                    line={u}
+                    onChangeQty={(n) => onChangeUnlistedQty(u.id, n)}
+                    onChangePrice={(v) => onChangeUnlistedPrice(u.id, v)}
+                    onRemove={() => onRemoveUnlisted(u.id)}
+                  />
+                ))}
+              </>
             )}
-            {unlisted.map((u) => {
-              const lineTotal = computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
-              return (
-                <View key={u.id} style={styles.reviewRow}>
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.unlistedTagRow}>
-                      <Text style={styles.reviewName} numberOfLines={1}>
-                        {u.name || "Unlisted item"}
-                      </Text>
-                      <View style={styles.customTag}>
-                        <Text style={styles.customTagText}>Custom</Text>
-                      </View>
-                    </View>
-                    <View style={styles.priceEditRow}>
-                      <Text style={styles.priceCurrency}>$</Text>
-                      <MoneyTextInput
-                        value={u.unitPrice || null}
-                        onChangeValue={(v) => onChangeUnlistedPrice(u.id, v)}
-                        placeholder="0.00"
-                        style={[styles.priceInput, styles.priceInputActive]}
-                      />
-                      <Text style={styles.reviewMeta}>/ unit</Text>
-                    </View>
-                  </View>
-                  <QtyStepper value={u.qty} onChangeQty={(n) => onChangeUnlistedQty(u.id, n)} />
-                  <Text style={styles.reviewTotal}>${lineTotal.toFixed(2)}</Text>
-                  <Pressable
-                    onPress={() => onRemoveUnlisted(u.id)}
-                    hitSlop={6}
-                    style={styles.removeBtn}
-                  >
-                    <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-                  </Pressable>
-                </View>
-              );
-            })}
-            <Pressable style={styles.reviewAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
+
+            <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
               <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-              <Text style={styles.reviewAddUnlistedText}>Add unlisted item</Text>
+              <Text style={styles.cartAddUnlistedText}>Add unlisted item</Text>
             </Pressable>
+
+            <InvoiceDetailsCard details={details} />
           </ScrollView>
+
+          <View style={styles.cartFooter}>
+            <View style={styles.cartFooterRow}>
+              <View>
+                <Text style={styles.footerEyebrow}>INVOICE TOTAL</Text>
+                <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
+                  <Text style={styles.cartContinueText}>Keep adding</Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.confirmBtn,
+                    (totalItems === 0 || saving) && styles.confirmBtnDisabled,
+                  ]}
+                  disabled={totalItems === 0 || saving}
+                  onPress={onSave}
+                  accessibilityState={{ disabled: totalItems === 0 || saving }}
+                >
+                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Create invoice"}</Text>
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                </Pressable>
+              </View>
+            </View>
+          </View>
         </View>
       </View>
     </Modal>
+  );
+}
+
+function ReviewRow({
+  product,
+  line,
+  onIncrement,
+  onDecrement,
+  onChangeQty,
+  onChangeBoxes,
+  onChangePieces,
+  onChangePrice,
+  onRemove,
+}: {
+  product: Product;
+  line: LineState;
+  onIncrement: () => void;
+  onDecrement: () => void;
+  onChangeQty: (n: number) => void;
+  onChangeBoxes: (n: number) => void;
+  onChangePieces: (n: number) => void;
+  onChangePrice: (value: number | null) => void;
+  onRemove: () => void;
+}) {
+  const upb = Number(product.unitsPerBox ?? 0);
+  const isBoxed = upb > 1;
+  const catalogPrice = toNumber(product.pricePerUnit);
+  const effUnit = effectiveUnitPrice(line, product);
+  const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  const qty = effectiveQty(line, product.unitsPerBox);
+  const lineTotal = computeLineSubtotal({
+    unitPrice: effUnit,
+    qty,
+    boxes: line.boxes ?? null,
+    pieces: line.pieces ?? null,
+    unitsPerBox: product.unitsPerBox ?? null,
+  });
+
+  return (
+    <View style={styles.cartRow}>
+      <View style={styles.cartRowHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.cartRowName} numberOfLines={2}>
+            {displayName(product)}
+          </Text>
+          <Text style={styles.cartRowMeta}>
+            {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
+            {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
+          </Text>
+        </View>
+        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
+          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
+        </Pressable>
+      </View>
+
+      {/* Editable price — the "discounted price". Defaults to the catalog price;
+          typing another value records a one-time override for this line. */}
+      <View style={styles.cartPriceRow}>
+        <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
+        <View style={styles.cartPriceInputWrap}>
+          <Text style={styles.cartPriceCurrency}>$</Text>
+          <MoneyTextInput
+            style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
+            value={line.unitPrice ?? null}
+            onChangeValue={onChangePrice}
+            placeholder={catalogPrice.toFixed(2)}
+            returnKeyType="done"
+          />
+          {isOverridden ? (
+            <Text style={styles.cartPriceWas}>${catalogPrice.toFixed(2)}</Text>
+          ) : null}
+        </View>
+      </View>
+
+      {isBoxed ? (
+        <>
+          <StepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
+          <StepperRow
+            label={`Loose ${product.unit ?? "units"}`}
+            value={line.pieces ?? 0}
+            onChange={onChangePieces}
+            max={upb - 1}
+            hint={`${upb} per case`}
+          />
+        </>
+      ) : (
+        <StepperRow
+          label={`Qty${product.unit ? ` (${product.unit})` : ""}`}
+          value={line.qty ?? 0}
+          onChange={onChangeQty}
+          onIncrement={onIncrement}
+          onDecrement={onDecrement}
+        />
+      )}
+
+      <View style={styles.cartRowFooter}>
+        <Text style={styles.cartRowFooterLabel}>Line total</Text>
+        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Review row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag. */
+function UnlistedReviewRow({
+  line,
+  onChangeQty,
+  onChangePrice,
+  onRemove,
+}: {
+  line: UnlistedLine;
+  onChangeQty: (n: number) => void;
+  onChangePrice: (value: number | null) => void;
+  onRemove: () => void;
+}) {
+  const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
+  return (
+    <View style={styles.cartRow}>
+      <View style={styles.cartRowHeader}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.unlistedTagRow}>
+            <Text style={styles.cartRowName} numberOfLines={2}>
+              {line.name || "Unlisted item"}
+            </Text>
+            <View style={styles.customTag}>
+              <Text style={styles.customTagText}>Custom</Text>
+            </View>
+          </View>
+        </View>
+        <Pressable onPress={onRemove} hitSlop={8} style={styles.cartRowRemove}>
+          <Ionicons name="trash-outline" size={18} color={ios.system.redInk} />
+        </Pressable>
+      </View>
+
+      <View style={styles.cartPriceRow}>
+        <Text style={styles.cartPriceLabel}>Price</Text>
+        <View style={styles.cartPriceInputWrap}>
+          <Text style={styles.cartPriceCurrency}>$</Text>
+          <MoneyTextInput
+            style={[styles.cartPriceInput, styles.cartPriceInputActive]}
+            value={line.unitPrice || null}
+            onChangeValue={onChangePrice}
+            placeholder="0.00"
+            returnKeyType="done"
+          />
+        </View>
+      </View>
+
+      <StepperRow
+        label="Qty"
+        value={line.qty}
+        onChange={onChangeQty}
+        onIncrement={() => onChangeQty(line.qty + 1)}
+        onDecrement={() => onChangeQty(Math.max(0, line.qty - 1))}
+      />
+
+      <View style={styles.cartRowFooter}>
+        <Text style={styles.cartRowFooterLabel}>Line total</Text>
+        <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** Labelled row wrapping the shared stepper. */
+function StepperRow({
+  label,
+  value,
+  onChange,
+  onIncrement,
+  onDecrement,
+  max,
+  hint,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  onIncrement?: () => void;
+  onDecrement?: () => void;
+  max?: number;
+  hint?: string;
+}) {
+  return (
+    <View style={styles.stepperRow}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.stepperLabel}>{label}</Text>
+        {hint ? <Text style={styles.stepperHint}>{hint}</Text> : null}
+      </View>
+      <QtyStepper
+        value={value}
+        onChangeQty={onChange}
+        onIncrement={onIncrement}
+        onDecrement={onDecrement}
+        max={max}
+      />
+    </View>
+  );
+}
+
+/** Terms, dates and delivery — everything that isn't a line, in one card. */
+function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
+  return (
+    <View style={styles.detailsCard}>
+      <Text style={styles.detailsTitle}>Invoice details</Text>
+
+      <View style={styles.detailField}>
+        <Text style={styles.detailLabel}>Payment terms</Text>
+        <FilterChipRow
+          chips={TERM_CHIPS}
+          value={d.terms}
+          onChange={d.onChangeTerms}
+          paddingHorizontal={0}
+        />
+      </View>
+
+      <View style={styles.detailField}>
+        <Text style={styles.detailLabel}>Issue date (backdate)</Text>
+        <TextInput
+          value={d.issueDate}
+          onChangeText={d.onChangeIssueDate}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={ios.label3}
+          keyboardType="numbers-and-punctuation"
+          style={styles.detailInput}
+        />
+        <Text style={styles.detailHelp}>
+          The day the invoice was actually issued. Leave blank for today.
+        </Text>
+      </View>
+
+      <View style={styles.detailField}>
+        <Text style={styles.detailLabel}>Due date</Text>
+        <TextInput
+          value={d.dueDate}
+          onChangeText={d.onChangeDueDate}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={ios.label3}
+          keyboardType="numbers-and-punctuation"
+          style={styles.detailInput}
+        />
+      </View>
+
+      <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
+        <View style={[styles.checkbox, d.send && styles.checkboxOn]}>
+          {d.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
+        </View>
+        <Text style={styles.sendLabel}>Send immediately on create</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -915,10 +1448,13 @@ function ReviewSheet({
 
 function UnlistedItemModal({
   open,
+  initialName,
   onClose,
   onAdd,
 }: {
   open: boolean;
+  /** Prefills the description — the search term that matched no catalog product. */
+  initialName?: string;
   onClose: () => void;
   onAdd: (name: string, unitPrice: number, qty: number) => void;
 }) {
@@ -928,10 +1464,11 @@ function UnlistedItemModal({
 
   useEffect(() => {
     if (open) {
-      setName("");
+      setName(initialName ?? "");
       setPriceText("");
       setQtyText("1");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const price = parseFloat(priceText);
@@ -953,6 +1490,7 @@ function UnlistedItemModal({
             placeholder="e.g. Delivery surcharge"
             placeholderTextColor={ios.label3}
             autoFocus
+            returnKeyType="next"
           />
 
           <View style={{ flexDirection: "row", gap: 10 }}>
@@ -973,7 +1511,7 @@ function UnlistedItemModal({
               <TextInput
                 style={styles.unlistedInput}
                 value={qtyText}
-                onChangeText={(t) => setQtyText(t.replace(/[^0-9]/g, ""))}
+                onChangeText={(t) => setQtyText(sanitizeIntInput(t))}
                 placeholder="1"
                 placeholderTextColor={ios.label3}
                 keyboardType="number-pad"
@@ -1066,86 +1604,67 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
-  productRow: {
-    backgroundColor: ios.bg,
-    borderRadius: 14,
-    padding: 10,
+  catalogList: { flex: 1 },
+  listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
+  rowSpacer: { height: 10 },
+  emptyUnlistedBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-  },
-  productImg: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
+    gap: 6,
+    marginTop: 14,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     backgroundColor: ios.brandWash,
   },
-  productName: {
-    fontSize: 15,
+  emptyUnlistedText: {
+    flexShrink: 1,
+    color: ios.brand,
+    fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    letterSpacing: -0.2,
   },
-  productMeta: {
-    fontSize: 12,
+  // Tail of the catalog: the same escape hatch, quiet enough not to read as a
+  // second primary action next to the rows' Add buttons.
+  listUnlistedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 44,
+    marginTop: 12,
+    paddingHorizontal: 14,
+  },
+  listUnlistedText: {
+    flexShrink: 1,
+    color: ios.brand,
+    fontSize: 14,
     fontFamily: "Inter_400Regular",
+  },
+
+  // ── Added case-packed catalog row: cases stepper + split + way into review ──
+  boxedControl: { alignItems: "center", gap: 4 },
+  boxedQtyLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
     color: ios.label2,
-    marginTop: 1,
+    letterSpacing: 0.3,
+  },
+  boxedSummary: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
     fontVariant: ["tabular-nums"],
   },
-  addBtn: {
-    width: 36,
-    height: 36,
-    backgroundColor: ios.brandWash,
+  boxedEditBtn: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 12,
     borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: ios.brandWash,
   },
-  addBtnText: { color: ios.brand, fontSize: 20 },
-
-  section: {
-    marginHorizontal: 16,
-    marginTop: 16,
-    backgroundColor: ios.bg,
-    borderRadius: 14,
-    padding: 14,
-    gap: 10,
-  },
-  sectionTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
-  termsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  termPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: ios.separator,
-  },
-  termPillActive: { backgroundColor: ios.brand, borderColor: ios.brand },
-  termPillText: { fontSize: 13, color: ios.label },
-  termPillTextActive: { color: "#fff", fontFamily: "Inter_600SemiBold" },
-  dueLabel: { fontSize: 12, color: ios.label2, marginTop: 4 },
-  dueInput: {
-    borderWidth: 1,
-    borderColor: ios.separator,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 14,
-    color: ios.label,
-  },
-  sendRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: ios.separator,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: { backgroundColor: ios.brand, borderColor: ios.brand },
-  checkboxTick: { color: "#fff", fontFamily: "Inter_700Bold" },
-  sendLabel: { fontSize: 13, color: ios.label },
+  boxedEditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   footer: {
     paddingHorizontal: 16,
@@ -1194,7 +1713,7 @@ const styles = StyleSheet.create({
   confirmBtnDisabled: { opacity: 0.4 },
   confirmBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
 
-  // Review sheet
+  // ── Review sheet ──────────────────────────────────────────────────────────
   sheetBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -1224,81 +1743,161 @@ const styles = StyleSheet.create({
     color: ios.label,
   },
   sheetCount: {
-    width: 80,
+    width: 64,
     textAlign: "right",
-    fontSize: 13,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
     marginRight: 6,
-    fontVariant: ["tabular-nums"],
   },
-  reviewRow: {
+  cartRow: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,
     padding: 12,
+    gap: 10,
+  },
+  cartRowHeader: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
+  cartRowName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    letterSpacing: -0.2,
+  },
+  cartRowMeta: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginTop: 2,
+    fontVariant: ["tabular-nums"],
+  },
+  cartRowRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: ios.fill3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cartPriceRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    justifyContent: "space-between",
+    gap: 12,
   },
-  reviewName: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
-  reviewMeta: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
-  priceEditRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
-  priceCurrency: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
-  priceInput: {
-    minWidth: 56,
+  cartPriceLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  cartPriceInputWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cartPriceCurrency: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
+  cartPriceInput: {
+    minWidth: 70,
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
+    paddingVertical: 5,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: ios.separator,
     borderRadius: 8,
-    fontSize: 13,
+    textAlign: "right",
+    fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
-  priceInputActive: { borderColor: ios.brand, color: ios.brand },
-  priceWas: {
+  cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  cartPriceWas: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
     color: ios.label2,
     textDecorationLine: "line-through",
   },
-  reviewTotal: {
-    fontSize: 14,
+  stepperRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  stepperLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
+  stepperHint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    marginTop: 1,
+  },
+  cartRowFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  cartRowFooterLabel: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  cartRowFooterValue: {
+    fontSize: 15,
     fontFamily: "Inter_700Bold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
-    minWidth: 60,
-    textAlign: "right",
   },
-  removeBtn: {
-    width: 32,
-    height: 32,
+  cartAddUnlisted: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: ios.system.redWash,
-    borderRadius: 8,
-  },
-
-  // ── Unlisted item CTA + tag + modal ───────────────────────────────────────
-  unlistedCtaWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    marginTop: 16,
-  },
-  unlistedCta: {
-    flexDirection: "row",
-    alignItems: "center",
     gap: 6,
     backgroundColor: ios.brandWash,
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    marginTop: 4,
   },
-  unlistedCtaText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  unlistedCount: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  cartAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  cartFooter: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 20,
+    backgroundColor: ios.bgElev,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  cartFooterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  cartContinueBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: ios.fill3,
+  },
+  cartContinueText: { color: ios.label, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+
+  // ── Invoice details card ──────────────────────────────────────────────────
+  detailsCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 12,
+    gap: 12,
+    marginTop: 4,
+  },
+  detailsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  detailField: { gap: 6 },
+  detailLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  detailInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  detailHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
+  sendRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: ios.separator,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxOn: { backgroundColor: ios.brand, borderColor: ios.brand },
+  checkboxTick: { color: "#fff", fontFamily: "Inter_700Bold" },
+  sendLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+
+  // ── Unlisted tag + modal ──────────────────────────────────────────────────
   unlistedTagRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   customTag: {
     backgroundColor: ios.system.orangeWash,
@@ -1312,16 +1911,6 @@ const styles = StyleSheet.create({
     color: ios.system.orangeInk,
     letterSpacing: 0.2,
   },
-  reviewAddUnlisted: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 12,
-    paddingVertical: 12,
-  },
-  reviewAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
   unlistedOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",

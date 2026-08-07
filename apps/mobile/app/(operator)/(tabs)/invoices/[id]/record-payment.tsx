@@ -27,6 +27,12 @@ const METHODS: { id: PaymentMethod; label: string }[] = [
   { id: "OTHER", label: "Other" },
 ];
 
+// Distinct from paidAt (the recorded payment date) and from the server-stamped
+// check-lifecycle clearedAt: this is when the funds hit the account.
+const BANK_DATE_LABEL = "Money received in bank";
+const BANK_DATE_HELP =
+  "When the funds actually landed — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
 export default function RecordPaymentScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -41,6 +47,7 @@ export default function RecordPaymentScreen() {
   const [notes, setNotes] = useState("");
   const [bankCharges, setBankCharges] = useState("");
   const [paidAt, setPaidAt] = useState("");
+  const [settledAt, setSettledAt] = useState("");
   const [photos, setPhotos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,6 +81,7 @@ export default function RecordPaymentScreen() {
       notes: notes.trim() || undefined,
       bankCharges: bankCharges.trim() ? Number(bankCharges) || undefined : undefined,
       paidAt: paidAt.trim() || undefined,
+      settledAt: settledAt.trim() || undefined,
     };
     mut.mutate(dto, {
       onSuccess: (result) => {
@@ -175,6 +183,14 @@ export default function RecordPaymentScreen() {
               const d = new Date();
               return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
             })()}
+            keyboardType="numbers-and-punctuation"
+          />
+        </FormField>
+        <FormField label={BANK_DATE_LABEL} hint={BANK_DATE_HELP}>
+          <FormTextInput
+            value={settledAt}
+            onChangeText={setSettledAt}
+            placeholder="YYYY-MM-DD"
             keyboardType="numbers-and-punctuation"
           />
         </FormField>

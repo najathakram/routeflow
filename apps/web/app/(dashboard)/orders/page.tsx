@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  History,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -49,6 +50,44 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
 ];
+
+// ─── Date column ──────────────────────────────────────────────────────────────
+
+const DATE_FORMAT: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", year: "numeric" };
+
+/**
+ * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
+ * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
+ */
+function formatDateOnly(iso: string): string {
+  const [y, m, d] = iso.split("T")[0].split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", DATE_FORMAT);
+}
+
+/** The business day the order happened, falling back to when it was entered. */
+function OrderDateCell({ order }: { order: Order }) {
+  const backdated =
+    !!order.orderDate && order.orderDate.slice(0, 10) !== order.createdAt.slice(0, 10);
+  return (
+    <span className="inline-flex items-center gap-1">
+      {order.orderDate
+        ? formatDateOnly(order.orderDate)
+        : new Date(order.createdAt).toLocaleDateString("en-US", DATE_FORMAT)}
+      {backdated && (
+        <span
+          className="cursor-help"
+          title={`Backdated — entered ${new Date(order.createdAt).toLocaleDateString(
+            "en-US",
+            DATE_FORMAT,
+          )}`}
+        >
+          <History className="h-3 w-3 text-navy/40" aria-hidden />
+          <span className="sr-only">Backdated order</span>
+        </span>
+      )}
+    </span>
+  );
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -731,28 +770,14 @@ export default function OrdersPage() {
                     <td className="px-4 py-3 text-sm">
                       {order.requestedDeliveryDate ? (
                         <span className="text-navy/70">
-                          {(() => {
-                            const [y, m, d] = order.requestedDeliveryDate
-                              .split("T")[0]
-                              .split("-")
-                              .map(Number);
-                            return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              year: "numeric",
-                            });
-                          })()}
+                          {formatDateOnly(order.requestedDeliveryDate)}
                         </span>
                       ) : (
                         <span className="text-navy/30">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-navy/70">
-                      {new Date(order.createdAt).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
+                      <OrderDateCell order={order} />
                     </td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <button

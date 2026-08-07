@@ -27,6 +27,8 @@ export interface Order {
   shippingFee?: number | string;
   notes?: string;
   requestedDeliveryDate?: string;
+  /** Business date the order actually happened on. Null = `createdAt` is the date. */
+  orderDate?: string | null;
   templateId?: string;
   lineItems: OrderItem[];
   /** Invoices generated from this order (sibling split invoices share invoiceGroupId). */
@@ -216,6 +218,9 @@ export function useCreateOrder() {
       notes?: string;
       urgent?: boolean;
       requestedDeliveryDate?: string;
+      /** Business date (YYYY-MM-DD) for an order entered late. Staff-only; the API
+       *  rejects a future date or one more than 2 years back. */
+      orderDate?: string;
       discountAmount?: number;
       shippingFee?: number;
       /**
@@ -250,6 +255,9 @@ export interface CreateSaleDto {
   discountAmount?: number;
   shippingFee?: number;
   requestedDeliveryDate?: string;
+  /** Business date (YYYY-MM-DD) for a sale entered late. Staff-only. When set on a
+   *  deliveredNow sale it also becomes `deliveredAt`, so omit it for a same-day sale. */
+  orderDate?: string;
   /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
   send?: boolean;
   /** Customer credit notes to apply to this order's invoice(s) at creation

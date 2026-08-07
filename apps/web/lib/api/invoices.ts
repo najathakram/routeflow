@@ -56,6 +56,8 @@ export interface InvoicePayment {
   paymentNumber?: string;
   paidAt?: string;
   createdAt: string;
+  /** When the money landed in the bank. May be a future date (post-dated check). */
+  settledAt?: string | null;
   /** P5-12 check lifecycle — only ever set when method = CHECK. */
   checkStatus?: CheckStatus | null;
   depositedAt?: string | null;
@@ -179,6 +181,8 @@ export interface AllPayment {
   paymentGroupId?: string;
   paidAt?: string;
   createdAt: string;
+  /** When the money landed in the bank. May be a future date (post-dated check). */
+  settledAt?: string | null;
   /** Payment image (receipt/slip/check photo). Grouped standalone rows share one image. */
   imageKey?: string | null;
   imageOriginalName?: string | null;
@@ -452,6 +456,8 @@ export interface RecordInvoicePaymentDto {
   method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: number;
   paidAt?: string;
+  /** Bank landing date. May be in the future; omit when unknown. */
+  settledAt?: string | null;
   bankCharges?: number;
   status?: "DRAFT" | "PAID";
   reference?: string;
@@ -476,6 +482,8 @@ export interface UpdateInvoicePaymentDto {
   method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   amount: number;
   paidAt?: string;
+  /** Omit to keep the stored bank date; send null to clear it. */
+  settledAt?: string | null;
   bankCharges?: number;
   status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
@@ -554,6 +562,8 @@ export interface StandalonePaymentDto {
   totalAmount: number;
   method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
   paidAt?: string;
+  /** Bank landing date applied to every allocation row of the group. */
+  settledAt?: string | null;
   bankCharges?: number;
   reference?: string;
   notes?: string;

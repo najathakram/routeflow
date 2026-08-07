@@ -83,6 +83,36 @@ export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null
   return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
 }
 
+/** An already-recorded bill that matches the one being entered. */
+export interface DuplicateVendorBillInfo {
+  billId: string;
+  billNumber: string;
+  status: string;
+  /** The existing bill is still DRAFT — finishing it beats creating a second one. */
+  resumable: boolean;
+  totalOwed: number;
+  billDate: string | null;
+  receivedDate: string | null;
+  supplierName: string | null;
+  itemCount: number;
+  /** "number" = the supplier's own invoice number matched; "fuzzy" = supplier + date + total. */
+  matchedBy: "number" | "fuzzy";
+  totalMatches: boolean;
+}
+
+/** Payload of the 409 thrown when creating a bill that already exists. */
+export interface DuplicateVendorBillError {
+  code: "DUPLICATE_VENDOR_BILL";
+  message: string;
+  duplicate: DuplicateVendorBillInfo;
+}
+
+/** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
+export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
+}
+
 /** A DRAFT bill whose receive would skip inventory/cost updates. */
 export function billNeedsMapping(bill: VendorBill): boolean {
   return (
@@ -118,11 +148,55 @@ export function useVendorBill(id: string) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
+export interface CreateVendorBillItemDto {
+  productId?: string;
+  description: string;
+  qty: number;
+  unitCost: number;
+}
+
+export interface CreateVendorBillDto {
+  supplierId?: string;
+  purchaseOrderId?: string;
+  billDate?: string;
+  dueDate?: string;
+  items: CreateVendorBillItemDto[];
+  notes?: string;
+  /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
+  taxAmount?: number;
+  /** The supplier's own invoice number — normalized and stored server-side. */
+  supplierInvoiceNumber?: string;
+  /** Operator override: record the bill even though it matches an existing one. */
+  allowDuplicate?: boolean;
+}
+
 export function useCreateVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, any>({
+  return useMutation<VendorBill, Error, CreateVendorBillDto>({
     mutationFn: (dto) => apiClient.post("/vendor-bills", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["vendor-bills"] }),
+  });
+}
+
+export interface CheckVendorBillDuplicateDto {
+  supplierId?: string;
+  supplierInvoiceNumber?: string;
+  total?: number;
+  billDate?: string;
+}
+
+/**
+ * Read-only pre-flight of the guard `POST /vendor-bills` enforces, so a client
+ * can warn before the operator commits. Needs either the supplier invoice
+ * number, or supplier + bill date together; anything less returns no match.
+ */
+export function useCheckVendorBillDuplicate() {
+  return useMutation<
+    { duplicate: DuplicateVendorBillInfo | null },
+    Error,
+    CheckVendorBillDuplicateDto
+  >({
+    mutationFn: (dto) => apiClient.post("/vendor-bills/check-duplicate", dto).then((r) => r.data),
   });
 }
 

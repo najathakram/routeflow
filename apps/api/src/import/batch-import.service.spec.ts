@@ -1,4 +1,5 @@
 import { Test } from "@nestjs/testing";
+import { ConflictException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -246,6 +247,23 @@ describe("BatchImportService", () => {
       expect(res.posted).toBe(1);
     });
 
+    it("passes the supplier invoice number so the bill carries the dedup key", async () => {
+      prisma.importQueueItem.findMany.mockResolvedValue([
+        {
+          id: "i1",
+          batchId: "b1",
+          supplierMatchId: "s1",
+          invoiceNumber: "VB-1",
+          total: "100.00",
+          extractedPayload: { items: [{ matchedProductId: "p1", qty: 1, unitCost: 100 }] },
+        },
+      ]);
+      await service.postBatch("b1", "user-1");
+      expect(vendorBills.create).toHaveBeenCalledWith(
+        expect.objectContaining({ supplierInvoiceNumber: "VB-1" }),
+      );
+    });
+
     it("falls back to today's date when the scan didn't extract an invoice date", async () => {
       prisma.importQueueItem.findMany.mockResolvedValue([
         {
@@ -260,6 +278,132 @@ describe("BatchImportService", () => {
       await service.postBatch("b1", "user-1");
       const billDateArg = vendorBills.create.mock.calls[0][0].billDate as Date;
       expect(billDateArg.toISOString().slice(0, 10)).toBe(new Date().toISOString().slice(0, 10));
+    });
+
+    describe("when create reports an existing bill", () => {
+      const duplicateConflict = (overrides: Record<string, unknown> = {}) =>
+        new ConflictException({
+          code: "DUPLICATE_VENDOR_BILL",
+          message: "already recorded",
+          duplicate: {
+            billId: "vb-existing",
+            billNumber: "BILL-2026-0009",
+            resumable: false,
+            matchedBy: "number",
+            ...overrides,
+          },
+        });
+
+      const queueItems = (count = 1) =>
+        prisma.importQueueItem.findMany.mockResolvedValue(
+          Array.from({ length: count }, (_, n) => ({
+            id: `i${n + 1}`,
+            batchId: "b1",
+            supplierMatchId: "s1",
+            invoiceNumber: `VB-${n + 1}`,
+            total: "10.00",
+            extractedPayload: { items: [{ matchedProductId: "p1", qty: 1, unitCost: 10 }] },
+          })),
+        );
+
+      it("adopts a NUMBER match, links it, and counts it apart from a fresh post", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict());
+
+        const res = await service.postBatch("b1", "user-1");
+
+        expect(res).toMatchObject({ posted: 0, adopted: 1, duplicates: 0 });
+        expect(prisma.importQueueItem.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: {
+              status: "POSTED",
+              vendorBillId: "vb-existing",
+              duplicateOfInvoiceId: "vb-existing",
+            },
+          }),
+        );
+      });
+
+      it("leaves a FUZZY match unposted for review rather than discarding its lines", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict({ matchedBy: "fuzzy" }));
+
+        const res = await service.postBatch("b1", "user-1");
+
+        expect(res).toMatchObject({ posted: 0, adopted: 0, duplicates: 1 });
+        expect(vendorBills.receive).not.toHaveBeenCalled();
+        const data = prisma.importQueueItem.update.mock.calls[0][0].data;
+        expect(data.status).toBe("DUPLICATE");
+        expect(data.vendorBillId).toBeUndefined();
+        expect(data.duplicateOfInvoiceId).toBe("vb-existing");
+        expect(data.errorMessage).toContain("BILL-2026-0009");
+      });
+
+      it("does not adopt a 409 that never says what matched", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict({ matchedBy: undefined }));
+
+        const res = await service.postBatch("b1", "user-1");
+
+        expect(res).toMatchObject({ posted: 0, adopted: 0, duplicates: 1 });
+        expect(vendorBills.receive).not.toHaveBeenCalled();
+      });
+
+      it("receives a DRAFT match — the first attempt's stock never landed", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict({ resumable: true }));
+
+        await service.postBatch("b1", "user-1");
+
+        expect(vendorBills.receive).toHaveBeenCalledWith(
+          "vb-existing",
+          { acknowledgeUnlinked: true },
+          "user-1",
+        );
+      });
+
+      it("swallows an 'already received' race while resuming a DRAFT match", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict({ resumable: true }));
+        vendorBills.receive.mockRejectedValue(new ConflictException("Bill already received"));
+
+        const res = await service.postBatch("b1", "user-1");
+
+        expect(res).toMatchObject({ posted: 0, adopted: 1 });
+      });
+
+      it("does not re-receive an already-received match", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(duplicateConflict());
+
+        await service.postBatch("b1", "user-1");
+
+        expect(vendorBills.receive).not.toHaveBeenCalled();
+      });
+
+      it("keeps posting the rest of the batch", async () => {
+        queueItems(2);
+        vendorBills.create
+          .mockRejectedValueOnce(duplicateConflict())
+          .mockResolvedValueOnce({ id: "bill2" });
+
+        const res = await service.postBatch("b1", "user-1");
+
+        expect(res).toMatchObject({ posted: 1, adopted: 1 });
+        expect(vendorBills.receive).toHaveBeenCalledWith(
+          "bill2",
+          { acknowledgeUnlinked: true },
+          "user-1",
+        );
+      });
+
+      it("still fails the item on any other error", async () => {
+        queueItems();
+        vendorBills.create.mockRejectedValue(new Error("db down"));
+
+        await expect(service.postBatch("b1", "user-1")).rejects.toThrow("db down");
+        expect(prisma.importQueueItem.update).not.toHaveBeenCalled();
+      });
     });
   });
 

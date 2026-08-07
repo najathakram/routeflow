@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
+  FlatList,
   Modal,
   Pressable,
   ScrollView,
@@ -13,7 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { NavAction, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProducts } from "../lib/api/products";
 import { useCustomer, useCustomerPrices } from "../lib/api/customers";
@@ -36,7 +37,7 @@ import {
   costPerSellingUnit,
   effectiveQty,
   getTierPrice,
-  perUnitPrice,
+  normalizeBoxesPieces,
   priceForMarginFloor,
   roundMoney,
 } from "../lib/pricing";
@@ -59,8 +60,9 @@ import { useAuthStore } from "../lib/auth-store";
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
 // "Confirm button frozen" report), so use these everywhere instead.
 import { alertInfo, chooseAction } from "../lib/confirm";
-import { BarcodeScanner } from "./BarcodeScanner";
-import { BarcodeFab } from "./BarcodeFab";
+import { InlineToast, useInlineToast } from "./InlineToast";
+import { ProductRow } from "./ProductRow";
+import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
   decrementLine,
   incrementLine,
@@ -72,7 +74,15 @@ import {
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
 import { ScanOutcome } from "../lib/scan-loop";
+import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
+import {
+  NO_PENDING_SCROLL,
+  requestScroll,
+  stepPendingScroll,
+  type PendingScrollState,
+} from "../lib/pending-scroll";
 import { withCartRows } from "../lib/visible-cart";
+import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
 
 export interface NewOrderScreenProps {
@@ -186,6 +196,37 @@ function toNumber(v: number | string | null | undefined): number {
  *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
 function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
   return line?.unitPrice != null ? line.unitPrice : basePrice;
+}
+
+const productKey = (p: Product) => p.id;
+
+function RowSpacer() {
+  return <View style={styles.rowSpacer} />;
+}
+
+/** One-line "2 cases + 1 loose · $54.00" for an added case-packed catalog row. */
+function boxedLineSummary(line: LineState, product: Product, unitPrice: number): string {
+  const split = normalizeBoxesPieces({
+    boxes: line.boxes,
+    pieces: line.pieces,
+    qty: line.qty,
+    unitsPerBox: product.unitsPerBox,
+  });
+  const boxes = split.boxes ?? 0;
+  const pieces = split.pieces ?? 0;
+  const parts: string[] = [];
+  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
+  if (pieces > 0) parts.push(`${pieces} loose`);
+  // Raw line fields, exactly as the footer memo passes them — the two totals
+  // must be byte-identical.
+  const subtotal = computeLineSubtotal({
+    unitPrice,
+    qty: split.qty,
+    boxes: line.boxes ?? null,
+    pieces: line.pieces ?? null,
+    unitsPerBox: product.unitsPerBox ?? null,
+  });
+  return `${parts.join(" + ") || "0"} · $${subtotal.toFixed(2)}`;
 }
 
 export function NewOrderScreen({
@@ -368,11 +409,12 @@ function ProductPickView({
 }) {
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
-  const canCreateProducts = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  // Backdating an order is a books-affecting edit — staff only, never drivers.
+  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.
-  const canSeeCost =
-    userRole === "OPERATOR" || userRole === "TENANT_ADMIN" || userRole === "DRIVER";
+  const canSeeCost = isStaff || userRole === "DRIVER";
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
@@ -380,6 +422,8 @@ function ProductPickView({
   // Ad-hoc lines not in the product catalog (productId null on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
+  // Name to prefill the unlisted-item composer with (from an empty search).
+  const [unlistedPrefill, setUnlistedPrefill] = useState("");
   // Fetched once when customer is confirmed — price pre-fill is instant during scanning.
   const { data: priceHistory } = useCustomerPriceHistory(customerId);
   // Customer tier pricing (mirrors web CreateOrderModal): the effective tier is
@@ -413,6 +457,10 @@ function ProductPickView({
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
   const [scanOpen, setScanOpen] = useState(false);
+  // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
+  // only: the order payload never reads them.
+  const [scanOrder, setScanOrder] = useState<string[]>([]);
+  const [scanFlash, setScanFlash] = useState<ScanFlash | null>(null);
   const [cartOpen, setCartOpen] = useState(false);
   // Regulated-license guard: the blocked categories from a 409, and which
   // submitOrder(mergeChoice) to replay once the license/override is captured.
@@ -420,10 +468,11 @@ function ProductPickView({
   const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
   // Order-level options (mirror web CreateOrderModal): notes, urgent flag,
   // requested delivery date (YYYY-MM-DD), and an order-level discount.
-  const [optionsOpen, setOptionsOpen] = useState(false);
   const [orderNotes, setOrderNotes] = useState("");
   const [orderUrgent, setOrderUrgent] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState("");
+  // Business date of the order (YYYY-MM-DD); blank = today. Staff only.
+  const [orderDate, setOrderDate] = useState("");
   const [discountRaw, setDiscountRaw] = useState("");
   const [shippingFeeRaw, setShippingFeeRaw] = useState("");
   // Apply-credit selection (mobile v1: toggle only, no amount input — null
@@ -451,34 +500,14 @@ function ProductPickView({
     setSelectedCreditIds([]);
     setJustCreatedCredits([]);
   }, [customerId]);
-  // Scroll the just-scanned product row into view. We track the product list's
-  // top offset within the ScrollView plus each row's offset within the list.
-  const scrollRef = useRef<ScrollView>(null);
-  const listTopRef = useRef(0);
-  const rowYRef = useRef<Map<string, number>>(new Map());
-  const [scrollToId, setScrollToId] = useState<string | null>(null);
+  // Scroll the just-added row into view. The target is kept as an ID and
+  // re-resolved against whatever the list renders each pass — a cached row
+  // offset goes stale the moment clearing the search swaps the rendered list.
+  const listRef = useRef<FlatList<Product>>(null);
+  const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
-  // The pending scroll target survives across renders so a freshly-pinned row
-  // (a just-scanned out-of-catalog item, mounted this commit) can complete the
-  // scroll from its own onLayout — which fires AFTER this effect. Without it,
-  // rowYRef has no entry yet at effect time and the scroll silently no-ops.
-  const scrollToIdRef = useRef<string | null>(null);
-  const scrollToRow = (id: string) => {
-    const y = rowYRef.current.get(id);
-    if (y == null) return false;
-    scrollRef.current?.scrollTo({ y: Math.max(0, listTopRef.current + y - 12), animated: true });
-    return true;
-  };
-  useEffect(() => {
-    if (!scrollToId) return;
-    scrollToIdRef.current = scrollToId;
-    if (scrollToRow(scrollToId)) {
-      scrollToIdRef.current = null;
-      setScrollToId(null);
-    }
-    // else: leave it pending for the row's onLayout to finish once measured.
-  }, [scrollToId, items]);
+  const { toast, show: showInline, dismiss: dismissInline } = useInlineToast();
   /**
    * Products discovered via barcode scan that aren't in the locally-cached
    * product list (e.g. beyond the 200-item page, or filtered out by the
@@ -674,9 +703,31 @@ function ProductPickView({
     setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, noteOpen: !x.noteOpen } : x)));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
-  // Continuous-scan handler: the scanner overlay stays open between items and
-  // renders the returned feedback ("Added … — scan next"); only the
-  // create-product hand-off (and the Done button) closes it.
+  /** Newest scanned line to the top of the tray, and flash it. */
+  const bumpScanned = (id: string) => {
+    setScanOrder((order) => bumpScanOrder(order, id));
+    setScanFlash((prev) => nextFlash(prev, id));
+  };
+
+  /**
+   * Land a resolved product on the order. In scan mode the tray row IS the
+   * confirmation, so no banner and no search reset (which would swap the list
+   * out from under the operator mid-scan); ScanOrderSheet owns the haptic and
+   * the scroll-to-top on the outcome it gets back.
+   */
+  const acceptScannedProduct = (product: Product): ScanOutcome => {
+    addOne(product.id, product);
+    if (scanOpen) {
+      bumpScanned(product.id);
+      return;
+    }
+    setSearch(""); // an active search would hide the added row (web clears too)
+    setPendingScroll((s) => requestScroll(s, product.id));
+    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+  };
+
+  // Continuous-scan handler: the scan sheet stays open between items; only the
+  // create-product hand-off (and Done) closes it.
   const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
@@ -691,21 +742,13 @@ function ProductPickView({
         (p.sku ?? "").toLowerCase() === lower ||
         (p.id ?? "").toLowerCase() === lower,
     );
-    if (local) {
-      addOne(local.id, local);
-      setSearch(""); // an active search would hide the added row (web clears too)
-      setScrollToId(local.id);
-      return { feedback: { kind: "added", text: `Added ${displayName(local)}` } };
-    }
+    if (local) return acceptScannedProduct(local);
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (!result.notFound && result.product?.id) {
-        addOne(result.product.id, result.product);
-        setSearch("");
-        setScrollToId(result.product.id);
-        return { feedback: { kind: "added", text: `Added ${displayName(result.product)}` } };
+        return acceptScannedProduct(result.product);
       }
     } catch (err: any) {
       // Network / 5xx — surface so the operator can retry instead of silently
@@ -747,24 +790,42 @@ function ProductPickView({
       parent: null,
     };
     addOne(product.id, snapshot);
-    setScrollToId(product.id);
+    bumpScanned(product.id);
+    setPendingScroll((s) => requestScroll(s, product.id));
     setCreateCode(null);
-    showToast(`Added ${displayName(snapshot, products)}`);
+    showInline(`Added ${displayName(snapshot, products)}`);
   };
 
-  const categories = useMemo(() => {
+  const categoryChips = useMemo(() => {
     const set = new Set<string>();
     for (const p of products) if (p.category) set.add(p.category);
-    return ["All", ...Array.from(set).slice(0, 6)];
+    return [{ label: "All" }, ...Array.from(set).map((label) => ({ label }))];
   }, [products]);
 
   const filtered = useMemo(() => {
-    const base = category === "All" ? products : products.filter((p) => p.category === category);
+    const term = search.trim();
+    // The chip row is hidden while a search is active, so the category must not
+    // keep narrowing results behind a control the operator can no longer see.
+    const base =
+      term || category === "All" ? products : products.filter((p) => p.category === category);
     // While browsing (no active search), pin cart lines the filter would hide
     // — scanned items outside the category/page must keep a visible row.
-    if (search.trim()) return base;
+    if (term) return base;
     return withCartRows(base, Object.keys(items), (id) => productById.get(id));
   }, [products, category, search, items, productById]);
+
+  // Resolve a queued scroll against the ids the list renders THIS pass. A
+  // just-scanned product is often absent for a render or two while it refetches.
+  useEffect(() => {
+    if (!pendingScroll.targetId) return;
+    const { state, scrollIndex } = stepPendingScroll(
+      pendingScroll,
+      filtered.map((p) => p.id),
+    );
+    if (scrollIndex == null) return;
+    setPendingScroll(state);
+    listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
+  }, [pendingScroll, filtered]);
 
   // Total + count, computed from items + the unified product map so scanned
   // items that aren't in the local list still contribute. Subtotal uses the
@@ -827,8 +888,173 @@ function ProductPickView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, productById, unlisted, splitCategoryById, cpMap, customerTier]);
 
-  const inc = (id: string) => addOne(id);
-  const dec = (id: string) => removeOne(id);
+  // Newest-first "order so far" for the scan tray. Same inputs as the total
+  // memo, so the tray and the footer cannot disagree.
+  const trayRows = useMemo(
+    () =>
+      trayRowsFrom({
+        items,
+        unlisted,
+        scanOrder,
+        lookup: (id) => productById.get(id),
+        priceFor: (p) => {
+          const full = productById.get(p.id);
+          return full ? tierPriceFor(full) : 0;
+        },
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, unlisted, scanOrder, productById, cpMap, customerTier],
+  );
+
+  /**
+   * Both the catalog rows and the tray rows are memoized, so their callbacks
+   * must keep a stable identity or every row re-renders on each scan. This ref
+   * always holds the current render's closures behind that stable identity.
+   */
+  const rowActions = {
+    add: addOne,
+    remove: removeOne,
+    setQty,
+    setBoxes,
+    setUnits,
+    removeLine,
+    isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
+    unlistedQty: (id: string) => unlisted.find((u) => u.id === id)?.qty ?? 0,
+    updateUnlistedQty,
+    removeUnlisted,
+    unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
+  };
+  const actionsRef = useRef(rowActions);
+  actionsRef.current = rowActions;
+
+  const onRowAdd = useCallback((id: string) => actionsRef.current.add(id), []);
+  const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
+  const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
+  const onRowChangeQty = useCallback(
+    (id: string, n: number) => actionsRef.current.setQty(id, n),
+    [],
+  );
+  const onRowChangeBoxes = useCallback(
+    (id: string, n: number) => actionsRef.current.setBoxes(id, n),
+    [],
+  );
+  const openCart = useCallback(() => setCartOpen(true), []);
+  const openUnlistedModal = useCallback((prefill: string) => {
+    setUnlistedPrefill(prefill);
+    setUnlistedModalOpen(true);
+  }, []);
+
+  // Tray steppers hand back a TOTAL unit count; a case-packed line has to go
+  // through setLineUnits so the cases/loose split is re-derived from it.
+  const onTrayChangeQty = useCallback((id: string, qty: number) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, qty);
+    else if (a.unitsPerBox(id) > 1) a.setUnits(id, qty);
+    else a.setQty(id, qty);
+  }, []);
+  const onTrayIncrement = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, a.unlistedQty(id) + 1);
+    else a.add(id);
+  }, []);
+  const onTrayDecrement = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.updateUnlistedQty(id, a.unlistedQty(id) - 1);
+    else a.remove(id);
+  }, []);
+  const onTrayRemove = useCallback((id: string) => {
+    const a = actionsRef.current;
+    if (a.isUnlisted(id)) a.removeUnlisted(id);
+    else a.removeLine(id);
+  }, []);
+
+  // Boxed rows have variable height, so there's no getItemLayout to make
+  // scrollToIndex exact — estimate, then retry once the cells have laid out.
+  const scrollRetryRef = useRef(false);
+  const onScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, info.averageItemLength * info.index),
+        animated: true,
+      });
+      if (scrollRetryRef.current) return;
+      scrollRetryRef.current = true;
+      requestAnimationFrame(() => {
+        scrollRetryRef.current = false;
+        listRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.12, animated: true });
+      });
+    },
+    [],
+  );
+
+  /**
+   * An added case-packed row keeps exactly three controls: a case stepper, the
+   * resulting split + line total, and a way into the cart sheet, which owns the
+   * full per-line editor (price override, sell-by, loose units, note, cost).
+   */
+  const renderProduct = useCallback(
+    ({ item: p }: { item: Product }) => {
+      const line = items[p.id];
+      const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
+      const price = tierPriceFor(p);
+      const band =
+        line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
+          <>
+            <View style={styles.boxedControl}>
+              <Text style={styles.boxedQtyLabel}>Cases</Text>
+              <QtyStepper
+                size="mini"
+                value={line.boxes ?? 0}
+                onChangeQty={(n) => onRowChangeBoxes(p.id, n)}
+              />
+            </View>
+            <Text style={styles.boxedSummary} numberOfLines={1}>
+              {boxedLineSummary(line, p, effectiveUnitPrice(line, price))}
+            </Text>
+            <Pressable
+              onPress={openCart}
+              hitSlop={8}
+              style={styles.boxedEditBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${displayName(p)}`}
+            >
+              <Text style={styles.boxedEditText}>Edit</Text>
+            </Pressable>
+          </>
+        ) : null;
+
+      return (
+        <ProductRow
+          id={p.id}
+          name={displayName(p)}
+          sku={p.sku}
+          unit={p.unit}
+          unitsPerBox={p.unitsPerBox}
+          price={price}
+          listPrice={toNumber(p.pricePerUnit)}
+          qty={qty}
+          onAdd={onRowAdd}
+          onChangeQty={onRowChangeQty}
+          onIncrement={onRowIncrement}
+          onDecrement={onRowDecrement}
+        >
+          {band}
+        </ProductRow>
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      items,
+      cpMap,
+      customerTier,
+      onRowAdd,
+      onRowChangeQty,
+      onRowIncrement,
+      onRowDecrement,
+      onRowChangeBoxes,
+      openCart,
+    ],
+  );
 
   const createOrder = useCreateOrderAsDriver();
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
@@ -879,6 +1105,8 @@ function ProductPickView({
     const discountAmount = Math.max(0, parseFloat(discountRaw) || 0);
     const shippingFee = Math.max(0, parseFloat(shippingFeeRaw) || 0);
     const deliveryTrim = deliveryDate.trim();
+    // Blank = today (the server stamps it); only staff can reach the field.
+    const orderDateTrim = isStaff ? orderDate.trim() : "";
     createOrder.mutate(
       {
         customerId,
@@ -889,6 +1117,7 @@ function ProductPickView({
         ...(orderNotes.trim() ? { notes: orderNotes.trim() } : {}),
         ...(orderUrgent ? { urgent: true } : {}),
         ...(deliveryTrim ? { requestedDeliveryDate: deliveryTrim } : {}),
+        ...(orderDateTrim ? { orderDate: orderDateTrim } : {}),
         ...(discountAmount > 0 ? { discountAmount } : {}),
         ...(shippingFee > 0 ? { shippingFee } : {}),
         ...(mergeChoice ? { mergeChoice } : {}),
@@ -975,18 +1204,23 @@ function ProductPickView({
     submitOrder(undefined, asDraft);
   };
 
+  const searchTerm = search.trim();
+  // The cart sheet's copy of this opener is unreachable until the cart has a
+  // line, so the catalog list owns the only zero-item path to an ad-hoc item.
+  const unlistedPlacement = unlistedAffordancePlacement({
+    rowCount: filtered.length,
+    loading: productsLoading,
+  });
+  const unlistedLabel = searchTerm
+    ? `Add "${searchTerm}" as an unlisted item`
+    : "Add an unlisted item";
+
   return (
     <>
+      {/* One save trigger only — the footer Confirm. */}
       <NavBar
         inlineTitle="New order"
         leading={<NavBackButton label={backLabel ?? customerName ?? "Back"} onPress={onBack} />}
-        trailing={
-          <NavAction
-            label={createOrder.isPending ? "Saving…" : "Save"}
-            bold
-            onPress={canSave ? () => onSave() : undefined}
-          />
-        }
       />
 
       {/* Customer chip — tappable to re-pick when not locked */}
@@ -1004,346 +1238,83 @@ function ProductPickView({
         </Pressable>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* Order options — notes, urgent, delivery date, order-level discount. */}
-        <View style={styles.optionsWrap}>
-          <Pressable style={styles.optionsHeader} onPress={() => setOptionsOpen((o) => !o)}>
-            <Ionicons name="options-outline" size={16} color={ios.brand} />
-            <Text style={styles.optionsTitle}>Order options</Text>
-            {!optionsOpen &&
-            (orderUrgent || deliveryDate || discountRaw || shippingFeeRaw || orderNotes) ? (
-              <Text style={styles.optionsSummary} numberOfLines={1}>
-                {[
-                  orderUrgent ? "Urgent" : null,
-                  deliveryDate ? `Deliver ${deliveryDate}` : null,
-                  parseFloat(discountRaw) > 0 ? `-$${parseFloat(discountRaw).toFixed(2)}` : null,
-                  parseFloat(shippingFeeRaw) > 0
-                    ? `+$${parseFloat(shippingFeeRaw).toFixed(2)} shipping`
-                    : null,
-                  orderNotes.trim() ? "Notes" : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Text>
-            ) : null}
-            <Ionicons
-              name={optionsOpen ? "chevron-up" : "chevron-down"}
-              size={16}
-              color={ios.label3}
-            />
+      {/* Find: search + categories, pinned so they never scroll away. */}
+      <SearchBar
+        placeholder="Search items…"
+        value={search}
+        onChangeText={setSearch}
+        trailing={
+          <Pressable
+            onPress={() => setScanOpen(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Scan items"
+          >
+            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
           </Pressable>
-          {optionsOpen ? (
-            <View style={styles.optionsBody}>
-              <Pressable style={styles.optionRow} onPress={() => setOrderUrgent((u) => !u)}>
-                <Ionicons
-                  name={orderUrgent ? "flame" : "flame-outline"}
-                  size={18}
-                  color={orderUrgent ? ios.system.orange : ios.label2}
-                />
-                <Text style={styles.optionLabel}>Urgent</Text>
-                <View style={[styles.toggle, orderUrgent && styles.toggleOn]}>
-                  <View style={[styles.toggleDot, orderUrgent && styles.toggleDotOn]} />
-                </View>
-              </Pressable>
-              <View style={styles.optionField}>
-                <Text style={styles.optionLabel}>Delivery date</Text>
-                <TextInput
-                  value={deliveryDate}
-                  onChangeText={setDeliveryDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={ios.label3}
-                  keyboardType="numbers-and-punctuation"
-                  style={styles.optionInput}
-                />
-              </View>
-              <View style={styles.optionField}>
-                <Text style={styles.optionLabel}>Order discount ($)</Text>
-                <TextInput
-                  value={discountRaw}
-                  onChangeText={setDiscountRaw}
-                  placeholder="0.00"
-                  placeholderTextColor={ios.label3}
-                  keyboardType="decimal-pad"
-                  style={styles.optionInput}
-                />
-              </View>
-              <View style={styles.optionField}>
-                <Text style={styles.optionLabel}>Shipping fee ($)</Text>
-                <TextInput
-                  value={shippingFeeRaw}
-                  onChangeText={setShippingFeeRaw}
-                  placeholder="0.00 (optional)"
-                  placeholderTextColor={ios.label3}
-                  keyboardType="decimal-pad"
-                  style={styles.optionInput}
-                />
-              </View>
-              <View style={styles.optionField}>
-                <Text style={styles.optionLabel}>Notes</Text>
-                <TextInput
-                  value={orderNotes}
-                  onChangeText={setOrderNotes}
-                  placeholder="Delivery / handling notes…"
-                  placeholderTextColor={ios.label3}
-                  multiline
-                  style={[styles.optionInput, { minHeight: 60, textAlignVertical: "top" }]}
-                />
-              </View>
-            </View>
-          ) : null}
-        </View>
+        }
+      />
 
-        {/* Apply credit — customer-scoped open credit notes. Gated on the
-            customer alone (not credit COUNT) so the operator can create one
-            right here when none exist yet. Toggle only (no amount input on
-            mobile v1); null amount = up to remaining. */}
-        {customerId ? (
-          <View style={styles.optionsWrap}>
-            <View style={styles.optionsHeader}>
-              <Ionicons name="pricetag-outline" size={16} color={ios.brand} />
-              <Text style={styles.optionsTitle}>Apply credit</Text>
-              <View style={{ flex: 1 }}>
-                {selectedCreditIds.length > 0 ? (
-                  <Text style={styles.optionsSummary} numberOfLines={1}>
-                    {selectedCreditIds.length} selected
-                  </Text>
-                ) : null}
-              </View>
-              <Pressable onPress={() => setCreateCreditOpen(true)} hitSlop={6}>
-                <Text style={styles.newCreditText}>+ New credit note</Text>
-              </Pressable>
-            </View>
-            <View style={styles.optionsBody}>
-              {creditRows.length === 0 ? (
-                <Text style={styles.optionsSummary}>No open credits for this customer.</Text>
-              ) : (
-                creditRows.map((cn) => {
-                  const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
-                  const checked = selectedCreditIds.includes(cn.id);
-                  return (
-                    <Pressable
-                      key={cn.id}
-                      style={styles.optionRow}
-                      onPress={() =>
-                        setSelectedCreditIds((ids) =>
-                          checked ? ids.filter((i) => i !== cn.id) : [...ids, cn.id],
-                        )
-                      }
-                    >
-                      <Ionicons
-                        name={checked ? "checkbox" : "square-outline"}
-                        size={20}
-                        color={checked ? ios.brand : ios.label2}
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.optionLabel} numberOfLines={1}>
-                          {cn.creditNoteNumber}
-                          {cn.reason ? ` · ${cn.reason}` : ""}
-                        </Text>
-                        {cn.expiresAt ? (
-                          <Text style={styles.optionsSummary}>
-                            Expires {new Date(cn.expiresAt).toLocaleDateString()}
-                          </Text>
-                        ) : null}
-                      </View>
-                      <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
-                    </Pressable>
-                  );
-                })
-              )}
-            </View>
-          </View>
-        ) : null}
+      {searchTerm === "" && categoryChips.length > 1 ? (
+        <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+      ) : null}
 
-        <SearchBar
-          placeholder="Search items…"
-          value={search}
-          onChangeText={setSearch}
-          trailing={
-            <Pressable onPress={() => setScanOpen(true)} hitSlop={10}>
-              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-            </Pressable>
-          }
-        />
-
-        {categories.length > 1 ? (
-          <View style={styles.chipRow}>
-            {categories.map((c) => (
+      <FlatList
+        ref={listRef}
+        style={styles.catalogList}
+        data={filtered}
+        keyExtractor={productKey}
+        renderItem={renderProduct}
+        extraData={items}
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={7}
+        removeClippedSubviews
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        onScrollToIndexFailed={onScrollToIndexFailed}
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={RowSpacer}
+        ListEmptyComponent={
+          unlistedPlacement === "empty-state" ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>
+                No products{searchTerm ? " match your search" : " yet"}.
+              </Text>
               <Pressable
-                key={c}
-                onPress={() => setCategory(c)}
-                style={[styles.chip, category === c ? styles.chipActive : styles.chipInactive]}
+                style={styles.emptyUnlistedBtn}
+                onPress={() => openUnlistedModal(searchTerm)}
+                accessibilityRole="button"
               >
-                <Text
-                  style={[
-                    styles.chipText,
-                    category === c ? styles.chipTextActive : styles.chipTextInactive,
-                  ]}
-                >
-                  {c}
+                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                <Text style={styles.emptyUnlistedText} numberOfLines={2}>
+                  {unlistedLabel}
                 </Text>
               </Pressable>
-            ))}
-          </View>
-        ) : null}
-
-        {/* Add an ad-hoc line that isn't in the catalog (free-text name + price). */}
-        <View style={styles.unlistedCtaWrap}>
-          <Pressable style={styles.unlistedCta} onPress={() => setUnlistedModalOpen(true)}>
-            <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
-            <Text style={styles.unlistedCtaText}>Add unlisted item</Text>
-          </Pressable>
-          {unlisted.length > 0 ? (
-            <Text style={styles.unlistedCount}>
-              {unlisted.length} custom line{unlisted.length === 1 ? "" : "s"}
-            </Text>
-          ) : null}
-        </View>
-
-        {productsLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={ios.brand} />
-          </View>
-        ) : filtered.length === 0 ? (
-          <View style={styles.center}>
-            <Text style={styles.emptyText}>No products{search ? " match your search" : ""}.</Text>
-          </View>
-        ) : (
-          <View
-            style={{ paddingHorizontal: 16, paddingTop: 14, gap: 10 }}
-            onLayout={(e) => {
-              listTopRef.current = e.nativeEvent.layout.y;
-            }}
-          >
-            {filtered.map((p) => {
-              const line = items[p.id];
-              const q = line ? effectiveQty(line, p.unitsPerBox) : 0;
-              const price = tierPriceFor(p);
-              const listPrice = toNumber(p.pricePerUnit);
-              const isSpecial = price < listPrice - 0.0001;
-              const upb = Number(p.unitsPerBox ?? 0);
-              const isBoxed = upb > 1;
-              // Display-only per-unit hint on the case price — never fed back into math.
-              const perUnitHint = isBoxed ? perUnitPrice(price, upb) : null;
-              const sellBy = line?.sellBy ?? "case";
-              return (
-                <View
-                  key={p.id}
-                  onLayout={(e) => {
-                    rowYRef.current.set(p.id, e.nativeEvent.layout.y);
-                    // Complete a scroll waiting on this row's first measurement.
-                    if (scrollToIdRef.current === p.id && scrollToRow(p.id)) {
-                      scrollToIdRef.current = null;
-                      setScrollToId(null);
-                    }
-                  }}
-                  style={[
-                    styles.productRow,
-                    // Boxed + added: switch to a column layout so we can stack
-                    // Box and Loose pieces steppers below the product header.
-                    isBoxed && q > 0 && { flexDirection: "column", alignItems: "stretch" },
-                  ]}
-                >
-                  {/* Top row: image + name + meta + add button (or qty for non-boxed) */}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 12,
-                      width: "100%",
-                    }}
-                  >
-                    <View style={styles.productImg} />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.productName} numberOfLines={1}>
-                        {displayName(p)}
-                      </Text>
-                      <Text style={styles.productMeta}>
-                        {p.sku ? `SKU ${p.sku} · ` : ""}
-                        {isSpecial ? (
-                          <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text>
-                        ) : null}
-                        <Text style={isSpecial ? styles.metaSpecial : undefined}>
-                          ${price.toFixed(2)}
-                        </Text>
-                        {isBoxed ? ` / case of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
-                        {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
-                      </Text>
-                    </View>
-                    {q === 0 ? (
-                      <Pressable style={styles.addBtn} onPress={() => inc(p.id)}>
-                        <Text style={styles.addBtnText}>+</Text>
-                      </Pressable>
-                    ) : !isBoxed ? (
-                      <QtyStepper
-                        value={q}
-                        onChangeQty={(n) => setQty(p.id, n)}
-                        onIncrement={() => inc(p.id)}
-                        onDecrement={() => dec(p.id)}
-                      />
-                    ) : null}
-                  </View>
-
-                  {/* Boxed + added: a Cases/Units segmented control switches entry
-                      mode. Cases mode dials Boxes and Loose units independently
-                      without opening the cart sheet; Units mode is a single
-                      uncapped total-unit stepper routed through setLineUnits.
-                      (The cart sheet still works for the same edits.) */}
-                  {isBoxed && q > 0 ? (
-                    <View style={styles.boxedDualRow}>
-                      <SellByToggle value={sellBy} onChange={(v) => setSellBy(p.id, v)} />
-                      {sellBy === "unit" ? (
-                        <View style={styles.boxedQtyControl}>
-                          <Text style={styles.boxedQtyLabel}>
-                            {p.unit ? `${p.unit}s` : "Units"}
-                          </Text>
-                          <QtyStepper
-                            size="mini"
-                            value={q}
-                            onChangeQty={(n) => setUnits(p.id, n)}
-                          />
-                        </View>
-                      ) : (
-                        <>
-                          <View style={styles.boxedQtyControl}>
-                            <Text style={styles.boxedQtyLabel}>Cases</Text>
-                            <QtyStepper
-                              size="mini"
-                              value={line?.boxes ?? 0}
-                              onChangeQty={(n) => setBoxes(p.id, n)}
-                            />
-                          </View>
-                          <View style={styles.boxedQtyControl}>
-                            <Text style={styles.boxedQtyLabel}>Loose {p.unit ?? "units"}</Text>
-                            <QtyStepper
-                              size="mini"
-                              value={line?.pieces ?? 0}
-                              max={upb - 1}
-                              onChangeQty={(n) => setPieces(p.id, n)}
-                            />
-                          </View>
-                        </>
-                      )}
-                      <Pressable
-                        onPress={() => removeLine(p.id)}
-                        hitSlop={6}
-                        style={styles.boxedRemoveBtn}
-                      >
-                        <Ionicons name="trash-outline" size={16} color={ios.system.redInk} />
-                      </Pressable>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-        )}
-        <View style={{ height: 16 }} />
-      </ScrollView>
+            </View>
+          ) : (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          )
+        }
+        ListFooterComponent={
+          unlistedPlacement === "list-footer" ? (
+            <Pressable
+              style={styles.listUnlistedBtn}
+              onPress={() => openUnlistedModal(searchTerm)}
+              accessibilityRole="button"
+              accessibilityLabel={unlistedLabel}
+              hitSlop={4}
+            >
+              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+              <Text style={styles.listUnlistedText} numberOfLines={1}>
+                {unlistedLabel}
+              </Text>
+            </Pressable>
+          ) : null
+        }
+      />
 
       <View style={styles.footer}>
         <View style={styles.footerRow}>
@@ -1413,19 +1384,27 @@ function ProductPickView({
         </View>
       </View>
 
-      {scanOpen ? (
-        <BarcodeScanner
-          continuous
-          onScanned={handleBarcodeScanned}
-          onClose={() => setScanOpen(false)}
-        />
-      ) : null}
+      <InlineToast toast={toast} onDismiss={dismissInline} bottom={112} />
 
-      {/* Floating, draggable scan button — keeps the scanner one tap away even
-          when the operator has scrolled deep into the product list. Hidden
-          while the cart sheet or the in-list scanner is up so it doesn't
-          stack on top of either. */}
-      <BarcodeFab continuous onScanned={handleBarcodeScanned} hidden={cartOpen || scanOpen} />
+      {/* Scan mode: camera over the live order. The sheet owns the scan haptics
+          and the tray scroll; this screen only mutates the order. */}
+      <ScanOrderSheet
+        visible={scanOpen}
+        rows={trayRows}
+        flash={scanFlash}
+        totalItems={totalItems}
+        total={total}
+        onScanned={handleBarcodeScanned}
+        onChangeQty={onTrayChangeQty}
+        onIncrement={onTrayIncrement}
+        onDecrement={onTrayDecrement}
+        onRemove={onTrayRemove}
+        onReview={() => {
+          setScanOpen(false);
+          setCartOpen(true);
+        }}
+        onDone={() => setScanOpen(false)}
+      />
 
       <LicenseGuardModal
         open={!!licenseBlock}
@@ -1448,7 +1427,7 @@ function ProductPickView({
             return next;
           });
           setLicenseBlock(null);
-          showToast("Removed regulated line(s)");
+          showInline("Removed regulated line(s)");
         }}
         onClose={() => setLicenseBlock(null)}
       />
@@ -1494,7 +1473,31 @@ function ProductPickView({
         onChangeUnlistedNote={updateUnlistedNote}
         onToggleUnlistedNote={toggleUnlistedNote}
         onRemoveUnlisted={removeUnlisted}
-        onAddUnlisted={() => setUnlistedModalOpen(true)}
+        onAddUnlisted={() => openUnlistedModal("")}
+        options={{
+          urgent: orderUrgent,
+          onToggleUrgent: () => setOrderUrgent((u) => !u),
+          deliveryDate,
+          onChangeDeliveryDate: setDeliveryDate,
+          orderDate,
+          onChangeOrderDate: setOrderDate,
+          canBackdate: isStaff,
+          discountRaw,
+          onChangeDiscount: setDiscountRaw,
+          shippingFeeRaw,
+          onChangeShippingFee: setShippingFeeRaw,
+          notes: orderNotes,
+          onChangeNotes: setOrderNotes,
+        }}
+        credits={{
+          rows: creditRows,
+          selectedIds: selectedCreditIds,
+          onToggle: (id) =>
+            setSelectedCreditIds((ids) =>
+              ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id],
+            ),
+          onCreateNew: () => setCreateCreditOpen(true),
+        }}
         onSave={() => {
           setCartOpen(false);
           onSave();
@@ -1503,11 +1506,12 @@ function ProductPickView({
 
       <UnlistedItemModal
         open={unlistedModalOpen}
+        initialName={unlistedPrefill}
         onClose={() => setUnlistedModalOpen(false)}
         onAdd={(name, unitPrice, qty) => {
           addUnlisted(name, unitPrice, qty);
           setUnlistedModalOpen(false);
-          showToast(`Added ${name}`);
+          showInline(`Added ${name}`);
         }}
       />
 
@@ -1519,7 +1523,7 @@ function ProductPickView({
           setJustCreatedCredits((prev) => [...prev, created]);
           setSelectedCreditIds((ids) => (ids.includes(created.id) ? ids : [...ids, created.id]));
           setCreateCreditOpen(false);
-          showToast(`Created credit ${created.creditNoteNumber}`);
+          showInline(`Created credit ${created.creditNoteNumber}`);
         }}
       />
     </>
@@ -1527,6 +1531,206 @@ function ProductPickView({
 }
 
 // ─────────────────────── Cart review modal ───────────────────────
+
+/** Order-level fields, owned by ProductPickView and edited inside the cart. */
+interface OrderOptions {
+  urgent: boolean;
+  onToggleUrgent: () => void;
+  deliveryDate: string;
+  onChangeDeliveryDate: (v: string) => void;
+  /** Business date of the order (YYYY-MM-DD); blank = today. */
+  orderDate: string;
+  onChangeOrderDate: (v: string) => void;
+  /** Staff only — drivers must never see the backdate field. */
+  canBackdate: boolean;
+  discountRaw: string;
+  onChangeDiscount: (v: string) => void;
+  shippingFeeRaw: string;
+  onChangeShippingFee: (v: string) => void;
+  notes: string;
+  onChangeNotes: (v: string) => void;
+}
+
+interface CreditPicker {
+  rows: CreditNote[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  onCreateNew: () => void;
+}
+
+/** Collapsed-by-default disclosure inside the cart sheet. */
+function CartSection({
+  icon,
+  title,
+  summary,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  summary?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.cartSection}>
+      <Pressable
+        style={styles.optionsHeader}
+        onPress={() => setOpen((o) => !o)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+      >
+        <Ionicons name={icon} size={16} color={ios.brand} />
+        <Text style={styles.optionsTitle}>{title}</Text>
+        <Text style={styles.optionsSummary} numberOfLines={1}>
+          {open ? "" : (summary ?? "")}
+        </Text>
+        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={16} color={ios.label3} />
+      </Pressable>
+      {open ? <View style={styles.optionsBody}>{children}</View> : null}
+    </View>
+  );
+}
+
+function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
+  const summary = [
+    o.urgent ? "Urgent" : null,
+    o.orderDate ? `Dated ${o.orderDate}` : null,
+    o.deliveryDate ? `Deliver ${o.deliveryDate}` : null,
+    parseFloat(o.discountRaw) > 0 ? `-$${parseFloat(o.discountRaw).toFixed(2)}` : null,
+    parseFloat(o.shippingFeeRaw) > 0
+      ? `+$${parseFloat(o.shippingFeeRaw).toFixed(2)} shipping`
+      : null,
+    o.notes.trim() ? "Notes" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <CartSection icon="options-outline" title="Order options" summary={summary}>
+      <Pressable style={styles.optionRow} onPress={o.onToggleUrgent}>
+        <Ionicons
+          name={o.urgent ? "flame" : "flame-outline"}
+          size={18}
+          color={o.urgent ? ios.system.orange : ios.label2}
+        />
+        <Text style={styles.optionLabel}>Urgent</Text>
+        <View style={[styles.toggle, o.urgent && styles.toggleOn]}>
+          <View style={[styles.toggleDot, o.urgent && styles.toggleDotOn]} />
+        </View>
+      </Pressable>
+      {o.canBackdate ? (
+        <View style={styles.optionField}>
+          <Text style={styles.optionLabel}>Order date (backdate)</Text>
+          <TextInput
+            value={o.orderDate}
+            onChangeText={o.onChangeOrderDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={ios.label3}
+            keyboardType="numbers-and-punctuation"
+            style={styles.optionInput}
+          />
+          <Text style={styles.optionHelp}>
+            The day the order actually happened. Leave blank for today.
+          </Text>
+        </View>
+      ) : null}
+      <View style={styles.optionField}>
+        <Text style={styles.optionLabel}>Delivery date</Text>
+        <TextInput
+          value={o.deliveryDate}
+          onChangeText={o.onChangeDeliveryDate}
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={ios.label3}
+          keyboardType="numbers-and-punctuation"
+          style={styles.optionInput}
+        />
+      </View>
+      <View style={styles.optionField}>
+        <Text style={styles.optionLabel}>Order discount ($)</Text>
+        <TextInput
+          value={o.discountRaw}
+          onChangeText={o.onChangeDiscount}
+          placeholder="0.00"
+          placeholderTextColor={ios.label3}
+          keyboardType="decimal-pad"
+          style={styles.optionInput}
+        />
+      </View>
+      <View style={styles.optionField}>
+        <Text style={styles.optionLabel}>Shipping fee ($)</Text>
+        <TextInput
+          value={o.shippingFeeRaw}
+          onChangeText={o.onChangeShippingFee}
+          placeholder="0.00 (optional)"
+          placeholderTextColor={ios.label3}
+          keyboardType="decimal-pad"
+          style={styles.optionInput}
+        />
+      </View>
+      <View style={styles.optionField}>
+        <Text style={styles.optionLabel}>Notes</Text>
+        <TextInput
+          value={o.notes}
+          onChangeText={o.onChangeNotes}
+          placeholder="Delivery / handling notes…"
+          placeholderTextColor={ios.label3}
+          multiline
+          style={[styles.optionInput, { minHeight: 60, textAlignVertical: "top" }]}
+        />
+      </View>
+    </CartSection>
+  );
+}
+
+/**
+ * Open credit notes for this customer. Toggle only (no amount input on mobile);
+ * a null amount means "up to the credit's remaining balance", resolved server-side.
+ */
+function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
+  const summary = c.selectedIds.length
+    ? `${c.selectedIds.length} selected`
+    : c.rows.length
+      ? `${c.rows.length} available`
+      : "None open";
+
+  return (
+    <CartSection icon="pricetag-outline" title="Apply credit" summary={summary}>
+      {c.rows.length === 0 ? (
+        <Text style={styles.optionsSummary}>No open credits for this customer.</Text>
+      ) : (
+        c.rows.map((cn) => {
+          const remaining = Math.max(0, cn.amount - (cn.amountUsed ?? 0));
+          const checked = c.selectedIds.includes(cn.id);
+          return (
+            <Pressable key={cn.id} style={styles.optionRow} onPress={() => c.onToggle(cn.id)}>
+              <Ionicons
+                name={checked ? "checkbox" : "square-outline"}
+                size={20}
+                color={checked ? ios.brand : ios.label2}
+              />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.optionLabel} numberOfLines={1}>
+                  {cn.creditNoteNumber}
+                  {cn.reason ? ` · ${cn.reason}` : ""}
+                </Text>
+                {cn.expiresAt ? (
+                  <Text style={styles.optionsSummary}>
+                    Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                  </Text>
+                ) : null}
+              </View>
+              <Text style={styles.optionLabel}>${remaining.toFixed(2)}</Text>
+            </Pressable>
+          );
+        })
+      )}
+      <Pressable onPress={c.onCreateNew} hitSlop={6} style={styles.newCreditBtn}>
+        <Ionicons name="add-circle-outline" size={14} color={ios.brand} />
+        <Text style={styles.newCreditText}>New credit note</Text>
+      </Pressable>
+    </CartSection>
+  );
+}
 
 /**
  * Slide-up sheet that lets the operator inspect every added line, tweak
@@ -1567,6 +1771,8 @@ function CartModal({
   onToggleUnlistedNote,
   onRemoveUnlisted,
   onAddUnlisted,
+  options,
+  credits,
   onSave,
 }: {
   open: boolean;
@@ -1605,6 +1811,9 @@ function CartModal({
   onToggleUnlistedNote: (id: string) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
+  /** Order-level fields; state stays in the parent so the payload is unchanged. */
+  options: OrderOptions;
+  credits: CreditPicker;
   onSave: () => void;
 }) {
   // R2: preserve SCAN order. `items` is a UUID-keyed Record whose insertion order
@@ -1707,6 +1916,9 @@ function CartModal({
               <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
               <Text style={styles.cartAddUnlistedText}>Add unlisted item</Text>
             </Pressable>
+
+            <OrderOptionsSection options={options} />
+            <ApplyCreditSection credits={credits} />
           </ScrollView>
 
           {/* Sticky footer: total + actions */}
@@ -2166,10 +2378,13 @@ function UnlistedCartRow({
  */
 function UnlistedItemModal({
   open,
+  initialName,
   onClose,
   onAdd,
 }: {
   open: boolean;
+  /** Prefills the name — the search term that matched no catalog product. */
+  initialName?: string;
   onClose: () => void;
   onAdd: (name: string, unitPrice: number, qty: number) => void;
 }) {
@@ -2180,10 +2395,11 @@ function UnlistedItemModal({
   // Reset fields whenever the modal is (re)opened.
   useEffect(() => {
     if (open) {
-      setName("");
+      setName(initialName ?? "");
       setPriceText("");
       setQtyText("1");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const price = parseFloat(priceText);
@@ -2414,8 +2630,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
-  optionsWrap: { marginHorizontal: 16, marginTop: 10 },
-  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 },
+  cartSection: { marginTop: 4 },
+  optionsHeader: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 },
   optionsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   optionsSummary: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   optionsBody: {
@@ -2428,6 +2644,7 @@ const styles = StyleSheet.create({
   optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   optionField: { gap: 6 },
   optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
+  optionHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
   optionInput: {
     backgroundColor: ios.fill3,
     borderRadius: 10,
@@ -2472,54 +2689,42 @@ const styles = StyleSheet.create({
     opacity: 0.65,
     marginLeft: 6,
   },
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 4,
-  },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 999,
-    minHeight: 28,
-    justifyContent: "center",
-  },
-  chipActive: { backgroundColor: ios.brand },
-  chipInactive: { backgroundColor: ios.fill3 },
-  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  chipTextActive: { color: "#fff" },
-  chipTextInactive: { color: ios.label },
-  productRow: {
-    backgroundColor: ios.bg,
-    borderRadius: 14,
-    padding: 10,
+  catalogList: { flex: 1 },
+  listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
+  rowSpacer: { height: 10 },
+  emptyUnlistedBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-  },
-  productImg: {
-    width: 48,
-    height: 48,
-    borderRadius: 10,
+    gap: 6,
+    marginTop: 14,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 12,
     backgroundColor: ios.brandWash,
   },
-  productName: {
-    fontSize: 15,
+  emptyUnlistedText: {
+    flexShrink: 1,
+    color: ios.brand,
+    fontSize: 14,
     fontFamily: "Inter_600SemiBold",
-    color: ios.label,
-    letterSpacing: -0.2,
   },
-  productMeta: {
-    fontSize: 12,
+  // Tail of the catalog: the same escape hatch, quiet enough not to read as a
+  // second primary action next to the rows' Add buttons.
+  listUnlistedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 44,
+    marginTop: 12,
+    paddingHorizontal: 14,
+  },
+  listUnlistedText: {
+    flexShrink: 1,
+    color: ios.brand,
+    fontSize: 14,
     fontFamily: "Inter_400Regular",
-    color: ios.label2,
-    marginTop: 1,
-    fontVariant: ["tabular-nums"],
   },
-  metaWas: { color: ios.label3, textDecorationLine: "line-through" },
-  metaSpecial: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
   stepper: {
     flexDirection: "row",
     alignItems: "center",
@@ -2531,23 +2736,6 @@ const styles = StyleSheet.create({
   },
   stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
   stepBtnText: { color: ios.brand, fontSize: 18 },
-  stepQty: {
-    minWidth: 28,
-    textAlign: "center",
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: ios.label,
-    fontVariant: ["tabular-nums"],
-  },
-  addBtn: {
-    width: 36,
-    height: 36,
-    backgroundColor: ios.brandWash,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  addBtnText: { color: ios.brand, fontSize: 20 },
   footer: {
     paddingHorizontal: 16,
     paddingTop: 10,
@@ -2599,37 +2787,31 @@ const styles = StyleSheet.create({
   confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 
-  // ── Inline boxed product editor (dual stepper) ───────────────────────────
-  boxedDualRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-  },
-  boxedQtyControl: {
-    flex: 1,
-    alignItems: "center",
-    gap: 4,
-  },
+  // ── Added case-packed catalog row: cases stepper + split + way into the cart ──
+  boxedControl: { alignItems: "center", gap: 4 },
   boxedQtyLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",
     color: ios.label2,
     letterSpacing: 0.3,
   },
-  boxedRemoveBtn: {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: ios.system.redWash,
-    borderRadius: 8,
+  boxedSummary: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label2,
+    fontVariant: ["tabular-nums"],
   },
-  // Cases/Units segmented control (product row + cart sheet).
+  boxedEditBtn: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: ios.brandWash,
+  },
+  boxedEditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  // Cases/Units segmented control (cart sheet).
   sellBySegment: {
     flexDirection: "row",
     backgroundColor: ios.bgElev,
@@ -2646,7 +2828,14 @@ const styles = StyleSheet.create({
   sellBySegmentBtnActive: { backgroundColor: ios.brand },
   sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
   sellBySegmentTextActive: { color: "#fff" },
-  newCreditText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
+  newCreditBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    minHeight: 44,
+  },
+  newCreditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   // ── Footer extras ─────────────────────────────────────────────────────────
   footerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -2928,24 +3117,6 @@ const styles = StyleSheet.create({
   },
 
   // ── Unlisted item CTA + cart row + tag ────────────────────────────────────
-  unlistedCtaWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 14,
-  },
-  unlistedCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: ios.brandWash,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  unlistedCtaText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  unlistedCount: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
   cartAddUnlisted: {
     flexDirection: "row",
     alignItems: "center",

@@ -74,6 +74,57 @@ real-time sync; offline queue for driver route completions.
 - **location tracker** `lib/location-tracker.ts` (+ `.web.ts`) — driver background location.
 - **stores** `store/{cartStore,mileageStore,podStore,routeStore,productPickerStore,offlineQueue}.ts`.
 - **order-entry / catalog batch (2026-07-11):** `components/ProductPickerSheet.tsx` (server search + camera scan + `standaloneOnly` variant-parent mode; used by Quick Receive, ProductForm variant picker, vendor-bill link), `components/InlineCreateProductSheet.tsx` (create-on-scan-miss overlay — new-product OR variant-of, preserves the cart; `initialCode/initialName/initialPrice/initialCost`), `lib/product-form.ts` (pure `buildProductPayload`/`emptyProductForm`/`productFormFromValues` — variant-aware, re-exported by `components/ProductForm.tsx`, tested in `operator-create-forms.test.ts`), `lib/product-display.ts` (`displayProductName`/`PRODUCT_NAME_SEPARATOR` mirror of web), `lib/money-input.ts` + `components/MoneyTextInput.tsx` (no-reformat money field), `lib/vendor-bill-scan.ts` `unmatchedCount`/`linkScanItem`, `formatQtySplit` in `lib/pricing.ts`. `lib/api/products.ts` `useCreateProduct` returns `CreatedProduct`; `CreateProductDto`+={parentProductId,variantName}.
+- **Scan-to-order split view + declutter (2026-08-07):** the client complaint ("I scan an item, it's
+  added, but I never SEE it") was architectural, not a scroll bug — during continuous scanning
+  `BarcodeScanner` is a full-screen `absoluteFill` camera at `zIndex 2000` covering the list, so
+  nothing underneath it could ever be visible, and the hand-rolled scroll machinery
+  (`scrollRef`/`listTopRef`/`rowYRef`/`scrollToId` + per-row `onLayout`) went stale anyway because
+  clearing the search swapped the rendered list out from under the cached row Y. **New shared parts:**
+  `lib/scan-tray.ts` (`bumpScanOrder` — front-inserts, reference-stable when already first;
+  `trayRowsFrom` — newest-first rows whose subtotals go through the SAME `computeLineSubtotal` the
+  footer uses, so tray and footer cannot disagree; `nextFlash` — `{id, nonce}` so a re-scan re-flashes),
+  `lib/pending-scroll.ts` (`requestScroll`/`stepPendingScroll` — re-resolves the target index against
+  the ids rendered THIS pass, so it survives the refetch window that broke the cached-offset version),
+  `lib/haptics.ts` (`scanHaptic`, first expo-haptics use in the app), `components/ScanCamera(.web).tsx`
+  (layout-agnostic camera engine extracted from `BarcodeScanner(.web)`, which are now thin wrappers —
+  their six other call sites are unchanged), `components/ScanTray.tsx` (newest-first FlatList, NOT
+  `inverted`, `forwardRef` → `scrollToTop`), `components/ScanOrderSheet.tsx` (camera ~45% / live order
+  tray ~55%), `components/ProductRow.tsx` (memoized catalog row), `components/InlineToast.tsx` (needed
+  because `lib/toast.ts` is a NO-OP on iOS, so those users had NO feedback for draft-saved / credit-
+  created / line-removed). **`NewOrderScreen.tsx`** and **`(operator)/(tabs)/invoices/new.tsx`** (a
+  structural copy that carried the same duplicated machinery) both migrated: `filtered.map` inside a
+  ScrollView → FlatList (`extraData={items}`, no `getItemLayout` since added boxed rows vary in height,
+  `onScrollToIndexFailed` = offset estimate + one rAF retry); `BarcodeFab` removed from these two
+  screens (it mounted a SECOND scanner instance) leaving the SearchBar barcode icon as the single
+  entry point; in scan mode a hit does `addOne` + bump + flash + haptic and deliberately does NOT
+  `setSearch("")` and shows NO success banner (the tray row IS the confirmation), while outside it the
+  old clear-search + scroll + banner behaviour is kept. Declutter: Order options and Apply credit moved
+  into CartModal as collapsed sections (state stays lifted — the submitted payload is unchanged), the
+  standalone "+ Add unlisted item" band deleted (homes: cart action + empty-search state), NavBar Save
+  removed (three save triggers → one footer Confirm; Save-as-draft stays), the boxed in-row editor cut
+  from ~9 controls to stepper + summary + an Edit affordance into CartModal's full per-line editor, and
+  the never-populated 48×48 image placeholder dropped. The relocated Order-options section also hosts
+  the staff-only **"Order date (backdate)"** field. **Two escape hatches the declutter had closed** are
+  re-opened by pure predicates so they can be tested: `lib/unlisted-affordance.ts`
+  `unlistedAffordancePlacement({rowCount, loading})` → `"list-footer" | "empty-state" | "none"` drives
+  BOTH the catalog FlatList's `ListFooterComponent` and its `ListEmptyComponent` from one call, so
+  exactly one opener is ever live — without it, "Add unlisted item" survived only in the empty-state
+  and inside CartModal, and every footer opener of CartModal is gated on `totalItems > 0`, leaving a
+  non-empty catalog + empty cart with NO way to add an off-catalog item (the exact case that starts an
+  order). `lib/scan-fallback.ts` `scanFallbackContent({hint, manualMode, hasError})` keeps the help copy
+  behind `hint` but computes the manual-entry link from `manualMode` only: `ScanOrderSheet` passes
+  `hint={false}`, and `ScanCamera.web`'s old `showCard` gate meant a camera that OPENS but cannot decode
+  (bad light, damaged barcode, soft-focus webcam) offered no way in — `manualMode` only flips when
+  getUserMedia or the zxing import outright fails. Tests:
+  `__tests__/{scan-tray,pending-scroll,unlisted-affordance,scan-fallback}.test.ts` (the scan-fallback
+  suite sweeps all 8 hint × manualMode × hasError states asserting a manual input or link in each).
+- **Vendor-bill duplicate handling (2026-08-07):** `lib/vendor-bill-scan.ts` `buildBillDtoFromScan` had
+  been DROPPING the scanned invoice number entirely (so mobile-created bills were invisible to dedup) —
+  it now emits `supplierInvoiceNumber` and folds a "Supplier invoice #N" fragment into `notes` so the
+  server's legacy parser still matches. `(operator)/vendor-bills/scan.tsx` pre-flights
+  `check-duplicate` before saving (a failed probe proceeds — the server guard is the backstop) and
+  routes a match into a 3-way prompt: Open existing bill / Create anyway (`allowDuplicate`) / Cancel;
+  the same 409 is re-parsed in the create mutation's `onError` to cover the race.
 - **mobile↔web parity waves (2026-07-11, #225):** ~14 waves of mobile-only fixes bringing mobile to web parity across scan UX, money flows, compliance, invoicing, returns, and the buyer portal — see the dedicated "Where to find" rows above (Returns, Continuous barcode scan, Always-visible scanned cart rows, Incremental order-item edit, Regulated-license guard, Buyer favorites/finances/licenses, Buyer cart promotions, Scan-driven stock count, Product cost-basis tools + photos, Post-delivery invoice send, Invoice write-off/payment edit, Save order as draft/reopen/recurring create, Live margin hint). Also: `store/cartStore.ts` `CartItem` gained `category` (so CATEGORY-scoped buyer promos can match a cart line); `package.json` added `expo-image-manipulator ~55.0.16` (JPEG transcode for product-photo upload — needs a native rebuild on deploy); `lib/api/admin.ts` `AdminOrder.customer` widened with `mobile`/`email` (feeds the send-invoice sheet) + new `useAdminProductsInfinite` (pages the whole catalog, was a single `limit:100` call that silently dropped rows past 100 — same fix on the buyer side via `useBuyerProductsInfinite` in `lib/api/buyer.ts`). Two waves described in the PR's commit messages (ProductForm "Variant of" create-link UI, product-detail "Variant(s)" card) did **not** land in the final reconciled merge — verified absent from `ProductForm.tsx`/`products/[id].tsx`; only the photo-upload half of that wave (12) is present.
 
 ## Screens by role (`app/`)

@@ -22,6 +22,7 @@ import { VendorBillsService } from "./vendor-bills.service";
 import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
+import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -93,6 +94,11 @@ export class VendorBillsController {
     return this.vendorBillsService.scanInvoice(
       files.map((f) => ({ buffer: f.buffer, mimeType: f.mimetype || "image/jpeg" })),
     );
+  }
+
+  // Must be before :id routes
+  @Post("check-duplicate") checkDuplicate(@Body() dto: CheckVendorBillDuplicateDto) {
+    return this.vendorBillsService.checkDuplicate(dto);
   }
 
   // Product mapping memory — must be before :id routes

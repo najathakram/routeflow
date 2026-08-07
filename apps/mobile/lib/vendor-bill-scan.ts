@@ -1,4 +1,5 @@
-import type { ScanResult } from "./api/vendor-bills";
+import type { DuplicateVendorBillInfo, ScanResult } from "./api/vendor-bills";
+import { roundMoney } from "./pricing";
 
 /**
  * Pure (screen-free, testable) helpers for the vendor-bill scan flow — turn an AI
@@ -24,6 +25,8 @@ export interface ScanBillDto {
   supplierId?: string;
   billDate?: string;
   notes?: string;
+  /** The supplier's own invoice number — the server's duplicate key. */
+  supplierInvoiceNumber?: string;
   items: ScanBillItemDto[];
 }
 
@@ -44,11 +47,13 @@ export function buildBillDtoFromScan(
   const matchedSupplier = supplierName
     ? suppliers?.find((s) => s.name.toLowerCase() === supplierName.toLowerCase())
     : undefined;
+  const invoiceNumber = (result.invoiceNumber ?? "").trim();
 
   return {
     supplierId: matchedSupplier?.id,
     billDate: result.invoiceDate ?? undefined,
-    notes: supplierName ? `AI scanned from ${supplierName}` : undefined,
+    notes: scanNotes(supplierName, invoiceNumber),
+    supplierInvoiceNumber: invoiceNumber || undefined,
     items: (result.items ?? [])
       .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
       .map((i) => ({
@@ -58,6 +63,44 @@ export function buildBillDtoFromScan(
         unitCost: i.unitCost ?? 0,
       })),
   };
+}
+
+/** The "Supplier invoice #N" fragment is load-bearing: it is the only carrier
+ * the server's legacy notes parser reads, so the number must stay a single
+ * unbroken token at the end of the phrase. */
+function scanNotes(supplierName: string, invoiceNumber: string): string | undefined {
+  const parts: string[] = [];
+  if (supplierName) parts.push(`AI scanned from ${supplierName}`);
+  if (invoiceNumber) parts.push(`Supplier invoice #${invoiceNumber}`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+/** What the server will compute as `totalOwed` for this DTO — the duplicate
+ * probe only lines up with the create-time guard when both see the same total.
+ * (The scan flow sends no tax, so line costs are the whole bill.) */
+export function scanBillTotal(dto: ScanBillDto): number {
+  return roundMoney(dto.items.reduce((sum, i) => sum + i.qty * i.unitCost, 0));
+}
+
+/** Alert copy for a scan that matches an already-recorded bill. A resumable
+ * (DRAFT) match is a nudge; anything else warns about double-counting. */
+export function duplicateBillPrompt(duplicate: DuplicateVendorBillInfo): {
+  message: string;
+  destructive: boolean;
+} {
+  const bill = duplicate.supplierName
+    ? `${duplicate.supplierName} bill ${duplicate.billNumber}`
+    : `Bill ${duplicate.billNumber}`;
+  const amount = `$${roundMoney(duplicate.totalOwed).toFixed(2)}`;
+  return duplicate.resumable
+    ? {
+        message: `${bill} (${amount}) is already saved as a draft — open it to finish.`,
+        destructive: false,
+      }
+    : {
+        message: `${bill} (${amount}) already records this invoice — creating it again would double stock and amounts owed.`,
+        destructive: true,
+      };
 }
 
 /**

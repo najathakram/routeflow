@@ -1,11 +1,13 @@
 import {
   buildBillDtoFromScan,
+  duplicateBillPrompt,
   mappingsFromScan,
+  scanBillTotal,
   unmatchedCount,
   linkScanItem,
   type SupplierRef,
 } from "../lib/vendor-bill-scan";
-import type { ScanResult } from "../lib/api/vendor-bills";
+import type { DuplicateVendorBillInfo, ScanResult } from "../lib/api/vendor-bills";
 
 /**
  * Locks the ScanResult → create-bill DTO mapping to the API's actual field names
@@ -57,12 +59,41 @@ describe("buildBillDtoFromScan", () => {
     expect(dto).toEqual({
       supplierId: "sup-1",
       billDate: "2026-07-01",
-      notes: "AI scanned from Metro Wholesale",
+      notes: "AI scanned from Metro Wholesale · Supplier invoice #INV-100",
+      supplierInvoiceNumber: "INV-100",
       items: [
         { description: "Cola 24pk", productId: "prod-1", qty: 2, unitCost: 20 },
         { description: "Mystery Snack", productId: undefined, qty: 5, unitCost: 10 },
       ],
     });
+  });
+
+  it("carries the scanned invoice number as the server's duplicate key", () => {
+    expect(
+      buildBillDtoFromScan(scanResult({ invoiceNumber: " INV-100 " }), suppliers),
+    ).toHaveProperty("supplierInvoiceNumber", "INV-100");
+  });
+
+  it("keeps the legacy notes carrier the server parses, with the number as the last token", () => {
+    const { notes } = buildBillDtoFromScan(scanResult(), suppliers);
+    expect(notes).toContain("Supplier invoice #INV-100");
+    // The server's fallback regex — clients that only send notes must still match.
+    expect(notes?.match(/supplier invoice #\s*(\S+)/i)?.[1]).toBe("INV-100");
+  });
+
+  it("omits the number and its notes fragment when the scan found none", () => {
+    const dto = buildBillDtoFromScan(scanResult({ invoiceNumber: null }), suppliers);
+    expect(dto.supplierInvoiceNumber).toBeUndefined();
+    expect(dto.notes).toBe("AI scanned from Metro Wholesale");
+  });
+
+  it("has no notes at all when neither supplier nor invoice number was read", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({ supplier: null, invoiceNumber: null }),
+      suppliers,
+    );
+    expect(dto.notes).toBeUndefined();
+    expect(dto.supplierInvoiceNumber).toBeUndefined();
   });
 
   it("resolves the supplier case-insensitively", () => {
@@ -111,13 +142,80 @@ describe("buildBillDtoFromScan", () => {
   it("handles a missing supplier and suppliers list", () => {
     const dto = buildBillDtoFromScan(scanResult({ supplier: null }), undefined);
     expect(dto.supplierId).toBeUndefined();
-    expect(dto.notes).toBeUndefined();
+    expect(dto.notes).toBe("Supplier invoice #INV-100");
     expect(dto.billDate).toBe("2026-07-01");
   });
 
   it("omits billDate when the scan has no invoiceDate", () => {
     const dto = buildBillDtoFromScan(scanResult({ invoiceDate: null }), suppliers);
     expect(dto.billDate).toBeUndefined();
+  });
+});
+
+describe("scanBillTotal", () => {
+  it("matches what the server computes as totalOwed (the duplicate probe compares totals)", () => {
+    expect(scanBillTotal(buildBillDtoFromScan(scanResult(), suppliers))).toBe(90);
+  });
+
+  it("rounds to cents", () => {
+    const dto = buildBillDtoFromScan(
+      scanResult({
+        items: [
+          {
+            extractedName: "Odd lot",
+            qty: 3,
+            unitCost: 0.335,
+            lineTotal: null,
+            matchedProductId: null,
+            matchedProductName: null,
+            confidence: "none",
+          },
+        ],
+      }),
+      suppliers,
+    );
+    expect(scanBillTotal(dto)).toBe(1.01);
+  });
+});
+
+describe("duplicateBillPrompt", () => {
+  const duplicate = (
+    overrides: Partial<DuplicateVendorBillInfo> = {},
+  ): DuplicateVendorBillInfo => ({
+    billId: "bill-1",
+    billNumber: "VB-0007",
+    status: "DRAFT",
+    resumable: true,
+    totalOwed: 90,
+    billDate: "2026-07-01",
+    receivedDate: null,
+    supplierName: "Metro Wholesale",
+    itemCount: 2,
+    matchedBy: "number",
+    totalMatches: true,
+    ...overrides,
+  });
+
+  it("nudges the operator to finish a resumable draft", () => {
+    const { message, destructive } = duplicateBillPrompt(duplicate());
+    expect(message).toContain("Metro Wholesale bill VB-0007");
+    expect(message).toContain("$90.00");
+    expect(message).toContain("open it to finish");
+    expect(destructive).toBe(false);
+  });
+
+  it("warns about double-counting once the bill is past DRAFT", () => {
+    const { message, destructive } = duplicateBillPrompt(
+      duplicate({ status: "RECEIVED", resumable: false }),
+    );
+    expect(message).toContain("would double stock");
+    expect(destructive).toBe(true);
+  });
+
+  it("falls back to the bill number when the supplier is unknown", () => {
+    expect(duplicateBillPrompt(duplicate({ supplierName: null })).message).toContain(
+      "Bill VB-0007",
+    );
   });
 });
 
