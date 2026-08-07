@@ -1179,6 +1179,13 @@ model Order {
   // non-VOID invoices — recomputeOrderFromInvoices maintains the back-sync.
   shippingFee            Decimal     @default(0) @db.Decimal(10, 2)
   requestedDeliveryDate  DateTime?
+  // BUSINESS date of the order — the day it actually happened, which is NOT
+  // `createdAt` (the entry timestamp) when an operator enters a forgotten order
+  // days later. Staff-settable only (OPERATOR/TENANT_ADMIN). When set it drives
+  // `deliveredAt` on the already-delivered sale path and the issueDate/dueDate of
+  // every invoice generated from this order — which in turn moves the regulated
+  // ledger's period bucket into that past month.
+  orderDate              DateTime?
   deliveredAt            DateTime?
   // Carrier shipment tracking — set when goods ship via a carrier instead of being
   // delivered on our own route. Copied onto the Invoice(s) generated from this order.
@@ -1221,6 +1228,7 @@ model Order {
   @@index([urgent])
   @@index([createdAt])
   @@index([requestedDeliveryDate])
+  @@index([orderDate])
   @@index([tenantId])
 }
 
@@ -1807,6 +1815,13 @@ model InvoicePayment {
   reference        String?
   notes            String?
   paidAt           DateTime      @default(now())
+  // When the money actually LANDED in the bank, as opposed to `paidAt` (when the
+  // payment instrument was received/recorded). A post-dated check is paidAt=today,
+  // settledAt=the clearing date — so this MAY legitimately be in the future.
+  // Cash-basis reporting uses `settledAt ?? paidAt`; null on every legacy row, so
+  // those keep reporting on paidAt unchanged. Distinct from `clearedAt` below,
+  // which is a server-stamped audit mark of the CHECK-lifecycle transition.
+  settledAt        DateTime?
   createdAt        DateTime      @default(now())
   creditNoteId     String?
   advancePaymentId String?
@@ -1841,6 +1856,7 @@ model InvoicePayment {
   @@index([paymentGroupId])
   @@index([status])
   @@index([tenantId])
+  @@index([tenantId, settledAt])
 }
 
 model PaymentCounter {
@@ -2208,19 +2224,27 @@ model EstimateItem {
 // ─── Sprint 7: Vendor Bills (Accounts Payable) ───────────────────────────────
 
 model VendorBill {
-  id           String           @id @default(uuid())
-  billNumber   String
-  supplierId   String?
-  status       VendorBillStatus @default(RECEIVED)
-  totalOwed    Decimal          @db.Decimal(10, 2)
-  totalPaid    Decimal          @default(0) @db.Decimal(10, 2)
-  billDate     DateTime?
-  dueDate      DateTime?
-  receivedDate DateTime?
-  notes        String?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  tenantId     String?
+  id                    String           @id @default(uuid())
+  billNumber            String
+  supplierId            String?
+  status                VendorBillStatus @default(RECEIVED)
+  totalOwed             Decimal          @db.Decimal(10, 2)
+  totalPaid             Decimal          @default(0) @db.Decimal(10, 2)
+  billDate              DateTime?
+  dueDate               DateTime?
+  receivedDate          DateTime?
+  notes                 String?
+  // The SUPPLIER's own invoice number, stored NORMALIZED (uppercase, whitespace
+  // stripped — see DuplicateMatchService.normalizeNumber). `billNumber` above is
+  // OUR generated BILL-YYYY-NNNN, so this is the only field that identifies the
+  // vendor's document. Deliberately NOT unique: prod predates the column, the
+  // same number legitimately recurs across suppliers, and VOID bills must never
+  // block a re-scan — dedup is an app-level guard (VendorBillsService.create).
+  // Null on legacy rows the backfill could not parse and on old mobile builds.
+  supplierInvoiceNumber String?
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+  tenantId              String?
 
   supplier Supplier?        @relation(fields: [supplierId], references: [id])
   tenant   Tenant?          @relation(fields: [tenantId], references: [id])
@@ -2232,6 +2256,7 @@ model VendorBill {
   @@index([status])
   @@index([dueDate])
   @@index([tenantId])
+  @@index([tenantId, supplierInvoiceNumber])
 }
 
 model VendorBillItem {
@@ -2307,7 +2332,7 @@ model Return {
   // is minted, this is the audit trail). Kept as String? rather than an enum to avoid a
   // CREATE TYPE migration; validated at the DTO edge.
   refundMethod String?
-  refundAmount Decimal? @db.Decimal(10, 2)
+  refundAmount Decimal?     @db.Decimal(10, 2)
   refundedAt   DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -2990,39 +3015,39 @@ enum RegulatedFilingStatus {
 /// (tobacco, alcohol, CRV deposits, city sugar taxes…). Deactivation
 /// (active=false) keeps historic sales/ledger data intact.
 model TrackedCategory {
-  id               String                 @id @default(uuid())
-  tenantId         String
-  name             String
-  taxType          TrackedCategoryTaxType @default(NONE)
+  id                  String                 @id @default(uuid())
+  tenantId            String
+  name                String
+  taxType             TrackedCategoryTaxType @default(NONE)
   // Interpreted by taxType. PERCENT_OF_SALE stores a fraction (0.05 = 5%),
   // matching the existing InvoiceItem.taxRate convention; the per-unit/volume
   // variants store an absolute amount per `unitBasis`.
-  rate             Decimal                @default(0) @db.Decimal(12, 4)
-  unitBasis        String? // pack, oz, container… what `rate` multiplies
-  priceIncludesTax Boolean                @default(false)
-  invoiceTreatment InvoiceTreatment       @default(SEPARATE_INVOICE)
-  appliesScope     Json? // optional geo/customer scoping, e.g. {cities:["Oakland"]}
-  requiresLicense  Boolean                @default(false)
+  rate                Decimal                @default(0) @db.Decimal(12, 4)
+  unitBasis           String? // pack, oz, container… what `rate` multiplies
+  priceIncludesTax    Boolean                @default(false)
+  invoiceTreatment    InvoiceTreatment       @default(SEPARATE_INVOICE)
+  appliesScope        Json? // optional geo/customer scoping, e.g. {cities:["Oakland"]}
+  requiresLicense     Boolean                @default(false)
   // Phase 4 (W7b): per-category POD policy — when set, a delivery stop containing
   // a product in this category demands the driver capture an age check and/or an
   // identity check (with signature POD, no safe-drop) before the stop completes.
-  requiresAgeCheck Boolean                @default(false)
-  requiresIdCheck  Boolean                @default(false)
-  reportTemplate   String                 @default("GENERIC") // CA_CDTFA | CA_ABC | CALRECYCLE | GENERIC
-  reportCadence    ReportCadence          @default(MONTHLY)
+  requiresAgeCheck    Boolean                @default(false)
+  requiresIdCheck     Boolean                @default(false)
+  reportTemplate      String                 @default("GENERIC") // CA_CDTFA | CA_ABC | CALRECYCLE | GENERIC
+  reportCadence       ReportCadence          @default(MONTHLY)
   // TX Comptroller (TX_COMPTROLLER report template) config — all optional, per-program because
   // a TX cigarette permit differs from a cigar/tobacco permit.
   wholesalerLicenseNo String? // THIS tenant's own TX license/permit number (8 digits)
   /// DEPRECATED — txItemType/txUom are superseded by Product.regItemType/regUomUnit. Kept one release as a shadow; no reader.
-  txItemType          Int?    // 1 = Cigarettes, 2 = Cigars, 3 = Tobacco
+  txItemType          Int? // 1 = Cigarettes, 2 = Cigars, 3 = Tobacco
   /// DEPRECATED — txItemType/txUom are superseded by Product.regItemType/regUomUnit. Kept one release as a shadow; no reader.
   txUom               String? // CP|CS|CC (cigarettes) SB|SC|SD|SF (cigars) WO|WN (tobacco)
   /// Saved custom report column layout, keyed by template:
   /// { "TX_COMPTROLLER": ["wholesalerPermit", "retailerName", ...] }
   reportColumnPrefs   Json?
-  active           Boolean                @default(true)
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  active              Boolean                @default(true)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 
   tenant         Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   products       Product[]
