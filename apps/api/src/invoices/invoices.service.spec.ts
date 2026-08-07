@@ -1922,7 +1922,10 @@ describe("InvoicesService", () => {
 
       expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
         where: { id: "pay-1" },
-        data: { checkStatus: CheckStatus.CLEARED, clearedAt: expect.any(Date) },
+        data: {
+          checkStatus: CheckStatus.CLEARED,
+          clearedAt: expect.any(Date),
+        },
       });
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(result).toEqual({ success: true, checkStatus: CheckStatus.CLEARED });
@@ -3628,6 +3631,396 @@ describe("InvoicesService", () => {
         // Existing consumers reading Invoice fields off the response are unaffected.
         expect(result.id).toBe("inv-1");
       });
+    });
+  });
+
+  // ─── Backdated orders drive invoice dating ────────────────────────────────
+
+  describe("invoice dating follows the order's business date", () => {
+    const backdated = new Date(Date.now() - 40 * 86_400_000);
+
+    const seedDatingSpies = () => {
+      jest
+        .spyOn(service as any, "resolveDefaultTerms")
+        .mockResolvedValue({ terms: "Net 30", dueDays: 30 });
+      jest
+        .spyOn(service as any, "resolveTenantInvoiceDefaults")
+        .mockResolvedValue({ notes: null, terms: null });
+      jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1");
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.orderItem.update.mockResolvedValue({});
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { shippingFee: 0 } });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, id: "inv-1", items: [], payments: [], customer: {} }),
+      );
+    };
+
+    const orderWith = (over: any = {}) => ({
+      id: "ord-1",
+      customerId: "cust-1",
+      orderNumber: "ORD-9",
+      subtotal: 20,
+      tax: 0,
+      shippingFee: 0,
+      lineItems: [
+        {
+          id: "li-1",
+          productId: "p1",
+          name: null,
+          qty: 2,
+          invoicedQty: 0,
+          boxes: null,
+          pieces: null,
+          unitPrice: 10,
+          subtotal: 20,
+          originalPrice: null,
+          priceType: "STANDARD",
+          product: { name: "Widget", unitsPerBox: 0 },
+        },
+      ],
+      ...over,
+    });
+
+    /** Whole days between two invoice dates, tolerant of a DST hour. */
+    const daysBetween = (a: Date, b: Date) => Math.round((b.getTime() - a.getTime()) / 86_400_000);
+
+    it("createInvoiceFromOrder issues on the order date and runs the term from it", async () => {
+      seedDatingSpies();
+      prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: backdated }));
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(data.issueDate).toEqual(backdated);
+      expect(daysBetween(data.issueDate, data.dueDate)).toBe(30);
+    });
+
+    it("createInvoiceFromOrder falls back to today when the order has no business date", async () => {
+      seedDatingSpies();
+      const before = Date.now();
+      prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: null }));
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(data.issueDate.getTime()).toBeGreaterThanOrEqual(before);
+      expect(daysBetween(data.issueDate, data.dueDate)).toBe(30);
+    });
+
+    it("createInvoiceFromOrderWithTenant issues on the order date", async () => {
+      seedDatingSpies();
+      prisma.systemConfig.findFirst.mockResolvedValue(null);
+      prisma.tenantConfig.findUnique.mockResolvedValue(null);
+      prisma.order.findFirst.mockResolvedValue(orderWith({ orderDate: backdated }));
+      prisma.customer.findFirst.mockResolvedValue({ isTaxExempt: false });
+
+      await service.createInvoiceFromOrderWithTenant("ord-1", "test-tenant");
+
+      const data = (prisma.invoice.create.mock.calls[0][0] as any).data;
+      expect(data.issueDate).toEqual(backdated);
+      expect(daysBetween(data.issueDate, data.dueDate)).toBe(30);
+    });
+
+    it("the regulated ledger books the sale in the backdated period", async () => {
+      seedDatingSpies();
+      const ledger = (service as any).ledger;
+      prisma.order.findUnique.mockResolvedValue(orderWith({ orderDate: backdated }));
+
+      await service.createInvoiceFromOrder("ord-1");
+
+      expect(ledger.writeSaleEntries).toHaveBeenCalledWith(
+        expect.objectContaining({ soldAt: backdated }),
+      );
+    });
+
+    it("createPartialFromOrder issues on the order date and runs its default term from it", async () => {
+      seedDatingSpies();
+      prisma.order.findUnique.mockResolvedValue(
+        orderWith({
+          orderDate: backdated,
+          lineItems: [{ ...orderWith().lineItems[0], id: "oi-1" }],
+        }),
+      );
+
+      const invoice = (await service.createPartialFromOrder("ord-1", {
+        items: [{ orderItemId: "oi-1", qty: 2 }],
+      } as any)) as any;
+
+      expect(invoice.issueDate).toEqual(backdated);
+      expect(daysBetween(invoice.issueDate, invoice.dueDate)).toBe(30);
+    });
+
+    it("createPartialFromOrder falls back to today without a business date", async () => {
+      seedDatingSpies();
+      const before = Date.now();
+      prisma.order.findUnique.mockResolvedValue(
+        orderWith({ orderDate: null, lineItems: [{ ...orderWith().lineItems[0], id: "oi-1" }] }),
+      );
+
+      const invoice = (await service.createPartialFromOrder("ord-1", {
+        items: [{ orderItemId: "oi-1", qty: 2 }],
+      } as any)) as any;
+
+      expect(invoice.issueDate.getTime()).toBeGreaterThanOrEqual(before);
+    });
+  });
+
+  // ─── settledAt: when the money actually landed in the bank ────────────────
+
+  describe("payment settledAt", () => {
+    const futureSettlement = "2027-01-15";
+
+    const seedInvoiceForPayment = () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [],
+      });
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 2 });
+      prisma.invoicePayment.create.mockResolvedValue({ id: "pay-new-1" });
+      prisma.invoice.update.mockResolvedValue({
+        id: "inv-1",
+        invoiceNumber: "INV-0001",
+        customerId: "cust-1",
+        total: 100,
+        payments: [],
+      });
+    };
+
+    it("recordPayment stores a post-dated settlement without clamping it to today", async () => {
+      seedInvoiceForPayment();
+
+      await service.recordPayment("inv-1", {
+        amount: 100,
+        method: "CHECK",
+        settledAt: futureSettlement,
+      } as any);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ settledAt: new Date(futureSettlement) }),
+      });
+    });
+
+    it("recordPayment leaves settledAt null when the bank date is unknown", async () => {
+      seedInvoiceForPayment();
+
+      await service.recordPayment("inv-1", { amount: 100, method: "CASH" } as any);
+
+      expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ settledAt: null }),
+      });
+    });
+
+    describe("updatePayment", () => {
+      const seedExistingPayment = () => {
+        prisma.invoice.findUnique.mockResolvedValue({
+          id: "inv-1",
+          status: InvoiceStatus.SENT,
+          total: 100,
+          dueDate: null,
+          payments: [
+            { id: "pay-1", status: "PAID", amount: 100, settledAt: new Date("2026-07-01") },
+          ],
+        });
+        prisma.invoice.update.mockResolvedValue({
+          id: "inv-1",
+          invoiceNumber: "INV-0001",
+          customerId: "cust-1",
+          total: 100,
+          payments: [],
+        });
+      };
+
+      const updateData = () => (prisma.invoicePayment.update.mock.calls[0][0] as any).data;
+
+      it("sets the bank date when supplied", async () => {
+        seedExistingPayment();
+
+        await service.updatePayment("inv-1", "pay-1", {
+          amount: 100,
+          method: "CHECK",
+          settledAt: futureSettlement,
+        } as any);
+
+        expect(updateData().settledAt).toEqual(new Date(futureSettlement));
+      });
+
+      it("clears the bank date when explicitly null", async () => {
+        seedExistingPayment();
+
+        await service.updatePayment("inv-1", "pay-1", {
+          amount: 100,
+          method: "CHECK",
+          settledAt: null,
+        } as any);
+
+        expect(updateData().settledAt).toBeNull();
+      });
+
+      it("preserves the stored bank date when the key is absent", async () => {
+        seedExistingPayment();
+
+        await service.updatePayment("inv-1", "pay-1", { amount: 100, method: "CHECK" } as any);
+
+        expect(updateData()).not.toHaveProperty("settledAt");
+      });
+    });
+
+    it("recordStandalonePayment stamps the bank date on every row of the group", async () => {
+      prisma.paymentCounter.upsert.mockResolvedValue({ id: "test-tenant", next: 3 });
+      prisma.invoice.findFirst.mockResolvedValue({
+        id: "inv-1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+        payments: [],
+      });
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+
+      await service.recordStandalonePayment({
+        customerId: "cust-1",
+        totalAmount: 60,
+        method: "CHECK",
+        settledAt: futureSettlement,
+        allocations: [
+          { invoiceId: "inv-1", amount: 40 },
+          { invoiceId: "inv-2", amount: 20 },
+        ],
+      } as any);
+
+      const calls = prisma.invoicePayment.create.mock.calls;
+      expect(calls).toHaveLength(2);
+      for (const [args] of calls) {
+        expect((args as any).data.settledAt).toEqual(new Date(futureSettlement));
+      }
+    });
+
+    describe("setCheckStatus CLEARED", () => {
+      const basePayment = {
+        id: "pay-1",
+        invoiceId: "inv-1",
+        method: "CHECK",
+        status: "PAID",
+        checkStatus: CheckStatus.DEPOSITED,
+        amount: 100,
+        paymentNumber: "PAY-0001",
+        reference: null,
+        settledAt: null,
+      };
+
+      const seedInvoiceLookup = () =>
+        prisma.invoice.findUnique.mockResolvedValue({
+          invoiceNumber: "INV-0001",
+          customerId: "cust-1",
+          status: InvoiceStatus.PAID,
+          total: 100,
+        });
+
+      const updateData = () => (prisma.invoicePayment.update.mock.calls[0][0] as any).data;
+
+      // The cash-basis reporting window in BookkeepingService keys on this
+      // expression, so it is the seam a fabricated settledAt would shift.
+      const reportingDate = (row: { settledAt: Date | null; paidAt: Date }) =>
+        row.settledAt ?? row.paidAt;
+
+      it("an explicit landing date drives both clearedAt and settledAt", async () => {
+        prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
+        seedInvoiceLookup();
+
+        await service.setCheckStatus("inv-1", "pay-1", {
+          status: CheckStatus.CLEARED,
+          settledAt: "2026-07-20",
+        } as any);
+
+        expect(updateData().clearedAt).toEqual(new Date("2026-07-20"));
+        expect(updateData().settledAt).toEqual(new Date("2026-07-20"));
+      });
+
+      it("without one, a NULL bank date stays NULL while clearedAt is still stamped", async () => {
+        const before = Date.now();
+        prisma.invoicePayment.findFirst.mockResolvedValue(basePayment);
+        seedInvoiceLookup();
+
+        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+
+        expect(updateData()).not.toHaveProperty("settledAt");
+        expect(updateData().clearedAt.getTime()).toBeGreaterThanOrEqual(before);
+      });
+
+      it("without one, a bank date already entered on the payment is left untouched", async () => {
+        const entered = new Date("2026-07-05");
+        prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, settledAt: entered });
+        seedInvoiceLookup();
+
+        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+
+        expect(updateData()).not.toHaveProperty("settledAt");
+        expect(updateData().clearedAt).not.toEqual(entered);
+      });
+
+      it("clearing a legacy check does not move it out of its original period", async () => {
+        const paidAt = new Date("2025-11-14T00:00:00.000Z");
+        prisma.invoicePayment.findFirst.mockResolvedValue({ ...basePayment, paidAt });
+        seedInvoiceLookup();
+
+        await service.setCheckStatus("inv-1", "pay-1", { status: CheckStatus.CLEARED });
+
+        const after = { ...basePayment, paidAt, ...updateData() };
+        expect(reportingDate(after)).toEqual(paidAt);
+      });
+    });
+
+    it("exportPayments carries a Bank Date column right after Date", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          paymentNumber: "PAY-0001",
+          paidAt: new Date("2026-07-01T00:00:00.000Z"),
+          settledAt: new Date("2027-01-15T00:00:00.000Z"),
+          method: "CHECK",
+          reference: null,
+          bankCharges: null,
+          amount: 100,
+          status: "PAID",
+          invoice: { invoiceNumber: "INV-0001", customer: { businessName: "Acme" } },
+        },
+        {
+          paymentNumber: "PAY-0002",
+          paidAt: new Date("2026-07-02T00:00:00.000Z"),
+          settledAt: null,
+          method: "CASH",
+          reference: null,
+          bankCharges: null,
+          amount: 50,
+          status: "PAID",
+          invoice: { invoiceNumber: "INV-0002", customer: { businessName: "Acme" } },
+        },
+      ]);
+
+      const [header, first, second] = (await service.exportPayments({})).split("\n");
+
+      expect(header).toBe(
+        "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status",
+      );
+      expect(first.split(",").slice(0, 3)).toEqual(["PAY-0001", "2026-07-01", "2027-01-15"]);
+      expect(second.split(",").slice(0, 3)).toEqual(["PAY-0002", "2026-07-02", ""]);
+    });
+
+    it("settledAt is an accepted sort field on both the list and the export", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await service.listAllPayments({ sortBy: "settledAt", sortDir: "asc" });
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { settledAt: "asc" } }),
+      );
+
+      prisma.invoicePayment.findMany.mockClear();
+      await service.exportPayments({ sortBy: "settledAt", sortDir: "desc" });
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { settledAt: "desc" } }),
+      );
     });
   });
 });

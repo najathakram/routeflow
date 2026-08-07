@@ -9,7 +9,7 @@ import { MigrationController } from "./migration.controller";
 import { BatchController } from "./batch.controller";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductAliasService } from "./product-alias.service";
-import { DuplicateMatchService } from "./duplicate-match.service";
+import { DuplicateMatchModule } from "./duplicate-match.module";
 import { VariantResolutionService } from "./variant-resolution.service";
 import { MigrationService } from "./migration.service";
 import { BatchImportService } from "./batch-import.service";
@@ -19,7 +19,7 @@ import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
 import { ProductsModule } from "../products/products.module";
 
 @Module({
-  imports: [PrismaModule, VendorBillsModule, ProductsModule],
+  imports: [PrismaModule, VendorBillsModule, ProductsModule, DuplicateMatchModule],
   controllers: [
     ImportController,
     NumberingController,
@@ -33,7 +33,6 @@ import { ProductsModule } from "../products/products.module";
     NumberingService,
     ExternalRefService,
     ProductAliasService,
-    DuplicateMatchService,
     VariantResolutionService,
     MigrationService,
     BatchImportService,
@@ -43,6 +42,6 @@ import { ProductsModule } from "../products/products.module";
   // must call reserveNext at mint time) can consume it without duplicating it.
   // The idempotency substrate is exported for the migration (Phase 4) and batch
   // (Phase 5) flows built on top of it.
-  exports: [NumberingService, ExternalRefService, ProductAliasService, DuplicateMatchService],
+  exports: [NumberingService, ExternalRefService, ProductAliasService, DuplicateMatchModule],
 })
 export class ImportModule {}

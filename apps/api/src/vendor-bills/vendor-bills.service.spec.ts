@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const mockAnthropicCreate = jest.fn();
@@ -51,12 +52,34 @@ const bill = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** An existing bill as the matcher reports it. */
+const duplicateMatch = (overrides: Record<string, unknown> = {}) => ({
+  id: "vb-9",
+  billNumber: "BILL-2026-0009",
+  status: "RECEIVED",
+  totalOwed: 100,
+  billDate: new Date("2026-06-01"),
+  receivedDate: new Date("2026-06-02"),
+  supplierId: "sup-1",
+  itemCount: 4,
+  matchedBy: "number" as const,
+  totalMatches: true,
+  ...overrides,
+});
+
+const dupMatch = {
+  normalizeNumber: (raw: string) => (raw ?? "").toUpperCase().replace(/\s+/g, ""),
+  findVendorBillDuplicate: jest.fn(),
+};
+
 describe("VendorBillsService", () => {
   let service: VendorBillsService;
   let prisma: ReturnType<typeof createMockPrisma>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    dupMatch.findVendorBillDuplicate.mockReset();
+    dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -64,6 +87,7 @@ describe("VendorBillsService", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        { provide: DuplicateMatchService, useValue: dupMatch },
       ],
     }).compile();
 
@@ -303,6 +327,188 @@ describe("VendorBillsService", () => {
     });
   });
 
+  // ─── duplicate guard ────────────────────────────────────────────────────────
+
+  describe("create — duplicate guard", () => {
+    beforeEach(() => {
+      prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
+      prisma.vendorBill.create.mockResolvedValue(bill());
+      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+    });
+
+    const scanned = (overrides: Record<string, unknown> = {}) => ({
+      requireSupplier: false,
+      supplierInvoiceNumber: "INV-1",
+      items: [{ description: "A", qty: 1, unitCost: 100 }],
+      ...overrides,
+    });
+
+    it("blocks a re-scan of the same supplier invoice with a structured 409", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch());
+
+      await expect(service.create(scanned())).rejects.toMatchObject({
+        constructor: ConflictException,
+        response: expect.objectContaining({
+          code: "DUPLICATE_VENDOR_BILL",
+          duplicate: expect.objectContaining({
+            billId: "vb-9",
+            billNumber: "BILL-2026-0009",
+            resumable: false,
+            supplierName: "Acme Foods",
+            itemCount: 4,
+            matchedBy: "number",
+            totalMatches: true,
+          }),
+        }),
+      });
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
+    it("writes a message that stands alone for clients that only surface the text", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch());
+
+      const err = await service.create(scanned()).catch((e) => e);
+      const message = err.response.message as string;
+      expect(message).toContain("INV-1");
+      expect(message).toContain("BILL-2026-0009");
+      expect(message).toContain("double stock");
+    });
+
+    it("points a DRAFT match at finishing the existing bill instead of a second one", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ status: "DRAFT" }));
+
+      const err = await service.create(scanned()).catch((e) => e);
+      expect(err.response.duplicate.resumable).toBe(true);
+      expect(err.response.message).toContain("open it to finish receiving");
+    });
+
+    it("records the bill on a FUZZY match — same supplier, day and amount isn't identity", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ matchedBy: "fuzzy" }));
+
+      await service.create({
+        supplierId: "sup-1",
+        billDate: "2026-06-01",
+        items: [{ description: "A", qty: 1, unitCost: 100 }],
+      });
+
+      expect(dupMatch.findVendorBillDuplicate).toHaveBeenCalled();
+      expect(prisma.vendorBill.create).toHaveBeenCalled();
+    });
+
+    it("records the bill anyway when the operator sends allowDuplicate", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch());
+
+      await service.create(scanned({ allowDuplicate: true }));
+
+      expect(dupMatch.findVendorBillDuplicate).not.toHaveBeenCalled();
+      expect(prisma.vendorBill.create).toHaveBeenCalled();
+    });
+
+    it("records the bill when nothing live matches (a VOID prior bill never does)", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
+
+      await service.create(scanned());
+
+      expect(prisma.vendorBill.create).toHaveBeenCalled();
+    });
+
+    it("persists the supplier invoice number normalized", async () => {
+      await service.create(scanned({ supplierInvoiceNumber: "inv 088 41" }));
+
+      expect(prisma.vendorBill.create.mock.calls[0][0].data.supplierInvoiceNumber).toBe("INV08841");
+      expect(dupMatch.findVendorBillDuplicate).toHaveBeenCalledWith(
+        expect.objectContaining({ number: "INV08841" }),
+      );
+    });
+
+    it("falls back to the notes phrase when only notes carry the number", async () => {
+      await service.create({
+        requireSupplier: false,
+        notes: "Batch import — Supplier invoice #VB-7",
+        items: [{ description: "A", qty: 1, unitCost: 10 }],
+      });
+
+      expect(prisma.vendorBill.create.mock.calls[0][0].data.supplierInvoiceNumber).toBe("VB-7");
+      expect(dupMatch.findVendorBillDuplicate).toHaveBeenCalledWith(
+        expect.objectContaining({ number: "VB-7" }),
+      );
+    });
+
+    it.each([
+      ["neither a number nor a supplier", { requireSupplier: false }],
+      ["a supplier but no bill date", { supplierId: "sup-1" }],
+    ])("skips the check with %s — nothing identifies the document", async (_label, extra) => {
+      await service.create({ items: [{ description: "A", qty: 1, unitCost: 10 }], ...extra });
+
+      expect(dupMatch.findVendorBillDuplicate).not.toHaveBeenCalled();
+      expect(prisma.vendorBill.create).toHaveBeenCalled();
+    });
+
+    it("checks on supplier + bill date even with no number at all", async () => {
+      await service.create({
+        supplierId: "sup-1",
+        billDate: "2026-06-01",
+        items: [{ description: "A", qty: 1, unitCost: 10 }],
+      });
+
+      expect(dupMatch.findVendorBillDuplicate).toHaveBeenCalledWith({
+        supplierId: "sup-1",
+        number: null,
+        total: 10,
+        issueDate: new Date("2026-06-01"),
+      });
+    });
+  });
+
+  // ─── checkDuplicate ─────────────────────────────────────────────────────────
+
+  describe("checkDuplicate", () => {
+    it("maps a match to the wire payload, resolving the supplier name", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ status: "DRAFT" }));
+      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+
+      await expect(
+        service.checkDuplicate({ supplierInvoiceNumber: "inv-1", total: 100 }),
+      ).resolves.toEqual({
+        duplicate: {
+          billId: "vb-9",
+          billNumber: "BILL-2026-0009",
+          status: "DRAFT",
+          resumable: true,
+          totalOwed: 100,
+          billDate: new Date("2026-06-01"),
+          receivedDate: new Date("2026-06-02"),
+          supplierName: "Acme Foods",
+          itemCount: 4,
+          matchedBy: "number",
+          totalMatches: true,
+        },
+      });
+    });
+
+    it("returns null without querying when nothing identifies the document", async () => {
+      await expect(service.checkDuplicate({ total: 100 })).resolves.toEqual({ duplicate: null });
+      expect(dupMatch.findVendorBillDuplicate).not.toHaveBeenCalled();
+    });
+
+    it("still reports a fuzzy match so a client can warn before the operator commits", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ matchedBy: "fuzzy" }));
+      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+
+      await expect(
+        service.checkDuplicate({ supplierId: "sup-1", billDate: "2026-06-01" }),
+      ).resolves.toMatchObject({ duplicate: { billId: "vb-9", matchedBy: "fuzzy" } });
+    });
+
+    it("returns null when the matcher finds nothing", async () => {
+      dupMatch.findVendorBillDuplicate.mockResolvedValue(null);
+
+      await expect(
+        service.checkDuplicate({ supplierId: "sup-1", billDate: "2026-06-01" }),
+      ).resolves.toEqual({ duplicate: null });
+    });
+  });
+
   // ─── scanInvoice ────────────────────────────────────────────────────────────
 
   describe("scanInvoice", () => {
@@ -316,6 +522,7 @@ describe("VendorBillsService", () => {
           { provide: PrismaService, useValue: prisma },
           { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+          { provide: DuplicateMatchService, useValue: dupMatch },
         ],
       }).compile();
       service = module.get<VendorBillsService>(VendorBillsService);

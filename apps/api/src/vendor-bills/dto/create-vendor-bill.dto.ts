@@ -1,4 +1,12 @@
-import { IsArray, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 
 /**
@@ -32,6 +40,10 @@ export class CreateVendorBillDto {
   @IsOptional() @IsString() notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
   @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
+  /** The supplier's own invoice number; stored normalized and used for dedup. */
+  @IsOptional() @IsString() supplierInvoiceNumber?: string;
+  /** Operator override after the duplicate warning — records the bill anyway. */
+  @IsOptional() @IsBoolean() allowDuplicate?: boolean;
 
   @IsOptional()
   @IsArray()

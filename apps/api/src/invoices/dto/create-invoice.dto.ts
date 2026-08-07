@@ -59,6 +59,8 @@ export class RecordInvoicePaymentDto {
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsDateString() paidAt?: string;
+  /** Date the money lands in the bank. May be in the future (post-dated check). */
+  @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
 }
@@ -69,6 +71,8 @@ export class UpdatePaymentDto {
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsDateString() paidAt?: string;
+  /** Omit to preserve the stored bank date; send null to clear it. */
+  @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsEnum(["DRAFT", "PAID", "VOID"]) status?: string;
 }
@@ -83,6 +87,8 @@ export class StandalonePaymentDto {
   @IsNumber() @Min(0.01) totalAmount: number;
   @IsEnum(PaymentMethod) method: string;
   @IsOptional() @IsDateString() paidAt?: string;
+  /** Date the money lands in the bank; applied to every row of the allocation group. */
+  @IsOptional() @IsDateString() settledAt?: string | null;
   @IsOptional() @IsNumber() @Min(0) bankCharges?: number;
   @IsOptional() @IsString() reference?: string;
   @IsOptional() @IsString() notes?: string;
@@ -102,4 +108,6 @@ export class SetCheckStatusDto {
   @IsEnum(CheckStatus) status: CheckStatus;
   /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
   @IsOptional() @IsNumber() @Min(0) nsfFeeAmount?: number;
+  /** The true landing date, meaningful with status = CLEARED; sets clearedAt and settledAt. */
+  @IsOptional() @IsDateString() settledAt?: string;
 }

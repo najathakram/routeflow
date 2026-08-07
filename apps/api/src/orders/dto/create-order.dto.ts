@@ -71,6 +71,11 @@ export class CreateOrderDto {
   @IsOptional() @StripHtml() @IsString() @MaxLength(5000) notes?: string;
   @IsOptional() @IsBoolean() urgent?: boolean;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
+  /**
+   * Business date of the order — the day it actually happened, for an order entered
+   * late. Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
+   */
+  @IsOptional() @IsDateString() orderDate?: string;
   @IsOptional() @IsString() @MaxLength(64) routeRunId?: string;
   @IsOptional() @IsString() @MaxLength(64) routeRunStopId?: string;
   @IsOptional() @IsBoolean() immediateDelivery?: boolean;

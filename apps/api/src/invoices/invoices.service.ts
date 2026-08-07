@@ -419,7 +419,10 @@ export class InvoicesService {
     const tenantId = this.prisma.getTenantId();
     // Due date from configured payment terms (e.g. "Net 30")
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
-    const dueDate = new Date();
+    // A backdated order bills on its business date, and the payment term runs from
+    // that date — not from when the invoice happened to be generated.
+    const issueDate = order.orderDate ?? new Date();
+    const dueDate = new Date(issueDate);
     dueDate.setDate(dueDate.getDate() + dueDays);
     // Customer-facing invoice Notes and T&C from tenant settings
     const tenantDefaults = await this.resolveTenantInvoiceDefaults();
@@ -427,7 +430,7 @@ export class InvoicesService {
     const extraInvoiceData: Record<string, any> = {
       dueDate,
       terms: tenantDefaults.terms ?? defaultTerms,
-      issueDate: new Date(),
+      issueDate,
       notes: tenantDefaults.notes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
       // Carry carrier shipment tracking from the order onto the invoice so the
       // shipment shows on the customer's invoice + PDF.
@@ -1777,7 +1780,10 @@ export class InvoicesService {
       }
     }
 
-    const dueDate = new Date();
+    // A backdated order bills on its business date, and the payment term runs from
+    // that date — not from when the invoice happened to be generated.
+    const issueDate = order.orderDate ?? new Date();
+    const dueDate = new Date(issueDate);
     dueDate.setDate(dueDate.getDate() + dueDays);
 
     // Customer-facing invoice Notes and T&C from tenant settings
@@ -1795,7 +1801,7 @@ export class InvoicesService {
     const extraInvoiceData: Record<string, any> = {
       dueDate,
       terms: tenantTerms ?? defaultTerms,
-      issueDate: new Date(),
+      issueDate,
       notes: tenantNotes ?? (order.orderNumber ? `Order #${order.orderNumber}` : null),
     };
 
@@ -1896,13 +1902,16 @@ export class InvoicesService {
     }
     const total = roundMoney(subtotal + taxAmount + feeRemaining);
 
-    // Resolve due date: explicit dto.dueDate wins, else default term.
+    // Resolve due date: explicit dto.dueDate wins, else default term from the issue date.
     const { terms: defaultTerms, dueDays } = await this.resolveDefaultTerms();
+    // A backdated order bills on its business date, and the payment term runs from
+    // that date — not from when the invoice happened to be generated.
+    const issueDate = order.orderDate ?? new Date();
     let dueDate: Date;
     if (dto.dueDate) {
       dueDate = new Date(dto.dueDate);
     } else {
-      dueDate = new Date();
+      dueDate = new Date(issueDate);
       dueDate.setDate(dueDate.getDate() + dueDays);
     }
 
@@ -1925,7 +1934,7 @@ export class InvoicesService {
           total,
           dueDate,
           terms: dto.terms ?? tenantDefaults.terms ?? defaultTerms,
-          issueDate: new Date(),
+          issueDate,
           notes:
             dto.notes ??
             tenantDefaults.notes ??
@@ -3082,6 +3091,7 @@ export class InvoicesService {
 
     const validSortFields: Record<string, any> = {
       paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
+      settledAt: { settledAt: sortDir === "asc" ? "asc" : "desc" },
       amount: { amount: sortDir === "asc" ? "asc" : "desc" },
       createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
       paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
@@ -3273,6 +3283,8 @@ export class InvoicesService {
           reference: dto.reference,
           notes: dto.notes,
           paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+          // Never clamped: a post-dated check settles in the future.
+          settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
           bankCharges: dto.bankCharges,
           status: paymentStatus as any,
           paymentNumber,
@@ -3528,6 +3540,10 @@ export class InvoicesService {
           reference: dto.reference,
           notes: dto.notes,
           ...(dto.paidAt && { paidAt: new Date(dto.paidAt) }),
+          // Key present = set or (null) clear; key absent = keep what is stored.
+          ...(dto.settledAt !== undefined && {
+            settledAt: dto.settledAt ? new Date(dto.settledAt) : null,
+          }),
           ...(dto.bankCharges !== undefined && { bankCharges: dto.bankCharges }),
           status: newPaymentStatus,
         },
@@ -3715,6 +3731,8 @@ export class InvoicesService {
   async recordStandalonePayment(dto: StandalonePaymentDto) {
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    // One bank date for the whole allocation group — the money landed once.
+    const settledAt = dto.settledAt ? new Date(dto.settledAt) : null;
     const status = dto.status ?? "PAID";
 
     return this.prisma.tenantTransaction(async (tx) => {
@@ -3747,6 +3765,7 @@ export class InvoicesService {
             amount: alloc.amount,
             method: dto.method as any,
             paidAt,
+            settledAt,
             bankCharges: dto.bankCharges,
             reference: dto.reference,
             notes: dto.notes,
@@ -3900,13 +3919,26 @@ export class InvoicesService {
       }
 
       const now = new Date();
+      // clearedAt is the CHECK-lifecycle audit mark — when the transition happened —
+      // so it may default to the clock. settledAt is operator-supplied truth about
+      // the bank and must NEVER be inferred from when someone clicked: cash-basis
+      // reporting windows on `settledAt ?? paidAt`, so stamping it here would move a
+      // historical payment into the current period and restate a closed one. Absent
+      // an explicit date the column stays as it is (NULL rows keep falling back to
+      // paidAt); an explicit date is authoritative and drives both fields.
+      const explicitSettledAt = dto.settledAt ? new Date(dto.settledAt) : null;
 
       if (dto.status === "DEPOSITED" || dto.status === "CLEARED") {
         await tx.invoicePayment.update({
           where: { id: paymentId },
           data: {
             checkStatus: dto.status,
-            ...(dto.status === "DEPOSITED" ? { depositedAt: now } : { clearedAt: now }),
+            ...(dto.status === "DEPOSITED"
+              ? { depositedAt: now }
+              : {
+                  clearedAt: explicitSettledAt ?? now,
+                  ...(explicitSettledAt ? { settledAt: explicitSettledAt } : {}),
+                }),
           },
         });
         const invoice = await tx.invoice.findUnique({
@@ -4036,6 +4068,7 @@ export class InvoicesService {
 
     const validSortFields: Record<string, any> = {
       paidAt: { paidAt: sortDir === "asc" ? "asc" : "desc" },
+      settledAt: { settledAt: sortDir === "asc" ? "asc" : "desc" },
       amount: { amount: sortDir === "asc" ? "asc" : "desc" },
       createdAt: { createdAt: sortDir === "asc" ? "asc" : "desc" },
       paymentNumber: { paymentNumber: sortDir === "asc" ? "asc" : "desc" },
@@ -4062,11 +4095,13 @@ export class InvoicesService {
         : s;
     };
 
-    const header = "Payment#,Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
+    const header =
+      "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
     const lines = rows.map((r: any) =>
       [
         escape(r.paymentNumber ?? ""),
         escape(r.paidAt ? new Date(r.paidAt).toISOString().split("T")[0] : ""),
+        escape(r.settledAt ? new Date(r.settledAt).toISOString().split("T")[0] : ""),
         escape(r.invoice?.customer?.businessName ?? ""),
         escape(r.invoice?.invoiceNumber ?? ""),
         escape(r.method ?? ""),

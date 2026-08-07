@@ -363,4 +363,139 @@ describe("BookkeepingService", () => {
       expect(invoiceRow?.balance).toBe(100);
     });
   });
+
+  // ─── Cash-basis reporting on the settled (bank) date ────────────────────────
+
+  describe("cash-basis reports use settledAt ?? paidAt", () => {
+    const FROM = "2026-01-01";
+    const TO = "2026-03-31";
+
+    // The Prisma mock does not evaluate `where`, so apply the service's own filter
+    // here: a regression back to a plain paidAt window flips these rows' membership.
+    const matchesCondition = (value: any, cond: any): boolean => {
+      if (cond === null) return value === null;
+      if (cond instanceof Date) return value instanceof Date && +value === +cond;
+      if (cond && typeof cond === "object") {
+        if (cond.gte !== undefined && !(value && value >= cond.gte)) return false;
+        if (cond.lte !== undefined && !(value && value <= cond.lte)) return false;
+        return true;
+      }
+      return value === cond;
+    };
+    const matchesWhere = (row: any, where: any): boolean =>
+      Object.entries(where ?? {}).every(([key, cond]) => {
+        if (key === "OR") return (cond as any[]).some((c) => matchesWhere(row, c));
+        if (key === "AND") return (cond as any[]).every((c) => matchesWhere(row, c));
+        return matchesCondition(row[key], cond);
+      });
+
+    const invoiceRel = {
+      id: "inv-1",
+      invoiceNumber: "INV-0001",
+      customerId: "cust-1",
+      customer: { id: "cust-1", businessName: "Acme" },
+    };
+    const payment = (over: Record<string, any>) => ({
+      status: "PAID",
+      settledAt: null,
+      createdAt: new Date("2020-01-01T00:00:00Z"),
+      invoice: invoiceRel,
+      ...over,
+    });
+
+    // Bank date inside the window, instrument recorded before it.
+    const SETTLED_IN = payment({
+      id: "pay-settled-in",
+      amount: 100,
+      paidAt: new Date("2025-12-20T00:00:00Z"),
+      settledAt: new Date("2026-02-15T00:00:00Z"),
+    });
+    // Instrument recorded inside the window, money landed before it.
+    const SETTLED_OUT = payment({
+      id: "pay-settled-out",
+      amount: 200,
+      paidAt: new Date("2026-02-10T00:00:00Z"),
+      settledAt: new Date("2025-12-31T00:00:00Z"),
+    });
+    // Legacy row: no bank date recorded, so paidAt still decides.
+    const LEGACY = payment({
+      id: "pay-legacy",
+      amount: 300,
+      paidAt: new Date("2026-02-01T00:00:00Z"),
+    });
+    // Post-dated check: clears after the window closes.
+    const POST_DATED = payment({
+      id: "pay-post-dated",
+      amount: 400,
+      paidAt: new Date("2026-03-15T00:00:00Z"),
+      settledAt: new Date("2026-08-01T00:00:00Z"),
+    });
+    const VOIDED = payment({
+      id: "pay-void",
+      amount: 500,
+      status: "VOID",
+      paidAt: new Date("2026-02-20T00:00:00Z"),
+      settledAt: new Date("2026-02-20T00:00:00Z"),
+    });
+
+    const ALL = [SETTLED_IN, SETTLED_OUT, LEGACY, POST_DATED, VOIDED];
+
+    beforeEach(() => {
+      prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+        ALL.filter((p) => matchesWhere(p, args.where)),
+      );
+    });
+
+    it("getCashFlow counts money in on the settled date, keeping legacy rows on paidAt", async () => {
+      const result = await service.getCashFlow(FROM, TO);
+
+      // SETTLED_IN (bank date inside) + LEGACY (no bank date, paidAt inside).
+      expect(result.totalIn).toBe(400);
+    });
+
+    it("getPaymentsReceivedReport includes/excludes rows on the effective date", async () => {
+      const result = await service.getPaymentsReceivedReport(FROM, TO);
+      const ids = result.data.map((r) => r.id);
+
+      expect(ids).toContain("pay-settled-in");
+      expect(ids).toContain("pay-legacy");
+      // Money landed before the window even though the instrument was recorded in it.
+      expect(ids).not.toContain("pay-settled-out");
+      // Post-dated check clears after the window closes.
+      expect(ids).not.toContain("pay-post-dated");
+      expect(ids).not.toContain("pay-void");
+      expect(result.total).toBe(400);
+    });
+
+    it("getPaymentsReceivedReport renders settledAt when present and paidAt otherwise", async () => {
+      const result = await service.getPaymentsReceivedReport(FROM, TO);
+      const byId = Object.fromEntries(result.data.map((r) => [r.id, r]));
+
+      expect(byId["pay-settled-in"].createdAt).toEqual(SETTLED_IN.settledAt);
+      expect(byId["pay-legacy"].createdAt).toEqual(LEGACY.paidAt);
+      // Rows come back newest-first on that same effective date.
+      expect(result.data.map((r) => r.id)).toEqual(["pay-settled-in", "pay-legacy"]);
+    });
+
+    it("matches the old paidAt-only output while no bank dates are recorded anywhere", async () => {
+      const legacyRows = ALL.map((p) => ({ ...p, settledAt: null }));
+      prisma.invoicePayment.findMany.mockImplementation(async (args: any) =>
+        legacyRows.filter((p) => matchesWhere(p, args.where)),
+      );
+
+      const result = await service.getPaymentsReceivedReport(FROM, TO);
+
+      // Exactly the PAID rows whose paidAt falls in the window, newest first.
+      expect(result.data.map((r) => r.id)).toEqual([
+        "pay-post-dated",
+        "pay-settled-out",
+        "pay-legacy",
+      ]);
+      expect(result.data.map((r) => r.createdAt)).toEqual([
+        POST_DATED.paidAt,
+        SETTLED_OUT.paidAt,
+        LEGACY.paidAt,
+      ]);
+    });
+  });
 });

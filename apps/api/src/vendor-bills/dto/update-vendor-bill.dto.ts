@@ -12,6 +12,8 @@ export class UpdateVendorBillDto {
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() notes?: string;
+  /** The supplier's own invoice number; stored normalized and used for dedup. */
+  @IsOptional() @IsString() supplierInvoiceNumber?: string;
 
   @IsOptional()
   @IsArray()

@@ -47,6 +47,12 @@ export class CreateSaleDto {
   /** Optional flat shipping fee added to the order total (never taxed). */
   @IsOptional() @IsNumber() @Min(0) @Max(1_000_000) shippingFee?: number;
   @IsOptional() @IsDateString() requestedDeliveryDate?: string;
+  /**
+   * Business date of the sale — the day it actually happened, for a sale entered
+   * late. Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
+   * With deliveredNow it also becomes the order's deliveredAt.
+   */
+  @IsOptional() @IsDateString() orderDate?: string;
 
   /** Only used when deliveredNow=false: issue (send) the draft invoice now instead of leaving it DRAFT. */
   @IsOptional() @IsBoolean() send?: boolean;
