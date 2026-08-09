@@ -21,8 +21,24 @@ export interface VendorBillDuplicateMatch {
   receivedDate: Date | null;
   supplierId: string | null;
   itemCount: number;
-  matchedBy: "number" | "fuzzy";
+  /** `lines` is reported by callers that matched through an InvoiceScan fingerprint. */
+  matchedBy: "number" | "fuzzy" | "lines";
   totalMatches: boolean;
+}
+
+/**
+ * An earlier scan of the same document, and which key proved it.
+ * `file` (identical bytes) > `lines` (identical qty/unit-cost numbers) >
+ * `number` (the printed invoice number) — strongest evidence first.
+ */
+export interface ScanDuplicateMatch {
+  id: string;
+  status: string;
+  createdAt: Date;
+  vendorBillId: string | null;
+  supplierInvoiceNumber: string | null;
+  total: number | null;
+  matchedBy: "file" | "lines" | "number";
 }
 
 /** Money agreement window — Decimal(10,2) columns compared as floats. */
@@ -53,7 +69,28 @@ export function formatSupplierInvoiceNote(invoiceNumber: string): string {
   return `Batch import — Supplier invoice #${invoiceNumber}`;
 }
 
+const INVOICE_SCAN_DUP_SELECT = {
+  id: true,
+  status: true,
+  createdAt: true,
+  vendorBillId: true,
+  supplierInvoiceNumber: true,
+  total: true,
+} as const;
+
 const SUPPLIER_INVOICE_NOTE_RE = /supplier invoice #\s*(\S+)/i;
+
+/**
+ * The one place the invoice-number normalization rule is written. Every writer
+ * and every lookup must go through it: a value stored under a different rule is
+ * a value the matcher will never find again.
+ * `scripts/backfill-supplier-invoice-number.mjs` greps this file for the
+ * expression below and aborts when it drifts, so keep the body literal here
+ * rather than delegating it elsewhere.
+ */
+export function normalizeInvoiceNumber(raw: string | null | undefined): string {
+  return (raw ?? "").toUpperCase().replace(/\s+/g, "");
+}
 
 export function extractSupplierInvoiceNumber(notes: string | null | undefined): string | null {
   const match = notes?.match(SUPPLIER_INVOICE_NOTE_RE);
@@ -76,7 +113,7 @@ export class DuplicateMatchService {
 
   /** Normalize an invoice number for fuzzy matching: strip whitespace, uppercase. */
   normalizeNumber(raw: string): string {
-    return (raw ?? "").toUpperCase().replace(/\s+/g, "");
+    return normalizeInvoiceNumber(raw);
   }
 
   /**
@@ -179,6 +216,92 @@ export class DuplicateMatchService {
     if (!supplierId || !issueDate || total == null) return null;
     const candidates = await this.fuzzyVendorBillCandidates(supplierId, total, issueDate, false);
     return candidates.length ? this.toVendorBillMatch(candidates[0], "fuzzy", total) : null;
+  }
+
+  /**
+   * Find an earlier InvoiceScan of the same document, strongest key first:
+   * identical bytes, then identical line numbers, then the printed invoice
+   * number. Only the first key that hits is reported — a caller acting on a
+   * `file` match never needs to know the weaker keys also agreed.
+   *
+   * DISCARDED scans never match: discarding is how an operator says a document
+   * was a mistake, so it must not haunt the next upload.
+   *
+   * The supplier narrows the NUMBER lookup only ("INV-1001" recurs across
+   * vendors) and never the lines lookup — a fingerprint of the same quantities
+   * at the same unit costs summing to the same total is document identity, and
+   * scoping it by supplier would miss exactly the case it exists for, where the
+   * two scans read the vendor's name differently.
+   */
+  async findScanDuplicate(params: {
+    fileHash?: string | null;
+    lineFingerprint?: string | null;
+    supplierId?: string | null;
+    number?: string | null;
+  }): Promise<ScanDuplicateMatch | null> {
+    this.requireTenant();
+    const notDiscarded = { status: { not: "DISCARDED" as const } };
+
+    if (params.fileHash) {
+      const hit = await this.findScan({ ...notDiscarded, fileHash: params.fileHash });
+      if (hit) return this.toScanMatch(hit, "file");
+    }
+
+    if (params.lineFingerprint) {
+      // Supplier-scoped, unlike the fileHash layer above: identical bytes are the
+      // same document whoever sent it, but identical qty/unit-cost figures from a
+      // DIFFERENT supplier are a coincidence, not a repeat. Unassigned scans stay
+      // in range because a duplicate is often created before the supplier resolves.
+      const hit = await this.findScan({
+        ...notDiscarded,
+        lineFingerprint: params.lineFingerprint,
+        ...this.supplierScope(params.supplierId ?? null, true),
+      });
+      if (hit) return this.toScanMatch(hit, "lines");
+    }
+
+    const target = params.number ? normalizeInvoiceNumber(params.number) : "";
+    if (target) {
+      const hit = await this.findScan({
+        ...notDiscarded,
+        supplierInvoiceNumber: target,
+        ...this.supplierScope(params.supplierId ?? null, true),
+      });
+      if (hit) return this.toScanMatch(hit, "number");
+    }
+
+    return null;
+  }
+
+  /** Newest first — the most recent handling of a document is what a caller has to explain. */
+  private findScan(where: Record<string, unknown>) {
+    return this.prisma.forTenant().invoiceScan.findFirst({
+      where,
+      select: INVOICE_SCAN_DUP_SELECT,
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  private toScanMatch(
+    row: {
+      id: string;
+      status: string;
+      createdAt: Date;
+      vendorBillId: string | null;
+      supplierInvoiceNumber: string | null;
+      total: unknown;
+    },
+    matchedBy: ScanDuplicateMatch["matchedBy"],
+  ): ScanDuplicateMatch {
+    return {
+      id: row.id,
+      status: row.status,
+      createdAt: row.createdAt,
+      vendorBillId: row.vendorBillId ?? null,
+      supplierInvoiceNumber: row.supplierInvoiceNumber ?? null,
+      total: row.total == null ? null : Number(row.total),
+      matchedBy,
+    };
   }
 
   /**

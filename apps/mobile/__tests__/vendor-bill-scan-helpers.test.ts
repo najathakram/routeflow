@@ -2,12 +2,17 @@ import {
   buildBillDtoFromScan,
   duplicateBillPrompt,
   mappingsFromScan,
+  priorScanPrompt,
   scanBillTotal,
   unmatchedCount,
   linkScanItem,
   type SupplierRef,
 } from "../lib/vendor-bill-scan";
-import type { DuplicateVendorBillInfo, ScanResult } from "../lib/api/vendor-bills";
+import type {
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  ScanResult,
+} from "../lib/api/vendor-bills";
 
 /**
  * Locks the ScanResult → create-bill DTO mapping to the API's actual field names
@@ -61,11 +66,36 @@ describe("buildBillDtoFromScan", () => {
       billDate: "2026-07-01",
       notes: "AI scanned from Metro Wholesale · Supplier invoice #INV-100",
       supplierInvoiceNumber: "INV-100",
+      taxAmount: 10,
+      subtotal: 90,
       items: [
-        { description: "Cola 24pk", productId: "prod-1", qty: 2, unitCost: 20 },
-        { description: "Mystery Snack", productId: undefined, qty: 5, unitCost: 10 },
+        { description: "Cola 24pk", productId: "prod-1", qty: 2, unitCost: 20, lineTotal: 40 },
+        { description: "Mystery Snack", productId: undefined, qty: 5, unitCost: 10, lineTotal: 50 },
       ],
     });
+  });
+
+  it("carries the per-line item code and pack size the invoice printed", () => {
+    const result = scanResult();
+    result.items[0].sku = "  MW-4471 ";
+    result.items[0].packSize = 24;
+    const dto = buildBillDtoFromScan(result, suppliers);
+    expect(dto.items[0].sku).toBe("MW-4471");
+    expect(dto.items[0].packSize).toBe(24);
+    // Nothing invented for a line that printed neither.
+    expect(dto.items[1].sku).toBeUndefined();
+    expect(dto.items[1].packSize).toBeUndefined();
+  });
+
+  it("links the bill to the scan it was keyed from", () => {
+    expect(buildBillDtoFromScan(scanResult({ scanId: "scan-9" }), suppliers).scanId).toBe("scan-9");
+    expect(buildBillDtoFromScan(scanResult(), suppliers).scanId).toBeUndefined();
+  });
+
+  it("omits tax and subtotal rather than sending zeros the invoice never printed", () => {
+    const dto = buildBillDtoFromScan(scanResult({ tax: null, subtotal: null }), suppliers);
+    expect(dto.taxAmount).toBeUndefined();
+    expect(dto.subtotal).toBeUndefined();
   });
 
   it("carries the scanned invoice number as the server's duplicate key", () => {
@@ -153,13 +183,19 @@ describe("buildBillDtoFromScan", () => {
 });
 
 describe("scanBillTotal", () => {
-  it("matches what the server computes as totalOwed (the duplicate probe compares totals)", () => {
-    expect(scanBillTotal(buildBillDtoFromScan(scanResult(), suppliers))).toBe(90);
+  it("matches what the server computes as totalOwed — line sum PLUS the printed tax", () => {
+    // 2×20 + 5×10 = 90 of goods, and the invoice's own $10 of tax is owed too.
+    expect(scanBillTotal(buildBillDtoFromScan(scanResult(), suppliers))).toBe(100);
+  });
+
+  it("is the line sum alone when the invoice printed no tax", () => {
+    expect(scanBillTotal(buildBillDtoFromScan(scanResult({ tax: null }), suppliers))).toBe(90);
   });
 
   it("rounds to cents", () => {
     const dto = buildBillDtoFromScan(
       scanResult({
+        tax: null,
         items: [
           {
             extractedName: "Odd lot",
@@ -216,6 +252,51 @@ describe("duplicateBillPrompt", () => {
     expect(duplicateBillPrompt(duplicate({ supplierName: null })).message).toContain(
       "Bill VB-0007",
     );
+  });
+});
+
+describe("priorScanPrompt", () => {
+  const prior = (overrides: Partial<PriorScanSummary> = {}): PriorScanSummary => ({
+    scanId: "scan-1",
+    scannedAt: "2026-07-03T12:00:00.000Z",
+    status: "SCANNED",
+    vendorBillId: null,
+    billNumber: null,
+    supplierInvoiceNumber: "INV-100",
+    total: 100,
+    ...overrides,
+  });
+
+  it("offers the bill when the earlier scan was already posted", () => {
+    const p = priorScanPrompt(
+      prior({ status: "POSTED", vendorBillId: "bill-1", billNumber: "BILL-2026-0007" }),
+    );
+    expect(p.title).toBe("You already scanned this");
+    expect(p.message).toContain("BILL-2026-0007");
+    expect(p.message).toContain("$100.00");
+    expect(p.message).toContain("double stock");
+    expect(p.billId).toBe("bill-1");
+    expect(p.billLabel).toBe("Open BILL-2026-0007");
+  });
+
+  it("frames an unfinished review as restored work, with nothing to open", () => {
+    const p = priorScanPrompt(prior());
+    expect(p.title).toBe("Picking up where you left off");
+    expect(p.message).toContain("never finished");
+    expect(p.message).toContain("wasn't re-read");
+    expect(p.billId).toBeNull();
+  });
+
+  it("has nothing to open when a POSTED scan lost its bill", () => {
+    const p = priorScanPrompt(prior({ status: "POSTED", vendorBillId: null }));
+    expect(p.billId).toBeNull();
+    expect(p.title).toBe("Picking up where you left off");
+  });
+
+  it("drops the date clause rather than printing an unreadable one", () => {
+    const { message } = priorScanPrompt(prior({ scannedAt: "not-a-date" }));
+    expect(message).toContain("You scanned this invoice before and never finished");
+    expect(message).not.toContain("Invalid Date");
   });
 });
 

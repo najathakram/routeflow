@@ -23,6 +23,7 @@ import {
   useSaveProductMapping,
   getDuplicateVendorBillError,
   type DuplicateVendorBillInfo,
+  type PriorScanSummary,
   type ScanResult,
   type ScannedItem,
 } from "../../../lib/api/vendor-bills";
@@ -31,6 +32,7 @@ import {
   buildBillDtoFromScan,
   duplicateBillPrompt,
   mappingsFromScan,
+  priorScanPrompt,
   scanBillTotal,
   unmatchedCount,
   linkScanItem,
@@ -83,6 +85,9 @@ export default function ScanInvoiceScreen() {
         setScanResult(data);
         setEditedResult(data);
         setStep("review");
+        // Land on the review either way — the extraction is real work, already
+        // done. The prompt only tells the operator where it came from.
+        if (data.priorScan) announcePriorScan(data.priorScan);
       },
       onError: (e: any) => {
         setStep("upload");
@@ -93,6 +98,25 @@ export default function ScanInvoiceScreen() {
         );
       },
     });
+  };
+
+  /** Same shape as the duplicate alert: what happened last time, and the one
+   *  action that follows from it. */
+  const announcePriorScan = (prior: PriorScanSummary) => {
+    const { title, message, billId, billLabel } = priorScanPrompt(prior);
+    chooseAction(
+      title,
+      message,
+      billId
+        ? [
+            {
+              label: billLabel,
+              onPress: () => router.replace(`/(operator)/vendor-bills/${billId}`),
+            },
+            { label: "Review anyway", style: "cancel" },
+          ]
+        : [{ label: "Continue" }],
+    );
   };
 
   const promptDuplicate = (duplicate: DuplicateVendorBillInfo, dto: ScanBillDto) => {
@@ -197,6 +221,7 @@ export default function ScanInvoiceScreen() {
           saving={createMut.isPending}
           checking={checkDuplicateMut.isPending}
           imageUri={imageUri}
+          onOpenBill={(billId) => router.replace(`/(operator)/vendor-bills/${billId}`)}
         />
       ) : null}
     </SafeAreaView>
@@ -269,6 +294,39 @@ function ConfidenceDot({ confidence }: { confidence: ScannedItem["confidence"] }
   return <View style={[styles.confidenceDot, { backgroundColor: color }]} />;
 }
 
+/** The alert is a moment; this is the standing record of it. Amber when a bill
+ *  already exists (a mistake to avoid), green when an abandoned review was
+ *  simply restored (work already paid for). */
+function PriorScanBanner({
+  prior,
+  onOpenBill,
+}: {
+  prior: PriorScanSummary;
+  onOpenBill: (billId: string) => void;
+}) {
+  const { message, billId, billLabel } = priorScanPrompt(prior);
+  const ink = billId ? ios.system.orangeInk : ios.system.greenInk;
+  const wash = billId ? ios.system.orangeWash : ios.system.greenWash;
+  return (
+    <View style={[styles.priorBanner, { backgroundColor: wash }]}>
+      <Ionicons
+        name={billId ? "alert-circle" : "checkmark-circle"}
+        size={16}
+        color={ink}
+        style={{ marginTop: 1 }}
+      />
+      <View style={{ flex: 1, gap: 6 }}>
+        <Text style={[styles.priorBannerText, { color: ink }]}>{message}</Text>
+        {billId ? (
+          <Pressable onPress={() => onOpenBill(billId)}>
+            <Text style={[styles.priorBannerLink, { color: ink }]}>{billLabel}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 function ReviewStep({
   result,
   onChange,
@@ -276,6 +334,7 @@ function ReviewStep({
   saving,
   checking,
   imageUri,
+  onOpenBill,
 }: {
   result: ScanResult;
   onChange: (r: ScanResult) => void;
@@ -283,6 +342,7 @@ function ReviewStep({
   saving: boolean;
   checking: boolean;
   imageUri: string | null;
+  onOpenBill: (billId: string) => void;
 }) {
   // Row index whose "link existing product" picker / "create product" sheet is
   // open (mutually exclusive).
@@ -298,6 +358,12 @@ function ReviewStep({
     <ScrollView showsVerticalScrollIndicator={false}>
       {imageUri ? (
         <Image source={{ uri: imageUri }} style={styles.reviewImg} resizeMode="cover" />
+      ) : null}
+
+      {result.priorScan ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+          <PriorScanBanner prior={result.priorScan} onOpenBill={onOpenBill} />
+        </View>
       ) : null}
 
       <View style={styles.reviewSection}>
@@ -560,6 +626,19 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label,
     fontVariant: ["tabular-nums"],
+  },
+  priorBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderRadius: 10,
+    padding: 10,
+  },
+  priorBannerText: { fontSize: 12, fontFamily: "Inter_500Medium", lineHeight: 16 },
+  priorBannerLink: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    textDecorationLine: "underline",
   },
   unmatchedBanner: {
     flexDirection: "row",

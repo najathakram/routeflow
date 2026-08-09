@@ -107,6 +107,37 @@ export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBill
   return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
 }
 
+/** Lifecycle of an archived scan. DISCARDED is filtered out server-side, so a
+ *  re-upload never reports one. */
+export type InvoiceScanStatus = "SCANNED" | "POSTED" | "DISCARDED" | "DUPLICATE";
+
+/**
+ * The archive entry for a document that was read before. Present only when the
+ * uploaded bytes hash to a scan already on file — in which case the extraction
+ * it arrives with is the STORED one, replayed without a second AI call.
+ */
+export interface PriorScanSummary {
+  scanId: string;
+  /** ISO timestamp of the earlier scan. */
+  scannedAt: string;
+  status: InvoiceScanStatus;
+  vendorBillId: string | null;
+  billNumber: string | null;
+  supplierInvoiceNumber: string | null;
+  total: number | null;
+}
+
+/**
+ * What `POST /vendor-bills/scan-invoice` returns on top of the extraction
+ * itself. Kept beside the vendor-bill types rather than folded into ScanResult
+ * because these fields describe the archive, not the document: `scanId` has to
+ * travel back on the create so the bill and the scan it came from are linked.
+ */
+export interface ScanArchive {
+  scanId?: string | null;
+  priorScan?: PriorScanSummary | null;
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export function useVendorBills(params?: {
@@ -151,6 +182,14 @@ export interface CreateVendorBillItem {
   description: string;
   qty: number;
   unitCost: number;
+  /** Supplier's item code as printed on the line — what matches this line to a
+   *  product on the next scan from the same supplier. */
+  sku?: string;
+  /** Units per box/case, only when the line explicitly printed one. */
+  packSize?: number;
+  /** Line amount as printed. Evidence from the document, not derived from
+   *  qty × unitCost — an operator correction leaves it standing. */
+  lineTotal?: number;
 }
 
 export interface CreateVendorBillDto {
@@ -162,6 +201,10 @@ export interface CreateVendorBillDto {
   notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
   taxAmount?: number;
+  /** Pre-tax total as printed. Stored only; totalOwed still comes from the lines. */
+  subtotal?: number;
+  /** The scan this bill was keyed from — marks that scan POSTED and links the two. */
+  scanId?: string;
   /** The supplier's own invoice number — normalized and stored server-side. */
   supplierInvoiceNumber?: string;
   /** Operator override: record the bill even though it matches an existing one. */

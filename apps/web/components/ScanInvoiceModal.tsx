@@ -34,7 +34,10 @@ import {
   useReceiveVendorBill,
   useSaveProductMapping,
   getDuplicateVendorBillError,
+  type CreateVendorBillItem,
   type DuplicateVendorBillInfo,
+  type PriorScanSummary,
+  type ScanArchive,
 } from "@/lib/api/vendor-bills";
 import { useCreateExpense, useExpenseCategories } from "@/lib/api/finance";
 import { SupplierSelect } from "./SupplierSelect";
@@ -51,6 +54,13 @@ const fmt = (n: number | null | undefined) =>
     : "—";
 
 type CreateMode = "bill" | "expense" | "both";
+
+/**
+ * The extraction plus its archive envelope. `scanInvoice()` is typed against
+ * the document shape alone, so the archive fields are asserted on at the one
+ * call site rather than being threaded through the transport type.
+ */
+type ArchivedScanResult = ScanResult & ScanArchive;
 
 interface VarietySplit {
   productId: string;
@@ -118,7 +128,7 @@ interface InvoiceGroup {
   previewIndex: number;
   status: InvoiceStatus;
   error: string | null;
-  scanResult: ScanResult | null;
+  scanResult: ArchivedScanResult | null;
   reviewItems: ReviewItem[];
   /** Supplier's own invoice number — extracted, editable, saved into bill notes. */
   invoiceNumber: string;
@@ -517,7 +527,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   }, []);
 
   /** Seed an invoice's review state from its scan result. */
-  const applyScan = (id: string, result: ScanResult) => {
+  const applyScan = (id: string, result: ArchivedScanResult) => {
     const items: ReviewItem[] = (result.items ?? []).map((item) => ({
       extractedName: item.extractedName,
       productId: item.matchedProductId ?? "",
@@ -576,7 +586,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     const controller = new AbortController();
     abortersRef.current.set(inv.id, controller);
     try {
-      const result = await scanInvoice(inv.files, controller.signal);
+      // A document already in the archive comes back instantly with its stored
+      // extraction and a `priorScan` block — same shape, no second AI call.
+      const result = (await scanInvoice(inv.files, controller.signal)) as ArchivedScanResult;
       if (runId !== runIdRef.current) return;
       applyScan(inv.id, result);
       if (singleFlow) {
@@ -1004,8 +1016,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   // Expand split rows: one VendorBillItem per non-zero variant entry.
   // Split entries inherit the row's unitCost (same SKU family on the invoice).
-  const buildBillItems = (inv: InvoiceGroup) =>
-    validItemsOf(inv).flatMap((item) => {
+  // They deliberately carry NO sku/packSize/lineTotal: the printed code and
+  // amount describe the whole line, and copying them onto each part would
+  // claim one item code maps to several products.
+  const buildBillItems = (inv: InvoiceGroup): CreateVendorBillItem[] =>
+    validItemsOf(inv).flatMap((item): CreateVendorBillItem[] => {
       if (item.splits && item.splits.length > 0) {
         return item.splits
           .filter((s) => parseFloat(s.qty) > 0)
@@ -1022,6 +1037,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           description: item.description,
           qty: parseFloat(item.qty) || 1,
           unitCost: parseFloat(item.unitCost) || 0,
+          // As printed on the invoice, kept verbatim. An operator correction to
+          // qty/unitCost doesn't rewrite them — the document still says what it
+          // says, and `sku` is what matches this line next time.
+          sku: item.sku?.trim() || undefined,
+          packSize: item.packSize ?? undefined,
+          lineTotal: item.lineTotal ?? undefined,
         },
       ];
     });
@@ -1046,6 +1067,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       if (wantsBill && !billId) {
         const billItems = buildBillItems(inv);
         const scannedTax = inv.scanResult?.tax ?? 0;
+        const scannedSubtotal = inv.scanResult?.subtotal ?? 0;
         const bill = await createBill.mutateAsync({
           supplierId: inv.supplierId,
           billDate: inv.billDate,
@@ -1059,6 +1081,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           // Sales tax is owed too; the server folds it into totalOwed (line
           // items only carry the pre-tax unit costs).
           taxAmount: scannedTax > 0 ? roundMoney(scannedTax) : undefined,
+          // Pre-tax total as the invoice printed it — stored as evidence; the
+          // amount owed is still summed from the lines.
+          subtotal: scannedSubtotal > 0 ? roundMoney(scannedSubtotal) : undefined,
+          // Closes the loop from bill back to the document it came from, and
+          // marks that scan POSTED so the archive stops offering it as unfinished.
+          scanId: inv.scanResult?.scanId ?? undefined,
         });
         billId = (bill as { id?: string })?.id ?? null;
         patchInvoiceById(invoiceId, { createdBillId: billId });
@@ -1562,6 +1590,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                             Created — this invoice is done and won&apos;t be posted again.
                           </p>
                         </div>
+                      )}
+                      {active?.status !== "created" && scanResult?.priorScan && (
+                        <PriorScanBanner prior={scanResult.priorScan} />
                       )}
                       {active?.status === "scanned" && active.error && (
                         <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-bg p-3">
@@ -2341,6 +2372,70 @@ const STATUS_DOT: Record<InvoiceStatus, { cls: string; label: string }> = {
 };
 
 /**
+ * Says what happened the last time these exact bytes were uploaded. Never a
+ * failure: either the work is already done (a bill exists — open it instead of
+ * paying twice in stock and cash), or an abandoned review just came back
+ * whole, off the archive, with no second AI call.
+ */
+function PriorScanBanner({ prior }: { prior: PriorScanSummary }) {
+  const recorded = prior.status === "POSTED" && !!prior.vendorBillId;
+  // fmtDate answers with an em-dash for anything unparseable; a missing
+  // timestamp should drop the clause entirely rather than read "on —".
+  const at = prior.scannedAt ? new Date(prior.scannedAt) : null;
+  const when = at && !Number.isNaN(at.getTime()) ? fmtDate(prior.scannedAt) : null;
+  return (
+    <div
+      className={cn(
+        "flex items-start gap-2 rounded-lg border p-3",
+        recorded ? "border-amber-200 bg-amber-50" : "border-green-200 bg-green-50",
+      )}
+      data-testid="prior-scan-banner"
+    >
+      {recorded ? (
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+      ) : (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className={cn("text-xs", recorded ? "text-amber-800" : "text-green-700")}>
+          {recorded ? (
+            <>
+              <span className="font-semibold">
+                You already scanned this — recorded as {prior.billNumber ?? "a vendor bill"}
+                {when ? ` on ${when}` : ""}
+                {prior.total != null ? `, ${fmt(prior.total)}` : ""}.
+              </span>{" "}
+              Open that bill instead of recording it a second time.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">
+                Picking up where you left off — this document was scanned
+                {when ? ` on ${when}` : " earlier"} and never finished.
+              </span>{" "}
+              Everything below is the saved extraction, restored without re-reading the invoice.
+            </>
+          )}
+        </p>
+        {recorded && prior.vendorBillId && (
+          <div className="mt-2">
+            <a
+              href={`/vendor-bills/${prior.vendorBillId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open {prior.billNumber ?? "existing bill"}
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Warns that this supplier invoice is already in the system. Two shapes,
  * because the recovery differs: a DRAFT match is resumable (finish that bill),
  * an already-received match is not (a second one would double stock).
@@ -2487,6 +2582,10 @@ function InvoiceNavigator({
   // Cross-session duplicate: matched against a bill recorded before this batch.
   const existingBill =
     active && active.createMode !== "expense" && !active.allowDuplicate ? active.duplicate : null;
+  // Byte-identical to a document already in the archive. Suppressed when the
+  // duplicate marker is already saying the same thing about the same bill.
+  const prior = existingBill ? null : (active?.scanResult?.priorScan ?? null);
+  const priorRecorded = !!prior && prior.status === "POSTED" && !!prior.vendorBillId;
 
   return (
     <div className="flex items-center gap-3 border-b border-surface-border bg-surface-raised px-4 py-2">
@@ -2524,6 +2623,17 @@ function InvoiceNavigator({
               {" "}
               — already {existingBill.resumable ? "saved as draft" : "imported as"}{" "}
               {existingBill.billNumber}
+            </span>
+          )}
+          {prior && (
+            <span
+              className={cn("font-medium", priorRecorded ? "text-amber-600" : "text-green-700")}
+            >
+              {" "}
+              —{" "}
+              {priorRecorded
+                ? `already recorded as ${prior.billNumber ?? "a bill"}`
+                : "restored from an earlier scan"}
             </span>
           )}
         </p>
