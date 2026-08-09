@@ -47,72 +47,29 @@ export class InventoryService {
   // ─── Stock overview ──────────────────────────────────────────────────────────
 
   /**
-   * Sum the open (`remainingQty > 0`) lots per product → { qty, value }. Used to
-   * value FIFO/LIFO stock at the actual remaining-lot cost rather than the moving
-   * average (which sales never update, so it drifts after non-uniform restocks).
-   */
-  private async openLotSums(
-    productIds: string[],
-  ): Promise<Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>> {
-    const map = new Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>();
-    if (productIds.length === 0) return map;
-    const lots = await this.prisma.forTenant().stockLot.findMany({
-      where: { productId: { in: productIds }, remainingQty: { gt: 0 } },
-      select: { productId: true, remainingQty: true, unitCost: true },
-    });
-    for (const lot of lots) {
-      const cur = map.get(lot.productId) ?? {
-        qty: new Prisma.Decimal(0),
-        value: new Prisma.Decimal(0),
-      };
-      const qty = new Prisma.Decimal(lot.remainingQty);
-      cur.qty = cur.qty.add(qty);
-      cur.value = cur.value.add(qty.mul(lot.unitCost));
-      map.set(lot.productId, cur);
-    }
-    return map;
-  }
-
-  /**
    * The single effective-cost + carrying-value rule shared by getStockOverview
    * and getValuation so the two money surfaces never disagree:
-   *   • FIFO / LIFO → value the remaining open lots (Σ remainingQty × unitCost),
-   *     plus any stock beyond the lots at the average cost; no lots → averageCost.
-   *   • STANDARD    → standardCost ?? averageCost.
-   *   • AVCO / LAST_COST → averageCost.
-   * `unitCost` is the display cost (for FIFO/LIFO it's value ÷ stock).
+   *   • STANDARD → standardCost ?? averageCost.
+   *   • everything else → averageCost.
+   *
+   * Valuation is weighted-average for every method, because every WRITE path is:
+   * `nextAverageCost` maintains `Product.averageCost` on each receipt regardless
+   * of `costingMethod`. This used to value FIFO/LIFO products from open stock
+   * lots instead, which was only sound while lots were drawn down on sale — and
+   * `recordSale`, the sole draw-down, has had no caller since c5f579c2. Lots
+   * therefore only ever grew while `currentStock` fell, so the lot branch
+   * reported the cost of every unit ever received, including everything already
+   * sold (measured at $12,463 over 54 products before this changed). Reading the
+   * average keeps the read consistent with the write and cannot drift that way.
    */
-  private effectiveValue(
-    p: {
-      costingMethod: CostingMethod;
-      currentStock: Prisma.Decimal | number;
-      averageCost: Prisma.Decimal | null;
-      standardCost: Prisma.Decimal | null;
-    },
-    lot?: { qty: Prisma.Decimal; value: Prisma.Decimal },
-  ): { unitCost: number | null; value: number | null } {
+  private effectiveValue(p: {
+    costingMethod: CostingMethod;
+    currentStock: Prisma.Decimal | number;
+    averageCost: Prisma.Decimal | null;
+    standardCost: Prisma.Decimal | null;
+  }): { unitCost: number | null; value: number | null } {
     const stock = Number(p.currentStock);
     const avg = p.averageCost != null ? Number(p.averageCost) : null;
-    const isLotBased =
-      p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO;
-
-    if (isLotBased) {
-      const lotQty = lot ? Number(lot.qty) : 0;
-      if (lotQty > 0) {
-        const lotValue = Number(lot!.value);
-        // Value any stock beyond the open lots at the average cost (rare drift /
-        // negative-lot data); undervalue rather than crash if the cost is unknown.
-        const uncovered = stock - lotQty;
-        const value = lotValue + (uncovered > 0 && avg != null ? uncovered * avg : 0);
-        const unitCost = stock !== 0 ? value / stock : lotValue / lotQty;
-        return { unitCost: +unitCost.toFixed(4), value: +value.toFixed(4) };
-      }
-      // No open lots — fall back to the moving average.
-      return avg != null
-        ? { unitCost: avg, value: +(stock * avg).toFixed(4) }
-        : { unitCost: null, value: null };
-    }
-
     const eff =
       p.costingMethod === CostingMethod.STANDARD
         ? p.standardCost != null
@@ -145,17 +102,9 @@ export class InventoryService {
       },
     });
 
-    const lotSums = await this.openLotSums(
-      products
-        .filter(
-          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
-        )
-        .map((p) => p.id),
-    );
-
     return products.map((p) => {
       const stock = Number(p.currentStock);
-      const { unitCost, value } = this.effectiveValue(p, lotSums.get(p.id));
+      const { unitCost, value } = this.effectiveValue(p);
       return {
         ...p,
         currentStock: stock,
@@ -831,20 +780,11 @@ export class InventoryService {
       },
     });
 
-    const lotSums = await this.openLotSums(
-      products
-        .filter(
-          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
-        )
-        .map((p) => p.id),
-    );
-
     let totalValue = 0;
     const missingCostProducts: { id: string; name: string }[] = [];
     for (const p of products) {
-      // Same lot-aware effective-cost rule as getStockOverview so the two money
-      // surfaces reconcile (FIFO/LIFO valued from open lots, not the moving avg).
-      const { value } = this.effectiveValue(p, lotSums.get(p.id));
+      // Same effective-cost rule as getStockOverview so the two money surfaces reconcile.
+      const { value } = this.effectiveValue(p);
       if (value == null) {
         missingCostProducts.push({ id: p.id, name: p.name });
         continue;

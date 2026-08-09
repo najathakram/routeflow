@@ -443,38 +443,54 @@ describe("InventoryService", () => {
       expect(result.missingCostProducts).toEqual([{ id: "prod-2", name: "No-cost" }]);
     });
 
-    it("values FIFO/LIFO stock from the remaining lots, not the drifted moving average", async () => {
-      // Bought 10@1 then 10@3 (avg 2), sold 10 (FIFO drew down the 10@1 lot):
-      // 10 units remain, all in the 10@3 lot → true value 30, NOT 10×avg(2)=20.
+    it("values a FIFO-labelled product at the weighted average, ignoring stock lots", async () => {
+      // Lots are never drawn down (recordSale has no caller), so a lot set that
+      // outlives the stock it describes must not inflate the carrying value:
+      // 10 units at avg 2 = 20, regardless of a stale 40-unit lot at cost 3.
       prisma.product.findMany.mockResolvedValue([
         product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
       ]);
       prisma.stockLot.findMany.mockResolvedValue([
-        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+        { productId: "prod-1", remainingQty: D(40), unitCost: D(3) },
       ]);
 
       const result = await service.getValuation();
 
-      expect(result.totalValue).toBe(30);
+      expect(result.totalValue).toBe(20);
       expect(result.missingCostCount).toBe(0);
+      expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
+    });
+
+    it("values a product with zero stock at zero however many lots survive", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "FIFO", currentStock: D(0), averageCost: D(5) }),
+      ]);
+      prisma.stockLot.findMany.mockResolvedValue([
+        { productId: "prod-1", remainingQty: D(7), unitCost: D(5) },
+      ]);
+
+      const result = await service.getValuation();
+
+      expect(result.totalValue).toBe(0);
     });
   });
 
   // ─── getStockOverview ─────────────────────────────────────────────────────────
 
   describe("getStockOverview", () => {
-    it("reports a FIFO row's value + unit cost from its open lots", async () => {
+    it("reports a FIFO row at the weighted average so it reconciles with getValuation", async () => {
       prisma.product.findMany.mockResolvedValue([
         product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
       ]);
       prisma.stockLot.findMany.mockResolvedValue([
-        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+        { productId: "prod-1", remainingQty: D(40), unitCost: D(3) },
       ]);
 
       const [row] = await service.getStockOverview();
 
-      expect(row.totalValue).toBe(30);
-      expect(row.averageCost).toBe(3); // value ÷ stock, not the moving average of 2
+      expect(row.totalValue).toBe(20);
+      expect(row.averageCost).toBe(2);
+      expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
     });
 
     it("selects trackedCategoryId and passes it through to the row (regulated-section filtering)", async () => {
