@@ -271,3 +271,42 @@ phone-UA proxy), plus a latent totals bug found on the way.
   only the scan path passes. A row added by TAPPING was never retained, so `productById` lost it
   once the page changed and the **footer total silently under-reported**. Now unconditional in
   both builders. Guard: `__tests__/paged-rows.test.ts` `mergeProductIndex`.
+
+### Batch 2026-08-11 — persistent operator bottom nav
+
+- **The bar now lives in `app/(operator)/_layout.tsx`, not in the tab navigator.** It used to be
+  drawn by `(tabs)/_layout.tsx`, but that layout is one _screen_ inside the operator `<Stack>` — so
+  the ~88 operator routes outside `(tabs)/` (credit-notes, payments, new-order, products,
+  customers, vendor-bills, …) covered it when pushed. `(tabs)/_layout.tsx` now passes
+  `tabBar={() => null}` so exactly one bar exists.
+  **Rendered as a plain in-flow flex sibling of `<Stack />`, NOT an overlay** — `<Stack>` carries
+  `flex:1` on both platforms, so the viewport is simply ~57px + inset shorter and **no screen needs
+  bottom padding**. Same shape as the `OfflineBanner` above it, and as React Navigation's own
+  `BottomTabView`. Routing is untouched: no file moves, no import rewrites, 176 nav call sites and
+  106 `router.back()` calls unaffected.
+- **`components/OperatorTabBar.tsx`** — five destinations, active state from
+  `lib/operator-tabs.ts` `activeOperatorTab(useSegments())`.
+  **The press action is load-bearing and was verified in a browser, not deduced.** It is
+  `navRef.dispatch(StackActions.popTo("(tabs)", { screen: tab }))`, dispatched **UNTARGETED** via
+  the container ref, preceded by a targeted `popToTop` on the destination tab's own nested stack
+  (`lib/operator-tab-nav.ts` `findDeepTabStackKey`) to preserve pop-to-root. Do **not** swap in
+  `router.push/replace/navigate/dismissTo`: expo-router targets the deepest DIVERGING navigator, so
+  from off-tab REPLACE inserts a _second_ `(tabs)` route (unbounded stack growth), and from inside
+  `(tabs)` the TabRouter implements neither REPLACE nor POP_TO and a targeted unhandled action is
+  swallowed silently. Verified: cold deep-link with no `(tabs)` mounted, off-tab screen, other tab,
+  same tab, and 7 rapid taps — the operator stack holds exactly one `(tabs)` throughout.
+- **`tabPress` is dead now** (it is only ever emitted by a tab bar). The five `popTabToRoot`
+  `listeners={…}` blocks were deleted rather than left as dead code; pop-to-root moved into the bar.
+  The `<Tabs.Screen>` entries stay — they still carry titles, icons and `finance`'s `href: null`.
+- **Pure, spec'd seams:** `lib/operator-tabs.ts` (`activeOperatorTab`, `OPERATOR_TABS`,
+  `OPERATOR_TAB_ROOT`; unmapped sections fall back to **More**, which is the hub they're reached
+  from) and `lib/operator-tab-nav.ts` (`findDeepTabStackKey`). Specs
+  `__tests__/operator-tabs.test.ts` + `__tests__/operator-tab-nav.test.ts`.
+- **No deny-list — the bar shows on every operator page**, including new-order and the inline
+  scanner screens. Footer-over-bar is already shipped: `invoices/new` and `orders/[id]/edit-items`
+  are inside `(tabs)` today, and `NewOrderScreen` already renders under the _driver_ bar. Measured
+  on new-order at 375px: Confirm 676-696, Save-as-draft 718-734, bar label 790 — nothing clipped.
+- **Companions:** `components/FormSheet.tsx` gains `bottomInset` (default OFF — sheets now sit above
+  a bar that already owns the inset; `(customer)/sellers/connect.tsx` is the one consumer with no
+  bar below it and opts in). `lib/toast.ts` web toast moved from `bottom:32px` to `96px` to clear
+  the bar.

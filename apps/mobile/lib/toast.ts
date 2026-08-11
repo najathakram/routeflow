@@ -9,7 +9,9 @@ export function showToast(message: string) {
     el.textContent = message;
     Object.assign(el.style, {
       position: "fixed",
-      bottom: "32px",
+      // Clear of the bottom nav (~57px + safe-area inset), which is now on every
+      // operator screen rather than just the tab routes.
+      bottom: "96px",
       left: "50%",
       transform: "translateX(-50%)",
       background: "rgba(30,30,30,0.88)",

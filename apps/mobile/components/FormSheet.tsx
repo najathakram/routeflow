@@ -32,6 +32,13 @@ interface FormSheetProps {
    * Caller computes the boolean from its form-dirty state.
    */
   warnIfDirty?: boolean;
+  /**
+   * Claim the bottom safe-area inset. Off by default: operator sheets render
+   * above the persistent bottom nav, which already owns that inset, and
+   * claiming it twice leaves an empty band. Set this only where the sheet is
+   * the last thing on screen.
+   */
+  bottomInset?: boolean;
   children: React.ReactNode;
 }
 
@@ -68,6 +75,7 @@ export function FormSheet({
   submitDisabled,
   destructive,
   warnIfDirty,
+  bottomInset = false,
   children,
 }: FormSheetProps) {
   const router = useRouter();
@@ -83,8 +91,16 @@ export function FormSheet({
     await onSubmit();
   };
 
+  // Default: no bottom edge. Almost every consumer sits under a bottom nav that
+  // already owns the home-indicator inset, so claiming it here too leaves an
+  // empty band between the Save row and the bar. Opt in only where there is no
+  // bar below (see `bottomInset`).
+  const edges = bottomInset
+    ? (["top", "left", "right", "bottom"] as const)
+    : (["top", "left", "right"] as const);
+
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safe} edges={edges}>
       <View style={styles.header}>
         <Pressable onPress={handleCancel} style={styles.iconBtn} hitSlop={10}>
           <Ionicons name="close" size={22} color={ios.label} />

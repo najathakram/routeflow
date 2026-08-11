@@ -40,6 +40,10 @@ export default function ConnectSellerScreen() {
       onSubmit={onSubmit}
       submitting={requestMut.isPending}
       submitDisabled={!canSubmit}
+      // The one FormSheet with no bottom nav under it — (customer)/_layout is a
+      // plain Stack and this route is outside its (tabs) group — so the sheet
+      // itself has to claim the home-indicator inset.
+      bottomInset
     >
       <FormSection>
         <FormField label="Seller company code" hint="Ask your sales rep for their RouteFlow code.">
