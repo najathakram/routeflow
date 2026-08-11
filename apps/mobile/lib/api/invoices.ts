@@ -146,6 +146,12 @@ export interface CreateInvoiceItem {
   /** Optional box/piece split for boxed products. Server prorates the line. */
   boxes?: number;
   pieces?: number;
+  /** Flat dollars off this line — server: lineSub = roundMoney(subtotal − discount). */
+  discount?: number;
+  /** Tax FRACTION (0.08 = 8%), charged on the POST-discount line subtotal. */
+  taxRate?: number;
+  /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
+  notes?: string;
 }
 
 export interface CreateInvoiceDto {
@@ -156,6 +162,12 @@ export interface CreateInvoiceDto {
   dueDate?: string;
   terms?: string;
   notes?: string;
+  /** Invoice-level $ discount — applied AFTER tax (never shrinks the tax base). */
+  discount?: number;
+  /** Flat shipping added after tax; never taxed, never part of subtotal. */
+  shippingFee?: number;
+  referenceNumber?: string;
+  subject?: string;
   /** Carrier shipment tracking recorded at creation time. */
   shippingCarrier?: string;
   shippingTrackingNumber?: string;
@@ -249,14 +261,106 @@ export function useDeleteInvoice() {
   });
 }
 
+/**
+ * PATCH /invoices/:id — the body is `Partial<CreateInvoiceDto>` server-side
+ * (mirrors web's useUpdateInvoice). Sending `items` REPLACES every line
+ * (delete-and-recreate, DRAFT-only) — so an items PATCH must round-trip
+ * per-line `notes` or they are silently wiped. Money fields recompute
+ * server-side with the same formula as create (lib/invoice-totals.ts).
+ */
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string; dueDate?: string; notes?: string }>({
+  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
     mutationFn: ({ id, ...body }) => apiClient.patch(`/invoices/${id}`, body).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
       qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      // An items edit on an order-linked invoice back-syncs the order's totals
+      // (recomputeOrderFromInvoices) — refresh both order cache families too.
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
+  });
+}
+
+/**
+ * POST /invoices/:id/send-reminder — re-emails the invoice PDF flagged as a
+ * reminder. Status never changes, so (like web) there is nothing to invalidate.
+ * Server rejects VOID/PAID and needs an email; pass the customer's email
+ * explicitly (web does the same — the server also accepts an override address).
+ */
+export function useSendInvoiceReminder() {
+  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+    mutationFn: ({ id, email }) =>
+      apiClient.post(`/invoices/${id}/send-reminder`, email ? { email } : {}).then((r) => r.data),
+  });
+}
+
+/**
+ * POST /invoices/:id/duplicate — server-side copy to a new DRAFT that preserves
+ * stored line subtotals, boxes/pieces, per-line discount/taxRate and the
+ * invoice's discount/shippingFee. Deliberately NOT a mirror of web, which
+ * hand-rolls a lossy re-create (drops the split, so a boxed line re-prices as
+ * pieces × box-price) — RF-011. Server rejects order-linked invoices.
+ */
+export function useDuplicateInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+/** POST /invoices/:id/reopen — PAID → DRAFT, clears paidAt. Payments STAY
+ *  attached, so the reopened draft renders with its payment history. */
+export function useReopenInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/reopen`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+    },
+  });
+}
+
+/**
+ * POST /invoices/:id/unvoid — VOID → DRAFT. Server re-claims the source
+ * order's OrderItem.invoicedQty in the same transaction, so both order cache
+ * families refresh too (exact inverse of useVoidInvoice's release).
+ */
+export function useUnvoidInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/unvoid`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
+  });
+}
+
+/** POST /invoices/:id/revert-to-draft — SENT/VIEWED/OVERDUE → DRAFT. Server
+ *  blocks when ANY payment row exists (even voided ones): "Void it instead." */
+export function useRevertInvoiceToDraft() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/revert-to-draft`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", id] });
     },
   });
 }

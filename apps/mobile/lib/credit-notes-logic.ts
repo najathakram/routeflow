@@ -55,3 +55,37 @@ export function creditNoteActionFlags(status: CreditNoteStatus): CreditNoteActio
     canVoid: status === "DRAFT" || status === "ISSUED",
   };
 }
+
+/**
+ * Dollars still available on a credit note. A partially-applied note stays
+ * ISSUED with amountUsed > 0, so `amount` alone is NEVER the open balance.
+ * Mirrors web's openCreditBalance (apps/web/lib/api/credit-notes.ts:188).
+ */
+export function openCreditBalance(cn: {
+  amount: number | string;
+  amountUsed?: number | string | null;
+}): number {
+  const amount = Number(cn.amount) || 0;
+  const used = Number(cn.amountUsed ?? 0) || 0;
+  return Math.max(0, Math.round((amount - used) * 100) / 100);
+}
+
+/**
+ * Whether a credit note belongs in an "apply to this invoice" list: ISSUED,
+ * unexpired, and with dollars remaining. Expiry is a COMPUTED filter — the
+ * server never flips a status on expiry, so the list endpoint still returns
+ * expired ISSUED notes and apply would 400 ("Credit note has expired").
+ */
+export function isCreditOpenForApply(
+  cn: {
+    status: CreditNoteStatus;
+    amount: number | string;
+    amountUsed?: number | string | null;
+    expiresAt?: string | null;
+  },
+  now: Date,
+): boolean {
+  if (cn.status !== "ISSUED") return false;
+  if (cn.expiresAt && new Date(cn.expiresAt) <= now) return false;
+  return openCreditBalance(cn) > 0;
+}

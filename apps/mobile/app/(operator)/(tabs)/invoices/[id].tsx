@@ -18,16 +18,28 @@ import { NavBackButton, NavBar, Pill, SegmentedControl } from "@routeflow/ui/mob
 import { useAdminInvoice, useAdminInvoices } from "../../../../lib/api/admin";
 import {
   useDeleteInvoice,
+  useDuplicateInvoice,
   useInvoicePdf,
   type InvoicePdfVariant,
+  useReopenInvoice,
+  useRevertInvoiceToDraft,
   useSendInvoice,
+  useSendInvoiceReminder,
+  useUnvoidInvoice,
   useUpdateInvoice,
   useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
+import { useApplyCreditNote, useCreditNotes } from "../../../../lib/api/credit-notes";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
-import { canWriteOff, isPaymentEditable } from "../../../../lib/invoices-logic";
+import {
+  canWriteOff,
+  invoiceActionFlags,
+  isPaymentEditable,
+  isPendingOrderMirror,
+} from "../../../../lib/invoices-logic";
+import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { confirm, chooseAction } from "../../../../lib/confirm";
@@ -103,10 +115,16 @@ export default function InvoiceDetailScreen() {
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
+  const reminderMut = useSendInvoiceReminder();
+  const duplicateMut = useDuplicateInvoice();
+  const reopenMut = useReopenInvoice();
+  const unvoidMut = useUnvoidInvoice();
+  const revertMut = useRevertInvoiceToDraft();
   const [loadingReceiptId, setLoadingReceiptId] = useState<string | null>(null);
   const [dueDateModal, setDueDateModal] = useState(false);
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
+  const [creditSheetOpen, setCreditSheetOpen] = useState(false);
   // Draft/Final PDF stage — null means follow the smart default (deriveInvoiceVariant).
   const [pdfVariantOverride, setPdfVariantOverride] = useState<InvoicePdfVariant | null>(null);
 
@@ -127,6 +145,17 @@ export default function InvoiceDetailScreen() {
   const isVoid = invoice.status === "VOID";
   const canSend = invoice.status === "DRAFT";
   const canRecord = !isPaid && !isVoid;
+  // Wave 2 action gating — pure mirrors of the server guards (invoices-logic).
+  const flags = invoiceActionFlags({
+    status: invoice.status,
+    paymentCount: invoice.payments?.length ?? 0,
+    isOrderLinked: invoice.orderId != null,
+  });
+  const pendingMirror = isPendingOrderMirror({
+    orderId: invoice.orderId,
+    deliveryBatchId: invoice.deliveryBatchId,
+    orderStatus: invoice.order?.status,
+  });
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -275,6 +304,98 @@ export default function InvoiceDetailScreen() {
     });
   };
 
+  const handleReminder = () => {
+    if (!id) return;
+    const email = invoice.customer?.email;
+    if (!email) {
+      // Same pre-check as web: don't burn the round-trip on a guaranteed 400.
+      showToast("No email on file — add one to this customer first.");
+      return;
+    }
+    reminderMut.mutate(
+      { id, email },
+      {
+        onSuccess: (res) => showToast(`Reminder emailed to ${res.sentTo}`),
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
+  };
+
+  const handleDuplicate = () => {
+    if (!id) return;
+    // Real POST /invoices/:id/duplicate — preserves the box split + per-line
+    // discount/taxRate (web hand-rolls a lossy re-create here; deliberately
+    // not mirrored, RF-011).
+    duplicateMut.mutate(id, {
+      onSuccess: (inv) => {
+        showToast(`New draft ${inv.invoiceNumber} created`);
+        router.push(`/(operator)/invoices/${inv.id}`);
+      },
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+    });
+  };
+
+  const handleRevert = () => {
+    if (!id) return;
+    confirm(
+      "Revert to draft?",
+      `${invoice.invoiceNumber} goes back to Draft so it can be edited; its Sent status is cleared.`,
+      () =>
+        revertMut.mutate(id, {
+          onSuccess: () => showToast("Invoice reverted to draft"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
+      { confirmText: "Revert" },
+    );
+  };
+
+  const handleReopen = () => {
+    if (!id) return;
+    confirm(
+      "Reopen invoice?",
+      `${invoice.invoiceNumber} returns to Draft. Its recorded payments stay attached.`,
+      () =>
+        reopenMut.mutate(id, {
+          onSuccess: () => showToast("Invoice reopened"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
+      { confirmText: "Reopen" },
+    );
+  };
+
+  const handleUnvoid = () => {
+    if (!id) return;
+    confirm(
+      "Unvoid invoice?",
+      `${invoice.invoiceNumber} returns to Draft and re-claims its billed quantities on the source order.`,
+      () =>
+        unvoidMut.mutate(id, {
+          onSuccess: () => showToast("Invoice unvoided — now in Draft"),
+          onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        }),
+      { confirmText: "Unvoid" },
+    );
+  };
+
+  // Lifecycle flips live one tap behind a single More tile — four extra tiles
+  // for rare transitions would drown the money actions (web keeps these in its
+  // "..." menu for the same reason).
+  const moreActions = [
+    ...(flags.canDuplicate ? [{ label: "Duplicate", onPress: handleDuplicate }] : []),
+    ...(flags.canRevertToDraft ? [{ label: "Revert to draft", onPress: handleRevert }] : []),
+    ...(flags.canReopen ? [{ label: "Reopen invoice", onPress: handleReopen }] : []),
+    ...(flags.canUnvoid ? [{ label: "Unvoid", onPress: handleUnvoid }] : []),
+  ];
+  const handleMore = () =>
+    chooseAction("More actions", invoice.invoiceNumber, [
+      ...moreActions.map((a) => ({
+        label: a.label,
+        style: "default" as const,
+        onPress: a.onPress,
+      })),
+      { label: "Cancel", style: "cancel" as const },
+    ]);
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <NavBar
@@ -289,6 +410,16 @@ export default function InvoiceDetailScreen() {
               {s.label}
             </Pill>
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
+            {invoice.subject?.trim() ? (
+              <Text style={styles.headerMeta} numberOfLines={2}>
+                {invoice.subject}
+              </Text>
+            ) : null}
+            {invoice.referenceNumber?.trim() ? (
+              <Text style={styles.headerMeta} numberOfLines={1}>
+                Ref: {invoice.referenceNumber}
+              </Text>
+            ) : null}
             <Text style={styles.balance}>{fmtCurrency(balance)}</Text>
             <Text style={styles.balanceSub}>
               of {fmtCurrency(invoice.total)} · paid {fmtCurrency(invoice.paidAmount ?? 0)}
@@ -370,6 +501,13 @@ export default function InvoiceDetailScreen() {
                 onPress={handleSend}
               />
             ) : null}
+            {flags.canEdit && !pendingMirror ? (
+              <ActionTile
+                icon="pencil-outline"
+                label="Edit invoice"
+                onPress={() => router.push(`/(operator)/invoices/${id}/edit`)}
+              />
+            ) : null}
             <ActionTile
               icon="share-outline"
               label={
@@ -379,6 +517,23 @@ export default function InvoiceDetailScreen() {
               }
               onPress={() => handlePdf(pdfVariant)}
             />
+            {flags.canSendReminder ? (
+              <ActionTile
+                icon="alarm-outline"
+                label={reminderMut.isPending ? "Sending…" : "Send reminder"}
+                onPress={handleReminder}
+              />
+            ) : null}
+            {flags.canApplyCredit ? (
+              <ActionTile
+                icon="pricetag-outline"
+                label="Apply credit"
+                onPress={() => setCreditSheetOpen(true)}
+              />
+            ) : null}
+            {moreActions.length > 0 ? (
+              <ActionTile icon="ellipsis-horizontal" label="More" onPress={handleMore} />
+            ) : null}
             {canWriteOff(invoice.status) ? (
               <ActionTile
                 icon="remove-circle-outline"
@@ -427,6 +582,11 @@ export default function InvoiceDetailScreen() {
                           `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
                         : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                     </Text>
+                    {Number(it.discount ?? 0) > 0 ? (
+                      // The shown subtotal is already post-discount; this line
+                      // explains why it's less than qty × price.
+                      <Text style={styles.itemSub}>−{fmtCurrency(it.discount ?? 0)} discount</Text>
+                    ) : null}
                     {it.notes?.trim() ? (
                       <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
                         {it.notes}
@@ -610,7 +770,129 @@ export default function InvoiceDetailScreen() {
         onClose={() => setShipmentModal(false)}
         onSave={handleSaveShipment}
       />
+
+      {/* Mounted only while open so its credit-notes query never runs (or runs
+          tenant-wide with an undefined customerId) in the background. */}
+      {creditSheetOpen && invoice.customer?.id ? (
+        <ApplyCreditSheet
+          customerId={invoice.customer.id}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+          balanceDue={Number(balance) || 0}
+          onClose={() => setCreditSheetOpen(false)}
+        />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+/**
+ * Invoice-side "Apply credit" — lists the customer's OPEN credit notes and
+ * applies the tapped one in full (mirrors the credit-note-side modal; web has
+ * no invoice-side entry, this is a mobile-first surface the server fully
+ * supports). Open = ISSUED + unexpired + dollars remaining; the list endpoint
+ * doesn't filter expiry/balance, so isCreditOpenForApply does.
+ */
+function ApplyCreditSheet({
+  customerId,
+  invoiceId,
+  invoiceNumber,
+  balanceDue,
+  onClose,
+}: {
+  customerId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  balanceDue: number;
+  onClose: () => void;
+}) {
+  const { data, isLoading } = useCreditNotes({ customerId, status: "ISSUED", limit: 100 });
+  const applyMut = useApplyCreditNote();
+  const now = new Date();
+  const open = (data?.data ?? []).filter((cn) => isCreditOpenForApply(cn, now));
+
+  const handleApply = (cnId: string, cnNumber: string, remaining: number) => {
+    const applied = Math.min(remaining, balanceDue);
+    confirm(
+      "Apply credit?",
+      `${fmtCurrency(applied)} from ${cnNumber} will be applied to ${invoiceNumber}.`,
+      () =>
+        applyMut.mutate(
+          { id: cnId, invoiceId },
+          {
+            onSuccess: () => {
+              showToast("Credit applied");
+              onClose();
+            },
+            // The four server rejections here are actionable (expired, wrong
+            // customer, no balance, terminal invoice) — surface them verbatim.
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          },
+        ),
+      { confirmText: "Apply" },
+    );
+  };
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.creditBackdrop} onPress={onClose}>
+        <Pressable style={styles.creditSheet} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.creditHeader}>
+            <Text style={styles.creditTitle}>Apply credit</Text>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Ionicons name="close" size={22} color={ios.label2} />
+            </Pressable>
+          </View>
+          {isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : open.length === 0 ? (
+            <View style={styles.center}>
+              <Text style={styles.creditEmpty}>
+                No open credits for this customer. Issue one from the Credit notes tab first.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {open.map((cn, i) => {
+                const remaining = openCreditBalance(cn);
+                return (
+                  <Pressable
+                    key={cn.id}
+                    style={[
+                      styles.creditRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                      applyMut.isPending && { opacity: 0.5 },
+                    ]}
+                    disabled={applyMut.isPending}
+                    onPress={() => handleApply(cn.id, cn.creditNoteNumber, remaining)}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.creditNumber} numberOfLines={1}>
+                        {cn.creditNoteNumber}
+                        {cn.reason ? ` — ${cn.reason}` : ""}
+                      </Text>
+                      {cn.expiresAt ? (
+                        <Text style={styles.creditMeta}>
+                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.creditRemaining}>{fmtCurrency(remaining)}</Text>
+                    <Ionicons name="chevron-forward" size={14} color={ios.label3} />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -657,6 +939,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   customer: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label2, marginTop: 8 },
+  headerMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 4 },
   balance: {
     fontSize: 32,
     fontFamily: "Inter_700Bold",
@@ -775,5 +1058,49 @@ const styles = StyleSheet.create({
     backgroundColor: ios.fill3,
     alignItems: "center",
     justifyContent: "center",
+  },
+
+  // ── Apply-credit sheet ────────────────────────────────────────────────────
+  creditBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  creditSheet: {
+    backgroundColor: ios.bg,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingBottom: 24,
+  },
+  creditHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
+  creditTitle: { fontSize: 16, fontFamily: "Inter_700Bold", color: ios.label },
+  creditEmpty: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
+  creditRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  creditNumber: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  creditMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  creditRemaining: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: ios.system.greenInk,
+    fontVariant: ["tabular-nums"],
   },
 });

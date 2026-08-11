@@ -16,7 +16,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
-import { useAdminCustomers } from "../../../../lib/api/admin";
+import {
+  useAdminCustomer,
+  useAdminCustomers,
+  useBusinessSettings,
+} from "../../../../lib/api/admin";
 import { useProductCategories } from "../../../../lib/api/products";
 import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
@@ -35,12 +39,14 @@ import { normalizeScanCode } from "../../../../lib/barcode-normalize";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
+import { computeLineSubtotal, effectiveQty } from "../../../../lib/pricing";
 import {
-  computeLineSubtotal,
-  effectiveQty,
-  normalizeBoxesPieces,
-  roundMoney,
-} from "../../../../lib/pricing";
+  computeInvoiceTotals,
+  invoiceLineDto,
+  type InvoiceTotals,
+  type InvoiceTotalsLine,
+} from "../../../../lib/invoice-totals";
+import { DEFAULT_TERMS, ISO_DATE, TERM_CHIPS, dueDateFor } from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
@@ -76,33 +82,8 @@ import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
  * order into invoices, use the order detail's "Split into invoice" entry.
  */
 
-const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
-
-const TERM_OPTIONS = Object.keys(TERM_DAYS);
-const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
-const DEFAULT_TERMS = "Net 30";
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-function todayPlusDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Due date = issue date (today when blank) + the term's day count, as web does. */
-function dueDateFor(issueDate: string, terms: string): string {
-  const days = TERM_DAYS[terms] ?? 30;
-  if (!ISO_DATE.test(issueDate)) return todayPlusDays(days);
-  const d = new Date(`${issueDate}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+// Term constants + due-date math live in lib/invoice-terms.ts (shared with
+// SplitInvoiceScreen and the invoice edit screen).
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -131,14 +112,26 @@ type Product = {
 // `unitPrice` is an optional one-time price override (the "discounted price").
 // When unset, the catalog price is used. For boxed products it is the BOX price,
 // matching the catalog price unit; computeLineSubtotal prorates pieces.
-type LineState = { qty: number; boxes?: number; pieces?: number; unitPrice?: number };
+// Wave 2 exception fields (all optional, survive the sale-line helpers' ...prev):
+// `discount` = flat $ off the line, `taxable` maps to the tenant tax rate at
+// submit (web's exact model), `note` prints under the description on the PDF.
+type LineState = {
+  qty: number;
+  boxes?: number;
+  pieces?: number;
+  unitPrice?: number;
+  discount?: number;
+  taxable?: boolean;
+  note?: string;
+  noteOpen?: boolean;
+};
 
 /**
  * An ad-hoc, non-catalog ("unlisted") invoice line: free-text description +
  * required price; never boxed. Serialised as `{ description, qty, unitPrice }`
  * (no productId). Keyed locally by a synthetic id.
  */
-type UnlistedLine = { id: string; name: string; unitPrice: number; qty: number };
+type UnlistedLine = { id: string; name: string; unitPrice: number; qty: number; taxable?: boolean };
 
 function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -324,6 +317,21 @@ function InvoiceComposer({
   const [issueDate, setIssueDate] = useState("");
   const [dueDate, setDueDate] = useState(() => dueDateFor("", DEFAULT_TERMS));
   const [send, setSend] = useState(false);
+  // Invoice-level money + header fields (Wave 2). Null money = unset.
+  const [invDiscount, setInvDiscount] = useState<number | null>(null);
+  const [shippingFee, setShippingFee] = useState<number | null>(null);
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [subject, setSubject] = useState("");
+
+  // Tenant tax rate (a PERCENT in settings → fraction on the wire, web's exact
+  // mapping) and the customer's exempt flag, which zeroes ALL tax server-side —
+  // the preview must match or the operator quotes a total the invoice won't have.
+  const { data: settings } = useBusinessSettings();
+  const { data: pickedCustomer } = useAdminCustomer(customerId);
+  const isTaxExempt = !!pickedCustomer?.isTaxExempt;
+  const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
+  // Rate the row toggles actually offer: hidden entirely for exempt customers.
+  const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
 
   // Debounced, server-filtered, paged — replaces the `limit: 0` fetch-all.
   // See NewOrderScreen and lib/use-product-search.ts.
@@ -436,6 +444,27 @@ function InvoiceComposer({
       return { ...m, [id]: { ...prev, unitPrice: value } };
     });
 
+  // Flat $ off one line (comes off BEFORE tax). Empty/invalid clears it.
+  const setLineDiscount = (id: string, value: number | null) =>
+    setItems((m) => {
+      const prev = m[id];
+      if (!prev) return m;
+      if (value == null || value <= 0) {
+        const { discount: _drop, ...rest } = prev;
+        return { ...m, [id]: rest };
+      }
+      return { ...m, [id]: { ...prev, discount: value } };
+    });
+
+  const toggleLineTaxable = (id: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], taxable: !m[id].taxable } } : m));
+
+  const setLineNote = (id: string, note: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], note } } : m));
+
+  const toggleLineNote = (id: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], noteOpen: !m[id].noteOpen } } : m));
+
   // ── Unlisted (ad-hoc, non-catalog) line helpers ──────────────────────────
   const addUnlisted = (name: string, unitPrice: number, qty: number) =>
     setUnlisted((u) => [...u, { id: newLocalId(), name: name.trim(), unitPrice, qty }]);
@@ -448,6 +477,8 @@ function InvoiceComposer({
       const price = value == null || value < 0 ? 0 : value;
       return u.map((x) => (x.id === id ? { ...x, unitPrice: price } : x));
     });
+  const toggleUnlistedTaxable = (id: string) =>
+    setUnlisted((u) => u.map((x) => (x.id === id ? { ...x, taxable: !x.taxable } : x)));
   const removeUnlisted = (id: string) => setUnlisted((u) => u.filter((x) => x.id !== id));
 
   /** Newest scanned line to the top of the tray, and flash it. */
@@ -578,8 +609,10 @@ function InvoiceComposer({
     listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
   }, [pendingScroll, filtered]);
 
-  const { total, totalItems } = useMemo(() => {
-    let total = 0;
+  // Full money preview through lib/invoice-totals — the same formula the server
+  // runs, so the footer/review totals equal the saved invoice to the cent.
+  const { totals, totalItems } = useMemo(() => {
+    const lines: InvoiceTotalsLine[] = [];
     let totalItems = 0;
     for (const [id, line] of Object.entries(items)) {
       const p = productById.get(id);
@@ -587,22 +620,37 @@ function InvoiceComposer({
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
       totalItems += qty;
-      total += computeLineSubtotal({
+      lines.push({
         unitPrice: effectiveUnitPrice(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
         unitsPerBox: p.unitsPerBox ?? null,
+        discount: line.discount ?? 0,
+        taxRate: line.taxable ? taxRateFraction : 0,
       });
     }
     // Unlisted lines: never boxed, simple unitPrice × qty.
     for (const u of unlisted) {
       if (u.qty <= 0) continue;
       totalItems += u.qty;
-      total += computeLineSubtotal({ unitPrice: u.unitPrice, qty: u.qty });
+      lines.push({
+        unitPrice: u.unitPrice,
+        qty: u.qty,
+        taxRate: u.taxable ? taxRateFraction : 0,
+      });
     }
-    return { total: roundMoney(total), totalItems };
-  }, [items, productById, unlisted]);
+    return {
+      totals: computeInvoiceTotals({
+        lines,
+        discount: invDiscount ?? 0,
+        shippingFee: shippingFee ?? 0,
+        isTaxExempt,
+      }),
+      totalItems,
+    };
+  }, [items, productById, unlisted, invDiscount, shippingFee, isTaxExempt, taxRateFraction]);
+  const total = totals.total;
 
   // Newest-first "invoice so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -786,25 +834,51 @@ function InvoiceComposer({
       alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
       return;
     }
+    // The server's own money guards, surfaced before the round-trip.
+    if (totals.hasNegativeLine) {
+      alertInfo("Check line discounts", "A line's discount is larger than the line itself.");
+      return;
+    }
+    if (totals.discount > totals.subtotal) {
+      alertInfo(
+        "Discount too large",
+        `The invoice discount ($${totals.discount.toFixed(2)}) can't exceed the subtotal ($${totals.subtotal.toFixed(2)}).`,
+      );
+      return;
+    }
     const payload: CreateInvoiceItem[] = [];
     for (const [productId, line] of Object.entries(items)) {
       const p = productById.get(productId);
       if (!p) continue;
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
-      payload.push({
-        description: displayName(p),
-        productId,
-        qty,
-        unitPrice: effectiveUnitPrice(line, p),
-        ...(line.boxes != null ? { boxes: line.boxes } : {}),
-        ...(line.pieces != null ? { pieces: line.pieces } : {}),
-      });
+      payload.push(
+        invoiceLineDto(
+          {
+            description: displayName(p),
+            productId,
+            qty,
+            unitPrice: effectiveUnitPrice(line, p),
+            boxes: line.boxes ?? null,
+            pieces: line.pieces ?? null,
+            unitsPerBox: p.unitsPerBox ?? null,
+            discount: line.discount,
+            taxable: line.taxable,
+            notes: line.note,
+          },
+          taxRateFraction,
+        ),
+      );
     }
     // Unlisted lines → `{ description, qty, unitPrice }` (no productId).
     for (const u of unlisted) {
       if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
-      payload.push({ description: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
+      payload.push(
+        invoiceLineDto(
+          { description: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice, taxable: u.taxable },
+          taxRateFraction,
+        ),
+      );
     }
     createMut.mutate(
       {
@@ -814,6 +888,10 @@ function InvoiceComposer({
         terms,
         send,
         ...(issueTrim ? { issueDate: issueTrim } : {}),
+        ...(invDiscount && invDiscount > 0 ? { discount: invDiscount } : {}),
+        ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+        ...(referenceNumber.trim() ? { referenceNumber: referenceNumber.trim() } : {}),
+        ...(subject.trim() ? { subject: subject.trim() } : {}),
       },
       {
         onSuccess: (inv) => {
@@ -1016,8 +1094,9 @@ function InvoiceComposer({
         items={items}
         productById={productById}
         unlisted={unlisted}
-        total={total}
+        totals={totals}
         totalItems={totalItems}
+        taxRateFraction={taxRateFraction}
         saving={createMut.isPending}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
@@ -1026,9 +1105,14 @@ function InvoiceComposer({
         onChangeBoxes={setBoxes}
         onChangePieces={setPieces}
         onChangePrice={setLinePrice}
+        onChangeDiscount={setLineDiscount}
+        onToggleTaxable={toggleLineTaxable}
+        onChangeNote={setLineNote}
+        onToggleNote={toggleLineNote}
         onRemove={removeLine}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
+        onToggleUnlistedTaxable={toggleUnlistedTaxable}
         onRemoveUnlisted={removeUnlisted}
         onAddUnlisted={() => openUnlistedModal("")}
         details={{
@@ -1040,6 +1124,14 @@ function InvoiceComposer({
           onChangeDueDate: setDueDate,
           send,
           onToggleSend: () => setSend((s) => !s),
+          referenceNumber,
+          onChangeReferenceNumber: setReferenceNumber,
+          subject,
+          onChangeSubject: setSubject,
+          invoiceDiscount: invDiscount,
+          onChangeInvoiceDiscount: setInvDiscount,
+          shippingFee,
+          onChangeShippingFee: setShippingFee,
         }}
         onSave={() => {
           setReviewOpen(false);
@@ -1097,6 +1189,16 @@ interface InvoiceDetails {
   onChangeDueDate: (v: string) => void;
   send: boolean;
   onToggleSend: () => void;
+  referenceNumber: string;
+  onChangeReferenceNumber: (v: string) => void;
+  subject: string;
+  onChangeSubject: (v: string) => void;
+  /** Invoice-level $ discount — applied AFTER tax. Null = unset. */
+  invoiceDiscount: number | null;
+  onChangeInvoiceDiscount: (v: number | null) => void;
+  /** Flat shipping added after tax; never taxed. Null = unset. */
+  shippingFee: number | null;
+  onChangeShippingFee: (v: number | null) => void;
 }
 
 function ReviewSheet({
@@ -1104,8 +1206,9 @@ function ReviewSheet({
   items,
   productById,
   unlisted,
-  total,
+  totals,
   totalItems,
+  taxRateFraction,
   saving,
   onClose,
   onIncrement,
@@ -1114,9 +1217,14 @@ function ReviewSheet({
   onChangeBoxes,
   onChangePieces,
   onChangePrice,
+  onChangeDiscount,
+  onToggleTaxable,
+  onChangeNote,
+  onToggleNote,
   onRemove,
   onChangeUnlistedQty,
   onChangeUnlistedPrice,
+  onToggleUnlistedTaxable,
   onRemoveUnlisted,
   onAddUnlisted,
   details,
@@ -1126,8 +1234,10 @@ function ReviewSheet({
   items: Record<string, LineState>;
   productById: Map<string, Product>;
   unlisted: UnlistedLine[];
-  total: number;
+  totals: InvoiceTotals;
   totalItems: number;
+  /** 0 hides every taxable toggle (no tenant rate, or tax-exempt customer). */
+  taxRateFraction: number;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1136,9 +1246,14 @@ function ReviewSheet({
   onChangeBoxes: (id: string, n: number) => void;
   onChangePieces: (id: string, n: number) => void;
   onChangePrice: (id: string, value: number | null) => void;
+  onChangeDiscount: (id: string, value: number | null) => void;
+  onToggleTaxable: (id: string) => void;
+  onChangeNote: (id: string, note: string) => void;
+  onToggleNote: (id: string) => void;
   onRemove: (id: string) => void;
   onChangeUnlistedQty: (id: string, n: number) => void;
   onChangeUnlistedPrice: (id: string, value: number | null) => void;
+  onToggleUnlistedTaxable: (id: string) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
   details: InvoiceDetails;
@@ -1188,12 +1303,17 @@ function ReviewSheet({
                     key={id}
                     product={product}
                     line={line}
+                    taxRateFraction={taxRateFraction}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
                     onChangePieces={(n) => onChangePieces(id, n)}
                     onChangePrice={(v) => onChangePrice(id, v)}
+                    onChangeDiscount={(v) => onChangeDiscount(id, v)}
+                    onToggleTaxable={() => onToggleTaxable(id)}
+                    onChangeNote={(t) => onChangeNote(id, t)}
+                    onToggleNote={() => onToggleNote(id)}
                     onRemove={() => onRemove(id)}
                   />
                 ))}
@@ -1201,8 +1321,10 @@ function ReviewSheet({
                   <UnlistedReviewRow
                     key={u.id}
                     line={u}
+                    taxRateFraction={taxRateFraction}
                     onChangeQty={(n) => onChangeUnlistedQty(u.id, n)}
                     onChangePrice={(v) => onChangeUnlistedPrice(u.id, v)}
+                    onToggleTaxable={() => onToggleUnlistedTaxable(u.id)}
                     onRemove={() => onRemoveUnlisted(u.id)}
                   />
                 ))}
@@ -1218,10 +1340,38 @@ function ReviewSheet({
           </ScrollView>
 
           <View style={styles.cartFooter}>
+            {/* Money breakdown — only the rows that apply, so the common
+                no-tax/no-adjustment invoice keeps the old one-line footer. */}
+            {totals.taxTotal > 0 || totals.discount > 0 || totals.shippingFee > 0 ? (
+              <View style={styles.breakdown}>
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Subtotal</Text>
+                  <Text style={styles.breakdownValue}>${totals.subtotal.toFixed(2)}</Text>
+                </View>
+                {totals.taxTotal > 0 ? (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Tax</Text>
+                    <Text style={styles.breakdownValue}>${totals.taxTotal.toFixed(2)}</Text>
+                  </View>
+                ) : null}
+                {totals.discount > 0 ? (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Discount</Text>
+                    <Text style={styles.breakdownValue}>−${totals.discount.toFixed(2)}</Text>
+                  </View>
+                ) : null}
+                {totals.shippingFee > 0 ? (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Shipping</Text>
+                    <Text style={styles.breakdownValue}>+${totals.shippingFee.toFixed(2)}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
             <View style={styles.cartFooterRow}>
               <View>
                 <Text style={styles.footerEyebrow}>INVOICE TOTAL</Text>
-                <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+                <Text style={styles.footerTotal}>${totals.total.toFixed(2)}</Text>
               </View>
               <View style={{ flexDirection: "row", gap: 8 }}>
                 <Pressable style={styles.cartContinueBtn} onPress={onClose} hitSlop={6}>
@@ -1251,22 +1401,32 @@ function ReviewSheet({
 function ReviewRow({
   product,
   line,
+  taxRateFraction,
   onIncrement,
   onDecrement,
   onChangeQty,
   onChangeBoxes,
   onChangePieces,
   onChangePrice,
+  onChangeDiscount,
+  onToggleTaxable,
+  onChangeNote,
+  onToggleNote,
   onRemove,
 }: {
   product: Product;
   line: LineState;
+  taxRateFraction: number;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
   onChangeBoxes: (n: number) => void;
   onChangePieces: (n: number) => void;
   onChangePrice: (value: number | null) => void;
+  onChangeDiscount: (value: number | null) => void;
+  onToggleTaxable: () => void;
+  onChangeNote: (note: string) => void;
+  onToggleNote: () => void;
   onRemove: () => void;
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
@@ -1275,13 +1435,18 @@ function ReviewRow({
   const effUnit = effectiveUnitPrice(line, product);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
-  const lineTotal = computeLineSubtotal({
-    unitPrice: effUnit,
-    qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
+  // Post-discount, matching the server's stored line subtotal (tax rides in the
+  // sheet footer, never on the row).
+  const lineTotal = Math.max(
+    0,
+    computeLineSubtotal({
+      unitPrice: effUnit,
+      qty,
+      boxes: line.boxes ?? null,
+      pieces: line.pieces ?? null,
+      unitsPerBox: product.unitsPerBox ?? null,
+    }) - (line.discount ?? 0),
+  );
 
   return (
     <View style={styles.cartRow}>
@@ -1342,6 +1507,48 @@ function ReviewRow({
         />
       )}
 
+      {/* Line discount — flat $ off, comes off BEFORE tax (server rule). */}
+      <View style={styles.cartPriceRow}>
+        <Text style={styles.cartPriceLabel}>Discount</Text>
+        <View style={styles.cartPriceInputWrap}>
+          <Text style={styles.cartPriceCurrency}>−$</Text>
+          <MoneyTextInput
+            style={[styles.cartPriceInput, (line.discount ?? 0) > 0 && styles.cartPriceInputActive]}
+            value={line.discount ?? null}
+            onChangeValue={onChangeDiscount}
+            placeholder="0.00"
+            returnKeyType="done"
+          />
+        </View>
+      </View>
+
+      {/* Taxable — hidden when there's no tenant rate or the customer is exempt. */}
+      {taxRateFraction > 0 ? (
+        <TaxableRow
+          taxable={!!line.taxable}
+          rateFraction={taxRateFraction}
+          onToggle={onToggleTaxable}
+        />
+      ) : null}
+
+      {/* Per-line note — prints under the description on the invoice PDF. */}
+      {line.noteOpen || line.note?.trim() ? (
+        <TextInput
+          value={line.note ?? ""}
+          onChangeText={onChangeNote}
+          placeholder="Note for this item (prints on invoice)"
+          placeholderTextColor={ios.label3}
+          maxLength={500}
+          returnKeyType="done"
+          style={styles.cartNoteInput}
+        />
+      ) : (
+        <Pressable onPress={onToggleNote} hitSlop={6} style={styles.cartNoteAdd}>
+          <Ionicons name="create-outline" size={14} color={ios.brand} />
+          <Text style={styles.cartNoteAddText}>Add note</Text>
+        </Pressable>
+      )}
+
       <View style={styles.cartRowFooter}>
         <Text style={styles.cartRowFooterLabel}>Line total</Text>
         <Text style={styles.cartRowFooterValue}>${lineTotal.toFixed(2)}</Text>
@@ -1350,16 +1557,44 @@ function ReviewRow({
   );
 }
 
-/** Review row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag. */
+/** "Taxable (8.25%)" checkbox row shared by catalog + unlisted review rows. */
+function TaxableRow({
+  taxable,
+  rateFraction,
+  onToggle,
+}: {
+  taxable: boolean;
+  rateFraction: number;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable style={styles.sendRow} onPress={onToggle} hitSlop={4} accessibilityRole="checkbox">
+      <View style={[styles.checkbox, taxable && styles.checkboxOn]}>
+        {taxable ? <Text style={styles.checkboxTick}>✓</Text> : null}
+      </View>
+      <Text style={styles.sendLabel}>
+        Taxable ({(rateFraction * 100).toFixed(2).replace(/\.?0+$/, "")}%)
+      </Text>
+    </Pressable>
+  );
+}
+
+/** Review row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag.
+ *  Taxable is the only money exception here — the price is already free-entry,
+ *  so a separate discount field would just be a second way to type the price. */
 function UnlistedReviewRow({
   line,
+  taxRateFraction,
   onChangeQty,
   onChangePrice,
+  onToggleTaxable,
   onRemove,
 }: {
   line: UnlistedLine;
+  taxRateFraction: number;
   onChangeQty: (n: number) => void;
   onChangePrice: (value: number | null) => void;
+  onToggleTaxable: () => void;
   onRemove: () => void;
 }) {
   const lineTotal = computeLineSubtotal({ unitPrice: line.unitPrice, qty: line.qty });
@@ -1402,6 +1637,14 @@ function UnlistedReviewRow({
         onIncrement={() => onChangeQty(line.qty + 1)}
         onDecrement={() => onChangeQty(Math.max(0, line.qty - 1))}
       />
+
+      {taxRateFraction > 0 ? (
+        <TaxableRow
+          taxable={!!line.taxable}
+          rateFraction={taxRateFraction}
+          onToggle={onToggleTaxable}
+        />
+      ) : null}
 
       <View style={styles.cartRowFooter}>
         <Text style={styles.cartRowFooterLabel}>Line total</Text>
@@ -1493,6 +1736,55 @@ function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
           keyboardType="numbers-and-punctuation"
           style={styles.detailInput}
         />
+      </View>
+
+      <View style={styles.detailField}>
+        <Text style={styles.detailLabel}>Reference number</Text>
+        <TextInput
+          value={d.referenceNumber}
+          onChangeText={d.onChangeReferenceNumber}
+          placeholder="PO / reference (optional)"
+          placeholderTextColor={ios.label3}
+          style={styles.detailInput}
+        />
+      </View>
+
+      <View style={styles.detailField}>
+        <Text style={styles.detailLabel}>Subject</Text>
+        <TextInput
+          value={d.subject}
+          onChangeText={d.onChangeSubject}
+          placeholder="Shown on the invoice header (optional)"
+          placeholderTextColor={ios.label3}
+          style={styles.detailInput}
+        />
+      </View>
+
+      {/* Whole-invoice adjustments. Discount comes off AFTER tax; shipping is
+          never taxed — the review footer shows both applied. */}
+      <View style={styles.detailMoneyRow}>
+        <View style={styles.detailMoneyCol}>
+          <Text style={styles.detailLabel}>Invoice discount ($)</Text>
+          <MoneyTextInput
+            value={d.invoiceDiscount}
+            onChangeValue={d.onChangeInvoiceDiscount}
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+            style={styles.detailInput}
+            returnKeyType="done"
+          />
+        </View>
+        <View style={styles.detailMoneyCol}>
+          <Text style={styles.detailLabel}>Shipping fee ($)</Text>
+          <MoneyTextInput
+            value={d.shippingFee}
+            onChangeValue={d.onChangeShippingFee}
+            placeholder="0.00"
+            placeholderTextColor={ios.label3}
+            style={styles.detailInput}
+            returnKeyType="done"
+          />
+        </View>
       </View>
 
       <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
@@ -1875,6 +2167,39 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
+  // Per-line note affordance — same recipe as NewOrderScreen's cart rows.
+  cartNoteAdd: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  cartNoteAddText: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.brand },
+  cartNoteInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  // Review-footer money breakdown (only rendered when tax/discount/shipping apply).
+  breakdown: {
+    gap: 3,
+    paddingBottom: 8,
+    marginBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
+  breakdownRow: { flexDirection: "row", justifyContent: "space-between" },
+  breakdownLabel: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  breakdownValue: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
   cartAddUnlisted: {
     flexDirection: "row",
     alignItems: "center",
@@ -1928,6 +2253,10 @@ const styles = StyleSheet.create({
     color: ios.label,
   },
   detailHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
+  detailMoneyRow: { flexDirection: "row", gap: 10 },
+  // flex-basis split, not flex:1 — RNW TextInputs carry an intrinsic width that
+  // otherwise pushes the second column off a 320px sheet (see lib/row-layout.ts).
+  detailMoneyCol: { flexBasis: 0, flexGrow: 1, minWidth: 0, gap: 6 },
   sendRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   checkbox: {
     width: 22,
