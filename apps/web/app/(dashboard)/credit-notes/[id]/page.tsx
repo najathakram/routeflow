@@ -126,18 +126,26 @@ function ApplyToInvoiceModal({
   const [selectedInvoiceId, setSelectedInvoiceId] = React.useState("");
   const [error, setError] = React.useState("");
 
-  const { data: invoicesData } = useInvoices({ limit: 100 });
+  // Scope by customer SERVER-side. This used to fetch the newest 100 invoices
+  // TENANT-WIDE and filter client-side, so a customer whose invoices fell
+  // outside that page got an empty list — the `<select>` never rendered, yet
+  // submit still demanded an invoice ("asks for the invoice number, there's no
+  // place to add it"). The sibling create modal already does it this way, and
+  // so does mobile's picker.
+  const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
+    customerId,
+    limit: 100,
+  });
   const invoices = React.useMemo(() => {
     const all = invoicesData?.data ?? [];
+    // Mirror the server's actual rule (credit-notes.service.ts rejects only
+    // PAID / VOID / WRITTEN_OFF) rather than an allow-list. The old list also
+    // hid DRAFT, so a customer whose only open invoice was a draft hit the
+    // same dead end even once the query was scoped.
     return all.filter(
-      (inv) =>
-        inv.customerId === customerId &&
-        (inv.status === "SENT" ||
-          inv.status === "VIEWED" ||
-          inv.status === "PARTIAL" ||
-          inv.status === "OVERDUE"),
+      (inv) => inv.status !== "PAID" && inv.status !== "VOID" && inv.status !== "WRITTEN_OFF",
     );
-  }, [invoicesData, customerId]);
+  }, [invoicesData]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -167,7 +175,13 @@ function ApplyToInvoiceModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="apply-cn-form" loading={isPending}>
+          {/* Never leave an enabled submit above a control that isn't there. */}
+          <Button
+            type="submit"
+            form="apply-cn-form"
+            loading={isPending}
+            disabled={invoicesLoading || invoices.length === 0}
+          >
             Apply Credit Note
           </Button>
         </>
@@ -176,8 +190,24 @@ function ApplyToInvoiceModal({
       <form id="apply-cn-form" onSubmit={handleSubmit} noValidate className="space-y-4">
         <div>
           <label className="mb-1.5 block text-sm font-medium text-navy/80">Invoice</label>
-          {invoices.length === 0 ? (
-            <p className="text-sm text-navy/70">No open invoices found for this customer.</p>
+          {invoicesLoading ? (
+            <p className="text-sm text-navy/70">Loading invoices…</p>
+          ) : invoices.length === 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm text-navy/70">
+                This customer has no open invoices, so there is nothing to apply this credit note
+                against yet. It stays available and will be applied automatically to their next
+                invoice.
+              </p>
+              {/* The customer page has an Invoices tab; /invoices has no
+                  customerId filter, so linking there would silently ignore it. */}
+              <Link
+                href={`/customers/${customerId}`}
+                className="inline-block text-sm font-medium text-brand-600 hover:underline"
+              >
+                View this customer&apos;s invoices
+              </Link>
+            </div>
           ) : (
             <select
               value={selectedInvoiceId}
@@ -190,7 +220,7 @@ function ApplyToInvoiceModal({
               <option value="">Select invoice…</option>
               {invoices.map((inv) => (
                 <option key={inv.id} value={inv.id}>
-                  {inv.invoiceNumber} — {fmt(Number(inv.balanceDue))} due
+                  {inv.invoiceNumber} — {fmt(Number(inv.balanceDue))} due ({inv.status})
                 </option>
               ))}
             </select>
@@ -329,10 +359,17 @@ export default function CreditNoteDetailPage({ params }: { params: { id: string 
             variant: "success",
           });
         },
-        onError: () => {
+        onError: (err: unknown) => {
+          // Surface the server's message, as mobile does. The apply endpoint
+          // returns four actionable ones ("Cannot apply credit note to invoice
+          // with status X", "…different customers", "…no remaining balance",
+          // "Credit note has expired") and all of them were being swallowed in
+          // favour of a fixed "Please try again."
+          const message = (err as { response?: { data?: { message?: string } } })?.response?.data
+            ?.message;
           toast({
             title: "Failed to apply credit note",
-            description: "Please try again.",
+            description: message ?? "Please try again.",
             variant: "error",
           });
         },
