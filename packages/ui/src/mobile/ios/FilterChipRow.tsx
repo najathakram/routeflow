@@ -52,6 +52,24 @@ export function FilterChipRow({
 const styles = StyleSheet.create({
   row: {
     height: 44,
+    // ScrollView's BASE style is `{ flexGrow: 1, flexShrink: 1 }` — identically in
+    // React Native core and react-native-web. All three of these are required:
+    //
+    //   flexShrink: 0  stops the row collapsing to nothing when the parent is
+    //                  over-subscribed (added in 56f582c8 — the chip strip went
+    //                  invisible on the invoices/expenses lists).
+    //   flexGrow: 0    stops the row GROWING to eat every spare pixel. `height`
+    //                  is not a cap — only max-height is — so flex-basis resolves
+    //                  to 44px and grow takes it from there. Beside a `flex: 1`
+    //                  list the two split the free space 50/50, and because
+    //                  `contents` centres vertically you get a ~290px band with
+    //                  the chips floating in the middle of it (the owner's "the
+    //                  top menu moves down" on New order).
+    //   height: 44     the actual row height, once neither of the above applies.
+    //
+    // Don't reach for an alignment fix instead: ScrollView throws a dev invariant
+    // if `alignItems`/`justifyContent` appear in its `style` prop.
+    flexGrow: 0,
     flexShrink: 0,
   },
   contents: {
