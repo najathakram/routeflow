@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
 import { useSocket } from "../../hooks/useSocket";
+import { OperatorTabBar } from "../../components/OperatorTabBar";
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -27,7 +28,15 @@ export default function OperatorLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <OfflineBanner />
+      {/* <Stack> carries flex:1 on both platforms, so the bar is a plain in-flow
+          sibling below it — same shape as OfflineBanner above, and the same shape
+          React Navigation's own BottomTabView uses. That means the screen viewport
+          is simply shorter and NO screen needs bottom padding. It also means the
+          bar survives every push, which is the whole point: only 18 of ~106
+          operator screens live inside the (tabs) navigator, so a bar owned by that
+          navigator vanishes on the other 88. */}
       <Stack screenOptions={{ headerShown: false }} />
+      <OperatorTabBar />
     </View>
   );
 }
