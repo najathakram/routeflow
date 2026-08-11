@@ -5,6 +5,8 @@ export { NavBar, NavBackButton, NavAction } from "./NavBar";
 export type { NavBarProps } from "./NavBar";
 
 export { IosTabBar } from "./TabBar";
+export { IosTabBarView } from "./TabBarView";
+export type { IosTabBarItem } from "./TabBarView";
 
 export { SegmentedControl } from "./SegmentedControl";
 export type { SegmentedControlProps } from "./SegmentedControl";
