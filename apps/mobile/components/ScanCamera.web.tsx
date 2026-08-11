@@ -28,18 +28,86 @@ export interface ScanCameraProps {
   onModeChange?: (mode: "camera" | "manual") => void;
 }
 
-type DetectedBarcode = { rawValue: string };
+type DetectedBarcode = { rawValue: string; format?: string };
 
 interface BarcodeDetectorCtor {
   new (opts?: { formats?: string[] }): {
     detect: (source: CanvasImageSource) => Promise<DetectedBarcode[]>;
   };
+  getSupportedFormats?: () => Promise<string[]>;
 }
 
 declare global {
   interface Window {
     BarcodeDetector?: BarcodeDetectorCtor;
   }
+}
+
+/**
+ * What a wholesale distributor actually scans. ITF-14 (`itf`) is the standard
+ * outer-case barcode and was previously missing from every format list.
+ */
+const WANTED_FORMATS = [
+  "ean_13",
+  "ean_8",
+  "upc_a",
+  "upc_e",
+  "code_128",
+  "code_39",
+  "itf",
+  "qr_code",
+];
+
+/**
+ * ~15 attempts/sec. The in-flight guard means the effective rate is
+ * min(15fps, 1/decodeTime), so a slow device degrades instead of queueing.
+ *
+ * For scale: @zxing/browser's `decodeFromStream` defaults to
+ * `delayBetweenScanAttempts: 500` — TWO attempts per second. zxing is the only
+ * decoder on iOS (no browser there ships BarcodeDetector), so that default was
+ * the single biggest cause of "the scanner isn't sensitive enough".
+ */
+const DETECT_INTERVAL_MS = 66;
+
+/**
+ * 640x480 (the UA default) leaves roughly 6px per narrow module on a 12-digit
+ * UPC at arm's length — under every decoder's floor. `ideal` never throws, so
+ * the UA silently downgrades rather than failing.
+ */
+const IDEAL_VIDEO: MediaTrackConstraints = {
+  facingMode: { ideal: "environment" },
+  width: { ideal: 1920 },
+  height: { ideal: 1080 },
+  frameRate: { ideal: 30 },
+};
+
+/**
+ * Best-effort focus. Per the mediacapture spec a UA DROPS `advanced` entries it
+ * doesn't understand rather than rejecting the call, so this is safe
+ * everywhere; it takes effect on Chrome/Android and is ignored on iOS Safari
+ * (which autofocuses continuously anyway) and Firefox.
+ */
+const ADVANCED_FOCUS = [{ focusMode: "continuous" }] as unknown as MediaTrackConstraintSet[];
+
+/**
+ * Open the rear camera, degrading one step at a time so we can never end up
+ * with a WORSE camera than the pre-existing bare constraint.
+ */
+async function openCamera(): Promise<MediaStream> {
+  const attempts: MediaStreamConstraints[] = [
+    { video: { ...IDEAL_VIDEO, advanced: ADVANCED_FOCUS }, audio: false },
+    { video: IDEAL_VIDEO, audio: false },
+    { video: { facingMode: { ideal: "environment" } }, audio: false },
+  ];
+  let lastErr: unknown;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -62,14 +130,24 @@ export function ScanCamera({
 }: ScanCameraProps) {
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
+  const trackRef = React.useRef<MediaStreamTrack | null>(null);
   const rafRef = React.useRef<number | null>(null);
   const readerRef = React.useRef<any>(null);
   const firedRef = React.useRef(false);
   const gateRef = React.useRef<ScanGateState | null>(null);
   const busyRef = React.useRef(false);
+  // Loop state. `stopped` latches teardown, `inFlight` serialises decodes so a
+  // slow frame can't queue behind itself, `lastDetect` throttles to ~15fps.
+  const stoppedRef = React.useRef(false);
+  const inFlightRef = React.useRef(false);
+  const lastDetectRef = React.useRef(0);
+  /** Set once an engine is chosen; resolves to a decoded string or null. */
+  const detectOnceRef = React.useRef<null | (() => Promise<string | null>)>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [manualMode, setManualMode] = React.useState(false);
   const [manualValue, setManualValue] = React.useState("");
+  const [torchOn, setTorchOn] = React.useState(false);
+  const [caps, setCaps] = React.useState<{ torch: boolean }>({ torch: false });
   // Parents recreate these callbacks every render; route them through refs so
   // `fire` stays stable and the camera effect doesn't restart after each scan.
   const onScannedRef = React.useRef(onScanned);
@@ -86,24 +164,41 @@ export function ScanCamera({
   }, [manualMode]);
 
   const stop = React.useCallback(() => {
+    stoppedRef.current = true;
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    if (readerRef.current) {
-      try {
-        readerRef.current.reset();
-      } catch {
-        /* ignore */
-      }
-      readerRef.current = null;
-    }
+    // NB: @zxing/browser's BrowserCodeReader has no `reset()` — the old call
+    // here threw straight into a swallowing catch. We drive zxing frame-by-frame
+    // via decodeFromCanvas now, so there is nothing to tear down but the stream.
+    readerRef.current = null;
+    detectOnceRef.current = null;
+    trackRef.current = null;
     const stream = streamRef.current;
     if (stream) {
       for (const track of stream.getTracks()) track.stop();
       streamRef.current = null;
     }
   }, []);
+
+  /** Torch, where the platform exposes it. Android/Chrome only — iOS Safari
+   *  reports no `torch` capability in any version, so the button never renders
+   *  there and there is no web workaround. */
+  const toggleTorch = React.useCallback(async () => {
+    const track = trackRef.current;
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({
+        advanced: [{ torch: next }],
+      } as unknown as MediaTrackConstraints);
+      setTorchOn(next);
+    } catch {
+      // The capability lied — hide the control rather than leave a dead button.
+      setCaps((prev) => ({ ...prev, torch: false }));
+    }
+  }, [torchOn]);
 
   /**
    * One decoded code from any source (BarcodeDetector, zxing, manual input).
@@ -145,8 +240,46 @@ export function ScanCamera({
     [continuous, stop],
   );
 
+  /**
+   * One throttled decode loop, whichever engine is active.
+   *
+   * The previous version had two structural bugs, both fatal and both silent:
+   * it `return`ed on a transient `!videoRef.current` WITHOUT rescheduling
+   * (killing the loop permanently), and in continuous mode after `stop()` it
+   * fell through and RE-ARMED against a dead stream (a CPU-burning loop until
+   * unmount). Scheduling first and latching on `stoppedRef` makes both
+   * impossible.
+   */
+  const loop = React.useCallback(() => {
+    if (stoppedRef.current) {
+      rafRef.current = null;
+      return;
+    }
+    rafRef.current = requestAnimationFrame(loop);
+
+    if (inFlightRef.current) return;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (now - lastDetectRef.current < DETECT_INTERVAL_MS) return;
+
+    const video = videoRef.current;
+    // readyState < HAVE_CURRENT_DATA means there is no frame to decode yet.
+    if (!video || video.readyState < 2) return;
+    const detect = detectOnceRef.current;
+    if (!detect) return;
+
+    lastDetectRef.current = now;
+    inFlightRef.current = true;
+    void detect()
+      .then((code) => (code ? fire(code) : undefined))
+      .catch(() => undefined)
+      .finally(() => {
+        inFlightRef.current = false;
+      });
+  }, [fire]);
+
   React.useEffect(() => {
     let cancelled = false;
+    stoppedRef.current = false;
 
     const start = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -157,10 +290,7 @@ export function ScanCamera({
 
       let stream: MediaStream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
+        stream = await openCamera();
       } catch (e: unknown) {
         setError(friendlyCameraError(e));
         setManualMode(true);
@@ -173,6 +303,12 @@ export function ScanCamera({
       }
       streamRef.current = stream;
 
+      const track = stream.getVideoTracks()[0] ?? null;
+      trackRef.current = track;
+      const capabilities = (track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      // getCapabilities is absent on Firefox — `caps` just stays false there.
+      setCaps({ torch: "torch" in capabilities });
+
       const video = videoRef.current;
       if (video) {
         video.srcObject = stream;
@@ -180,52 +316,112 @@ export function ScanCamera({
         await video.play().catch(() => undefined);
       }
 
-      // Try native BarcodeDetector first (Chrome / Edge / Android)
+      // Engine 1: native BarcodeDetector (Chrome / Edge / Android).
       const Ctor = typeof window !== "undefined" ? window.BarcodeDetector : undefined;
+      let usedNative = false;
       if (Ctor) {
-        const detector = new Ctor({
-          formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e", "code_39"],
-        });
-        const tick = async () => {
-          if (cancelled || !videoRef.current) return;
-          try {
-            const codes = await detector.detect(videoRef.current);
-            if (codes && codes.length > 0 && codes[0]?.rawValue) {
-              await fire(codes[0].rawValue);
-              // Single-shot: fire() latched + stopped — end the loop.
-              if (firedRef.current) return;
-            }
-          } catch {
-            /* ignore per-frame errors */
+        try {
+          // Chrome on desktop Windows/Linux can expose the constructor while
+          // supporting NOTHING, and constructing with an unsupported format
+          // throws. Unguarded, that throw was swallowed per-frame forever and
+          // zxing was never reached: a camera that streams and never decodes.
+          const supported = (await Ctor.getSupportedFormats?.()) ?? [];
+          const formats = WANTED_FORMATS.filter((f) => supported.includes(f));
+          if (formats.length >= 3) {
+            const detector = new Ctor({ formats });
+            // No canvas here on purpose: detect(videoElement) lets the browser
+            // hand the native frame to the platform detector. Routing it
+            // through a 2D canvas forces a GPU readback and is slower with no
+            // accuracy gain.
+            detectOnceRef.current = async () => {
+              const v = videoRef.current;
+              if (!v) return null;
+              const codes = await detector.detect(v);
+              const hit = codes?.[0];
+              if (!hit?.rawValue) return null;
+              // ITF is prone to partial reads; only a full ITF-14 is trustworthy.
+              if (hit.format === "itf" && hit.rawValue.length !== 14) return null;
+              return hit.rawValue;
+            };
+            usedNative = true;
           }
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        rafRef.current = requestAnimationFrame(tick);
-        return;
-      }
-
-      // Fallback: use @zxing/browser (works on Safari / Firefox / iOS)
-      try {
-        const { BrowserMultiFormatReader } = await import("@zxing/browser");
-        if (cancelled) return;
-        const reader = new BrowserMultiFormatReader();
-        readerRef.current = reader;
-        const videoEl = videoRef.current;
-        if (!videoEl) return;
-        reader.decodeFromStream(stream, videoEl, (result, err) => {
-          if (cancelled) return;
-          if (result) {
-            void fire(result.getText());
-          } else if (err && (err as any).name !== "NotFoundException") {
-            // real error, ignore transient "not found" per-frame errors
-          }
-        });
-      } catch (e: unknown) {
-        if (!cancelled) {
-          setError("Barcode scanning failed. Try entering the code manually.");
-          setManualMode(true);
+        } catch {
+          /* fall through to zxing */
         }
       }
+
+      // Engine 2: zxing. The only decoder available on iOS.
+      if (!usedNative) {
+        try {
+          const { BrowserMultiFormatReader, BarcodeFormat } = await import("@zxing/browser");
+          const { DecodeHintType } = await import("@zxing/library");
+          if (cancelled) return;
+          const hints = new Map<number, unknown>([
+            // Default hints make MultiFormatReader try Aztec, PDF417,
+            // DataMatrix, MaxiCode and RSS on every attempt. Restricting to
+            // what we actually sell buys most of that CPU back...
+            [
+              DecodeHintType.POSSIBLE_FORMATS,
+              [
+                BarcodeFormat.EAN_13,
+                BarcodeFormat.EAN_8,
+                BarcodeFormat.UPC_A,
+                BarcodeFormat.UPC_E,
+                BarcodeFormat.CODE_128,
+                BarcodeFormat.CODE_39,
+                BarcodeFormat.ITF,
+                BarcodeFormat.QR_CODE,
+              ],
+            ],
+            // ...and TRY_HARDER spends it on more scan rows plus a rotated
+            // pass, so a label held vertically still reads.
+            [DecodeHintType.TRY_HARDER, true],
+          ]);
+          const reader = new BrowserMultiFormatReader(hints as any);
+          readerRef.current = reader;
+
+          // Centre band only: 1D barcodes are wide and short, and the operator
+          // centres them. Downscaled so a TRY_HARDER pass fits the frame budget
+          // while still carrying far more detail than the old 640-wide frame.
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          detectOnceRef.current = async () => {
+            const v = videoRef.current;
+            if (!v || !v.videoWidth || !ctx) return null;
+            const sw = Math.round(v.videoWidth * 0.92);
+            const sh = Math.round(v.videoHeight * 0.42);
+            const sx = Math.round((v.videoWidth - sw) / 2);
+            const sy = Math.round((v.videoHeight - sh) / 2);
+            const scale = Math.min(1, 1024 / sw);
+            const dw = Math.round(sw * scale);
+            const dh = Math.round(sh * scale);
+            if (canvas.width !== dw || canvas.height !== dh) {
+              canvas.width = dw;
+              canvas.height = dh;
+            }
+            ctx.drawImage(v, sx, sy, sw, sh, 0, 0, dw, dh);
+            try {
+              const result = reader.decodeFromCanvas(canvas);
+              const text = result.getText();
+              const format = result.getBarcodeFormat?.();
+              if (format === BarcodeFormat.ITF && text.length !== 14) return null;
+              return text;
+            } catch {
+              // NotFoundException on every frame that doesn't contain a code.
+              return null;
+            }
+          };
+        } catch {
+          if (!cancelled) {
+            setError("Barcode scanning failed. Try entering the code manually.");
+            setManualMode(true);
+          }
+          return;
+        }
+      }
+
+      if (cancelled) return;
+      rafRef.current = requestAnimationFrame(loop);
     };
 
     void start();
@@ -234,7 +430,7 @@ export function ScanCamera({
       cancelled = true;
       stop();
     };
-  }, [fire, stop]);
+  }, [fire, loop, stop]);
 
   const submitManual = () => {
     const trimmed = manualValue.trim();
@@ -274,6 +470,20 @@ export function ScanCamera({
       )}
 
       <View style={styles.overlay} pointerEvents="box-none">
+        {/* Android/Chrome only — iOS Safari exposes no torch capability, so
+            this simply doesn't render on iPhone. */}
+        {!manualMode && caps.torch ? (
+          <Pressable
+            onPress={() => void toggleTorch()}
+            style={[styles.torchBtn, torchOn && styles.torchBtnOn]}
+            accessibilityRole="button"
+            accessibilityLabel={torchOn ? "Turn off the light" : "Turn on the light"}
+            accessibilityState={{ selected: torchOn }}
+          >
+            <Text style={styles.torchText}>{torchOn ? "Light on" : "Light"}</Text>
+          </Pressable>
+        ) : null}
+
         <View style={[styles.bottomCard, linkOnlyCard && styles.bottomCardCompact]}>
           {card.showError ? (
             <Text style={styles.error}>{error}</Text>
@@ -402,4 +612,20 @@ const styles = StyleSheet.create({
   manualBtnText: { color: "#fff", fontWeight: "600", fontSize: 15 },
   linkBtn: { alignItems: "center", justifyContent: "center", minHeight: 44 },
   linkText: { color: "rgba(255,255,255,0.85)", fontSize: 13 },
+  torchBtn: {
+    position: "absolute",
+    left: 16,
+    // Clear of the bottom card (compact ~44px + 28px inset) and of the pills
+    // the host sheet puts along the top edge.
+    bottom: 84,
+    minHeight: 44,
+    minWidth: 72,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  torchBtnOn: { backgroundColor: "rgba(255,214,10,0.92)" },
+  torchText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });
