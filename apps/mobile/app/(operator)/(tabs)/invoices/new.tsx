@@ -46,6 +46,7 @@ import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
+import { boxedLineSummary } from "../../../../lib/boxed-line-summary";
 import { InlineToast, useInlineToast } from "../../../../components/InlineToast";
 import { ProductRow } from "../../../../components/ProductRow";
 import { ScanOrderSheet } from "../../../../components/ScanOrderSheet";
@@ -152,31 +153,6 @@ const productKey = (p: Product) => p.id;
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
-}
-
-/** One-line "2 cases + 1 loose · $54.00" for an added case-packed catalog row. */
-function boxedLineSummary(line: LineState, product: Product, unitPrice: number): string {
-  const split = normalizeBoxesPieces({
-    boxes: line.boxes,
-    pieces: line.pieces,
-    qty: line.qty,
-    unitsPerBox: product.unitsPerBox,
-  });
-  const boxes = split.boxes ?? 0;
-  const pieces = split.pieces ?? 0;
-  const parts: string[] = [];
-  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
-  if (pieces > 0) parts.push(`${pieces} loose`);
-  // Raw line fields, exactly as the footer memo passes them — the two totals
-  // must be byte-identical.
-  const subtotal = computeLineSubtotal({
-    unitPrice,
-    qty: split.qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
-  return `${parts.join(" + ") || "0"} · $${subtotal.toFixed(2)}`;
 }
 
 export default function NewInvoiceScreen() {
@@ -745,7 +721,7 @@ function InvoiceComposer({
               />
             </View>
             <Text style={styles.boxedSummary} numberOfLines={1}>
-              {boxedLineSummary(line, p, effectiveUnitPrice(line, p))}
+              {boxedLineSummary(line, p.unitsPerBox, effectiveUnitPrice(line, p))}
             </Text>
             <Pressable
               onPress={openReview}

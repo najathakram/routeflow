@@ -47,6 +47,9 @@ import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
+// Shared with NewOrderScreen — edit-items' old local copy had a borderless
+// fill3 track; the canonical version uses bgElev + hairline (QtyStepper pill).
+import { SellByToggle } from "../../../../../components/SellByToggle";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -1604,31 +1607,6 @@ function CreateCreditNoteModal({
   );
 }
 
-/** Compact Cases/Units segmented control for a case-packed line's qty entry mode. */
-function SellByToggle({
-  value,
-  onChange,
-}: {
-  value: "case" | "unit";
-  onChange: (v: "case" | "unit") => void;
-}) {
-  return (
-    <View style={styles.sellBySegment}>
-      {(["case", "unit"] as const).map((opt) => (
-        <Pressable
-          key={opt}
-          onPress={() => onChange(opt)}
-          style={[styles.sellBySegmentBtn, value === opt && styles.sellBySegmentBtnActive]}
-        >
-          <Text style={[styles.sellBySegmentText, value === opt && styles.sellBySegmentTextActive]}>
-            {opt === "case" ? "Cases" : "Units"}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 // ─── Product picker ──────────────────────────────────────────────────────────
 
 function ProductPicker({
@@ -2121,23 +2099,6 @@ const styles = StyleSheet.create({
   optionRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   optionLabel: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   newCreditText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
-
-  // ── Cases/Units segmented control ─────────────────────────────────────────
-  sellBySegment: {
-    flexDirection: "row",
-    backgroundColor: ios.fill3,
-    borderRadius: 8,
-    padding: 2,
-    alignSelf: "flex-start",
-  },
-  sellBySegmentBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  sellBySegmentBtnActive: { backgroundColor: ios.brand },
-  sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
-  sellBySegmentTextActive: { color: "#fff" },
 });
 
 // Default export = the operator route (reads the [id] param). The named export

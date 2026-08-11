@@ -57,6 +57,8 @@ import {
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
+import { SellByToggle } from "./SellByToggle";
+import { boxedLineSummary } from "../lib/boxed-line-summary";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
@@ -210,31 +212,6 @@ const productKey = (p: Product) => p.id;
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
-}
-
-/** One-line "2 cases + 1 loose · $54.00" for an added case-packed catalog row. */
-function boxedLineSummary(line: LineState, product: Product, unitPrice: number): string {
-  const split = normalizeBoxesPieces({
-    boxes: line.boxes,
-    pieces: line.pieces,
-    qty: line.qty,
-    unitsPerBox: product.unitsPerBox,
-  });
-  const boxes = split.boxes ?? 0;
-  const pieces = split.pieces ?? 0;
-  const parts: string[] = [];
-  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
-  if (pieces > 0) parts.push(`${pieces} loose`);
-  // Raw line fields, exactly as the footer memo passes them — the two totals
-  // must be byte-identical.
-  const subtotal = computeLineSubtotal({
-    unitPrice,
-    qty: split.qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
-  return `${parts.join(" + ") || "0"} · $${subtotal.toFixed(2)}`;
 }
 
 export function NewOrderScreen({
@@ -1066,7 +1043,7 @@ function ProductPickView({
               />
             </View>
             <Text style={styles.boxedSummary} numberOfLines={1}>
-              {boxedLineSummary(line, p, effectiveUnitPrice(line, price))}
+              {boxedLineSummary(line, p.unitsPerBox, effectiveUnitPrice(line, price))}
             </Text>
             <Pressable
               onPress={openCart}
@@ -2721,31 +2698,6 @@ function CreateCreditNoteSheet({
   );
 }
 
-/** Compact Cases/Units segmented control for a case-packed line's qty entry mode. */
-function SellByToggle({
-  value,
-  onChange,
-}: {
-  value: "case" | "unit";
-  onChange: (v: "case" | "unit") => void;
-}) {
-  return (
-    <View style={styles.sellBySegment}>
-      {(["case", "unit"] as const).map((opt) => (
-        <Pressable
-          key={opt}
-          onPress={() => onChange(opt)}
-          style={[styles.sellBySegmentBtn, value === opt && styles.sellBySegmentBtnActive]}
-        >
-          <Text style={[styles.sellBySegmentText, value === opt && styles.sellBySegmentTextActive]}>
-            {opt === "case" ? "Cases" : "Units"}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
   center: { padding: 40, alignItems: "center" },
@@ -2964,22 +2916,6 @@ const styles = StyleSheet.create({
   },
   boxedEditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   // Cases/Units segmented control (cart sheet).
-  sellBySegment: {
-    flexDirection: "row",
-    backgroundColor: ios.bgElev,
-    borderRadius: 8,
-    padding: 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  sellBySegmentBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  sellBySegmentBtnActive: { backgroundColor: ios.brand },
-  sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
-  sellBySegmentTextActive: { color: "#fff" },
   newCreditBtn: {
     flexDirection: "row",
     alignItems: "center",
