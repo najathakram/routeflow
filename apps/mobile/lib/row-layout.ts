@@ -75,6 +75,24 @@ export const MIN_TEXT_COLUMN = 100;
  */
 export const MIN_TEXT_COLUMN_NARROW = 72;
 
+/** Gap between children of ProductRow's boxed band (its `band` style). */
+export const BAND_GAP = 10;
+
+/**
+ * Visual width of the band's "Edit" chip: 12px padding ×2 + "Edit" at 13px
+ * semibold ≈ 29px. Conservative bound used by the geometry tests.
+ */
+export const BAND_EDIT_CHIP_WIDTH = 53;
+
+/**
+ * Inner width of a ProductRow boxed band: viewport − 16px list margin ×2 −
+ * 10px row padding ×2. The band is full-width (rowStacked column), no thumb
+ * indent.
+ */
+export function bandInnerWidth(viewport: number): number {
+  return viewport - 16 * 2 - 10 * 2;
+}
+
 /**
  * Total width of a −/input/+ stepper pill. Mirrors the `pill` style: two square
  * buttons, the input, symmetric padding, and a hairline border on each side.

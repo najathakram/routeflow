@@ -58,7 +58,7 @@ import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { SellByToggle } from "./SellByToggle";
-import { boxedLineSummary } from "../lib/boxed-line-summary";
+import { BoxedQtyBand } from "./BoxedQtyBand";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
@@ -950,6 +950,7 @@ function ProductPickView({
     remove: removeOne,
     setQty,
     setBoxes,
+    setPieces,
     setUnits,
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
@@ -970,6 +971,10 @@ function ProductPickView({
   );
   const onRowChangeBoxes = useCallback(
     (id: string, n: number) => actionsRef.current.setBoxes(id, n),
+    [],
+  );
+  const onRowChangePieces = useCallback(
+    (id: string, n: number) => actionsRef.current.setPieces(id, n),
     [],
   );
   const openCart = useCallback(() => setCartOpen(true), []);
@@ -1033,28 +1038,16 @@ function ProductPickView({
       const price = tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
-          <>
-            <View style={styles.boxedControl}>
-              <Text style={styles.boxedQtyLabel}>Cases</Text>
-              <QtyStepper
-                size="mini"
-                value={line.boxes ?? 0}
-                onChangeQty={(n) => onRowChangeBoxes(p.id, n)}
-              />
-            </View>
-            <Text style={styles.boxedSummary} numberOfLines={1}>
-              {boxedLineSummary(line, p.unitsPerBox, effectiveUnitPrice(line, price))}
-            </Text>
-            <Pressable
-              onPress={openCart}
-              hitSlop={8}
-              style={styles.boxedEditBtn}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${displayName(p)}`}
-            >
-              <Text style={styles.boxedEditText}>Edit</Text>
-            </Pressable>
-          </>
+          <BoxedQtyBand
+            line={line}
+            unitsPerBox={Number(p.unitsPerBox)}
+            unit={p.unit}
+            unitPrice={effectiveUnitPrice(line, price)}
+            productName={displayName(p)}
+            onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
+            onChangePieces={(n) => onRowChangePieces(p.id, n)}
+            onEdit={openCart}
+          />
         ) : null;
 
       return (
@@ -1086,6 +1079,7 @@ function ProductPickView({
       onRowIncrement,
       onRowDecrement,
       onRowChangeBoxes,
+      onRowChangePieces,
       openCart,
     ],
   );
@@ -2891,31 +2885,6 @@ const styles = StyleSheet.create({
   confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 
-  // ── Added case-packed catalog row: cases stepper + split + way into the cart ──
-  boxedControl: { alignItems: "center", gap: 4 },
-  boxedQtyLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.3,
-  },
-  boxedSummary: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    fontVariant: ["tabular-nums"],
-  },
-  boxedEditBtn: {
-    minHeight: 44,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: ios.brandWash,
-  },
-  boxedEditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
-  // Cases/Units segmented control (cart sheet).
   newCreditBtn: {
     flexDirection: "row",
     alignItems: "center",
