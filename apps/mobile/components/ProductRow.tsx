@@ -60,7 +60,10 @@ export const ProductRow = React.memo(function ProductRow({
           <Text style={styles.name} numberOfLines={1}>
             {name}
           </Text>
-          <Text style={styles.meta}>
+          {/* Clamped at 2, not 1: this legitimately wraps to two lines on
+              native ("SKU X · $12.50 / case of 24 · ≈ $0.52/unit"). Unclamped,
+              a squeezed web column renders it one character per line. */}
+          <Text style={styles.meta} numberOfLines={2}>
             {sku ? `SKU ${sku} · ` : ""}
             {isSpecial ? <Text style={styles.metaWas}>${listPrice.toFixed(2)} </Text> : null}
             <Text style={isSpecial ? styles.metaSpecial : undefined}>${price.toFixed(2)}</Text>

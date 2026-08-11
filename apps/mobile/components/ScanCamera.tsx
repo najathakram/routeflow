@@ -1,5 +1,5 @@
 import * as React from "react";
-import { StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { gateScan, type ScanGateState, type ScanOutcome } from "../lib/scan-loop";
 
@@ -63,6 +63,7 @@ export function ScanCamera({
   const firedRef = React.useRef(false);
   const gateRef = React.useRef<ScanGateState | null>(null);
   const busyRef = React.useRef(false);
+  const [torchOn, setTorchOn] = React.useState(false);
   // Parents recreate these callbacks every render; route them through refs so
   // the handler identity never restarts the camera.
   const onScannedRef = React.useRef(onScanned);
@@ -101,15 +102,45 @@ export function ScanCamera({
     <View style={[styles.root, style]}>
       <CameraView
         style={StyleSheet.absoluteFill}
+        // itf14 is the standard outer-case barcode for a distributor and was
+        // missing from every format list.
         barcodeScannerSettings={{
-          barcodeTypes: ["ean13", "ean8", "code128", "qr", "upc_a", "upc_e", "code39"],
+          barcodeTypes: ["ean13", "ean8", "code128", "qr", "upc_a", "upc_e", "code39", "itf14"],
         }}
+        autofocus="on"
+        // Works on BOTH iOS and Android here — the one thing native gets that
+        // web-on-iPhone cannot (Safari exposes no torch API).
+        enableTorch={torchOn}
         onBarcodeScanned={active ? handleBarcodeScanned : undefined}
       />
+      <Pressable
+        onPress={() => setTorchOn((on) => !on)}
+        style={[styles.torchBtn, torchOn && styles.torchBtnOn]}
+        accessibilityRole="button"
+        accessibilityLabel={torchOn ? "Turn off the light" : "Turn on the light"}
+        accessibilityState={{ selected: torchOn }}
+      >
+        <Text style={styles.torchText}>{torchOn ? "Light on" : "Light"}</Text>
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000", overflow: "hidden" },
+  torchBtn: {
+    position: "absolute",
+    left: 16,
+    // Clear of the bottom card and of the pills the host sheet puts on top.
+    bottom: 84,
+    minHeight: 44,
+    minWidth: 72,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  torchBtnOn: { backgroundColor: "rgba(255,214,10,0.92)" },
+  torchText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 });

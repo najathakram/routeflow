@@ -227,7 +227,7 @@ describe("ProductsService", () => {
   // ─── findByBarcode ────────────────────────────────────────────────────────
 
   describe("findByBarcode", () => {
-    it("resolves a case barcode hit", async () => {
+    it("resolves a case barcode hit, querying the candidate set", async () => {
       prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, barcode: "BC-1" }]);
 
       const result = await service.findByBarcode("BC-1");
@@ -235,9 +235,50 @@ describe("ProductsService", () => {
       expect(result).toMatchObject({ barcode: "BC-1" });
       expect(prisma.product.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { OR: [{ barcode: "BC-1" }, { sku: "BC-1" }, { unitSku: "BC-1" }] },
+          where: {
+            OR: [
+              { barcode: { in: expect.arrayContaining(["BC-1"]) } },
+              { sku: { in: expect.arrayContaining(["BC-1"]) } },
+              { unitSku: { in: expect.arrayContaining(["BC-1"]) } },
+            ],
+          },
         }),
       );
+    });
+
+    it("matches a UPC-A scan against an EAN-13 stored code (the iOS decoder gap)", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, barcode: "0012345678905" }]);
+
+      const result = await service.findByBarcode("012345678905");
+
+      expect(result).toMatchObject({ barcode: "0012345678905" });
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.OR[0].barcode.in).toEqual(
+        expect.arrayContaining(["012345678905", "0012345678905"]),
+      );
+    });
+
+    it("falls back to a case-insensitive query only after the exact tier misses", async () => {
+      prisma.product.findMany
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ ...MOCK_PRODUCT, sku: "tom-001" }]);
+
+      const result = await service.findByBarcode("TOM-001");
+
+      expect(result).toMatchObject({ sku: "tom-001" });
+      expect(prisma.product.findMany).toHaveBeenCalledTimes(2);
+      const secondWhere = prisma.product.findMany.mock.calls[1][0].where;
+      expect(secondWhere.OR[0]).toEqual({
+        barcode: { equals: "TOM-001", mode: "insensitive" },
+      });
+    });
+
+    it("does not run the case-insensitive tier when the exact tier hits", async () => {
+      prisma.product.findMany.mockResolvedValue([{ ...MOCK_PRODUCT, barcode: "BC-1" }]);
+
+      await service.findByBarcode("BC-1");
+
+      expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
     });
 
     it("resolves a unitSku-only hit (no matching barcode/sku)", async () => {
@@ -273,10 +314,16 @@ describe("ProductsService", () => {
       expect(result.id).toBe("prod-sku");
     });
 
-    it("throws NotFoundException when no product matches any of the three codes", async () => {
+    it("throws NotFoundException when both tiers come back empty", async () => {
       prisma.product.findMany.mockResolvedValue([]);
 
       await expect(service.findByBarcode("NOPE")).rejects.toThrow(NotFoundException);
+      expect(prisma.product.findMany).toHaveBeenCalledTimes(2);
+    });
+
+    it("throws without querying at all for a blank code", async () => {
+      await expect(service.findByBarcode("   ")).rejects.toThrow(NotFoundException);
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
     });
   });
 

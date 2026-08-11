@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,7 +17,9 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../../../../lib/api/admin";
-import { useProducts } from "../../../../lib/api/products";
+import { useProductCategories } from "../../../../lib/api/products";
+import { useProductSearch } from "../../../../lib/use-product-search";
+import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
 import { showToast } from "../../../../lib/toast";
 import {
@@ -28,6 +31,8 @@ import {
   setLineUnits,
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
+import { normalizeScanCode } from "../../../../lib/barcode-normalize";
+import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
 import {
@@ -55,6 +60,7 @@ import {
 import { withCartRows } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
+import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
 
 /**
  * Standalone invoice composer for the mobile operator UI.
@@ -109,6 +115,8 @@ type Product = {
   id: string;
   name: string;
   sku?: string | null;
+  /** Retail-unit code — scannable, so the local scan fast path must see it. */
+  unitSku?: string | null;
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
@@ -305,8 +313,9 @@ function InvoiceComposer({
   onChangeCustomer: () => void;
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
 }) {
-  const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
+  /** See NewOrderScreen: after a scan the list shows only what's on the invoice. */
+  const [orderOnly, setOrderOnly] = useState(false);
   const [items, setItems] = useState<Record<string, LineState>>({});
   // Ad-hoc lines not in the catalog (no productId on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
@@ -322,6 +331,11 @@ function InvoiceComposer({
   const [reviewOpen, setReviewOpen] = useState(false);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
+  // POST /products is @Roles(OPERATOR) server-side, so offering "Create" to a
+  // driver only earns them a 403. NewOrderScreen has always gated this; this
+  // screen did not.
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canCreateProducts = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
@@ -334,20 +348,25 @@ function InvoiceComposer({
   const [dueDate, setDueDate] = useState(() => dueDateFor("", DEFAULT_TERMS));
   const [send, setSend] = useState(false);
 
-  const { data: productsData, isLoading: productsLoading } = useProducts({
-    search: search.trim() || undefined,
-    limit: 0,
-  });
-  const products: Product[] = productsData?.data ?? [];
+  // Debounced, server-filtered, paged — replaces the `limit: 0` fetch-all.
+  // See NewOrderScreen and lib/use-product-search.ts.
+  const {
+    search,
+    setSearch,
+    searchTerm,
+    products,
+    isLoading: productsLoading,
+    isSearching,
+    isPlaceholder,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useProductSearch<Product>({ category });
 
-  const productById = useMemo(() => {
-    const m = new Map<string, Product>();
-    for (const p of products) m.set(p.id, p);
-    for (const id of Object.keys(scannedById)) {
-      if (!m.has(id)) m.set(id, scannedById[id]);
-    }
-    return m;
-  }, [products, scannedById]);
+  const productById = useMemo(
+    () => mergeProductIndex<Product>(products, scannedById),
+    [products, scannedById],
+  );
 
   const addOne = (id: string, snapshot?: Product) => {
     const p = snapshot ?? productById.get(id);
@@ -358,11 +377,11 @@ function InvoiceComposer({
       // ...prev preserved so a repeat scan / +1 keeps unitPrice.
       return { ...m, [id]: incrementLine(prev, isBoxed, upb) };
     });
-    // Always retain the snapshot (see NewOrderScreen): the empty-search query
-    // can be GC'd while a search is held, so setSearch("") after a local scan
-    // may briefly refetch cold — the snapshot keeps this row resolvable.
-    if (snapshot) {
-      setScannedById((m) => (id in m ? m : { ...m, [id]: snapshot }));
+    // Retain a snapshot for EVERY added line, not just scanned ones — see
+    // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
+    // dropped out of the total as soon as the page changed underneath.
+    if (p) {
+      setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
   };
 
@@ -467,12 +486,13 @@ function InvoiceComposer({
    */
   const acceptScannedProduct = (product: Product): ScanOutcome => {
     addOne(product.id, product);
-    if (scanOpen) {
-      bumpScanned(product.id);
-      return;
-    }
-    setSearch(""); // an active search would hide the added row (web clears too)
+    bumpScanned(product.id);
+    // Never set the search box to the scanned code — see NewOrderScreen: the
+    // barcode endpoint resolves codes the text search cannot match.
+    setSearch("");
+    setOrderOnly(true);
     setPendingScroll((s) => requestScroll(s, product.id));
+    if (scanOpen) return; // the tray row is the confirmation
     return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
   };
 
@@ -481,16 +501,37 @@ function InvoiceComposer({
   const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
-    const lower = trimmed.toLowerCase();
+    // Local fast path over the rows already in memory, using the same candidate
+    // set the server matches on (UPC-E/EAN-13/leading-zero variants) and
+    // including unitSku, which the previous version omitted.
+    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
+    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
     const local = products.find(
       (p) =>
-        (p.barcode ?? "").toLowerCase() === lower ||
-        (p.sku ?? "").toLowerCase() === lower ||
-        (p.id ?? "").toLowerCase() === lower,
+        hit(p.barcode) ||
+        hit(p.sku) ||
+        hit(p.unitSku) ||
+        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
     if (local) return acceptScannedProduct(local);
     try {
       const result = await resolveProductByCode<Product>(trimmed);
+      if (result.ambiguous) {
+        // Several substring hits, no exact code match — don't guess row #1.
+        return {
+          feedback: {
+            kind: "error",
+            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
+            action: {
+              label: "Choose",
+              onPress: () => {
+                setSearch(trimmed);
+                setScanOpen(false);
+              },
+            },
+          },
+        };
+      }
       if (!result.notFound && result.product?.id) {
         return acceptScannedProduct(result.product);
       }
@@ -498,15 +539,21 @@ function InvoiceComposer({
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
       return { feedback: { kind: "error", text: msg } };
     }
-    chooseAction(
-      `No product for "${trimmed}"`,
-      "Add it as a new product or a variant of an existing one? Your invoice stays as it is.",
-      [
-        { label: "Cancel", style: "cancel" },
-        { label: "Create", onPress: () => setCreateCode(trimmed) },
-      ],
-    );
-    return { close: true };
+    // Nothing matched. STAY IN SCAN MODE — the pill carries the hand-off. A
+    // confirm dialog here is invisible on react-native-web (it renders behind
+    // the opaque scan sheet), which is why this used to close the scanner and
+    // strand the operator on the first mis-read.
+    const text = `No product for "${trimmed}"`;
+    if (canCreateProducts) {
+      return {
+        feedback: {
+          kind: "error",
+          text,
+          action: { label: "Create", onPress: () => setCreateCode(trimmed) },
+        },
+      };
+    }
+    return { feedback: { kind: "error", text } };
   };
 
   // Create-on-miss: overlays the invoice builder (never navigates away) so the
@@ -531,23 +578,36 @@ function InvoiceComposer({
     showInline(`Added ${displayName(snapshot, products)}`);
   };
 
-  const categoryChips = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of products) if (p.category) set.add(p.category);
-    return [{ label: "All" }, ...Array.from(set).map((label) => ({ label }))];
-  }, [products]);
+  // Chips from the tenant's distinct categories — a 50-row page can't enumerate them.
+  const { data: tenantCategories } = useProductCategories();
+  const categoryChips = useMemo(
+    () => [{ label: "All" }, ...(tenantCategories ?? []).map((label) => ({ label }))],
+    [tenantCategories],
+  );
+
+  /** Lines on the invoice, newest scan first — the "ON THIS INVOICE" list. */
+  const orderRows = useMemo(() => {
+    const rank = new Map(scanOrder.map((id, i) => [id, i]));
+    return Object.keys(items)
+      .map((id) => productById.get(id))
+      .filter((p): p is Product => !!p)
+      .sort(
+        (a, b) =>
+          (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+      );
+  }, [items, productById, scanOrder]);
 
   const filtered = useMemo(() => {
-    const term = search.trim();
-    // The chip row is hidden while a search is active, so the category must not
-    // keep narrowing results behind a control the operator can no longer see.
-    const base =
-      term || category === "All" ? products : products.filter((p) => p.category === category);
-    // While browsing (no active search), pin cart lines the filter would hide
-    // so every scanned item keeps a visible row.
-    if (term) return base;
-    return withCartRows(base, Object.keys(items), (id) => productById.get(id));
-  }, [products, category, search, items, productById]);
+    if (orderOnly) return orderRows;
+    // Search AND category are server-side now; the only client-side shaping
+    // left is pinning cart lines the current page doesn't contain.
+    if (searchTerm) return products;
+    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+  }, [orderOnly, orderRows, products, searchTerm, items, productById]);
+
+  useEffect(() => {
+    if (orderOnly && Object.keys(items).length === 0) setOrderOnly(false);
+  }, [orderOnly, items]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -811,12 +871,13 @@ function InvoiceComposer({
     );
   };
 
-  const searchTerm = search.trim();
   // The review sheet's copy of this opener is unreachable until the invoice has
   // a line, so the catalog list owns the only zero-item path to an ad-hoc item.
   const unlistedPlacement = unlistedAffordancePlacement({
     rowCount: filtered.length,
-    loading: productsLoading,
+    // Suppress mid-search too: keepPreviousData means the rows on screen may
+    // belong to the previous query.
+    loading: productsLoading || isSearching,
   });
   const unlistedLabel = searchTerm
     ? `Add "${searchTerm}" as an unlisted item`
@@ -841,20 +902,40 @@ function InvoiceComposer({
       <SearchBar
         placeholder="Search items…"
         value={search}
-        onChangeText={setSearch}
+        onChangeText={(t) => {
+          setSearch(t);
+          if (t.trim()) setOrderOnly(false);
+        }}
         trailing={
-          <Pressable
-            onPress={() => setScanOpen(true)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Scan items"
-          >
-            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-          </Pressable>
+          <View style={styles.searchTrailing}>
+            {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
+            <Pressable
+              onPress={() => setScanOpen(true)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Scan items"
+            >
+              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+            </Pressable>
+          </View>
         }
       />
 
-      {searchTerm === "" && categoryChips.length > 1 ? (
+      {orderOnly ? (
+        <View style={styles.orderOnlyBar}>
+          <Text style={styles.orderOnlyLabel}>ON THIS INVOICE</Text>
+          <Pressable
+            onPress={() => setOrderOnly(false)}
+            hitSlop={8}
+            style={styles.orderOnlyBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Show all items"
+          >
+            <Ionicons name="refresh-outline" size={13} color={ios.brand} />
+            <Text style={styles.orderOnlyBtnText}>Show all items</Text>
+          </Pressable>
+        </View>
+      ) : searchTerm === "" && categoryChips.length > 1 ? (
         <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
       ) : null}
 
@@ -868,10 +949,17 @@ function InvoiceComposer({
         initialNumToRender={12}
         maxToRenderPerBatch={12}
         windowSize={7}
-        removeClippedSubviews
+        // RN's own default is Android-only; forcing it on for iOS is a known
+        // source of cells failing to render. No-op on web.
+        removeClippedSubviews={Platform.OS === "android"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         onScrollToIndexFailed={onScrollToIndexFailed}
+        onEndReachedThreshold={0.5}
+        onEndReached={() => {
+          if (orderOnly || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+          fetchNextPage();
+        }}
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={RowSpacer}
         ListEmptyComponent={
@@ -898,20 +986,27 @@ function InvoiceComposer({
           )
         }
         ListFooterComponent={
-          unlistedPlacement === "list-footer" ? (
-            <Pressable
-              style={styles.listUnlistedBtn}
-              onPress={() => openUnlistedModal(searchTerm)}
-              accessibilityRole="button"
-              accessibilityLabel={unlistedLabel}
-              hitSlop={4}
-            >
-              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-              <Text style={styles.listUnlistedText} numberOfLines={1}>
-                {unlistedLabel}
-              </Text>
-            </Pressable>
-          ) : null
+          <>
+            {unlistedPlacement === "list-footer" ? (
+              <Pressable
+                style={styles.listUnlistedBtn}
+                onPress={() => openUnlistedModal(searchTerm)}
+                accessibilityRole="button"
+                accessibilityLabel={unlistedLabel}
+                hitSlop={4}
+              >
+                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                <Text style={styles.listUnlistedText} numberOfLines={1}>
+                  {unlistedLabel}
+                </Text>
+              </Pressable>
+            ) : null}
+            {isFetchingNextPage && !orderOnly ? (
+              <View style={styles.pageSpinner}>
+                <ActivityIndicator color={ios.brand} />
+              </View>
+            ) : null}
+          </>
         }
       />
 
@@ -958,6 +1053,9 @@ function InvoiceComposer({
           haptics and the tray scroll; this screen only mutates the lines. */}
       <ScanOrderSheet
         visible={scanOpen}
+        // Freeze decoding, don't close — see the miss path in
+        // handleBarcodeScanned for why the scanner must survive a no-match.
+        paused={createCode != null}
         rows={trayRows}
         flash={scanFlash}
         totalItems={totalItems}
@@ -1021,6 +1119,9 @@ function InvoiceComposer({
         }}
       />
 
+      {/* MUST STAY AFTER <ScanOrderSheet>: on react-native-web sibling Modals
+          stack by portal-div mount order with no z-index, so rendering this
+          earlier would hide it behind an open scan sheet. */}
       <InlineCreateProductSheet
         visible={createCode != null}
         initialCode={createCode ?? undefined}
@@ -1237,7 +1338,7 @@ function ReviewRow({
           <Text style={styles.cartRowName} numberOfLines={2}>
             {displayName(product)}
           </Text>
-          <Text style={styles.cartRowMeta}>
+          <Text style={styles.cartRowMeta} numberOfLines={1}>
             {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
@@ -1261,7 +1362,9 @@ function ReviewRow({
             returnKeyType="done"
           />
           {isOverridden ? (
-            <Text style={styles.cartPriceWas}>${catalogPrice.toFixed(2)}</Text>
+            <Text style={styles.cartPriceWas} numberOfLines={1}>
+              ${catalogPrice.toFixed(2)}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -1377,8 +1480,14 @@ function StepperRow({
   return (
     <View style={styles.stepperRow}>
       <View style={{ flex: 1 }}>
-        <Text style={styles.stepperLabel}>{label}</Text>
-        {hint ? <Text style={styles.stepperHint}>{hint}</Text> : null}
+        <Text style={styles.stepperLabel} numberOfLines={1}>
+          {label}
+        </Text>
+        {hint ? (
+          <Text style={styles.stepperHint} numberOfLines={1}>
+            {hint}
+          </Text>
+        ) : null}
       </View>
       <QtyStepper
         value={value}
@@ -1606,6 +1715,31 @@ const styles = StyleSheet.create({
 
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
+  pageSpinner: { paddingVertical: 16, alignItems: "center" },
+  searchTrailing: { flexDirection: "row", alignItems: "center", gap: 10 },
+  orderOnlyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  orderOnlyLabel: {
+    flexShrink: 1,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.6,
+    color: ios.label2,
+  },
+  orderOnlyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 32,
+    paddingHorizontal: 4,
+  },
+  orderOnlyBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   rowSpacer: { height: 10 },
   emptyUnlistedBtn: {
     flexDirection: "row",
@@ -1785,10 +1919,19 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   cartPriceLabel: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
-  cartPriceInputWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cartPriceInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
+  },
   cartPriceCurrency: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
   cartPriceInput: {
     minWidth: 70,
+    // Caps the react-native-web intrinsic width; never binds on native.
+    maxWidth: MONEY_INPUT_MAX_WIDTH,
+    flexShrink: 0,
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderWidth: StyleSheet.hairlineWidth,

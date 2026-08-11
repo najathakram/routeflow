@@ -22,7 +22,7 @@ import {
 } from "../../../../../lib/api/credit-notes";
 import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
-import { useProducts } from "../../../../../lib/api/products";
+import { useProductSearch } from "../../../../../lib/use-product-search";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
 import {
@@ -44,6 +44,9 @@ import {
   type OriginalLine,
 } from "../../../../../lib/order-item-diff";
 import { sanitizeIntInput } from "../../../../../lib/qty";
+import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
+import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
@@ -1006,7 +1009,10 @@ function DraftItemCard({
                 {isOverridden && !isUpsell ? (
                   <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
                 ) : null}
-                <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
+                <Text
+                  style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
+                  numberOfLines={2}
+                >
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
@@ -1027,7 +1033,10 @@ function DraftItemCard({
                 {isOverridden && !isUpsell ? (
                   <Text style={styles.priceStrike}>${item.catalogPrice.toFixed(2)}</Text>
                 ) : null}
-                <Text style={[styles.cardMeta, isOverridden && { color: overrideColor }]}>
+                <Text
+                  style={[styles.cardMeta, isOverridden && { color: overrideColor }]}
+                  numberOfLines={2}
+                >
                   ${item.unitPrice.toFixed(2)}
                   {isBoxed ? ` / box of ${upb}` : item.unit ? ` / ${item.unit}` : ""}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
@@ -1184,8 +1193,16 @@ function StepperRow({
   return (
     <View style={styles.stepperRow}>
       <View style={{ flex: 1 }}>
-        <Text style={styles.stepperLabel}>{label}</Text>
-        {hint ? <Text style={styles.stepperHint}>{hint}</Text> : null}
+        {/* Clamped: unclamped, a squeezed column renders the label one letter
+            per line on react-native-web. See lib/row-layout.ts. */}
+        <Text style={styles.stepperLabel} numberOfLines={1}>
+          {label}
+        </Text>
+        {hint ? (
+          <Text style={styles.stepperHint} numberOfLines={1}>
+            {hint}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.stepper}>
         <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
@@ -1633,15 +1650,21 @@ function ProductPicker({
   }) => void;
   onClose: () => void;
 }) {
-  const [search, setSearch] = useState("");
-  // limit: 0 → all products. Previously this defaulted to the API's 20-row
-  // page so suggestion lists "stopped halfway" for any catalogue larger than
-  // 20 SKUs. Server-side `search` already narrows the payload.
-  const { data, isLoading } = useProducts({
-    search: search.trim() || undefined,
-    limit: 0,
-  });
-  const products = (data?.data ?? []) as Array<{
+  const [scanOpen, setScanOpen] = useState(false);
+  // Debounced + paged, replacing the `limit: 0` fetch-all. See
+  // lib/use-product-search.ts.
+  const {
+    search,
+    setSearch,
+    products: pagedProducts,
+    isLoading,
+    isSearching,
+    isPlaceholder,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useProductSearch<{ id: string }>();
+  const products = pagedProducts as unknown as Array<{
     id: string;
     name: string;
     sku?: string;
@@ -1654,18 +1677,73 @@ function ProductPicker({
     priceTier5?: number | string | null;
   }>;
 
+  /**
+   * Single-shot scan: this picker's contract is "return one product", so a
+   * continuous scanner would fight it. Mirrors ProductPickerSheet.
+   */
+  const onScanned = async (code: string) => {
+    setScanOpen(false);
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<any>(trimmed);
+      if (result.ambiguous) {
+        // Several substring hits and no exact code match — seed the search box
+        // and let the operator pick from the list already on screen.
+        setSearch(trimmed);
+        showToast(`${result.matches?.length ?? 0} products match "${trimmed}"`);
+        return;
+      }
+      if (!result.notFound && result.product?.id) {
+        onPick(result.product);
+        return;
+      }
+    } catch {
+      showToast("Couldn't look up barcode. Check your connection.");
+      return;
+    }
+    // Leave the code in the box so it can be edited rather than re-scanned.
+    setSearch(trimmed);
+    showToast(`No product for "${trimmed}"`);
+  };
+
   return (
     <>
       <NavBar inlineTitle={title} leading={<NavBackButton label="Cancel" onPress={onClose} />} />
-      <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <SearchBar
+        placeholder="Scan or search products…"
+        value={search}
+        onChangeText={setSearch}
+        trailing={
+          <Pressable
+            onPress={() => setScanOpen(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Scan a barcode"
+          >
+            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+          </Pressable>
+        }
+      />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={200}
+        onScroll={({ nativeEvent: e }) => {
+          // Page in as the operator nears the bottom. `isPlaceholder` guards
+          // against paging a stale query key while the next search lands.
+          const nearBottom =
+            e.layoutMeasurement.height + e.contentOffset.y >= e.contentSize.height - 400;
+          if (!nearBottom || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+          fetchNextPage();
+        }}
+      >
         {isLoading ? (
           <View style={styles.center}>
             <ActivityIndicator color={ios.brand} />
           </View>
         ) : products.length === 0 ? (
           <View style={styles.center}>
-            <Text style={styles.empty}>No products match.</Text>
+            <Text style={styles.empty}>{isSearching ? "Searching…" : "No products match."}</Text>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, gap: 6, paddingBottom: 24 }}>
@@ -1677,7 +1755,7 @@ function ProductPicker({
                     <Text style={styles.cardName} numberOfLines={1}>
                       {p.name}
                     </Text>
-                    <Text style={styles.cardMeta}>
+                    <Text style={styles.cardMeta} numberOfLines={2}>
                       {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
                       {upb > 1 ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
                     </Text>
@@ -1688,7 +1766,17 @@ function ProductPicker({
             })}
           </View>
         )}
+        {isFetchingNextPage ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={ios.brand} />
+          </View>
+        ) : null}
       </ScrollView>
+
+      {/* Inline full-screen swap, not a Modal — absoluteFill covers the screen. */}
+      {scanOpen ? (
+        <BarcodeScanner onScanned={(c) => void onScanned(c)} onClose={() => setScanOpen(false)} />
+      ) : null}
     </>
   );
 }
@@ -1792,7 +1880,10 @@ const styles = StyleSheet.create({
   stepBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
   stepText: { color: ios.brand, fontSize: 18 },
   qtyInput: {
-    minWidth: 44,
+    // Definite width, not minWidth — see lib/row-layout.ts. This is a
+    // hand-rolled copy of QtyStepper; it needs the same bound.
+    width: QTY_INPUT_WIDTH.edit,
+    flexShrink: 0,
     paddingHorizontal: 4,
     textAlign: "center",
     fontSize: 16,

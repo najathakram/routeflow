@@ -1,18 +1,69 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ImageUploadFile } from "../product-image";
+import { nextProductPage, type PaginationMeta } from "../product-search-params";
 
-export function useProducts(params?: {
-  search?: string;
-  category?: string;
-  isActive?: boolean;
-  limit?: number;
-}) {
+/** Rows per page for the catalogue pickers. */
+export const PRODUCT_PAGE_SIZE = 50;
+
+export function useProducts(
+  params?: {
+    search?: string;
+    category?: string;
+    isActive?: boolean;
+    page?: number;
+    limit?: number;
+  },
+  // Mirrors apps/web/lib/api/products.ts so a picker can gate its fetch while
+  // closed.
+  options?: { enabled?: boolean; staleTime?: number },
+) {
+  // isActive was sent but NOT keyed, so a caller passing `false` silently got
+  // actives from the cache. Folding it into one object fixes both.
+  const query = { isActive: true, ...params };
   return useQuery({
-    queryKey: ["products", params],
-    queryFn: () =>
-      apiClient.get("/products", { params: { ...params, isActive: true } }).then((r) => r.data),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryKey: ["products", query],
+    queryFn: () => apiClient.get("/products", { params: query }).then((r) => r.data),
+    staleTime: options?.staleTime ?? 5 * 60 * 1000,
+    // Every caller of this hook is a search-driven picker. Without this, each
+    // keystroke mints a new query key, `data` goes undefined, and the list
+    // blanks to a spinner — which is what "suggestions do not appear" looked
+    // like. Baked in rather than opt-in so a new call site can't forget it.
+    placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/**
+ * Paged catalogue for the sale builders. Replaces the `limit: 0` fetch-all,
+ * which asked the server for up to 10,000 rows and shipped megabytes to a
+ * phone before the first row could render.
+ *
+ * Key stays under ["products"] so the existing mutation invalidations reach it.
+ */
+export function useProductsInfinite(
+  params?: { search?: string; category?: string; limit?: number },
+  options?: { enabled?: boolean },
+) {
+  const limit = params?.limit ?? PRODUCT_PAGE_SIZE;
+  const query = { ...params, limit, isActive: true };
+  return useInfiniteQuery({
+    queryKey: ["products", "infinite", query],
+    queryFn: ({ pageParam }) =>
+      apiClient
+        .get("/products", { params: { ...query, page: pageParam } })
+        .then((r) => r.data as { data: any[]; meta: PaginationMeta }),
+    initialPageParam: 1,
+    getNextPageParam: (last) => nextProductPage(last?.meta),
+    staleTime: 5 * 60 * 1000,
+    placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
   });
 }
 

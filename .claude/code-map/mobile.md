@@ -202,3 +202,72 @@ real-time sync; offline queue for driver route completions.
 - **Typed quantity input (#307)** — new `components/QtyStepper.tsx` (`QtyTextInput` primitive + bordered `QtyStepper` md/mini) built on new pure `lib/qty.ts` `commitQtyDraft` (empty→0 or revert, below-min revert, above-max clamp-no-rollover). Wired into the 4 tap-only surfaces: `NewOrderScreen` tile + boxed dual, `invoices/new` (new `setUnits` helper, `suffix` "b + N"), `(customer)/orders/cart.tsx` + `(customer)/(tabs)/catalog.tsx` (cartStore `setUnits` action); opportunistic upgrade of customer `orders/[id]/edit-items.tsx`. Tests: `qty.test.ts` `commitQtyDraft`, `cart-store.test.ts` `setUnits`.
 - **Payment image (#309)** — `lib/api/payments.ts`+`invoices.ts` mirror the 3 image fields + upload/get/delete hooks; operator `record-payment.tsx` + driver `route/stop/[stopId]/payment.tsx` capture via `PhotoCapture` (HEIC→JPEG transcode, best-effort upload to `createdPaymentId`/`paymentIds[0]`); `invoices/[id].tsx` payment rows + edit screen view/replace/remove.
 - **Unit code (#310)** — `lib/product-form.ts` + `components/ProductForm.tsx` add the "Unit code" field; `lib/barcode-resolve.ts` exact-preference widened to `unitSku`. Scan screens unchanged (server widening covers them).
+
+### Batch 2026-08-10 — mobile-web scan + catalogue defects
+
+Five owner-reported defects, all reproducing on **mobile web** (react-native-web behind the
+phone-UA proxy), plus a latent totals bug found on the way.
+
+- **Row collapse — `lib/row-layout.ts` (new).** RNW renders `<TextInput>` as a real `<input>` with
+  no declared width, so it carries the UA `size=20` intrinsic (~177px); the stepper pill is
+  `flexShrink: 0`, so it balloons and starves the sibling name column until `word-wrap: break-word`
+  renders text one character per line. **`minWidth: 0` and `flexShrink: 1` are inert here** — RNW's
+  `View` base already sets `minWidth: 0`, and no deficit reaches the input. Only a DEFINITE `width`
+  works. `QTY_INPUT_WIDTH` {md 52, mini 46, cart 60, edit 56} + `MONEY_INPUT_MAX_WIDTH` 96 are
+  consumed by `QtyStepper.tsx` (md/mini), `NewOrderScreen` `cartStepperInput`/`cartPriceInput`,
+  `invoices/new` `cartPriceInput`, and `edit-items` `qtyInput` (hand-rolled stepper duplicate —
+  worth folding into `QtyStepper` later). Unclamped `<Text>` in every row got `numberOfLines`.
+  `+html.tsx` adds a `min-width: 0` net for _unstyled_ inputs (does NOT fix the steppers).
+  `SearchBar` (packages/ui) gains `minWidth: 0`. Guard: `__tests__/row-layout.test.ts`
+  (`stepperPillWidth`/`textColumnWidth` arithmetic; fails on a revert to `minWidth`-only).
+  `removeClippedSubviews` gated to `Platform.OS === "android"` — RN's own default; it is a **dead
+  prop on RNW**, so this is a native-only hygiene fix.
+- **Forgiving barcode matching — `lib/barcode-normalize.ts` (mirror of
+  `apps/api/src/common/barcode-normalize.ts`).** `normalizeScanCode` → ordered candidates (UPC-E→
+  UPC-A, UPC-A↔EAN-13, GTIN-14 unwrap, leading-zero strip, check-digit-stripped LAST),
+  `upcEToUpcA`, `pickBestScanMatch`. Mobile's copy exists only for the in-memory scan fast path in
+  `NewOrderScreen`/`invoices/new` (which now also check `unitSku`). Drift guard:
+  `__tests__/barcode-normalize.test.ts` compares both files below the header.
+  `lib/barcode-resolve.ts` gains additive `ambiguous`/`matches` — >1 substring hit no longer
+  silently adds row #1.
+- **Scanner survives a miss — `lib/scan-loop.ts` `ScanFeedback.action`.** On RNW, sibling `Modal`
+  portals stack by mount order with **no z-index**, so the root `ConfirmModal` rendered BEHIND the
+  opaque scan sheet — which is why the miss path returned `{close:true}` and the first mis-read
+  stranded the operator. Now the miss returns an actionable pill; `ScanOrderSheet` gains
+  `paused` (freezes decoding without tearing the stream down) and an 8s action pill.
+  `scanOpen` is never cleared, so create/cancel both land back in a live scanner.
+  **`InlineCreateProductSheet` must stay AFTER `ScanOrderSheet` in the JSX** (portal order).
+  `invoices/new` also gained the missing `canCreateProducts` role gate.
+- **Scan affordances** — `CartModal` gains `onScanMore` (inverse of `onReview`); `edit-items`
+  `ProductPicker` gains a `trailing` barcode button + single-shot `BarcodeScanner`.
+- **Web camera — `ScanCamera.web.tsx` rewritten.** One throttled ~15fps loop with an in-flight
+  guard replaces the per-rAF `detect()` and zxing's `decodeFromStream` (whose
+  `delayBetweenScanAttempts: 500` default meant **2 attempts/sec on iOS**, where zxing is the only
+  decoder). Adds a 3-step `getUserMedia` ladder (1080p + `focusMode`), torch via
+  `getCapabilities().torch` (Android/Chrome only — iOS exposes none), a `getSupportedFormats()`
+  gate (its absence could leave the camera streaming and never decoding), zxing
+  `POSSIBLE_FORMATS` + `TRY_HARDER` (needs new dep `@zxing/library`), a centre-band ROI on the
+  zxing path only, and ITF-14. Fixes two loop bugs (permanent death on a transient null ref;
+  re-arming against a dead stream) and drops the dead `reader.reset()`. `ScanCamera.tsx` gains
+  `enableTorch`/`autofocus`/`itf14`. `ScanOrderSheet` adds `navigator.vibrate` (web had no scan
+  confirmation at all).
+- **Paged catalogue + live suggestions — `lib/use-product-search.ts` (new).** Replaces five
+  hand-copied `limit: 0` fetch-alls. `useProducts` gains an options arg, `isActive` in the query
+  key, and baked-in `placeholderData: keepPreviousData` (the blanking that read as "no
+  suggestions"); new `useProductsInfinite` (50/page). Pure helpers `lib/paged-rows.ts`
+  (`flattenPages` with page-boundary de-dupe, `mergeProductIndex`) and
+  `lib/product-search-params.ts` (`productSearchParams` — a live term drops the hidden category
+  chip — `nextProductPage`). Category filtering moved SERVER-side; chips now come from
+  `useProductCategories()`. Converted: `NewOrderScreen`, `invoices/new`, `edit-items`
+  `ProductPicker`, `recurring-invoices/new`. **NOT converted:
+  `regulated/[id]/assign-products.tsx` — its `limit: 0` is load-bearing** (seeds the assigned set
+  from the whole catalogue; paging would unassign unloaded products on Save).
+- **"ON THIS ORDER" mode** — `orderOnly` state on both sale builders: after a scan the list shows
+  only the order's lines, newest scan first, with a _Show all items_ escape in the chip row's slot.
+  Exits on typing, the toggle, or the order emptying. Deliberately does NOT put the scanned code
+  in the search box: `search` doesn't cover `Product.id` and `/products/barcode/:code` resolves
+  codes the text search can't, so a successful scan could leave an empty list.
+- **Latent totals bug (fixed)** — `addOne`'s snapshot stash was gated on `productSnapshot`, which
+  only the scan path passes. A row added by TAPPING was never retained, so `productById` lost it
+  once the page changed and the **footer total silently under-reported**. Now unconditional in
+  both builders. Guard: `__tests__/paged-rows.test.ts` `mergeProductIndex`.

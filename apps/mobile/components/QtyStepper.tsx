@@ -2,6 +2,7 @@ import * as React from "react";
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { sanitizeIntInput, parseIntQty, commitQtyDraft } from "../lib/qty";
+import { QTY_INPUT_WIDTH } from "../lib/row-layout";
 
 export interface QtyTextInputProps extends Omit<
   TextInputProps,
@@ -123,7 +124,16 @@ const md = StyleSheet.create({
   btn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
   btnText: { color: ios.brand, fontSize: 18 },
   input: {
-    minWidth: 28,
+    // Definite width, NOT minWidth. react-native-web renders TextInput as a
+    // real <input>, whose base style declares no width — so it carries the UA
+    // `size=20` intrinsic width (~177px) and the pill (flexShrink: 0) balloons,
+    // squeezing the sibling name column to a few pixels until RNW's
+    // `word-wrap: break-word` renders it one character per line. `minWidth` is
+    // a floor and does nothing here; only a definite width bounds the flex base
+    // size. QTY_INPUT_WIDTH.md is what the field already reaches at maxLength 5
+    // on native, so nothing grows there — it just stops resizing as you type.
+    width: QTY_INPUT_WIDTH.md,
+    flexShrink: 0,
     textAlign: "center",
     fontSize: 16,
     fontFamily: "Inter_700Bold",
@@ -153,7 +163,9 @@ const mini = StyleSheet.create({
   btn: { width: 26, height: 26, alignItems: "center", justifyContent: "center" },
   btnText: { color: ios.brand, fontSize: 16 },
   input: {
-    minWidth: 24,
+    // See md.input — definite width, not minWidth.
+    width: QTY_INPUT_WIDTH.mini,
+    flexShrink: 0,
     textAlign: "center",
     fontSize: 14,
     fontFamily: "Inter_700Bold",

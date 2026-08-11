@@ -39,15 +39,37 @@ export function gateScan(
   return { accept: false, state: next };
 }
 
+/** A call-to-action rendered inside the scanner's feedback pill. */
+export interface ScanFeedbackAction {
+  label: string;
+  onPress: () => void;
+}
+
 /** Feedback shown inside the scanner overlay after each continuous scan. */
 export interface ScanFeedback {
   kind: "added" | "error";
   text: string;
+  /**
+   * Renders a button in the pill instead of stranding the operator, and the
+   * scanner STAYS OPEN — the action is expected to raise a sheet that stacks
+   * above it (see ScanOrderSheet's `paused` prop).
+   *
+   * Prefer this over `{close:true}`. On react-native-web, Modal portals are
+   * appended to document.body at mount with no z-index, so a root-mounted
+   * confirm dialog renders BEHIND the opaque scan sheet — which is why the
+   * old miss path had to close the scanner to be seen at all, and why the
+   * first mis-read stranded the operator.
+   */
+  action?: ScanFeedbackAction;
 }
 
 /**
  * What a continuous `onScanned` handler tells the scanner to do next:
- * show feedback and keep scanning, or close the overlay (e.g. to hand off
- * to a "create this product?" dialog). `void` = keep scanning, no banner.
+ * show feedback and keep scanning, or close the overlay.
+ * `void` = keep scanning, no banner.
+ *
+ * `close` means "this hand-off REPLACES the scanner" — it is not the way to
+ * surface a dialog. No order or invoice path uses it any more; prefer
+ * `feedback.action`.
  */
 export type ScanOutcome = { close?: boolean; feedback?: ScanFeedback } | void;
