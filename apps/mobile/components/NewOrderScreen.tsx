@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,7 +17,9 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../lib/api/admin";
-import { useProducts } from "../lib/api/products";
+import { useProductCategories } from "../lib/api/products";
+import { useProductSearch } from "../lib/use-product-search";
+import { mergeProductIndex } from "../lib/paged-rows";
 import { useCustomer, useCustomerPrices } from "../lib/api/customers";
 import {
   useCreateOrderAsDriver,
@@ -28,6 +31,7 @@ import {
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
+import { normalizeScanCode } from "../lib/barcode-normalize";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -55,6 +59,7 @@ import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
+import { MONEY_INPUT_MAX_WIDTH, QTY_INPUT_WIDTH } from "../lib/row-layout";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
 // Alert.alert silently no-ops 3-button alerts on Expo Web (the user's
@@ -117,6 +122,8 @@ type Product = {
   id: string;
   name: string;
   sku?: string | null;
+  /** Retail-unit code — scannable, so the local scan fast path must see it. */
+  unitSku?: string | null;
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
@@ -416,8 +423,14 @@ function ProductPickView({
   // endpoints already return cost to them). Buyers never reach this screen.
   const canSeeCost = isStaff || userRole === "DRIVER";
 
-  const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
+  /**
+   * "ON THIS ORDER" mode: after a scan the catalogue collapses to just the
+   * lines on the order, newest scan first, with a "Show all items" escape.
+   * Scanning a case of goods is a receipt-building activity — the operator
+   * wants to see what they've captured, not 10,000 other SKUs.
+   */
+  const [orderOnly, setOrderOnly] = useState(false);
   const [items, setItems] = useState<Record<string, LineState>>({});
   // Ad-hoc lines not in the product catalog (productId null on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
@@ -517,27 +530,32 @@ function ProductPickView({
    */
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
 
-  // limit: 0 → API treats as "all" (capped server-side at 100k). The previous
-  // 200 cap chopped catalogues with > 200 products in half — the user's
-  // "suggestions stop halfway" report. Server-side `search` already trims the
-  // payload by the typed query, so the only inflated path is the empty-search
-  // browse list, which is acceptable on mobile (single-tenant catalogues are
-  // typically a few hundred SKUs at most).
-  const { data: productsData, isLoading: productsLoading } = useProducts({
-    search: search.trim() || undefined,
-    limit: 0,
-  });
-  const products: Product[] = productsData?.data ?? [];
+  /**
+   * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single
+   * `useProducts({ limit: 0 })` — the fetch-all sentinel, which asks the server
+   * for up to 10,000 rows and ships megabytes to a phone before the first row
+   * renders ("the whole product catalogue loads"). Category filtering moved
+   * server-side with it; see `productSearchParams`.
+   */
+  const {
+    search,
+    setSearch,
+    searchTerm,
+    products,
+    isLoading: productsLoading,
+    isSearching,
+    isPlaceholder,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useProductSearch<Product>({ category });
 
-  // Unified product lookup: local list ∪ scanned-only items.
-  const productById = useMemo(() => {
-    const m = new Map<string, Product>();
-    for (const p of products) m.set(p.id, p);
-    for (const id of Object.keys(scannedById)) {
-      if (!m.has(id)) m.set(id, scannedById[id]);
-    }
-    return m;
-  }, [products, scannedById]);
+  // Index of everything this screen can price: the current page, plus
+  // snapshots of lines added from a page that is no longer loaded.
+  const productById = useMemo(
+    () => mergeProductIndex<Product>(products, scannedById),
+    [products, scannedById],
+  );
 
   /**
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
@@ -571,14 +589,19 @@ function ProductPickView({
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
-    // Always retain a scanned product's snapshot — even one currently in the
-    // local list. The empty-search products query can be GC'd (~5min) while a
-    // non-empty search is held, so the setSearch("") after a local scan may hit
-    // a cold refetch where `products` is briefly []; the snapshot keeps this row
-    // resolvable for the totals and list. productById prefers the live entry, so
-    // the snapshot only ever acts as a fallback.
-    if (productSnapshot) {
-      setScannedById((m) => (id in m ? m : { ...m, [id]: productSnapshot }));
+    // Retain a snapshot for EVERY added line, not just scanned ones.
+    //
+    // This used to be gated on `productSnapshot`, which is only passed by the
+    // scan path — so a product added by TAPPING a catalog row was never
+    // retained. Type a search afterwards and productById lost it, dropping the
+    // line from the footer total and the cart sheet. That was already a live
+    // bug with the fetch-all list; with 50-row pages it would happen to any
+    // line added from page 2 onward.
+    //
+    // productById prefers the live page entry, so this only ever acts as a
+    // fallback.
+    if (p) {
+      setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
   };
 
@@ -710,19 +733,26 @@ function ProductPickView({
   };
 
   /**
-   * Land a resolved product on the order. In scan mode the tray row IS the
-   * confirmation, so no banner and no search reset (which would swap the list
-   * out from under the operator mid-scan); ScanOrderSheet owns the haptic and
-   * the scroll-to-top on the outcome it gets back.
+   * Land a resolved product on the order.
+   *
+   * Both paths flash the row and switch the catalogue behind the scanner into
+   * "ON THIS ORDER" mode: in scan mode the tray is the immediate confirmation,
+   * but the catalogue is what's left on screen when Done closes the sheet, so
+   * it must already be showing what was captured. ScanOrderSheet still owns the
+   * haptic and its own scroll-to-top.
+   *
+   * Note what this deliberately does NOT do: put the scanned code into the
+   * search box. `search` doesn't cover Product.id, and /products/barcode/:code
+   * resolves codes the text search never matches — so a SUCCESSFUL scan could
+   * leave an empty list.
    */
   const acceptScannedProduct = (product: Product): ScanOutcome => {
     addOne(product.id, product);
-    if (scanOpen) {
-      bumpScanned(product.id);
-      return;
-    }
-    setSearch(""); // an active search would hide the added row (web clears too)
+    bumpScanned(product.id);
+    setSearch("");
+    setOrderOnly(true);
     setPendingScroll((s) => requestScroll(s, product.id));
+    if (scanOpen) return; // the tray row is the confirmation
     return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
   };
 
@@ -732,21 +762,42 @@ function ProductPickView({
     const trimmed = code.trim();
     if (!trimmed) return;
 
-    // 1) Local fast-path: match against barcode, sku OR id of cached items.
-    //    The previous version only checked sku, missing items where the
-    //    operator scans a barcode label or a different identifier.
-    const lower = trimmed.toLowerCase();
+    // 1) Local fast-path over the rows already in memory. Matches the same
+    //    candidate set the server uses (UPC-E/EAN-13/leading-zero variants), so
+    //    a code the server would resolve doesn't cost a round trip here — and
+    //    checks unitSku, which the old version omitted entirely.
+    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
+    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
     const local = products.find(
       (p) =>
-        (p.barcode ?? "").toLowerCase() === lower ||
-        (p.sku ?? "").toLowerCase() === lower ||
-        (p.id ?? "").toLowerCase() === lower,
+        hit(p.barcode) ||
+        hit(p.sku) ||
+        hit(p.unitSku) ||
+        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
     if (local) return acceptScannedProduct(local);
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
     try {
       const result = await resolveProductByCode<Product>(trimmed);
+      if (result.ambiguous) {
+        // Several substring hits and no exact code match — adding row #1 would
+        // be a guess. Hand the operator the filtered catalogue instead.
+        return {
+          feedback: {
+            kind: "error",
+            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
+            action: {
+              label: "Choose",
+              onPress: () => {
+                setSearch(trimmed);
+                setOrderOnly(false);
+                setScanOpen(false);
+              },
+            },
+          },
+        };
+      }
       if (!result.notFound && result.product?.id) {
         return acceptScannedProduct(result.product);
       }
@@ -757,21 +808,24 @@ function ProductPickView({
       return { feedback: { kind: "error", text: msg } };
     }
 
-    // 3) Nothing matched. Mirror web's behaviour: offer to create the product
-    //    inline (as a new product OR a variant of an existing one) WITHOUT
-    //    leaving the screen, so the in-progress order is preserved.
+    // 3) Nothing matched. STAY IN SCAN MODE — the pill carries the hand-off.
+    //    This used to raise a confirm dialog and return {close:true}, because on
+    //    react-native-web the root ConfirmModal's portal div is appended before
+    //    this screen's ScanOrderSheet div and neither sets z-index, so the
+    //    dialog rendered behind the opaque scan sheet. Closing the sheet was the
+    //    only way to see it — which meant the FIRST mis-read killed the scanner
+    //    and nothing ever re-opened it (the owner's "scanning prompt disappears").
+    const text = `No product for "${trimmed}"`;
     if (canCreateProducts) {
-      chooseAction(
-        `No product for "${trimmed}"`,
-        "Add it as a new product or a variant of an existing one? Your order stays as it is.",
-        [
-          { label: "Cancel", style: "cancel" },
-          { label: "Create", onPress: () => setCreateCode(trimmed) },
-        ],
-      );
-      return { close: true };
+      return {
+        feedback: {
+          kind: "error",
+          text,
+          action: { label: "Create", onPress: () => setCreateCode(trimmed) },
+        },
+      };
     }
-    return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
+    return { feedback: { kind: "error", text } };
   };
 
   // Non-null while the inline create sheet is open; holds the scanned/typed code
@@ -796,23 +850,40 @@ function ProductPickView({
     showInline(`Added ${displayName(snapshot, products)}`);
   };
 
-  const categoryChips = useMemo(() => {
-    const set = new Set<string>();
-    for (const p of products) if (p.category) set.add(p.category);
-    return [{ label: "All" }, ...Array.from(set).map((label) => ({ label }))];
-  }, [products]);
+  // Chips come from the tenant's distinct categories, not from the loaded rows:
+  // derived from a 50-row page they'd list only whatever happened to be on it.
+  const { data: tenantCategories } = useProductCategories();
+  const categoryChips = useMemo(
+    () => [{ label: "All" }, ...(tenantCategories ?? []).map((label) => ({ label }))],
+    [tenantCategories],
+  );
+
+  /** Lines on the order, newest scan first — the "ON THIS ORDER" list. */
+  const orderRows = useMemo(() => {
+    const ids = Object.keys(items);
+    const rank = new Map(scanOrder.map((id, i) => [id, i]));
+    return ids
+      .map((id) => productById.get(id))
+      .filter((p): p is Product => !!p)
+      .sort(
+        (a, b) =>
+          (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+      );
+  }, [items, productById, scanOrder]);
 
   const filtered = useMemo(() => {
-    const term = search.trim();
-    // The chip row is hidden while a search is active, so the category must not
-    // keep narrowing results behind a control the operator can no longer see.
-    const base =
-      term || category === "All" ? products : products.filter((p) => p.category === category);
-    // While browsing (no active search), pin cart lines the filter would hide
-    // — scanned items outside the category/page must keep a visible row.
-    if (term) return base;
-    return withCartRows(base, Object.keys(items), (id) => productById.get(id));
-  }, [products, category, search, items, productById]);
+    if (orderOnly) return orderRows;
+    // Search AND category are applied server-side now; the only client-side
+    // shaping left is pinning cart lines the current page doesn't contain.
+    if (searchTerm) return products;
+    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+  }, [orderOnly, orderRows, products, searchTerm, items, productById]);
+
+  // Leaving the mode is automatic once the order is empty — an "ON THIS ORDER"
+  // list with nothing on it is a dead end.
+  useEffect(() => {
+    if (orderOnly && Object.keys(items).length === 0) setOrderOnly(false);
+  }, [orderOnly, items]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -1204,12 +1275,14 @@ function ProductPickView({
     submitOrder(undefined, asDraft);
   };
 
-  const searchTerm = search.trim();
   // The cart sheet's copy of this opener is unreachable until the cart has a
   // line, so the catalog list owns the only zero-item path to an ad-hoc item.
   const unlistedPlacement = unlistedAffordancePlacement({
     rowCount: filtered.length,
-    loading: productsLoading,
+    // Also suppress mid-search: with keepPreviousData the rows on screen may
+    // belong to the previous query, so offering 'Add "x" as an unlisted item'
+    // before the real result lands would be premature.
+    loading: productsLoading || isSearching,
   });
   const unlistedLabel = searchTerm
     ? `Add "${searchTerm}" as an unlisted item`
@@ -1242,20 +1315,43 @@ function ProductPickView({
       <SearchBar
         placeholder="Search items…"
         value={search}
-        onChangeText={setSearch}
+        onChangeText={(t) => {
+          setSearch(t);
+          // Typing is a browse intent — leave the order-only list.
+          if (t.trim()) setOrderOnly(false);
+        }}
         trailing={
-          <Pressable
-            onPress={() => setScanOpen(true)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="Scan items"
-          >
-            <Ionicons name="barcode-outline" size={20} color={ios.brand} />
-          </Pressable>
+          <View style={styles.searchTrailing}>
+            {/* keepPreviousData holds the previous rows while the next page
+                lands, so without this the stale list can read as a wrong match. */}
+            {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
+            <Pressable
+              onPress={() => setScanOpen(true)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Scan items"
+            >
+              <Ionicons name="barcode-outline" size={20} color={ios.brand} />
+            </Pressable>
+          </View>
         }
       />
 
-      {searchTerm === "" && categoryChips.length > 1 ? (
+      {orderOnly ? (
+        <View style={styles.orderOnlyBar}>
+          <Text style={styles.orderOnlyLabel}>ON THIS ORDER</Text>
+          <Pressable
+            onPress={() => setOrderOnly(false)}
+            hitSlop={8}
+            style={styles.orderOnlyBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Show all items"
+          >
+            <Ionicons name="refresh-outline" size={13} color={ios.brand} />
+            <Text style={styles.orderOnlyBtnText}>Show all items</Text>
+          </Pressable>
+        </View>
+      ) : searchTerm === "" && categoryChips.length > 1 ? (
         <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
       ) : null}
 
@@ -1269,10 +1365,21 @@ function ProductPickView({
         initialNumToRender={12}
         maxToRenderPerBatch={12}
         windowSize={7}
-        removeClippedSubviews
+        // RN's own default is Android-only; forcing it on for iOS is a known
+        // source of cells failing to render. (No-op on web — RNW's vendored
+        // VirtualizedList never reads this prop.)
+        removeClippedSubviews={Platform.OS === "android"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         onScrollToIndexFailed={onScrollToIndexFailed}
+        onEndReachedThreshold={0.5}
+        onEndReached={() => {
+          // In order-only mode the rows come from the cart, not the page.
+          // `isPlaceholder` guards against fetching page N+1 of a new query key
+          // on top of pages 1..N of the previous one.
+          if (orderOnly || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+          fetchNextPage();
+        }}
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={RowSpacer}
         ListEmptyComponent={
@@ -1299,20 +1406,27 @@ function ProductPickView({
           )
         }
         ListFooterComponent={
-          unlistedPlacement === "list-footer" ? (
-            <Pressable
-              style={styles.listUnlistedBtn}
-              onPress={() => openUnlistedModal(searchTerm)}
-              accessibilityRole="button"
-              accessibilityLabel={unlistedLabel}
-              hitSlop={4}
-            >
-              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-              <Text style={styles.listUnlistedText} numberOfLines={1}>
-                {unlistedLabel}
-              </Text>
-            </Pressable>
-          ) : null
+          <>
+            {unlistedPlacement === "list-footer" ? (
+              <Pressable
+                style={styles.listUnlistedBtn}
+                onPress={() => openUnlistedModal(searchTerm)}
+                accessibilityRole="button"
+                accessibilityLabel={unlistedLabel}
+                hitSlop={4}
+              >
+                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                <Text style={styles.listUnlistedText} numberOfLines={1}>
+                  {unlistedLabel}
+                </Text>
+              </Pressable>
+            ) : null}
+            {isFetchingNextPage && !orderOnly ? (
+              <View style={styles.pageSpinner}>
+                <ActivityIndicator color={ios.brand} />
+              </View>
+            ) : null}
+          </>
         }
       />
 
@@ -1328,14 +1442,18 @@ function ProductPickView({
             disabled={totalItems === 0}
             hitSlop={6}
           >
-            <Text style={styles.footerEyebrow}>
+            <Text style={styles.footerEyebrow} numberOfLines={1}>
               {totalItems} ITEM{totalItems === 1 ? "" : "S"}
             </Text>
-            <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
+            <Text style={styles.footerTotal} numberOfLines={1}>
+              ${total.toFixed(2)}
+            </Text>
             {invoiceSplit.willSplit ? (
               <View style={styles.splitBadge}>
                 <Ionicons name="layers-outline" size={10} color={ios.system.orangeInk} />
-                <Text style={styles.splitBadgeText}>Splits × {invoiceSplit.groups.length}</Text>
+                <Text style={styles.splitBadgeText} numberOfLines={1}>
+                  Splits × {invoiceSplit.groups.length}
+                </Text>
               </View>
             ) : null}
           </Pressable>
@@ -1349,7 +1467,9 @@ function ProductPickView({
                 hitSlop={4}
               >
                 <Ionicons name="list-outline" size={14} color={ios.brand} />
-                <Text style={styles.viewBtnText}>View / edit</Text>
+                <Text style={styles.viewBtnText} numberOfLines={1}>
+                  View / edit
+                </Text>
               </Pressable>
             ) : null}
             <Pressable
@@ -1361,7 +1481,7 @@ function ProductPickView({
               onPress={() => onSave()}
               accessibilityState={{ disabled: !canSave }}
             >
-              <Text style={styles.confirmBtnText}>
+              <Text style={styles.confirmBtnText} numberOfLines={1}>
                 {createOrder.isPending ? "Saving…" : "Confirm"}
               </Text>
               <Ionicons name="arrow-forward" size={14} color="#fff" />
@@ -1390,6 +1510,10 @@ function ProductPickView({
           and the tray scroll; this screen only mutates the order. */}
       <ScanOrderSheet
         visible={scanOpen}
+        // Freeze decoding, don't close: `scanOpen` is never cleared here, so
+        // whether the operator creates the product or cancels, they land back
+        // in a live scanner with the tray intact — nothing to restore.
+        paused={createCode != null}
         rows={trayRows}
         flash={scanFlash}
         totalItems={totalItems}
@@ -1433,7 +1557,12 @@ function ProductPickView({
       />
 
       {/* Create-on-miss: overlays the cart (never navigates away) so the
-          in-progress order survives. Supports new-product OR variant-of. */}
+          in-progress order survives. Supports new-product OR variant-of.
+
+          MUST STAY AFTER <ScanOrderSheet> in this JSX: on react-native-web
+          sibling Modals stack by portal-div mount order and neither sets
+          z-index, so rendering this earlier would hide it behind an open scan
+          sheet. No lint rule can catch a reorder. */}
       <InlineCreateProductSheet
         visible={createCode != null}
         initialCode={createCode ?? undefined}
@@ -1474,6 +1603,10 @@ function ProductPickView({
         onToggleUnlistedNote={toggleUnlistedNote}
         onRemoveUnlisted={removeUnlisted}
         onAddUnlisted={() => openUnlistedModal("")}
+        onScanMore={() => {
+          setCartOpen(false);
+          setScanOpen(true);
+        }}
         options={{
           urgent: orderUrgent,
           onToggleUrgent: () => setOrderUrgent((u) => !u),
@@ -1771,6 +1904,7 @@ function CartModal({
   onToggleUnlistedNote,
   onRemoveUnlisted,
   onAddUnlisted,
+  onScanMore,
   options,
   credits,
   onSave,
@@ -1811,6 +1945,8 @@ function CartModal({
   onToggleUnlistedNote: (id: string) => void;
   onRemoveUnlisted: (id: string) => void;
   onAddUnlisted: () => void;
+  /** Leave the cart for scan mode. Symmetric with ScanOrderSheet's onReview. */
+  onScanMore: () => void;
   /** Order-level fields; state stays in the parent so the payload is unchanged. */
   options: OrderOptions;
   credits: CreditPicker;
@@ -1912,10 +2048,28 @@ function CartModal({
                 </Text>
               </View>
             ) : null}
-            <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
-              <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-              <Text style={styles.cartAddUnlistedText}>Add unlisted item</Text>
-            </Pressable>
+            {/* Two ways back to adding items. "Scan more" is the exact inverse
+                of ScanOrderSheet's "Review" — no nested modals, no new state. */}
+            <View style={styles.cartAddRow}>
+              <Pressable style={styles.cartAddUnlisted} onPress={onAddUnlisted} hitSlop={4}>
+                <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+                <Text style={styles.cartAddUnlistedText} numberOfLines={1}>
+                  Add unlisted item
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.cartAddUnlisted}
+                onPress={onScanMore}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel="Scan more items"
+              >
+                <Ionicons name="barcode-outline" size={16} color={ios.brand} />
+                <Text style={styles.cartAddUnlistedText} numberOfLines={1}>
+                  Scan more
+                </Text>
+              </Pressable>
+            </View>
 
             <OrderOptionsSection options={options} />
             <ApplyCreditSection credits={credits} />
@@ -2046,7 +2200,7 @@ function CartRow({
           <Text style={styles.cartRowName} numberOfLines={2}>
             {displayName(product)}
           </Text>
-          <Text style={styles.cartRowMeta}>
+          <Text style={styles.cartRowMeta} numberOfLines={1}>
             {isBoxed ? `case of ${upb}` : product.unit ? `per ${product.unit}` : ""}
             {product.sku ? `${isBoxed || product.unit ? " · " : ""}${product.sku}` : ""}
           </Text>
@@ -2071,13 +2225,20 @@ function CartRow({
             returnKeyType="done"
           />
           {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
-            <Text style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}>
+            <Text
+              style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
+              numberOfLines={1}
+            >
               Upsell
             </Text>
           ) : isOverridden ? (
-            <Text style={styles.cartPriceWas}>Current: ${catalogPrice.toFixed(2)}</Text>
+            <Text style={styles.cartPriceWas} numberOfLines={1}>
+              Current: ${catalogPrice.toFixed(2)}
+            </Text>
           ) : historyPrice != null && historyPrice !== catalogPrice ? (
-            <Text style={styles.cartPriceWas}>Last: ${historyPrice.toFixed(2)}</Text>
+            <Text style={styles.cartPriceWas} numberOfLines={1}>
+              Last: ${historyPrice.toFixed(2)}
+            </Text>
           ) : null}
         </View>
       </View>
@@ -2249,8 +2410,16 @@ function CartStepperRow({
   return (
     <View style={styles.cartStepperRow}>
       <View style={{ flex: 1 }}>
-        <Text style={styles.cartStepperLabel}>{label}</Text>
-        {hint ? <Text style={styles.cartStepperHint}>{hint}</Text> : null}
+        {/* Clamped: unclamped, a squeezed column renders "Qty (Jar)" one
+            letter per line on react-native-web. See lib/row-layout.ts. */}
+        <Text style={styles.cartStepperLabel} numberOfLines={1}>
+          {label}
+        </Text>
+        {hint ? (
+          <Text style={styles.cartStepperHint} numberOfLines={1}>
+            {hint}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.stepper}>
         <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
@@ -2692,6 +2861,32 @@ const styles = StyleSheet.create({
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   rowSpacer: { height: 10 },
+  pageSpinner: { paddingVertical: 16, alignItems: "center" },
+  searchTrailing: { flexDirection: "row", alignItems: "center", gap: 10 },
+  // "ON THIS ORDER" bar — takes the chip row's slot after a scan.
+  orderOnlyBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  orderOnlyLabel: {
+    flexShrink: 1,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.6,
+    color: ios.label2,
+  },
+  orderOnlyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 32,
+    paddingHorizontal: 4,
+  },
+  orderOnlyBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   emptyUnlistedBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2838,7 +3033,7 @@ const styles = StyleSheet.create({
   newCreditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   // ── Footer extras ─────────────────────────────────────────────────────────
-  footerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  footerActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
   viewBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2869,7 +3064,9 @@ const styles = StyleSheet.create({
   },
 
   // ── Cart review modal ─────────────────────────────────────────────────────
-  footerTotalTap: { paddingVertical: 4, paddingRight: 8 },
+  // The total + actions already overflow a 375px viewport; let both give ground
+  // so "Confirm" degrades gracefully instead of being clipped off the edge.
+  footerTotalTap: { paddingVertical: 4, paddingRight: 8, flexShrink: 1, minWidth: 0 },
   cartBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -2945,10 +3142,23 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     color: ios.label,
   },
-  cartPriceInputWrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cartPriceInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    // Let the wrap give ground before the row overflows. Only binds when the
+    // row is already over-subscribed, which on a narrow phone it can be.
+    flexShrink: 1,
+    minWidth: 0,
+  },
   cartPriceCurrency: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
   cartPriceInput: {
     minWidth: 70,
+    // Caps the web intrinsic width (~177px) without capping native, where
+    // "99999.99" at 15px is ~84px and this never binds. Paired with
+    // flexShrink: 0 so the shrinkable wrap above can't collapse the field.
+    maxWidth: MONEY_INPUT_MAX_WIDTH,
+    flexShrink: 0,
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderWidth: StyleSheet.hairlineWidth,
@@ -2973,6 +3183,7 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: ios.label2,
     textDecorationLine: "line-through",
+    flexShrink: 1,
   },
   floorFixBtn: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -3009,7 +3220,9 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   cartStepperInput: {
-    minWidth: 48,
+    // Definite width, not minWidth — see lib/row-layout.ts for why.
+    width: QTY_INPUT_WIDTH.cart,
+    flexShrink: 0,
     paddingHorizontal: 6,
     paddingVertical: 4,
     textAlign: "center",
@@ -3117,7 +3330,10 @@ const styles = StyleSheet.create({
   },
 
   // ── Unlisted item CTA + cart row + tag ────────────────────────────────────
+  cartAddRow: { flexDirection: "row", gap: 8 },
   cartAddUnlisted: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -3125,6 +3341,7 @@ const styles = StyleSheet.create({
     backgroundColor: ios.brandWash,
     borderRadius: 12,
     paddingVertical: 12,
+    paddingHorizontal: 8,
     marginTop: 4,
   },
   cartAddUnlistedText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },

@@ -16,7 +16,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers } from "../../../lib/api/admin";
-import { useProducts } from "../../../lib/api/products";
+import { useProductSearch } from "../../../lib/use-product-search";
 import {
   useCreateRecurringInvoice,
   type RecurringFrequency,
@@ -371,9 +371,19 @@ function ProductPickerModal({
   onClose: () => void;
   onPick: (p: { id: string; name: string; pricePerUnit: number | string }) => void;
 }) {
-  const [search, setSearch] = useState("");
-  const { data, isLoading } = useProducts({ search: search.trim() || undefined, limit: 0 });
-  const products = (data?.data ?? []) as Array<{
+  // Debounced + paged, replacing the `limit: 0` fetch-all. Gated on `open` so
+  // a mounted-but-closed picker doesn't fetch the catalogue.
+  const {
+    search,
+    setSearch,
+    products: pagedProducts,
+    isLoading,
+    isPlaceholder,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useProductSearch<{ id: string }>({ enabled: open });
+  const products = pagedProducts as unknown as Array<{
     id: string;
     name: string;
     pricePerUnit: number | string;
@@ -386,7 +396,16 @@ function ProductPickerModal({
           leading={<NavBackButton label="Cancel" onPress={onClose} />}
         />
         <SearchBar placeholder="Search products…" value={search} onChangeText={setSearch} />
-        <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          scrollEventThrottle={200}
+          onScroll={({ nativeEvent: e }) => {
+            const nearBottom =
+              e.layoutMeasurement.height + e.contentOffset.y >= e.contentSize.height - 400;
+            if (!nearBottom || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+            fetchNextPage();
+          }}
+        >
           {isLoading ? (
             <View style={styles.center}>
               <ActivityIndicator color={ios.brand} />
