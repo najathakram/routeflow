@@ -3,16 +3,24 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
-import type { ScanOutcome } from "../lib/scan-loop";
+import type { ScanFeedback, ScanOutcome } from "../lib/scan-loop";
 import type { ScanFlash, TrayRow } from "../lib/scan-tray";
 import { scanHaptic } from "../lib/haptics";
 import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
 import { ScanTray, type ScanTrayHandle } from "./ScanTray";
 
 const ERROR_PILL_MS = 2600;
+/** An actionable pill has to survive long enough to be read AND tapped. */
+const ACTION_PILL_MS = 8000;
 
 export interface ScanOrderSheetProps {
   visible: boolean;
+  /**
+   * Freeze decoding without unmounting the camera — used while a sheet raised
+   * from a pill action (e.g. "create this product") is on top. The web stream
+   * stays open, so resuming is instant and never re-prompts getUserMedia.
+   */
+  paused?: boolean;
   /** Newest-first tray rows; the parent bumps the scan order on every accepted scan. */
   rows: TrayRow[];
   flash: ScanFlash | null;
@@ -46,6 +54,7 @@ export interface ScanOrderSheetProps {
  */
 export function ScanOrderSheet({
   visible,
+  paused = false,
   rows,
   flash,
   totalItems,
@@ -61,7 +70,7 @@ export function ScanOrderSheet({
   const insets = useSafeAreaInsets();
   const { granted, request } = useScanCameraPermission(visible);
   const trayRef = React.useRef<ScanTrayHandle>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ScanFeedback | null>(null);
   const errorTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(
@@ -71,16 +80,25 @@ export function ScanOrderSheet({
     [],
   );
 
-  const showError = (text: string) => {
-    setError(text);
+  const dismissError = () => {
     if (errorTimer.current) clearTimeout(errorTimer.current);
-    errorTimer.current = setTimeout(() => setError(null), ERROR_PILL_MS);
+    errorTimer.current = null;
+    setError(null);
+  };
+
+  const showError = (feedback: ScanFeedback) => {
+    setError(feedback);
+    if (errorTimer.current) clearTimeout(errorTimer.current);
+    errorTimer.current = setTimeout(
+      () => setError(null),
+      feedback.action ? ACTION_PILL_MS : ERROR_PILL_MS,
+    );
   };
 
   const handleOutcome = (outcome: ScanOutcome) => {
     if (outcome?.feedback?.kind === "error") {
       scanHaptic("error");
-      showError(outcome.feedback.text);
+      showError(outcome.feedback);
       return;
     }
     if (outcome?.close) {
@@ -88,6 +106,9 @@ export function ScanOrderSheet({
       return;
     }
     scanHaptic("added");
+    // Web has no haptics (haptics.ts no-ops there) and the app plays no sound,
+    // so without this a mobile-web scan lands with zero confirmation.
+    if (typeof navigator !== "undefined") navigator.vibrate?.(30);
     trayRef.current?.scrollToTop();
   };
 
@@ -102,6 +123,7 @@ export function ScanOrderSheet({
               style={StyleSheet.absoluteFill}
               onScanned={onScanned}
               onOutcome={handleOutcome}
+              active={!paused}
               continuous
               hint={false}
             />
@@ -128,12 +150,27 @@ export function ScanOrderSheet({
             <View
               style={[styles.errorPill, { top: insets.top + 8 }]}
               accessibilityLiveRegion="polite"
-              pointerEvents="none"
+              // Only intercept touches when there's something to tap.
+              pointerEvents={error.action ? "auto" : "none"}
             >
               <Ionicons name="alert-circle" size={18} color="#fff" />
               <Text style={styles.errorText} numberOfLines={2}>
-                {error}
+                {error.text}
               </Text>
+              {error.action ? (
+                <Pressable
+                  onPress={() => {
+                    const run = error.action?.onPress;
+                    dismissError();
+                    run?.();
+                  }}
+                  style={styles.errorActionBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={error.action.label}
+                >
+                  <Text style={styles.errorActionText}>{error.action.label}</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -233,6 +270,15 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(220,38,38,0.92)",
   },
   errorText: { flexShrink: 1, color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  errorActionBtn: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    marginRight: -6,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  errorActionText: { color: "#fff", fontSize: 13, fontFamily: "Inter_700Bold" },
   tray: { flex: 0.55, backgroundColor: ios.bgElev },
   trayHeader: {
     flexDirection: "row",
