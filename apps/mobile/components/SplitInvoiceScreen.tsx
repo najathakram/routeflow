@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
+import { TERM_DAYS, TERM_OPTIONS, todayPlusDays } from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
@@ -53,21 +54,8 @@ export interface SplitInvoiceScreenProps {
   backLabel?: string;
 }
 
-const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
-
-const TERM_OPTIONS = Object.keys(TERM_DAYS);
-
-function todayPlusDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+// Term constants + date math live in lib/invoice-terms.ts (shared with the
+// invoice builder + edit screen; this file used to carry its own copy).
 
 /**
  * One draft invoice in the composer. The operator builds N of these in the UI

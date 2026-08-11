@@ -130,9 +130,17 @@ export function useApplyCreditNote() {
   return useMutation<{ id: string }, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
       apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
-    onSuccess: (_, { id }) => {
+    onSuccess: (_, { id, invoiceId }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      // The operator invoice detail/list read lib/api/admin.ts's own keys —
+      // without these, applying from the invoice screen showed a stale balance
+      // until manual refetch (useUnapplyCreditNote always had them; the
+      // asymmetry was an oversight).
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", invoiceId] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
     },
   });
 }

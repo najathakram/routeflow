@@ -269,6 +269,9 @@ export interface AdminCustomer {
   email?: string;
   status: string;
   creditLimit?: number;
+  /** Zeroes ALL invoice tax server-side — the builders' tax preview must match.
+   *  Already returned by GET /customers(/:id); was simply untyped. */
+  isTaxExempt?: boolean;
   userId?: string;
   createdAt: string;
 }
@@ -317,6 +320,18 @@ export interface AdminInvoice {
    *  (findOne/findAll use Prisma `include`, not a restrictive `select`) — was
    *  simply untyped on mobile until P10-REG-C. */
   orderId?: string | null;
+  /** Set when this invoice was cut by a delivery batch. Combined with orderId +
+   *  order.status it identifies a "pending order mirror" the server refuses to
+   *  edit/send (lib/invoices-logic.ts isPendingOrderMirror). Raw scalar,
+   *  previously untyped — same situation as orderId. */
+  deliveryBatchId?: string | null;
+  /** Invoice-level fields the mobile builders can now WRITE — all raw scalars
+   *  the API already returned, previously untyped (needed to hydrate the edit
+   *  screen and render Reference/Subject on the detail). */
+  referenceNumber?: string | null;
+  subject?: string | null;
+  terms?: string | null;
+  notes?: string | null;
   /** The linked order's status — drives the draft/final PDF default
    *  (deriveInvoiceVariant). Already returned by findOne's `include`, was untyped. */
   order?: { status?: string | null; orderNumber?: string | null } | null;
@@ -359,8 +374,14 @@ export interface AdminInvoice {
     /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
     priceType?: string;
     subtotal: number;
+    /** Flat dollars off this line; subtotal is stored POST-discount. */
+    discount?: number | null;
+    /** Tax fraction charged on the post-discount subtotal (0.08 = 8%). */
+    taxRate?: number | null;
     /** Per-line note carried from the order line (buyer-visible). */
     notes?: string | null;
+    /** Product this line was cut from — needed to round-trip an items PATCH. */
+    productId?: string | null;
   }>;
 }
 
