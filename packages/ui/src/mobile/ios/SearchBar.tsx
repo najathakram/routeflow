@@ -47,6 +47,10 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    // Inert on native (Yoga's min-size for a flex item is already 0). On
+    // react-native-web it neutralises the <input>'s `min-width: auto`, so the
+    // field can shrink instead of pushing a trailing accessory off the row.
+    minWidth: 0,
     fontSize: 17,
     fontFamily: "Inter_400Regular",
     color: ios.label,

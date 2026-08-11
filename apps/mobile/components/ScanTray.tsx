@@ -114,10 +114,14 @@ const TrayRowItem = React.memo(function TrayRowItem({
         <Text style={styles.name} numberOfLines={2}>
           {name}
         </Text>
-        <Text style={styles.subtotal}>${subtotal.toFixed(2)}</Text>
+        <Text style={styles.subtotal} numberOfLines={1}>
+          ${subtotal.toFixed(2)}
+        </Text>
       </View>
       <View style={styles.rowBottom}>
-        <Text style={styles.qtySummary}>{qtySummary}</Text>
+        <Text style={styles.qtySummary} numberOfLines={1}>
+          {qtySummary}
+        </Text>
         <QtyStepper
           size="mini"
           value={qty}
