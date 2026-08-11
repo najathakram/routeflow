@@ -19,6 +19,7 @@ import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
+import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -91,10 +92,11 @@ export class ProductsService {
     opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
   ) {
     const page = Number(query.page ?? 1);
-    // limit=0 is the internal "fetch-all" sentinel used by BuyerCatalogService for
+    // limit=0 is the "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
-    // External callers are blocked from setting limit=0 by the @Min(1) DTO constraint.
-    // Hard-cap at 10_000 to bound memory use even for internal callers.
+    // NOTE: the DTO allows it from external callers too (@Min(0) — web pickers
+    // relied on it); bounding that is a separate hardening change.
+    // Hard-cap at 10_000 to bound memory use either way.
     const limitRaw = Number(query.limit ?? 20);
     const fetchAll = limitRaw === 0;
     const limit = fetchAll ? 10_000 : limitRaw;
@@ -304,22 +306,58 @@ export class ProductsService {
   }
 
   /**
-   * Resolves a scanned code to a product across all three scannable
-   * identities — case `barcode`, case `sku`, or the retail-unit `unitSku` —
-   * each tenant-unique, so at most 3 rows can match. Deterministic priority
-   * when a code somehow matches more than one product: barcode > sku > unitSku.
+   * Resolves a scanned code to a product across all three scannable identities
+   * — case `barcode`, case `sku`, or the retail-unit `unitSku`.
+   *
+   * Matching is done against the CANDIDATE SET from `normalizeScanCode`, not
+   * the literal string: the same physical label decodes differently on
+   * different hardware (iOS reports a UPC-A as a 13-digit EAN-13 with a leading
+   * zero; the web decoders report 12 digits), so an exact-equality lookup 404s
+   * on products that plainly exist. `pickBestScanMatch` keeps the winner
+   * deterministic when several rows match.
    */
   async findByBarcode(code: string) {
-    const matches = await this.prisma.forTenant().product.findMany({
-      where: { OR: [{ barcode: code }, { sku: code }, { unitSku: code }] },
-      include: { variants: { where: { isActive: true } }, parent: true },
+    const candidates = normalizeScanCode(code);
+    if (candidates.length === 0) throw new NotFoundException("Product not found");
+
+    const include = { variants: { where: { isActive: true } }, parent: true };
+    const db = this.prisma.forTenant();
+
+    // Tier 1 — exact. Rides @@unique([tenantId, barcode|sku|unitSku]) and the
+    // @@index([barcode]) / @@index([unitSku]) as a BitmapOr of index scans:
+    // at most MAX_SCAN_CANDIDATES probes per column.
+    let matches = await db.product.findMany({
+      where: {
+        OR: [
+          { barcode: { in: candidates } },
+          { sku: { in: candidates } },
+          { unitSku: { in: candidates } },
+        ],
+      },
+      include,
     });
+
+    // Tier 2 — case-insensitive, MISS ONLY. Prisma emits ILIKE for
+    // `mode: "insensitive"`, which a btree can't serve, so this is a
+    // tenant-scoped seq scan. It runs only on the path that used to 404
+    // outright, and camera-decoded EAN/UPC codes (all digits) never reach it —
+    // it exists for typed or lowercased alpha SKUs.
+    if (matches.length === 0) {
+      matches = await db.product.findMany({
+        where: {
+          OR: candidates.flatMap((c) => [
+            { barcode: { equals: c, mode: "insensitive" as const } },
+            { sku: { equals: c, mode: "insensitive" as const } },
+            { unitSku: { equals: c, mode: "insensitive" as const } },
+          ]),
+        },
+        include,
+        take: 25,
+      });
+    }
+
     if (matches.length === 0) throw new NotFoundException("Product not found");
-    return (
-      matches.find((p) => p.barcode === code) ??
-      matches.find((p) => p.sku === code) ??
-      matches.find((p) => p.unitSku === code)!
-    );
+    return pickBestScanMatch(matches, candidates);
   }
 
   async create(dto: CreateProductDto) {

@@ -33,12 +33,26 @@ export interface BarcodeResolveHit<T = any> {
   product: T;
   source: BarcodeResolveSource;
   notFound?: false;
+  /**
+   * The substring search returned MORE THAN ONE row and none was an exact
+   * sku/unitSku hit, so `product` is a guess (the first row by name).
+   *
+   * `product` is still populated so existing callers keep working unchanged,
+   * but a caller that can show a list SHOULD branch on this instead of silently
+   * adding the wrong line — with numeric product names, a 12-digit scan
+   * substring-matches broadly.
+   */
+  ambiguous?: boolean;
+  /** Every row the substring search returned. Only set when `ambiguous`. */
+  matches?: T[];
 }
 
 export interface BarcodeResolveMiss {
   notFound: true;
   product?: undefined;
   source?: undefined;
+  ambiguous?: false;
+  matches?: undefined;
 }
 
 export type BarcodeResolveResult<T = any> = BarcodeResolveHit<T> | BarcodeResolveMiss;
@@ -70,12 +84,15 @@ export async function resolveProductByCode<T = any>(
     if (matches.length > 0) {
       const codeLower = code.toLowerCase();
       const skuExact = matches.find((p) => (p?.sku ?? "").toString().toLowerCase() === codeLower);
+      if (skuExact) return { product: skuExact, source: "sku" };
       const unitSkuExact = matches.find(
         (p) => (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
       );
-      const product = skuExact ?? unitSkuExact ?? matches[0];
-      const source = skuExact ? "sku" : unitSkuExact ? "unitSku" : "search";
-      return { product, source };
+      if (unitSkuExact) return { product: unitSkuExact, source: "unitSku" };
+      // One substring hit is safe to take. More than one is a guess — flag it
+      // so the caller can offer a choice rather than commit to row #1.
+      if (matches.length === 1) return { product: matches[0], source: "search" };
+      return { product: matches[0], source: "search", ambiguous: true, matches };
     }
   } catch (err: any) {
     const status = err?.response?.status;
