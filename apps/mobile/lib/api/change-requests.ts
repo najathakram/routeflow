@@ -65,7 +65,13 @@ export function useResolveChangeRequestAtStop(orderId: string) {
       apiClient
         .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action: "APPROVE_AT_STOP" })
         .then((r) => r.data),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["orders", orderId] }),
+    onSettled: () => {
+      // Both cache families — the operator list/detail read ["admin","orders"]
+      // (see invalidateOrderCaches in orders.ts), and an approved change
+      // request alters the order's items/total that the list shows.
+      void qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
   });
 }
 
@@ -83,6 +89,12 @@ export function useDeclineChangeRequestAtStop(orderId: string) {
       apiClient
         .post(`/orders/${orderId}/change-requests/${crId}/resolve`, { action: "DECLINE", reason })
         .then((r) => r.data),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["orders", orderId] }),
+    onSettled: () => {
+      // Both cache families — the operator list/detail read ["admin","orders"]
+      // (see invalidateOrderCaches in orders.ts), and an approved change
+      // request alters the order's items/total that the list shows.
+      void qc.invalidateQueries({ queryKey: ["orders", orderId] });
+      void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
   });
 }
