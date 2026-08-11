@@ -432,3 +432,6 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **Types** — `AdminInvoice` + `deliveryBatchId`/`referenceNumber`/`subject`/`terms`/`notes`,
   items + `discount`/`taxRate`/`productId`; `AdminCustomer` + `isTaxExempt` (all
   already-returned-just-untyped).
+- **`app/(operator)/settings/index.tsx`** — tax-rate field hint corrected to "%, e.g. 8.75":
+  `settings.taxRate` is a PERCENT (web validates 0-100 and every consumer divides by 100); the
+  old "(e.g. 0.0875)" hint told owners to store a fraction that web then divided again.
