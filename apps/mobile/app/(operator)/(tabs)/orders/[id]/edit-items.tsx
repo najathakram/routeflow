@@ -1678,8 +1678,15 @@ function ProductPicker({
   }>;
 
   /**
-   * Single-shot scan: this picker's contract is "return one product", so a
-   * continuous scanner would fight it. Mirrors ProductPickerSheet.
+   * Single-shot scan: this picker's contract is "return one product" (`onPick`
+   * closes it), so a continuous scanner would fight it.
+   *
+   * KNOWN DIVERGENCE from web: `orders/[id]/page.tsx` re-focuses its scan input
+   * after every add, so the desktop edit screen scans N items with zero taps
+   * while this one costs a camera re-open per item. Closing that gap needs an
+   * add-and-stay callback here (the picker would keep the scanner mounted
+   * instead of returning), which is a bigger change than it looks — tracked
+   * separately rather than bolted onto the scan-alignment batch.
    */
   const onScanned = async (code: string) => {
     setScanOpen(false);

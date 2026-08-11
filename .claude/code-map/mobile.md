@@ -310,3 +310,36 @@ phone-UA proxy), plus a latent totals bug found on the way.
   a bar that already owns the inset; `(customer)/sellers/connect.tsx` is the one consumer with no
   bar below it and opts in). `lib/toast.ts` web toast moved from `bottom:32px` to `96px` to clear
   the bar.
+
+### 2026-08-11b — scan-to-order realigned with web
+
+Owner: _"adding items by scanning to an order should behave exactly in the way the desktop website
+behaves… no messes, avoid clutter, super efficient."_ The **"ON THIS ORDER" mode added in
+`5be1dfac` is REVERTED** — it was a mobile-only invention with no web counterpart, and it was the
+clutter. Removed from both sale builders (`NewOrderScreen.tsx`, `(tabs)/invoices/new.tsx`):
+`orderOnly` state, the `orderRows` memo, the auto-exit effect, the bar that replaced the chip row,
+and its `onEndReached`/footer gates.
+
+**The invariant to hold on to: a scan must not move the catalogue.** Web increments a repeat scan
+IN PLACE (`CreateOrderModal.addLineItem`, `orders/[id]/page.tsx addProduct`) and never filters or
+re-sorts. So `scanOrder`/`bumpScanOrder` still drive the scan TRAY's newest-first order — the
+phone's stand-in for web's always-visible line table — but must never reach `filtered`.
+`requestScroll` is now skipped while `scanOpen` (it was animating a list behind an opaque modal).
+Verified in-browser: scanning FIX-3, FIX-1, FIX-3 left the catalogue alphabetical and untouched,
+chips visible, 3 items / $40.49 (repeat incremented in place).
+
+**Two deliberate NON-copies of web, both money-safety:**
+
+- Web's create-order flow silently takes `matches[0]` on a multi-match. Mobile keeps its
+  `ambiguous` guard, because this tenant has numeric product NAMES so a 12-digit scan
+  substring-matches broadly and the guess would put the wrong item on an order. Web's order-EDIT
+  screen agrees (it opens a picker). "Choose" now opens `ProductPickerSheet` (new `initialSearch`
+  prop) over the **paused** camera instead of tearing it down — one tap, scanning resumes.
+- `ScanOrderSheet` + `ScanTray` stay. Web needs no tray because its line table is permanently
+  beside the search box; a full-screen phone camera hides everything, so the tray restores that
+  property. Deleting it would make mobile worse than web, not equal.
+
+**Known remaining divergence (not fixed):** `orders/[id]/edit-items.tsx`'s picker scanner is
+single-shot — its contract is "return one product", so `onPick` closes it. Web's edit screen
+re-focuses its input and scans N items with zero taps. Closing the gap needs an add-and-stay
+callback; commented in place at the `onScanned` docblock.

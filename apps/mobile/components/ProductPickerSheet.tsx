@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -29,6 +29,7 @@ export function ProductPickerSheet({
   onSelect,
   title = "Product",
   standaloneOnly = false,
+  initialSearch,
 }: {
   visible: boolean;
   selectedId?: string;
@@ -37,9 +38,20 @@ export function ProductPickerSheet({
   title?: string;
   /** Only offer standalone products (e.g. picking a variant PARENT). */
   standaloneOnly?: boolean;
+  /**
+   * Pre-fill the search box each time the sheet opens. Used by the sale
+   * builders when a scanned code has several substring matches: the sheet opens
+   * already showing them, so choosing is one tap.
+   */
+  initialSearch?: string;
 }) {
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [scanOpen, setScanOpen] = useState(false);
+
+  // Re-seed on each open — `initialSearch` is a different scanned code each time.
+  useEffect(() => {
+    if (visible) setSearch(initialSearch ?? "");
+  }, [visible, initialSearch]);
 
   const { data, isLoading } = useAdminProducts({
     search: search.trim() || undefined,
