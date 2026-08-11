@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
 
@@ -212,11 +212,26 @@ export function useOrder(id: string) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
+/**
+ * Order data is cached under TWO key families: driver/customer surfaces read
+ * ["orders", ...] while the OPERATOR list and detail (useAdminOrders /
+ * useAdminOrder in admin.ts) read ["admin", "orders", ...]. Invalidating only
+ * ["orders"] leaves the operator screens serving their cache for up to the 30s
+ * staleTime — a deleted order kept sitting in the list until the next refresh.
+ * Both prefixes also cover every per-id key beneath them, so these two calls
+ * are the complete set. EVERY order mutation goes through this helper; do not
+ * hand-roll the invalidation again, that is how the families drifted apart.
+ */
+function invalidateOrderCaches(qc: QueryClient) {
+  void qc.invalidateQueries({ queryKey: ["orders"] });
+  void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+}
+
 export function useCreateOrder() {
   const qc = useQueryClient();
   return useMutation<Order, Error, CreateOrderDto>({
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -226,7 +241,7 @@ export function useCreateOrderAsDriver() {
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
     onSuccess: (_, vars) => {
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateOrderCaches(qc);
     },
   });
 }
@@ -237,8 +252,8 @@ export function useConfirmOrder() {
     mutationFn: (orderId) =>
       apiClient.patch(`/orders/${orderId}/status`, { status: "CONFIRMED" }).then((r) => r.data),
     onSuccess: () => {
-      // Invalidate orders list AND route-runs so the "N to confirm" pill updates immediately
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      // Also route-runs so the "N to confirm" pill updates immediately.
+      invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["route-runs"] });
     },
   });
@@ -249,7 +264,7 @@ export function useCancelOrder() {
   return useMutation<Order, Error, string>({
     mutationFn: (id) =>
       apiClient.patch(`/orders/${id}/status`, { status: "CANCELLED" }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -312,11 +327,7 @@ export function useUpdateOrderItems() {
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
         })
         .then((r) => r.data),
-    onSuccess: (_, { orderId }) => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
-      qc.invalidateQueries({ queryKey: ["admin", "orders", orderId] });
-    },
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -333,12 +344,7 @@ export function useUpdateOrderShipment() {
   >({
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/orders/${id}/shipment`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["orders", id] });
-      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
-      qc.invalidateQueries({ queryKey: ["admin", "orders", id] });
-    },
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -347,7 +353,7 @@ export function useToggleOrderUrgent() {
   return useMutation<Order, Error, { id: string; urgent: boolean }>({
     mutationFn: ({ id, urgent }) =>
       apiClient.patch(`/orders/${id}/urgent`, { urgent }).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -357,7 +363,7 @@ export function useChangeOrderStatus() {
     mutationFn: ({ id, status, reason }) =>
       apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
+      invalidateOrderCaches(qc);
       qc.invalidateQueries({ queryKey: ["route-runs"] });
     },
   });
@@ -373,10 +379,7 @@ export function useReopenOrder() {
   const qc = useQueryClient();
   return useMutation<Order, Error, string>({
     mutationFn: (id) => apiClient.post(`/orders/${id}/reopen`).then((r) => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
-    },
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -395,7 +398,7 @@ export function useCreateAdminOrder() {
     }
   >({
     mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 
@@ -436,7 +439,10 @@ export function useDeleteOrder() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (id) => apiClient.delete(`/orders/${id}`).then(() => undefined),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    // The reported bug lived here: only ["orders"] was invalidated, so the
+    // operator list (["admin","orders",…], 30s staleTime) kept showing the
+    // deleted order until the next refresh.
+    onSuccess: () => invalidateOrderCaches(qc),
   });
 }
 

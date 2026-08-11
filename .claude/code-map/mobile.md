@@ -377,3 +377,16 @@ exceptions live one tap behind it. One affordance per action.**
 - **Roadmap:** Waves 2-6 (invoices money-complete → payments at the door → customer file →
   catalog & supply → visibility) live in the plan; the parity audit found ALL top-15 gaps are
   UI-only (endpoints exist; some mobile hooks exist unused).
+
+### 2026-08-11c — order mutations invalidate BOTH cache families
+
+Owner: "when I delete an order, it does not disappear immediately." Root cause: order data lives
+under TWO query-key families — driver/customer surfaces read `["orders", …]`, the OPERATOR
+list/detail (`useAdminOrders`/`useAdminOrder`, 30s staleTime) read `["admin","orders", …]` — and
+most mutations in `lib/api/orders.ts` invalidated only `["orders"]`. Three had been hand-patched
+with both; delete/cancel/create/urgent/status hadn't. All 11 now route through one
+`invalidateOrderCaches(qc)` helper (two prefix invalidations cover every per-id key too — do NOT
+hand-roll the pair again, that's how they drifted). Driver change-request resolve/decline in
+`lib/api/change-requests.ts` got the same admin-family addition. Verified in-browser on
+e2e-routeflow: created ORD-00006 (appeared in the list instantly — create had the same bug),
+deleted it, list back-navigation showed it gone with zero refresh. Invoices were already correct.
