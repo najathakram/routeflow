@@ -96,7 +96,10 @@ function GeneralTab() {
         </FormSection>
 
         <FormSection title="Invoicing">
-          <FormField label="Default tax rate (e.g. 0.0875)">
+          {/* A PERCENT (0-100), matching web's settings validation (z.number().max(100))
+              and every consumer's `taxRate / 100`. The old "(e.g. 0.0875)" hint told
+              owners to store a FRACTION, which web would then divide again. */}
+          <FormField label="Default tax rate (%, e.g. 8.75)">
             <FormTextInput value={taxRate} onChangeText={setTaxRate} keyboardType="decimal-pad" />
           </FormField>
         </FormSection>
