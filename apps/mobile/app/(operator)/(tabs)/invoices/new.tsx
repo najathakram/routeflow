@@ -952,40 +952,38 @@ function InvoiceComposer({
       />
 
       <View style={styles.footer}>
+        {/* ONE entry point into review: the summary itself is the button —
+            see NewOrderScreen's footer for the history. */}
         <Pressable
-          style={styles.footerTotalTap}
+          style={[styles.footerSummaryBtn, totalItems === 0 && styles.footerSummaryBtnDisabled]}
           onPress={totalItems > 0 ? openReview : undefined}
           disabled={totalItems === 0}
+          accessibilityRole="button"
+          accessibilityLabel="Review invoice"
+          accessibilityState={{ disabled: totalItems === 0 }}
           hitSlop={6}
         >
-          <Text style={styles.footerEyebrow}>
-            {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+          <View style={styles.footerSummaryEyebrowRow}>
+            <Text style={styles.footerEyebrow} numberOfLines={1}>
+              {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+            </Text>
+            {totalItems > 0 ? <Ionicons name="chevron-up" size={12} color={ios.brand} /> : null}
+          </View>
+          <Text style={styles.footerTotal} numberOfLines={1}>
+            ${total.toFixed(2)}
           </Text>
-          <Text style={styles.footerTotal}>${total.toFixed(2)}</Text>
         </Pressable>
-        <View style={styles.footerActions}>
-          {totalItems > 0 ? (
-            <Pressable
-              style={styles.viewBtn}
-              onPress={openReview}
-              accessibilityRole="button"
-              accessibilityLabel="View and edit invoice"
-              hitSlop={4}
-            >
-              <Ionicons name="list-outline" size={14} color={ios.brand} />
-              <Text style={styles.viewBtnText}>View / edit</Text>
-            </Pressable>
-          ) : null}
-          <Pressable
-            style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
-            disabled={!canSave}
-            onPress={onSave}
-            accessibilityState={{ disabled: !canSave }}
-          >
-            <Text style={styles.confirmBtnText}>{createMut.isPending ? "Saving…" : "Create"}</Text>
-            <Ionicons name="arrow-forward" size={14} color="#fff" />
-          </Pressable>
-        </View>
+        <Pressable
+          style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
+          disabled={!canSave}
+          onPress={onSave}
+          accessibilityState={{ disabled: !canSave }}
+        >
+          <Text style={styles.confirmBtnText} numberOfLines={1}>
+            {createMut.isPending ? "Saving…" : "Create"}
+          </Text>
+          <Ionicons name="arrow-forward" size={14} color="#fff" />
+        </Pressable>
       </View>
 
       <InlineToast toast={toast} onDismiss={dismissInline} bottom={96} />
@@ -1717,7 +1715,16 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
-  footerTotalTap: { paddingVertical: 4, paddingRight: 8 },
+  footerSummaryBtn: {
+    backgroundColor: ios.brandWash,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  footerSummaryBtnDisabled: { backgroundColor: "transparent", paddingHorizontal: 0 },
+  footerSummaryEyebrowRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   footerEyebrow: {
     fontSize: 11,
     fontFamily: "Inter_700Bold",
@@ -1730,17 +1737,6 @@ const styles = StyleSheet.create({
     color: ios.label,
     fontVariant: ["tabular-nums"],
   },
-  footerActions: { flexDirection: "row", gap: 8, alignItems: "center" },
-  viewBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: ios.brandWash,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderRadius: 14,
-  },
-  viewBtnText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
   confirmBtn: {
     backgroundColor: ios.brand,
     borderRadius: 14,
