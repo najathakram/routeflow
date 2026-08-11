@@ -1,37 +1,29 @@
-import { Tabs, router } from "expo-router";
+import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
-import { IosTabBar } from "@routeflow/ui/mobile/ios";
 
 /**
- * When a tab is pressed, react-navigation's default is to restore the LAST
- * sub-screen the user was on inside that tab's stack. The user reported this
- * as a bug: "when I go to home and press orders again, still goes to where
- * it was before [an order's edit screen]." Override the press so each tab
- * pops to its root whenever pressed.
+ * The operator bottom bar is NOT drawn here — it's rendered once in
+ * `(operator)/_layout.tsx` as a sibling of the Stack, so it survives navigation
+ * to the ~88 operator screens that live outside this navigator. `tabBar` returns
+ * null so exactly one bar exists (a null tab bar reserves no space; nothing in
+ * this app reads `useBottomTabBarHeight`).
  *
- * We only intercept when the tab's nested stack is not already at index 0 —
- * otherwise default behavior (no-op when already focused on the root) wins,
- * which is the right thing for the most common case.
+ * Consequence worth knowing: `tabPress` is only ever emitted BY a tab bar, so
+ * with none rendered here the old `popTabToRoot` listeners could never fire.
+ * They were deleted rather than left as dead code — pop-to-root now lives in
+ * `components/OperatorTabBar.tsx`, which pops the destination tab's nested stack
+ * itself.
+ *
+ * The <Tabs.Screen> entries stay: they still declare titles, icons and — for
+ * `finance` — `href: null`, which keeps it out of routing.
  */
-function popTabToRoot(navigation: any, tabName: string, rootHref: string) {
-  return (e: { preventDefault: () => void }) => {
-    const state = navigation.getState?.();
-    const tab = state?.routes?.find((r: any) => r.name === tabName);
-    const innerIdx = tab?.state?.index ?? 0;
-    if (innerIdx > 0) {
-      e.preventDefault();
-      router.replace(rootHref as any);
-    }
-  };
-}
-
 export default function OperatorTabsLayout() {
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <Tabs
-        tabBar={(props) => <IosTabBar {...(props as any)} />}
+        tabBar={() => null}
         screenOptions={{
           headerShown: false,
           tabBarActiveTintColor: ios.brand,
@@ -46,9 +38,6 @@ export default function OperatorTabsLayout() {
               <Ionicons name="home-outline" size={size} color={color} />
             ),
           }}
-          listeners={({ navigation }) => ({
-            tabPress: popTabToRoot(navigation, "home", "/(operator)/(tabs)/home"),
-          })}
         />
         <Tabs.Screen
           name="dispatch"
@@ -58,9 +47,6 @@ export default function OperatorTabsLayout() {
               <Ionicons name="car-outline" size={size} color={color} />
             ),
           }}
-          listeners={({ navigation }) => ({
-            tabPress: popTabToRoot(navigation, "dispatch", "/(operator)/(tabs)/dispatch"),
-          })}
         />
         <Tabs.Screen
           name="orders"
@@ -70,9 +56,6 @@ export default function OperatorTabsLayout() {
               <Ionicons name="receipt-outline" size={size} color={color} />
             ),
           }}
-          listeners={({ navigation }) => ({
-            tabPress: popTabToRoot(navigation, "orders", "/(operator)/(tabs)/orders"),
-          })}
         />
         <Tabs.Screen name="finance" options={{ href: null }} />
         <Tabs.Screen
@@ -83,9 +66,6 @@ export default function OperatorTabsLayout() {
               <Ionicons name="business-outline" size={size} color={color} />
             ),
           }}
-          listeners={({ navigation }) => ({
-            tabPress: popTabToRoot(navigation, "warehouse", "/(operator)/(tabs)/warehouse"),
-          })}
         />
         <Tabs.Screen
           name="more"
@@ -95,9 +75,6 @@ export default function OperatorTabsLayout() {
               <Ionicons name="ellipsis-horizontal" size={size} color={color} />
             ),
           }}
-          listeners={({ navigation }) => ({
-            tabPress: popTabToRoot(navigation, "more", "/(operator)/(tabs)/more"),
-          })}
         />
       </Tabs>
     </View>

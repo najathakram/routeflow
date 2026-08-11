@@ -271,3 +271,75 @@ phone-UA proxy), plus a latent totals bug found on the way.
   only the scan path passes. A row added by TAPPING was never retained, so `productById` lost it
   once the page changed and the **footer total silently under-reported**. Now unconditional in
   both builders. Guard: `__tests__/paged-rows.test.ts` `mergeProductIndex`.
+
+### Batch 2026-08-11 — persistent operator bottom nav
+
+- **The bar now lives in `app/(operator)/_layout.tsx`, not in the tab navigator.** It used to be
+  drawn by `(tabs)/_layout.tsx`, but that layout is one _screen_ inside the operator `<Stack>` — so
+  the ~88 operator routes outside `(tabs)/` (credit-notes, payments, new-order, products,
+  customers, vendor-bills, …) covered it when pushed. `(tabs)/_layout.tsx` now passes
+  `tabBar={() => null}` so exactly one bar exists.
+  **Rendered as a plain in-flow flex sibling of `<Stack />`, NOT an overlay** — `<Stack>` carries
+  `flex:1` on both platforms, so the viewport is simply ~57px + inset shorter and **no screen needs
+  bottom padding**. Same shape as the `OfflineBanner` above it, and as React Navigation's own
+  `BottomTabView`. Routing is untouched: no file moves, no import rewrites, 176 nav call sites and
+  106 `router.back()` calls unaffected.
+- **`components/OperatorTabBar.tsx`** — five destinations, active state from
+  `lib/operator-tabs.ts` `activeOperatorTab(useSegments())`.
+  **The press action is load-bearing and was verified in a browser, not deduced.** It is
+  `navRef.dispatch(StackActions.popTo("(tabs)", { screen: tab }))`, dispatched **UNTARGETED** via
+  the container ref, preceded by a targeted `popToTop` on the destination tab's own nested stack
+  (`lib/operator-tab-nav.ts` `findDeepTabStackKey`) to preserve pop-to-root. Do **not** swap in
+  `router.push/replace/navigate/dismissTo`: expo-router targets the deepest DIVERGING navigator, so
+  from off-tab REPLACE inserts a _second_ `(tabs)` route (unbounded stack growth), and from inside
+  `(tabs)` the TabRouter implements neither REPLACE nor POP_TO and a targeted unhandled action is
+  swallowed silently. Verified: cold deep-link with no `(tabs)` mounted, off-tab screen, other tab,
+  same tab, and 7 rapid taps — the operator stack holds exactly one `(tabs)` throughout.
+- **`tabPress` is dead now** (it is only ever emitted by a tab bar). The five `popTabToRoot`
+  `listeners={…}` blocks were deleted rather than left as dead code; pop-to-root moved into the bar.
+  The `<Tabs.Screen>` entries stay — they still carry titles, icons and `finance`'s `href: null`.
+- **Pure, spec'd seams:** `lib/operator-tabs.ts` (`activeOperatorTab`, `OPERATOR_TABS`,
+  `OPERATOR_TAB_ROOT`; unmapped sections fall back to **More**, which is the hub they're reached
+  from) and `lib/operator-tab-nav.ts` (`findDeepTabStackKey`). Specs
+  `__tests__/operator-tabs.test.ts` + `__tests__/operator-tab-nav.test.ts`.
+- **No deny-list — the bar shows on every operator page**, including new-order and the inline
+  scanner screens. Footer-over-bar is already shipped: `invoices/new` and `orders/[id]/edit-items`
+  are inside `(tabs)` today, and `NewOrderScreen` already renders under the _driver_ bar. Measured
+  on new-order at 375px: Confirm 676-696, Save-as-draft 718-734, bar label 790 — nothing clipped.
+- **Companions:** `components/FormSheet.tsx` gains `bottomInset` (default OFF — sheets now sit above
+  a bar that already owns the inset; `(customer)/sellers/connect.tsx` is the one consumer with no
+  bar below it and opts in). `lib/toast.ts` web toast moved from `bottom:32px` to `96px` to clear
+  the bar.
+
+### 2026-08-11b — scan-to-order realigned with web
+
+Owner: _"adding items by scanning to an order should behave exactly in the way the desktop website
+behaves… no messes, avoid clutter, super efficient."_ The **"ON THIS ORDER" mode added in
+`5be1dfac` is REVERTED** — it was a mobile-only invention with no web counterpart, and it was the
+clutter. Removed from both sale builders (`NewOrderScreen.tsx`, `(tabs)/invoices/new.tsx`):
+`orderOnly` state, the `orderRows` memo, the auto-exit effect, the bar that replaced the chip row,
+and its `onEndReached`/footer gates.
+
+**The invariant to hold on to: a scan must not move the catalogue.** Web increments a repeat scan
+IN PLACE (`CreateOrderModal.addLineItem`, `orders/[id]/page.tsx addProduct`) and never filters or
+re-sorts. So `scanOrder`/`bumpScanOrder` still drive the scan TRAY's newest-first order — the
+phone's stand-in for web's always-visible line table — but must never reach `filtered`.
+`requestScroll` is now skipped while `scanOpen` (it was animating a list behind an opaque modal).
+Verified in-browser: scanning FIX-3, FIX-1, FIX-3 left the catalogue alphabetical and untouched,
+chips visible, 3 items / $40.49 (repeat incremented in place).
+
+**Two deliberate NON-copies of web, both money-safety:**
+
+- Web's create-order flow silently takes `matches[0]` on a multi-match. Mobile keeps its
+  `ambiguous` guard, because this tenant has numeric product NAMES so a 12-digit scan
+  substring-matches broadly and the guess would put the wrong item on an order. Web's order-EDIT
+  screen agrees (it opens a picker). "Choose" now opens `ProductPickerSheet` (new `initialSearch`
+  prop) over the **paused** camera instead of tearing it down — one tap, scanning resumes.
+- `ScanOrderSheet` + `ScanTray` stay. Web needs no tray because its line table is permanently
+  beside the search box; a full-screen phone camera hides everything, so the tray restores that
+  property. Deleting it would make mobile worse than web, not equal.
+
+**Known remaining divergence (not fixed):** `orders/[id]/edit-items.tsx`'s picker scanner is
+single-shot — its contract is "return one product", so `onPick` closes it. Web's edit screen
+re-focuses its input and scans N items with zero taps. Closing the gap needs an add-and-stay
+callback; commented in place at the `onScanned` docblock.

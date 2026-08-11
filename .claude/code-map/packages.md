@@ -42,10 +42,24 @@ Cross-platform components. Entry `index.tsx`; subpaths `./web`, `./mobile`, `./t
   **All web primitives consume the Ledger tokens (below), so re-pointing tokens reskins them.**
 - **Mobile** (`src/mobile/index.ts`): `MobileButton`, `MobileInput`, `StatusBadge`,
   `ScreenHeader`, `SectionHeader`, `EmptyState`.
-- **iOS** (`src/mobile/ios/`): `NavBar`, `NavBackButton`, `NavAction`, `IosTabBar`, `KpiCard`,
-  `BrandGradientCard`, `StopCard`, `ExceptionCard`, `SegmentedControl`, `Pill`, `SearchBar`,
-  `ListGroup`, `ListRow`, `InlineStats`, `FilterChipRow`, `ProgressTrack`, `GoogleButton`,
-  `Blur`, `BrandGlyph`, `MessageBubble`, `IosEmptyState`.
+- **iOS** (`src/mobile/ios/`): `NavBar`, `NavBackButton`, `NavAction`, `IosTabBar`,
+  `IosTabBarView`, `KpiCard`, `BrandGradientCard`, `StopCard`, `ExceptionCard`,
+  `SegmentedControl`, `Pill`, `SearchBar`, `ListGroup`, `ListRow`, `InlineStats`,
+  `FilterChipRow`, `ProgressTrack`, `GoogleButton`, `Blur`, `BrandGlyph`, `MessageBubble`,
+  `IosEmptyState`.
+  - **`TabBarView.tsx` `IosTabBarView({items})` (2026-08-11)** — the bar's LOOK, with no router
+    knowledge (this package takes no navigator dependency). `TabBar.tsx` `IosTabBar` is now a thin
+    React Navigation adapter over it, keeping `shouldRenderTab`. Two callers share it: the adapter
+    (driver / customer / tenant `<Tabs tabBar=…>`) and `apps/mobile/components/OperatorTabBar.tsx`,
+    which lives outside any navigator. Extracted rather than forked so they can't drift.
+  - **`FilterChipRow` needs all three of `{height:44, flexGrow:0, flexShrink:0}`.** It's a
+    horizontal `ScrollView`, whose BASE style is `{flexGrow:1, flexShrink:1}` in RN core _and_
+    react-native-web. `flexShrink:0` (added 56f582c8) stops it collapsing; `flexGrow:0` (2026-08-11)
+    stops it GROWING — `height` is not a cap, so beside a `flex:1` list the two split the free space
+    50/50 and, because `contents` centres vertically, you get a ~290px band with the chips floating
+    in it ("the top menu moves down" on New order). Fixes 18 screens at once. A hand-rolled copy in
+    `(customer)/(tabs)/catalog.tsx` carries the same guard. Don't fix it with alignment — ScrollView
+    throws a dev invariant on `alignItems`/`justifyContent` in `style`.
 - **Tokens** (`src/tokens.ts`): `colors` (brand 50–900, canvas, navy, success/warning/danger,
   surface), `fontFamily` (Inter), `borderRadius`; typography in `src/typography.ts`.
 

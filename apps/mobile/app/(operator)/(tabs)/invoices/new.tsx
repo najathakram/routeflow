@@ -45,6 +45,7 @@ import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
+import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
 import { InlineToast, useInlineToast } from "../../../../components/InlineToast";
 import { ProductRow } from "../../../../components/ProductRow";
 import { ScanOrderSheet } from "../../../../components/ScanOrderSheet";
@@ -314,8 +315,6 @@ function InvoiceComposer({
   onSaved: (invoiceId: string, invoiceNumber: string) => void;
 }) {
   const [category, setCategory] = useState("All");
-  /** See NewOrderScreen: after a scan the list shows only what's on the invoice. */
-  const [orderOnly, setOrderOnly] = useState(false);
   const [items, setItems] = useState<Record<string, LineState>>({});
   // Ad-hoc lines not in the catalog (no productId on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
@@ -331,6 +330,8 @@ function InvoiceComposer({
   const [reviewOpen, setReviewOpen] = useState(false);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
+  /** Scanned code with several substring matches → picker over the camera. */
+  const [pickCode, setPickCode] = useState<string | null>(null);
   // POST /products is @Roles(OPERATOR) server-side, so offering "Create" to a
   // driver only earns them a 403. NewOrderScreen has always gated this; this
   // screen did not.
@@ -490,9 +491,8 @@ function InvoiceComposer({
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
     setSearch("");
-    setOrderOnly(true);
-    setPendingScroll((s) => requestScroll(s, product.id));
     if (scanOpen) return; // the tray row is the confirmation
+    setPendingScroll((s) => requestScroll(s, product.id));
     return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
   };
 
@@ -518,17 +518,13 @@ function InvoiceComposer({
       const result = await resolveProductByCode<Product>(trimmed);
       if (result.ambiguous) {
         // Several substring hits, no exact code match — don't guess row #1.
+        // The picker stacks over the PAUSED camera so choosing is one tap and
+        // scanning resumes; see NewOrderScreen for the full reasoning.
         return {
           feedback: {
             kind: "error",
             text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
-            action: {
-              label: "Choose",
-              onPress: () => {
-                setSearch(trimmed);
-                setScanOpen(false);
-              },
-            },
+            action: { label: "Choose", onPress: () => setPickCode(trimmed) },
           },
         };
       }
@@ -585,29 +581,13 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  /** Lines on the invoice, newest scan first — the "ON THIS INVOICE" list. */
-  const orderRows = useMemo(() => {
-    const rank = new Map(scanOrder.map((id, i) => [id, i]));
-    return Object.keys(items)
-      .map((id) => productById.get(id))
-      .filter((p): p is Product => !!p)
-      .sort(
-        (a, b) =>
-          (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
-      );
-  }, [items, productById, scanOrder]);
-
   const filtered = useMemo(() => {
-    if (orderOnly) return orderRows;
-    // Search AND category are server-side now; the only client-side shaping
-    // left is pinning cart lines the current page doesn't contain.
+    // Search AND category are server-side; the only client-side shaping left is
+    // pinning cart lines the current page doesn't contain. The catalogue never
+    // re-orders itself around scanning — see NewOrderScreen.
     if (searchTerm) return products;
     return withCartRows(products, Object.keys(items), (id) => productById.get(id));
-  }, [orderOnly, orderRows, products, searchTerm, items, productById]);
-
-  useEffect(() => {
-    if (orderOnly && Object.keys(items).length === 0) setOrderOnly(false);
-  }, [orderOnly, items]);
+  }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -902,10 +882,7 @@ function InvoiceComposer({
       <SearchBar
         placeholder="Search items…"
         value={search}
-        onChangeText={(t) => {
-          setSearch(t);
-          if (t.trim()) setOrderOnly(false);
-        }}
+        onChangeText={setSearch}
         trailing={
           <View style={styles.searchTrailing}>
             {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
@@ -921,21 +898,7 @@ function InvoiceComposer({
         }
       />
 
-      {orderOnly ? (
-        <View style={styles.orderOnlyBar}>
-          <Text style={styles.orderOnlyLabel}>ON THIS INVOICE</Text>
-          <Pressable
-            onPress={() => setOrderOnly(false)}
-            hitSlop={8}
-            style={styles.orderOnlyBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Show all items"
-          >
-            <Ionicons name="refresh-outline" size={13} color={ios.brand} />
-            <Text style={styles.orderOnlyBtnText}>Show all items</Text>
-          </Pressable>
-        </View>
-      ) : searchTerm === "" && categoryChips.length > 1 ? (
+      {searchTerm === "" && categoryChips.length > 1 ? (
         <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
       ) : null}
 
@@ -957,7 +920,7 @@ function InvoiceComposer({
         onScrollToIndexFailed={onScrollToIndexFailed}
         onEndReachedThreshold={0.5}
         onEndReached={() => {
-          if (orderOnly || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+          if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
           fetchNextPage();
         }}
         contentContainerStyle={styles.listContent}
@@ -1001,7 +964,7 @@ function InvoiceComposer({
                 </Text>
               </Pressable>
             ) : null}
-            {isFetchingNextPage && !orderOnly ? (
+            {isFetchingNextPage ? (
               <View style={styles.pageSpinner}>
                 <ActivityIndicator color={ios.brand} />
               </View>
@@ -1055,7 +1018,7 @@ function InvoiceComposer({
         visible={scanOpen}
         // Freeze decoding, don't close — see the miss path in
         // handleBarcodeScanned for why the scanner must survive a no-match.
-        paused={createCode != null}
+        paused={createCode != null || pickCode != null}
         rows={trayRows}
         flash={scanFlash}
         totalItems={totalItems}
@@ -1116,6 +1079,19 @@ function InvoiceComposer({
           addUnlisted(name, unitPrice, qty);
           setUnlistedModalOpen(false);
           showInline(`Added ${name}`);
+        }}
+      />
+
+      {/* Ambiguous scan → pick without losing the camera. Same portal-order
+          rule as the create sheet below. */}
+      <ProductPickerSheet
+        visible={pickCode != null}
+        title="Which one?"
+        initialSearch={pickCode ?? undefined}
+        onClose={() => setPickCode(null)}
+        onSelect={(p: { id: string }) => {
+          setPickCode(null);
+          acceptScannedProduct(p as unknown as Product);
         }}
       />
 
@@ -1717,29 +1693,6 @@ const styles = StyleSheet.create({
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },
   searchTrailing: { flexDirection: "row", alignItems: "center", gap: 10 },
-  orderOnlyBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  orderOnlyLabel: {
-    flexShrink: 1,
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    letterSpacing: 0.6,
-    color: ios.label2,
-  },
-  orderOnlyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    minHeight: 32,
-    paddingHorizontal: 4,
-  },
-  orderOnlyBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   rowSpacer: { height: 10 },
   emptyUnlistedBtn: {
     flexDirection: "row",

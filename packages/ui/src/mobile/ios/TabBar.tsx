@@ -1,8 +1,5 @@
 import React from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ios } from "../../tokens";
-import { Blur } from "./Blur";
+import { IosTabBarView, type IosTabBarItem } from "./TabBarView";
 
 // Minimal structural subset of @react-navigation/bottom-tabs' `BottomTabBarProps`.
 // Declared inline so `@routeflow/ui` doesn't need a direct dependency on
@@ -54,91 +51,37 @@ function shouldRenderTab(options: IosTabBarProps["descriptors"][string]["options
 
 /**
  * iOS-style bottom tab bar for use with Expo Router's <Tabs tabBar={...}/>.
- * Uses a blurred translucent background with brand-tinted active icons.
+ *
+ * This is the React Navigation ADAPTER: it turns navigator state into the plain
+ * item list `IosTabBarView` renders. All the chrome lives there, shared with the
+ * operator's persistent bar. Used by driver / customer / tenant.
  */
 export function IosTabBar({ state, descriptors, navigation }: IosTabBarProps) {
-  const insets = useSafeAreaInsets();
-  const bottomPad = Math.max(insets.bottom, 8);
-
-  const visibleRoutes = state.routes
+  const items: IosTabBarItem[] = state.routes
     .map((route, index) => ({ route, index }))
-    .filter(({ route }) => shouldRenderTab(descriptors[route.key]!.options));
+    .filter(({ route }) => shouldRenderTab(descriptors[route.key]!.options))
+    .map(({ route, index }) => {
+      const { options } = descriptors[route.key]!;
+      const isFocused = state.index === index;
+      return {
+        key: route.key,
+        label:
+          typeof options.tabBarLabel === "string"
+            ? options.tabBarLabel
+            : (options.title ?? route.name),
+        focused: isFocused,
+        // shouldRenderTab already guarantees tabBarIcon exists.
+        renderIcon: (p) => options.tabBarIcon!(p),
+        onPress: () => {
+          const event = navigation.emit({
+            type: "tabPress",
+            target: route.key,
+            canPreventDefault: true,
+          });
+          if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name as never);
+        },
+      };
+    });
 
-  return (
-    <Blur intensity={80} tint="light" style={[styles.wrap, { paddingBottom: bottomPad }]}>
-      <View style={styles.inner}>
-        {visibleRoutes.map(({ route, index }) => {
-          const { options } = descriptors[route.key]!;
-          const label =
-            typeof options.tabBarLabel === "string"
-              ? options.tabBarLabel
-              : (options.title ?? route.name);
-          const isFocused = state.index === index;
-          const color = isFocused ? ios.brand : ios.gray[1];
-
-          const onPress = () => {
-            const event = navigation.emit({
-              type: "tabPress",
-              target: route.key,
-              canPreventDefault: true,
-            });
-            if (!isFocused && !event.defaultPrevented) navigation.navigate(route.name as never);
-          };
-
-          const icon = options.tabBarIcon
-            ? options.tabBarIcon({ focused: isFocused, color, size: 25 })
-            : null;
-
-          return (
-            <Pressable
-              key={route.key}
-              onPress={onPress}
-              style={styles.tab}
-              accessibilityRole="button"
-              accessibilityState={isFocused ? { selected: true } : {}}
-            >
-              <View style={styles.icon}>{icon}</View>
-              <Text style={[styles.label, { color }]} numberOfLines={1}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </Blur>
-  );
+  return <IosTabBarView items={items} />;
 }
-
-const styles = StyleSheet.create({
-  wrap: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: ios.separator,
-    // Match mockup tab bar: no shadow, just the hairline
-    ...Platform.select({
-      android: { elevation: 0 },
-      default: {},
-    }),
-  },
-  inner: {
-    flexDirection: "row",
-    paddingTop: 8,
-  },
-  tab: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-    paddingVertical: 2,
-  },
-  icon: {
-    width: 28,
-    height: 26,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  label: {
-    fontSize: 10,
-    fontFamily: "Inter_500Medium",
-    letterSpacing: 0.1,
-  },
-});

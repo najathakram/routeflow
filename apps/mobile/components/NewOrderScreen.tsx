@@ -56,6 +56,7 @@ import {
 } from "../lib/invoice-split";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
+import { ProductPickerSheet } from "./ProductPickerSheet";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
@@ -424,13 +425,8 @@ function ProductPickView({
   const canSeeCost = isStaff || userRole === "DRIVER";
 
   const [category, setCategory] = useState("All");
-  /**
-   * "ON THIS ORDER" mode: after a scan the catalogue collapses to just the
-   * lines on the order, newest scan first, with a "Show all items" escape.
-   * Scanning a case of goods is a receipt-building activity — the operator
-   * wants to see what they've captured, not 10,000 other SKUs.
-   */
-  const [orderOnly, setOrderOnly] = useState(false);
+  /** Scanned code with several substring matches → open a picker over the camera. */
+  const [pickCode, setPickCode] = useState<string | null>(null);
   const [items, setItems] = useState<Record<string, LineState>>({});
   // Ad-hoc lines not in the product catalog (productId null on submit).
   const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
@@ -750,9 +746,11 @@ function ProductPickView({
     addOne(product.id, product);
     bumpScanned(product.id);
     setSearch("");
-    setOrderOnly(true);
-    setPendingScroll((s) => requestScroll(s, product.id));
     if (scanOpen) return; // the tray row is the confirmation
+    // Only reachable from a non-sheet caller. Web's equivalent scrolls the new
+    // line into view with `block: "nearest"` — a no-op when it is already
+    // visible — so mirror that rather than always animating.
+    setPendingScroll((s) => requestScroll(s, product.id));
     return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
   };
 
@@ -781,20 +779,21 @@ function ProductPickView({
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (result.ambiguous) {
-        // Several substring hits and no exact code match — adding row #1 would
-        // be a guess. Hand the operator the filtered catalogue instead.
+        // Several substring hits and no exact code match. Web's create-order
+        // flow silently takes matches[0] here; we deliberately don't, because
+        // this tenant has numeric product NAMES, so a 12-digit scan
+        // substring-matches broadly and the guess would put the wrong item on
+        // the order. Web's order-EDIT screen agrees — it opens a picker.
+        //
+        // The picker stacks over the PAUSED camera (same trick as the
+        // create-on-miss sheet) so choosing costs one tap and scanning resumes
+        // immediately, rather than tearing the camera down and making the
+        // operator re-open it.
         return {
           feedback: {
             kind: "error",
             text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
-            action: {
-              label: "Choose",
-              onPress: () => {
-                setSearch(trimmed);
-                setOrderOnly(false);
-                setScanOpen(false);
-              },
-            },
+            action: { label: "Choose", onPress: () => setPickCode(trimmed) },
           },
         };
       }
@@ -858,32 +857,19 @@ function ProductPickView({
     [tenantCategories],
   );
 
-  /** Lines on the order, newest scan first — the "ON THIS ORDER" list. */
-  const orderRows = useMemo(() => {
-    const ids = Object.keys(items);
-    const rank = new Map(scanOrder.map((id, i) => [id, i]));
-    return ids
-      .map((id) => productById.get(id))
-      .filter((p): p is Product => !!p)
-      .sort(
-        (a, b) =>
-          (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
-      );
-  }, [items, productById, scanOrder]);
-
   const filtered = useMemo(() => {
-    if (orderOnly) return orderRows;
-    // Search AND category are applied server-side now; the only client-side
-    // shaping left is pinning cart lines the current page doesn't contain.
+    // Search AND category are applied server-side; the only client-side shaping
+    // left is pinning cart lines the current page doesn't contain.
+    //
+    // The catalogue deliberately does NOT re-order itself around scanning. Web
+    // increments a repeat scan IN PLACE and never re-sorts, so scanning A, B, A
+    // leaves the list exactly where it was. `scanOrder` still drives the scan
+    // TRAY's newest-first ordering — the phone's stand-in for web's
+    // always-visible line table — but it must never reach the catalogue, or
+    // rows move under the operator's finger between scans.
     if (searchTerm) return products;
     return withCartRows(products, Object.keys(items), (id) => productById.get(id));
-  }, [orderOnly, orderRows, products, searchTerm, items, productById]);
-
-  // Leaving the mode is automatic once the order is empty — an "ON THIS ORDER"
-  // list with nothing on it is a dead end.
-  useEffect(() => {
-    if (orderOnly && Object.keys(items).length === 0) setOrderOnly(false);
-  }, [orderOnly, items]);
+  }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -1315,11 +1301,7 @@ function ProductPickView({
       <SearchBar
         placeholder="Search items…"
         value={search}
-        onChangeText={(t) => {
-          setSearch(t);
-          // Typing is a browse intent — leave the order-only list.
-          if (t.trim()) setOrderOnly(false);
-        }}
+        onChangeText={setSearch}
         trailing={
           <View style={styles.searchTrailing}>
             {/* keepPreviousData holds the previous rows while the next page
@@ -1337,21 +1319,7 @@ function ProductPickView({
         }
       />
 
-      {orderOnly ? (
-        <View style={styles.orderOnlyBar}>
-          <Text style={styles.orderOnlyLabel}>ON THIS ORDER</Text>
-          <Pressable
-            onPress={() => setOrderOnly(false)}
-            hitSlop={8}
-            style={styles.orderOnlyBtn}
-            accessibilityRole="button"
-            accessibilityLabel="Show all items"
-          >
-            <Ionicons name="refresh-outline" size={13} color={ios.brand} />
-            <Text style={styles.orderOnlyBtnText}>Show all items</Text>
-          </Pressable>
-        </View>
-      ) : searchTerm === "" && categoryChips.length > 1 ? (
+      {searchTerm === "" && categoryChips.length > 1 ? (
         <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
       ) : null}
 
@@ -1374,10 +1342,9 @@ function ProductPickView({
         onScrollToIndexFailed={onScrollToIndexFailed}
         onEndReachedThreshold={0.5}
         onEndReached={() => {
-          // In order-only mode the rows come from the cart, not the page.
           // `isPlaceholder` guards against fetching page N+1 of a new query key
           // on top of pages 1..N of the previous one.
-          if (orderOnly || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+          if (isPlaceholder || !hasNextPage || isFetchingNextPage) return;
           fetchNextPage();
         }}
         contentContainerStyle={styles.listContent}
@@ -1421,7 +1388,7 @@ function ProductPickView({
                 </Text>
               </Pressable>
             ) : null}
-            {isFetchingNextPage && !orderOnly ? (
+            {isFetchingNextPage ? (
               <View style={styles.pageSpinner}>
                 <ActivityIndicator color={ios.brand} />
               </View>
@@ -1513,7 +1480,7 @@ function ProductPickView({
         // Freeze decoding, don't close: `scanOpen` is never cleared here, so
         // whether the operator creates the product or cancels, they land back
         // in a live scanner with the tray intact — nothing to restore.
-        paused={createCode != null}
+        paused={createCode != null || pickCode != null}
         rows={trayRows}
         flash={scanFlash}
         totalItems={totalItems}
@@ -1528,6 +1495,20 @@ function ProductPickView({
           setCartOpen(true);
         }}
         onDone={() => setScanOpen(false)}
+      />
+
+      {/* Ambiguous scan: pick the right product without losing the camera.
+          Must stay AFTER <ScanOrderSheet> for the same portal-order reason as
+          the create sheet below. */}
+      <ProductPickerSheet
+        visible={pickCode != null}
+        title="Which one?"
+        initialSearch={pickCode ?? undefined}
+        onClose={() => setPickCode(null)}
+        onSelect={(p: { id: string }) => {
+          setPickCode(null);
+          acceptScannedProduct(p as unknown as Product);
+        }}
       />
 
       <LicenseGuardModal
@@ -2863,30 +2844,6 @@ const styles = StyleSheet.create({
   rowSpacer: { height: 10 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },
   searchTrailing: { flexDirection: "row", alignItems: "center", gap: 10 },
-  // "ON THIS ORDER" bar — takes the chip row's slot after a scan.
-  orderOnlyBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  orderOnlyLabel: {
-    flexShrink: 1,
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    letterSpacing: 0.6,
-    color: ios.label2,
-  },
-  orderOnlyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    minHeight: 32,
-    paddingHorizontal: 4,
-  },
-  orderOnlyBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   emptyUnlistedBtn: {
     flexDirection: "row",
     alignItems: "center",

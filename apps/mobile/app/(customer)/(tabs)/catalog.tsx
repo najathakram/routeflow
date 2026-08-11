@@ -168,6 +168,7 @@ export default function CustomerCatalogScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.pillsScroll}
           contentContainerStyle={styles.pillsRow}
         >
           {["", ...categories].map((c) => (
@@ -576,7 +577,12 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
-  pillsRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  // A horizontal ScrollView's base style is `{ flexGrow: 1, flexShrink: 1 }`, so
+  // beside the `flex: 1` product grid it would otherwise both eat the spare space
+  // on a short grid and collapse to nothing on a long one. Same guard as
+  // FilterChipRow (packages/ui) — see the comment there for the full reasoning.
+  pillsScroll: { flexGrow: 0, flexShrink: 0 },
+  pillsRow: { paddingHorizontal: 16, paddingBottom: 8, gap: 8, alignItems: "center" },
   pill: {
     borderRadius: 20,
     borderWidth: 1,
