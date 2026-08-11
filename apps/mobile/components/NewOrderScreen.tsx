@@ -57,6 +57,8 @@ import {
 import { MoneyTextInput } from "./MoneyTextInput";
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
+import { SellByToggle } from "./SellByToggle";
+import { BoxedQtyBand } from "./BoxedQtyBand";
 import { QtyStepper } from "./QtyStepper";
 import type { CreatedProduct } from "../lib/api/products";
 import { sanitizeIntInput } from "../lib/qty";
@@ -210,31 +212,6 @@ const productKey = (p: Product) => p.id;
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
-}
-
-/** One-line "2 cases + 1 loose · $54.00" for an added case-packed catalog row. */
-function boxedLineSummary(line: LineState, product: Product, unitPrice: number): string {
-  const split = normalizeBoxesPieces({
-    boxes: line.boxes,
-    pieces: line.pieces,
-    qty: line.qty,
-    unitsPerBox: product.unitsPerBox,
-  });
-  const boxes = split.boxes ?? 0;
-  const pieces = split.pieces ?? 0;
-  const parts: string[] = [];
-  if (boxes > 0) parts.push(`${boxes} case${boxes === 1 ? "" : "s"}`);
-  if (pieces > 0) parts.push(`${pieces} loose`);
-  // Raw line fields, exactly as the footer memo passes them — the two totals
-  // must be byte-identical.
-  const subtotal = computeLineSubtotal({
-    unitPrice,
-    qty: split.qty,
-    boxes: line.boxes ?? null,
-    pieces: line.pieces ?? null,
-    unitsPerBox: product.unitsPerBox ?? null,
-  });
-  return `${parts.join(" + ") || "0"} · $${subtotal.toFixed(2)}`;
 }
 
 export function NewOrderScreen({
@@ -973,6 +950,7 @@ function ProductPickView({
     remove: removeOne,
     setQty,
     setBoxes,
+    setPieces,
     setUnits,
     removeLine,
     isUnlisted: (id: string) => unlisted.some((u) => u.id === id),
@@ -993,6 +971,10 @@ function ProductPickView({
   );
   const onRowChangeBoxes = useCallback(
     (id: string, n: number) => actionsRef.current.setBoxes(id, n),
+    [],
+  );
+  const onRowChangePieces = useCallback(
+    (id: string, n: number) => actionsRef.current.setPieces(id, n),
     [],
   );
   const openCart = useCallback(() => setCartOpen(true), []);
@@ -1056,28 +1038,16 @@ function ProductPickView({
       const price = tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
-          <>
-            <View style={styles.boxedControl}>
-              <Text style={styles.boxedQtyLabel}>Cases</Text>
-              <QtyStepper
-                size="mini"
-                value={line.boxes ?? 0}
-                onChangeQty={(n) => onRowChangeBoxes(p.id, n)}
-              />
-            </View>
-            <Text style={styles.boxedSummary} numberOfLines={1}>
-              {boxedLineSummary(line, p, effectiveUnitPrice(line, price))}
-            </Text>
-            <Pressable
-              onPress={openCart}
-              hitSlop={8}
-              style={styles.boxedEditBtn}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${displayName(p)}`}
-            >
-              <Text style={styles.boxedEditText}>Edit</Text>
-            </Pressable>
-          </>
+          <BoxedQtyBand
+            line={line}
+            unitsPerBox={Number(p.unitsPerBox)}
+            unit={p.unit}
+            unitPrice={effectiveUnitPrice(line, price)}
+            productName={displayName(p)}
+            onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
+            onChangePieces={(n) => onRowChangePieces(p.id, n)}
+            onEdit={openCart}
+          />
         ) : null;
 
       return (
@@ -1109,6 +1079,7 @@ function ProductPickView({
       onRowIncrement,
       onRowDecrement,
       onRowChangeBoxes,
+      onRowChangePieces,
       openCart,
     ],
   );
@@ -1399,19 +1370,29 @@ function ProductPickView({
 
       <View style={styles.footer}>
         <View style={styles.footerRow}>
-          {/* Tap the running total OR the explicit "View" button to open the
-              cart review. The button is now visible on its own (the implicit
-              "tap the total" hint was missed by users who wanted an obvious
-              way to see + edit before confirming). */}
+          {/* ONE entry point into review: the summary itself is the button.
+              History: the bare tappable total was missed by users, so a
+              separate "View / edit" button was added beside it — two controls
+              for one action. The brandWash chip + chevron now carry that
+              affordance alone. */}
           <Pressable
-            style={styles.footerTotalTap}
+            style={[styles.footerSummaryBtn, totalItems === 0 && styles.footerSummaryBtnDisabled]}
             onPress={totalItems > 0 ? () => setCartOpen(true) : undefined}
             disabled={totalItems === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Review order"
+            accessibilityState={{ disabled: totalItems === 0 }}
             hitSlop={6}
           >
-            <Text style={styles.footerEyebrow} numberOfLines={1}>
-              {totalItems} ITEM{totalItems === 1 ? "" : "S"}
-            </Text>
+            <View style={styles.footerSummaryEyebrowRow}>
+              <Text style={styles.footerEyebrow} numberOfLines={1}>
+                {totalItems} ITEM{totalItems === 1 ? "" : "S"}
+              </Text>
+              {/* The chevron sits on the eyebrow line, not beside the 24px
+                  total, so the chip's min width is governed by the total alone
+                  and $99999.99 stays un-clipped at 320px. */}
+              {totalItems > 0 ? <Ionicons name="chevron-up" size={12} color={ios.brand} /> : null}
+            </View>
             <Text style={styles.footerTotal} numberOfLines={1}>
               ${total.toFixed(2)}
             </Text>
@@ -1424,36 +1405,20 @@ function ProductPickView({
               </View>
             ) : null}
           </Pressable>
-          <View style={styles.footerActions}>
-            {totalItems > 0 ? (
-              <Pressable
-                style={styles.viewBtn}
-                onPress={() => setCartOpen(true)}
-                accessibilityRole="button"
-                accessibilityLabel="View and edit order"
-                hitSlop={4}
-              >
-                <Ionicons name="list-outline" size={14} color={ios.brand} />
-                <Text style={styles.viewBtnText} numberOfLines={1}>
-                  View / edit
-                </Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              style={[
-                styles.confirmBtn,
-                (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
-              ]}
-              disabled={!canSave}
-              onPress={() => onSave()}
-              accessibilityState={{ disabled: !canSave }}
-            >
-              <Text style={styles.confirmBtnText} numberOfLines={1}>
-                {createOrder.isPending ? "Saving…" : "Confirm"}
-              </Text>
-              <Ionicons name="arrow-forward" size={14} color="#fff" />
-            </Pressable>
-          </View>
+          <Pressable
+            style={[
+              styles.confirmBtn,
+              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+            ]}
+            disabled={!canSave}
+            onPress={() => onSave()}
+            accessibilityState={{ disabled: !canSave }}
+          >
+            <Text style={styles.confirmBtnText} numberOfLines={1}>
+              {createOrder.isPending ? "Saving…" : "Confirm"}
+            </Text>
+            <Ionicons name="arrow-forward" size={14} color="#fff" />
+          </Pressable>
         </View>
         <View style={styles.footerSubRow}>
           {totalItems === 0 && !createOrder.isPending ? (
@@ -2721,31 +2686,6 @@ function CreateCreditNoteSheet({
   );
 }
 
-/** Compact Cases/Units segmented control for a case-packed line's qty entry mode. */
-function SellByToggle({
-  value,
-  onChange,
-}: {
-  value: "case" | "unit";
-  onChange: (v: "case" | "unit") => void;
-}) {
-  return (
-    <View style={styles.sellBySegment}>
-      {(["case", "unit"] as const).map((opt) => (
-        <Pressable
-          key={opt}
-          onPress={() => onChange(opt)}
-          style={[styles.sellBySegmentBtn, value === opt && styles.sellBySegmentBtnActive]}
-        >
-          <Text style={[styles.sellBySegmentText, value === opt && styles.sellBySegmentTextActive]}>
-            {opt === "case" ? "Cases" : "Units"}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
   center: { padding: 40, alignItems: "center" },
@@ -2939,47 +2879,6 @@ const styles = StyleSheet.create({
   confirmBtnDisabled: { opacity: 0.35 },
   confirmBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 
-  // ── Added case-packed catalog row: cases stepper + split + way into the cart ──
-  boxedControl: { alignItems: "center", gap: 4 },
-  boxedQtyLabel: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: ios.label2,
-    letterSpacing: 0.3,
-  },
-  boxedSummary: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-    color: ios.label2,
-    fontVariant: ["tabular-nums"],
-  },
-  boxedEditBtn: {
-    minHeight: 44,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: ios.brandWash,
-  },
-  boxedEditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
-  // Cases/Units segmented control (cart sheet).
-  sellBySegment: {
-    flexDirection: "row",
-    backgroundColor: ios.bgElev,
-    borderRadius: 8,
-    padding: 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: ios.separator,
-  },
-  sellBySegmentBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  sellBySegmentBtnActive: { backgroundColor: ios.brand },
-  sellBySegmentText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.label2 },
-  sellBySegmentTextActive: { color: "#fff" },
   newCreditBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -2990,17 +2889,19 @@ const styles = StyleSheet.create({
   newCreditText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 
   // ── Footer extras ─────────────────────────────────────────────────────────
-  footerActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
-  viewBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+  // The review entry point: a chip that LOOKS tappable. Residual flexShrink
+  // guard for very large totals at 320px, though Confirm is now the only
+  // sibling so the old overflow pressure is gone.
+  footerSummaryBtn: {
     backgroundColor: ios.brandWash,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
     borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
-  viewBtnText: { color: ios.brand, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  footerSummaryBtnDisabled: { backgroundColor: "transparent", paddingHorizontal: 0 },
+  footerSummaryEyebrowRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   footerHint: {
     color: ios.label3,
     fontSize: 12,
@@ -3023,7 +2924,6 @@ const styles = StyleSheet.create({
   // ── Cart review modal ─────────────────────────────────────────────────────
   // The total + actions already overflow a 375px viewport; let both give ground
   // so "Confirm" degrades gracefully instead of being clipped off the edge.
-  footerTotalTap: { paddingVertical: 4, paddingRight: 8, flexShrink: 1, minWidth: 0 },
   cartBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",

@@ -343,3 +343,37 @@ chips visible, 3 items / $40.49 (repeat incremented in place).
 single-shot — its contract is "return one product", so `onPick` closes it. Web's edit screen
 re-focuses its input and scans N items with zero taps. Closing the gap needs an add-and-stay
 callback; commented in place at the `onScanned` docblock.
+
+### Wave 1 2026-08-11 — order-builder row UX (mobile-first program)
+
+Owner declared mobile the PRIMARY surface. Principle set: **every-line actions live on the row;
+exceptions live one tap behind it. One affordance per action.**
+
+- **`components/BoxedQtyBand.tsx` (new)** — inline Cases + "Loose {unit}" mini steppers on band
+  line 1 (two 104px pills + gap = 218px, fits the 268px band at the 320px floor); summary + Edit
+  chip on band line 2 via a wrapper with `flexBasis: "100%"` (basis on the Text alone pushes the
+  chip to a third line — geometry asserted in `__tests__/row-layout.test.ts`, constants
+  `bandInnerWidth`/`BAND_GAP`/`BAND_EDIT_CHIP_WIDTH` in `lib/row-layout.ts`). Loose stepper
+  mirrors the sheet's `max = unitsPerBox - 1`. Consumed by BOTH sale builders; each wires
+  `setPieces` through its existing `actionsRef` stable-identity pattern. Loose pieces previously
+  cost a Review-sheet round-trip; desktop always had them inline.
+- **`lib/boxed-line-summary.ts` (new)** — the formerly copy-pasted summary, now
+  `(line, unitsPerBox, unitPrice)` with a RESOLVED price number (the builders resolve price
+  differently: tier-aware vs not). Spec pins strings AND a latent sharp edge: a boxed line with
+  qty but NO split would hit computeLineSubtotal's per-piece fallback (case price × pieces) —
+  unreachable today because every sale-line helper writes the split; do not normalize in the
+  summary without normalizing the footer too (row-vs-footer agreement is the invariant).
+- **`components/SellByToggle.tsx` (new shared)** — canonical bgElev + hairline track,
+  `alignSelf: "flex-start"` (both call sites are columns; stretch pulled the old NewOrderScreen
+  copy full-width). edit-items' borderless fill3 copy deleted.
+- **Footer: ONE control.** The summary chip (brandWash, eyebrow "N ITEMS" + chevron-up, bold
+  total, splitBadge inside) IS the review button; "View / edit" deleted from both builders. The
+  chevron sits on the eyebrow line so the 24px total governs chip min-width ($99999.99 unclipped
+  at 320). Zero items → washless + disabled. Confirm is now the only right-side child.
+- **Verified in-browser at 320/375/390** on both builders with a new `E2E Case Pack` fixture
+  (upb 6, $12/case, sku E2E-CASEPACK-1) created on e2e-routeflow: steppers share line 1, summary
+  line 2 (280px @390), Loose + → "1 case + 1 loose · $14.00", typed 9 clamps to 5 → $22.00
+  (= 12 × 11/6), chip opens the sheet with price/SellBy/note/cost intact, no horizontal scroll.
+- **Roadmap:** Waves 2-6 (invoices money-complete → payments at the door → customer file →
+  catalog & supply → visibility) live in the plan; the parity audit found ALL top-15 gaps are
+  UI-only (endpoints exist; some mobile hooks exist unused).

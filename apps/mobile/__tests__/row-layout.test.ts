@@ -12,6 +12,9 @@
  * asserts over the exported constants and geometry rather than rendering.
  */
 import {
+  BAND_EDIT_CHIP_WIDTH,
+  BAND_GAP,
+  bandInnerWidth,
   COMMON_VIEWPORT,
   MAX_ROW_CONTROL_WIDTH,
   MIN_SUPPORTED_VIEWPORT,
@@ -110,6 +113,36 @@ describe("textColumnWidth", () => {
       controlWidth: pill,
     });
     expect(column).toBeGreaterThanOrEqual(MIN_TEXT_COLUMN);
+  });
+
+  describe("boxed qty band — two mini steppers + wrapped summary line", () => {
+    const miniPill = stepperPillWidth({ btn: 26, inputWidth: QTY_INPUT_WIDTH.mini, padding: 2 });
+
+    it("mini pill is exactly the documented 104px", () => {
+      expect(miniPill).toBe(104);
+    });
+
+    it("Cases + Loose steppers fit band line 1 at every supported viewport", () => {
+      for (const viewport of [320, 375, 390]) {
+        const line1 = miniPill * 2 + BAND_GAP;
+        expect(`${viewport}:${line1 <= bandInnerWidth(viewport)}`).toBe(`${viewport}:true`);
+      }
+    });
+
+    it("the summary CANNOT share line 1 — it would starve below the readable floor", () => {
+      // This is why BoxedQtyBand's summaryRow carries flexBasis "100%": with
+      // two pills, three gaps and the Edit chip on one line, ~32px remain at
+      // 375 — under even the narrow-viewport floor.
+      const leftover = bandInnerWidth(375) - (miniPill * 2 + BAND_GAP * 3 + BAND_EDIT_CHIP_WIDTH);
+      expect(leftover).toBeLessThan(MIN_TEXT_COLUMN_NARROW);
+    });
+
+    it("line 2 leaves a readable summary column beside the Edit chip", () => {
+      for (const viewport of [320, 375, 390]) {
+        const column = bandInnerWidth(viewport) - BAND_GAP - BAND_EDIT_CHIP_WIDTH;
+        expect(`${viewport}:${column >= MIN_TEXT_COLUMN}`).toBe(`${viewport}:true`);
+      }
+    });
   });
 
   it("leaves a readable summary column in a scan-tray row", () => {
