@@ -401,3 +401,31 @@ Authz + input-validation batch from the security audit (each fix has a `*.securi
 - **Image compression everywhere (#308)** — `storage/compress.util.ts` now the single choke point; alpha-aware image branch (opaque→JPEG q80, transparent PNG/WebP→preserve alpha) + PDF passthrough, resize ≤1600px. Applied at the 3 previously-raw upload paths: `products.service.ts` `uploadImage`, `customers.service.ts` `uploadTaxDocument`, `tenants.service.ts` `uploadLogo`; `bookkeeping.service.ts` `uploadExpenseReceipt` refactored off its inline sharp block onto the util. Vendor-bill/batch scans unchanged (OCR-in-memory, never stored).
 - **Payment image attachment (#309, migration `add_payment_image`)** — `InvoicePayment` gains `imageKey/imageOriginalName/imageMimeType` (String?). New `InvoicesController` routes `POST|GET|DELETE /invoices/payments/:paymentId/image` (OPERATOR, `FileInterceptor`, 10MB), service `uploadPaymentImage`/`getPaymentImageUrl`/`deletePaymentImage` (StorageService injected; compress util; **group anchor** `paymentGroupId ?? id` → key `payments/<anchor>/image.jpg`, `updateMany` across the group so every allocation row sees it). `recordPayment` returns `createdPaymentId` (deferred client upload). `deletePayment` best-effort `storage.delete` post-commit only when no sibling still references the key. Driver `complete-with-payment` returns `paymentIds` so the at-door screen can attach.
 - **Case/Unit dual SKU (#310, migration `add_product_unit_sku`)** — `Product.unitSku String?` (nullable, `@@unique([tenantId, unitSku])` + `@@index`; NULL = "same as case sku", read-time fallback). `findByBarcode` widened to OR-match barcode/sku/unitSku with deterministic rank (barcode>sku>unitSku) — all `/products/barcode/:code` callers resolve either code, no client change. `findAll` search OR + create/update collision checks include unitSku. Invoice PDF prints the unit code via new pure `invoices/invoice-item-code.ts` `invoiceItemCode(p)=unitSku??barcode??sku`. Vendor-bill matcher + catalog select include unitSku. Tobacco/statement docs unchanged.
+
+### Batch 2026-08-10 — forgiving scanned-code matching
+
+- **`common/barcode-normalize.ts` (new, mirrored to `apps/mobile/lib/barcode-normalize.ts`)** —
+  `normalizeScanCode(raw): string[]` returns an ORDERED candidate list (literal → uppercase →
+  alnum-stripped → for all-digit codes: UPC-E→UPC-A, UPC-A→EAN-13, EAN-13→UPC-A, GTIN-14 unwrap,
+  leading-zero strip, and check-digit-stripped LAST because an 11-digit prefix can collide with an
+  unrelated SKU). Deduped, capped at `MAX_SCAN_CANDIDATES = 10` (typical 3-6). Also exports
+  `upcEToUpcA` (4-branch expansion, number systems 0/1 only) and `pickBestScanMatch(rows,
+candidates)` — earlier candidate wins, then barcode > sku > unitSku, ties on `id` so the answer
+  never flips. Spec `common/barcode-normalize.spec.ts`.
+  **Why:** iOS AVFoundation has no UPC-A symbology, so an iPhone reports a UPC-A label as a
+  13-digit EAN-13 with a leading zero while the web decoders report 12 digits — a catalogue seeded
+  from one source never matched a scan from the other. That was a large share of the field's
+  "item not found" reports.
+- **`products.service.ts` `findByBarcode` — now two tiers.** Tier 1 is
+  `OR: [{barcode:{in:candidates}}, {sku:{in}}, {unitSku:{in}}]`, riding
+  `@@unique([tenantId, barcode|sku|unitSku])` as a BitmapOr of index scans (≤30 probes). Tier 2
+  runs **only on a miss**: the same query with `mode: "insensitive"` and `take: 25`. ILIKE can't
+  use the btree, so tier 2 seq-scans within the tenant — acceptable because it only runs where we
+  used to return a hard 404, and digit-only camera scans never reach it (it exists for typed or
+  lowercased alpha SKUs). Blank code throws without querying. Winner via `pickBestScanMatch`.
+  Fixes every client at once — mobile web, native and desktop — with no client change.
+  Escape hatch if tier 2 ever shows up in profiling: a raw-SQL `UPPER()` expression index (the
+  repo already ships raw-SQL partial indexes).
+- **Stale comment fixed** in `findAll`: it claimed `@Min(1)` blocks external `limit=0`; the DTO is
+  `@Min(0)`. Bounding that for external callers is a separate hardening change (web pickers pass
+  500/1000 and `BuyerCatalogService` uses 0 internally).
