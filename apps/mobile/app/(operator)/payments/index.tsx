@@ -12,8 +12,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, KpiCard, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
+import { Ionicons } from "@expo/vector-icons";
 import { useInvoicePayments, type AllPayment } from "../../../lib/api/payments";
 import { paymentMethodPill, paymentStatusPill } from "../../../lib/payments-logic";
+import { checkBadgeFor } from "../../../lib/check-badge";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -24,6 +26,20 @@ const FILTERS = [
 
 type FilterId = (typeof FILTERS)[number]["id"];
 
+// Method filter — the server takes one exact enum value (`method=`).
+const METHOD_FILTERS = [
+  { id: "ALL", label: "Any method" },
+  { id: "CASH", label: "Cash" },
+  { id: "CHECK", label: "Check" },
+  { id: "ACH", label: "ACH" },
+  { id: "CREDIT_CARD", label: "Card" },
+  { id: "CREDIT_NOTE", label: "Credit note" },
+  { id: "ADVANCE", label: "Advance" },
+  { id: "OTHER", label: "Other" },
+] as const;
+
+type MethodFilterId = (typeof METHOD_FILTERS)[number]["id"];
+
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
@@ -32,19 +48,38 @@ function fmtCurrency(n: number | string | undefined): string {
 export default function PaymentsListScreen() {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterId>("ALL");
+  const [methodFilter, setMethodFilter] = useState<MethodFilterId>("ALL");
+  // "Load more" grows the fetch window (server clamps at 1000); the list is a
+  // plain query, so growing the limit re-fetches the full window — fine at
+  // these sizes and it keeps pull-to-refresh semantics trivial.
+  const [limit, setLimit] = useState(50);
   const [search, setSearch] = useState("");
 
   const { data, isLoading, isFetching, refetch, isError } = useInvoicePayments({
     status: filter === "ALL" ? undefined : filter,
+    method: methodFilter === "ALL" ? undefined : methodFilter,
     search: search.trim() || undefined,
-    limit: 50,
+    limit,
   });
   const payments = data?.data ?? [];
   const summary = data?.summary;
+  const total = data?.meta?.total ?? 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <NavBar largeTitle="Payments" />
+      <NavBar
+        largeTitle="Payments"
+        trailing={
+          <Pressable
+            onPress={() => router.push("/(operator)/payments/record" as any)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Record payment"
+          >
+            <Ionicons name="add-circle-outline" size={24} color={ios.brand} />
+          </Pressable>
+        }
+      />
       <SearchBar
         placeholder="Payment #, reference or customer…"
         value={search}
@@ -66,6 +101,15 @@ export default function PaymentsListScreen() {
         value={FILTERS.find((f) => f.id === filter)?.label ?? "All"}
         onChange={(label) =>
           setFilter((FILTERS.find((f) => f.label === label)?.id as FilterId) ?? "ALL")
+        }
+      />
+      <FilterChipRow
+        chips={METHOD_FILTERS.map((f) => ({ label: f.label }))}
+        value={METHOD_FILTERS.find((f) => f.id === methodFilter)?.label ?? "Any method"}
+        onChange={(label) =>
+          setMethodFilter(
+            (METHOD_FILTERS.find((f) => f.label === label)?.id as MethodFilterId) ?? "ALL",
+          )
         }
       />
       <ScrollView
@@ -95,6 +139,17 @@ export default function PaymentsListScreen() {
                 onPress={() => router.push(`/(operator)/payments/${p.id}`)}
               />
             ))}
+            {total > payments.length ? (
+              <Pressable
+                style={styles.loadMore}
+                onPress={() => setLimit((l) => Math.min(l + 50, 1000))}
+                disabled={isFetching}
+              >
+                <Text style={styles.loadMoreText}>
+                  {isFetching ? "Loading…" : `Load more (${payments.length} of ${total})`}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
       </ScrollView>
@@ -106,6 +161,8 @@ function Row({ payment, onPress }: { payment: AllPayment; onPress: () => void })
   const m = paymentMethodPill(payment.method);
   const s = paymentStatusPill(payment.status);
   const isVoid = payment.status === "VOID";
+  // Check-lifecycle badge (null for non-checks and manually-voided checks).
+  const check = checkBadgeFor(payment);
   return (
     <Pressable style={[styles.row, isVoid && { opacity: 0.55 }]} onPress={onPress}>
       <View style={styles.rowHead}>
@@ -118,9 +175,15 @@ function Row({ payment, onPress }: { payment: AllPayment; onPress: () => void })
           </Text>
         </View>
         <View style={styles.pills}>
-          <Pill variant={m.variant} dot small>
-            {m.label}
-          </Pill>
+          {check ? (
+            <Pill variant={check.variant} dot small>
+              {check.label}
+            </Pill>
+          ) : (
+            <Pill variant={m.variant} dot small>
+              {m.label}
+            </Pill>
+          )}
           {isVoid ? (
             <Pill variant={s.variant} dot small>
               {s.label}
@@ -163,4 +226,6 @@ const styles = StyleSheet.create({
   },
   footText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   bankDate: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 3 },
+  loadMore: { paddingVertical: 12, alignItems: "center" },
+  loadMoreText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
 });
