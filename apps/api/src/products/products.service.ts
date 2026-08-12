@@ -20,6 +20,7 @@ import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
 import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
+import { buildScanSearchOr } from "./scan-search";
 
 /** `-fp50x40` → focal point 50% across, 40% down. Omitted if focal is centre. */
 function encodeFocalSuffix(focal?: { x: number; y: number }): string {
@@ -110,6 +111,13 @@ export class ProductsService {
         { barcode: { contains: query.search, mode: "insensitive" } },
         { unitSku: { contains: query.search, mode: "insensitive" } },
       ];
+    } else if (query.scanCode) {
+      // Scan-fallback rung: same four columns, but contains-matched against
+      // EVERY normalizeScanCode candidate instead of the raw decode — the raw
+      // string misses whenever this camera's decode differs from the stored
+      // shape (iOS 13-digit vs a 12-digit code kept in the product name).
+      // OR: [] when the code yields no candidates — matches nothing, correctly.
+      where.OR = buildScanSearchOr(query.scanCode);
     }
     if (query.category) where.category = query.category;
     if (query.isActive !== undefined) where.isActive = query.isActive;

@@ -4,6 +4,10 @@ import { apiClient } from "../api-client";
 export function useProducts(
   params?: {
     search?: string;
+    /** Scanned code — server expands normalizeScanCode candidates into the
+     *  contains-search so the lookup is decoder-independent. Ignored when
+     *  `search` is also set. */
+    scanCode?: string;
     category?: string;
     isActive?: boolean;
     stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";

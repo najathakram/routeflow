@@ -29,6 +29,7 @@ import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { LicenseGuardModal } from "./LicenseGuardModal";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
@@ -227,8 +228,15 @@ export function CreateOrderModal({
   const { data: customersData } = useCustomers({
     search: debouncedCustomerSearch || undefined,
   });
+  // A term that looks like a scanned code goes through the candidate-aware
+  // `scanCode` search instead of raw `search` — a suffix-less wedge scanner
+  // (no Enter) only ever populates this dropdown, and the raw decode
+  // contains-misses whenever the camera/wedge decode differs from the stored
+  // shape (iOS 13-digit vs 12-digit codes kept in numeric product names).
+  const productTermIsScanCode = /^\d{8,14}$/.test(debouncedProductSearch.trim());
   const { data: productsData } = useProducts({
-    search: debouncedProductSearch || undefined,
+    search: productTermIsScanCode ? undefined : debouncedProductSearch || undefined,
+    scanCode: productTermIsScanCode ? debouncedProductSearch.trim() : undefined,
     isActive: true,
     includeVariants: true,
   });
@@ -246,35 +254,30 @@ export function CreateOrderModal({
       .slice(0, 10);
   }, [productsData, debouncedProductSearch]);
 
-  // Barcode scan handler — kept in a ref so the keydown listener never goes stale
+  // Barcode scan handler — kept in a ref so the keydown listener never goes stale.
+  // Uses the shared lib ladder (barcode endpoint → candidate-aware scanCode
+  // search) instead of the old inline copy, which swallowed 5xx/network errors
+  // as "not found" and skipped unitSku on the exact-match check. This surface
+  // keeps its historical multi-match behaviour: first row wins (the modal's
+  // scan flow has always auto-added; the edit page offers a picker instead).
   const barcodeScanHandlerRef = React.useRef<(code: string) => void>(() => {});
   barcodeScanHandlerRef.current = async (code: string) => {
-    // 1. Try dedicated barcode field lookup (product.barcode == scanned code)
     try {
-      const product = await apiClient
-        .get(`/products/barcode/${encodeURIComponent(code)}`)
-        .then((r) => r.data);
-      addLineItem(product); // addLineItem clears search + refocuses
-      return;
-    } catch {
-      // not found by barcode field — fall through to SKU
-    }
-    // 2. Search by code and pick exact SKU match first, then any result
-    try {
-      const res = await apiClient
-        .get("/products", {
-          params: { search: code, limit: 10, isActive: true, includeVariants: true },
-        })
-        .then((r) => r.data);
-      const matches: any[] = res?.data ?? [];
-      const skuMatch = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-      const toAdd = skuMatch ?? matches[0]; // exact SKU first; first search result as fallback
-      if (toAdd) {
-        addLineItem(toAdd);
+      const result = await resolveProductByCode(code);
+      if (!result.notFound && result.product) {
+        addLineItem(result.product); // addLineItem clears search + refocuses
         return;
       }
-    } catch {
-      // fall through to not-found
+    } catch (err: any) {
+      // Network / 5xx — a transient failure is NOT "product doesn't exist";
+      // don't open the create-product modal over it.
+      toast({
+        variant: "error",
+        title: "Couldn't look up the code",
+        description:
+          err?.response?.data?.message ?? err?.message ?? "Check the connection and rescan.",
+      });
+      return;
     }
     // Nothing found — open create-product modal with scanned barcode as SKU
     setCreateProductInitialName("");
@@ -1182,13 +1185,19 @@ export function CreateOrderModal({
                               onClick={() => {
                                 if (hasVariants) {
                                   setExpandedParentId(isExpanded ? null : p.id);
-                                } else if (!alreadyAdded) {
+                                } else {
+                                  // Already-added rows increment qty (addLineItem's
+                                  // repeat path) — the old no-op left the search
+                                  // text + open dropdown for the operator to
+                                  // clean up by hand, reading as "choosing does
+                                  // nothing". Scan of the same code has always
+                                  // incremented; clicking now matches it.
                                   addLineItem(p);
                                 }
                               }}
                               className={cn(
                                 "flex w-full items-center justify-between px-3 py-2.5 text-left text-sm text-navy hover:bg-surface-raised",
-                                alreadyAdded && !hasVariants && "opacity-40 cursor-default",
+                                alreadyAdded && !hasVariants && "opacity-40",
                               )}
                             >
                               <div className="flex items-center gap-1.5 min-w-0">
@@ -1231,12 +1240,10 @@ export function CreateOrderModal({
                                 <li key={v.id} className="bg-surface-raised/50">
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      if (!variantAdded) addLineItem(v);
-                                    }}
+                                    onClick={() => addLineItem(v)}
                                     className={cn(
                                       "flex w-full items-center justify-between pl-8 pr-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
-                                      variantAdded && "opacity-40 cursor-default",
+                                      variantAdded && "opacity-40",
                                     )}
                                   >
                                     <div className="flex items-center gap-1.5 min-w-0">

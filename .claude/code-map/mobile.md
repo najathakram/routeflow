@@ -435,3 +435,17 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`app/(operator)/settings/index.tsx`** — tax-rate field hint corrected to "%, e.g. 8.75":
   `settings.taxRate` is a PERCENT (web validates 0-100 and every consumer divides by 100); the
   old "(e.g. 0.0875)" hint told owners to store a fraction that web then divided again.
+
+### 2026-08-12b — scan-miss fix + clear-on-pick (owner-reported)
+
+- **Scan fallback is candidate-aware**: `lib/barcode-resolve.ts`'s search rung sends
+  `scanCode=<raw>` — the SERVER fans normalizeScanCode candidates into the contains-match
+  (`apps/api/src/products/scan-search.ts`), closing the "iOS decodes 13 digits but the 12-digit
+  code lives in the product NAME" miss. The two barcode-normalize mirrors are UNTOUCHED (the
+  drift test byte-compares them; server-only helpers must live elsewhere).
+- **Clear-on-pick**: both sale builders' `rowActions.pickedFromSearch(id)` clears the search and
+  pending-scrolls to the added row — fired from `onRowAdd` ONLY (first add; stepper increments
+  never swap the list mid-repeat-tap). Camera scanning was already continuous — untouched.
+- **`packages/ui` SearchBar** — cross-platform clear X (`accessibilityLabel="Clear search"`),
+  gated `Platform.OS !== "ios"` (native iOS already renders `clearButtonMode`'s X; RNW/Android
+  previously had NO one-tap clear at all).

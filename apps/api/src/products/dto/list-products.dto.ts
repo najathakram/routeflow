@@ -1,4 +1,14 @@
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, Max, Min } from "class-validator";
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from "class-validator";
 import { Type, Transform } from "class-transformer";
 
 export enum StockStatusFilter {
@@ -9,6 +19,11 @@ export enum StockStatusFilter {
 
 export class ListProductsDto {
   @IsOptional() @IsString() search?: string;
+  /** Scanned code for the resolve ladder's fallback rung: expanded server-side
+   *  via normalizeScanCode so the contains-search is decoder-independent
+   *  (iOS 13-digit vs desktop 12-digit decodes of the same label). Ignored
+   *  when `search` is also present. */
+  @IsOptional() @IsString() @MaxLength(64) scanCode?: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isActive?: boolean;
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isTobacco?: boolean;

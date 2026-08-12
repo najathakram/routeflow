@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, TextInput, View } from "react-native";
+import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "../../tokens";
 
@@ -28,6 +28,21 @@ export function SearchBar({
         style={styles.input}
         clearButtonMode="while-editing"
       />
+      {/* clearButtonMode is iOS-NATIVE only — a no-op on Android and
+          react-native-web (the primary operator surface), which previously had
+          no one-tap clear at all. Skipped on iOS native, where the built-in
+          clear button already shows (two Xs otherwise). Rendered before
+          `trailing` so the scan icon keeps its edge position. */}
+      {Platform.OS !== "ios" && value && onChangeText ? (
+        <Pressable
+          onPress={() => onChangeText("")}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Clear search"
+        >
+          <Ionicons name="close-circle" size={18} color={ios.gray[1]} />
+        </Pressable>
+      ) : null}
       {trailing}
     </View>
   );

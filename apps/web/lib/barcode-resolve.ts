@@ -20,18 +20,26 @@
  */
 import { apiClient } from "./api-client";
 
-export type BarcodeResolveSource = "barcode" | "sku" | "search";
+export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
 
 export interface BarcodeResolveHit<T = any> {
   product: T;
   source: BarcodeResolveSource;
   notFound?: false;
+  /** True when several substring hits matched with no exact code match —
+   *  `product` is the first row, `matches` carries the alternatives so the
+   *  caller can offer a choice instead of committing to row #1 (mirrors
+   *  apps/mobile/lib/barcode-resolve.ts). */
+  ambiguous?: boolean;
+  matches?: T[];
 }
 
 export interface BarcodeResolveMiss {
   notFound: true;
   product?: undefined;
   source?: undefined;
+  ambiguous?: undefined;
+  matches?: undefined;
 }
 
 export type BarcodeResolveResult<T = any> = BarcodeResolveHit<T> | BarcodeResolveMiss;
@@ -53,21 +61,26 @@ export async function resolveProductByCode<T = any>(
     if (status !== 404) throw err;
   }
 
-  // 2 + 3) SKU / name substring search; prefer exact SKU
+  // 2 + 3) SKU / unit-code / name substring search; prefer exact SKU, then exact
+  // unit code. `scanCode` (not `search`): the server fans the normalizeScanCode
+  // CANDIDATES into the contains-match, so this rung is decoder-independent —
+  // an iOS 13-digit decode still finds a 12-digit code stored in the product
+  // NAME (numeric-name catalogues), which `search=<raw>` contains-missed.
   try {
     const res = await apiClient.get("/products", {
-      params: { search: code, limit: 10, isActive: true, includeVariants: true },
+      params: { scanCode: code, limit: 10, isActive: true, includeVariants: true },
     });
     const matches: any[] = res?.data?.data ?? res?.data ?? [];
     if (matches.length > 0) {
       const codeLower = code.toLowerCase();
-      const skuExact = matches.find(
-        (p) =>
-          (p?.sku ?? "").toString().toLowerCase() === codeLower ||
-          (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
+      const skuExact = matches.find((p) => (p?.sku ?? "").toString().toLowerCase() === codeLower);
+      if (skuExact) return { product: skuExact, source: "sku" };
+      const unitSkuExact = matches.find(
+        (p) => (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
       );
-      const product = skuExact ?? matches[0];
-      return { product, source: skuExact ? "sku" : "search" };
+      if (unitSkuExact) return { product: unitSkuExact, source: "unitSku" };
+      if (matches.length === 1) return { product: matches[0], source: "search" };
+      return { product: matches[0], source: "search", ambiguous: true, matches };
     }
   } catch (err: any) {
     const status = err?.response?.status;

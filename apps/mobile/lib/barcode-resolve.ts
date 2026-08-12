@@ -75,10 +75,14 @@ export async function resolveProductByCode<T = any>(
     if (status !== 404) throw err;
   }
 
-  // 2 + 3) SKU / unit-code / name substring search; prefer exact SKU, then exact unit code
+  // 2 + 3) SKU / unit-code / name substring search; prefer exact SKU, then exact
+  // unit code. `scanCode` (not `search`): the server fans the normalizeScanCode
+  // CANDIDATES into the contains-match, so this rung is decoder-independent —
+  // an iOS 13-digit decode still finds a 12-digit code stored in the product
+  // NAME (numeric-name catalogues), which `search=<raw>` contains-missed.
   try {
     const res = await apiClient.get("/products", {
-      params: { search: code, limit: 10, isActive: true, includeVariants: true },
+      params: { scanCode: code, limit: 10, isActive: true, includeVariants: true },
     });
     const matches: any[] = res?.data?.data ?? res?.data ?? [];
     if (matches.length > 0) {
