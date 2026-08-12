@@ -42,8 +42,13 @@ export class AnalyticsController {
   }
 
   @Get("products/top")
-  getTopProducts(@Query("metric") metric?: string, @Query("limit") limit?: string) {
-    return this.analyticsService.getTopProducts(metric, limit ? parseInt(limit) : 10);
+  getTopProducts(
+    @Query("metric") metric?: string,
+    @Query("limit") limit?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.analyticsService.getTopProducts(metric, limit ? parseInt(limit) : 10, from, to);
   }
 
   @Get("customers/top")

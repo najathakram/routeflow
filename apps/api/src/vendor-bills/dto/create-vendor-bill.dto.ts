@@ -23,6 +23,11 @@ export class VendorBillItemDto {
   @IsOptional() @IsNumber() qty?: number;
   @IsOptional() @IsNumber() unitCost?: number;
   @IsOptional() @IsNumber() unitPrice?: number;
+  /** The supplier's own item code, as printed — the strongest signal for matching this line next scan. */
+  @IsOptional() @IsString() sku?: string;
+  /** Units per box/case, only when the line explicitly printed one. */
+  @IsOptional() @IsNumber() @Min(0) packSize?: number;
+  @IsOptional() @IsNumber() lineTotal?: number;
 }
 
 /**
@@ -38,8 +43,12 @@ export class CreateVendorBillDto {
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
   @IsOptional() @IsString() notes?: string;
-  /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
+  /** Sales tax on the supplier invoice — folded into totalOwed AND persisted. */
   @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
+  /** Pre-tax total as printed. Stored only; totalOwed still comes from the lines. */
+  @IsOptional() @IsNumber() @Min(0) subtotal?: number;
+  /** The InvoiceScan this bill was posted from — marks that scan POSTED. */
+  @IsOptional() @IsString() scanId?: string;
   /** The supplier's own invoice number; stored normalized and used for dedup. */
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
   /** Operator override after the duplicate warning — records the bill anyway. */

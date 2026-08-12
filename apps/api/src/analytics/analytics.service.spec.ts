@@ -8,7 +8,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
-describe("AnalyticsService — signed COGS", () => {
+describe("AnalyticsService — invoiced-sales readers", () => {
   let service: AnalyticsService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let addonService: { hasAddon: jest.Mock };
@@ -32,85 +32,360 @@ describe("AnalyticsService — signed COGS", () => {
   });
 
   describe("getGrossMarginTrend", () => {
-    it("computes COGS from signed SALE quantities × unitCost", async () => {
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(100) }]);
+    it("estimates COGS at each invoice's point-in-time average cost", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: D(100),
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(5),
+              subtotal: D(100),
+              taxRate: D(0),
+              product: { isTobacco: false },
+            },
+          ],
+        },
+        {
+          total: D(90),
+          issueDate: new Date("2026-06-15"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(3),
+              subtotal: D(90),
+              taxRate: D(0),
+              product: { isTobacco: false },
+            },
+          ],
+        },
+      ]);
+      // avgCostAfter snapshots: 2.00 until June 10, then 3.00 — the two
+      // invoices straddle the change and must be costed differently.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { quantity: D(-5), unitCost: D(2) }, // 5 sold @ 2.00 → +10
-        { quantity: D(-3), unitCost: D(4) }, // 3 sold @ 4.00 → +12
+        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getGrossMarginTrend();
 
-      expect(result.revenue).toBe(100);
-      expect(result.cogs).toBe(22);
-      expect(result.grossProfit).toBe(78);
-      expect(result.grossMarginPct).toBe(78);
+      expect(result.revenue).toBe(190);
+      expect(result.cogs).toBe(19); // 5 × 2.00 (June 5) + 3 × 3.00 (June 15)
+      expect(result.grossProfit).toBe(171);
+      expect(result.grossMarginPct).toBe(90);
     });
 
-    it("nets a sale + reopen-reversal pair to zero COGS", async () => {
-      prisma.invoice.findMany.mockResolvedValue([]);
-      prisma.stockMovement.findMany.mockResolvedValue([
-        { quantity: D(-5), unitCost: D(2) }, // original delivery
-        { quantity: D(5), unitCost: D(2) }, // stop reopened — compensating SALE
+    it("falls back to current averageCost when no snapshot predates the sale", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: D(50),
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(2),
+              subtotal: D(50),
+              taxRate: D(0),
+              product: { isTobacco: false },
+            },
+          ],
+        },
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([]); // no snapshots at all
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", costingMethod: "FIFO", standardCost: null, averageCost: D(4) },
       ]);
 
       const result = await service.getGrossMarginTrend();
 
-      expect(result.cogs).toBe(0);
+      expect(result.cogs).toBe(8);
+      expect(result.grossProfit).toBe(42);
     });
 
-    it("treats pre-fix SALE rows with null unitCost as zero cost", async () => {
-      prisma.invoice.findMany.mockResolvedValue([{ total: D(50) }]);
-      prisma.stockMovement.findMany.mockResolvedValue([{ quantity: D(-5), unitCost: null }]);
+    it("adds ad-hoc (null productId) line revenue with zero COGS and no cost queries", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: D(50),
+          issueDate: new Date("2026-06-05"),
+          items: [{ productId: null, qty: D(5), subtotal: D(50), taxRate: D(0), product: null }],
+        },
+      ]);
 
       const result = await service.getGrossMarginTrend();
 
+      expect(result.revenue).toBe(50);
       expect(result.cogs).toBe(0);
-      expect(result.grossProfit).toBe(50);
+      // No sold products → no snapshot or cost-facts queries at all.
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    it("no longer reads SALE movements — one invoice fetch feeds revenue AND COGS", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          total: D(10),
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(1),
+              subtotal: D(10),
+              taxRate: D(0),
+              product: { isTobacco: false },
+            },
+          ],
+        },
+      ]);
+
+      await service.getGrossMarginTrend();
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+      // The only movement query is the snapshot index — never type:"SALE".
+      const movementArgs = prisma.stockMovement.findMany.mock.calls[0][0];
+      expect(movementArgs.where).toEqual({
+        productId: { in: ["p1"] },
+        avgCostAfter: { not: null },
+        createdAt: { lte: expect.any(Date) },
+      });
     });
   });
 
-  describe("getTopProducts (units metric)", () => {
-    it("nets reopen-reversals out of units sold", async () => {
-      prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", quantity: D(-10), product: { id: "p1", name: "Flour" } },
-        { productId: "p1", quantity: D(4), product: { id: "p1", name: "Flour" } }, // reversal
-        { productId: "p2", quantity: D(-3), product: { id: "p2", name: "Sugar" } },
+  describe("getTopProducts", () => {
+    const invoiceFixture = [
+      {
+        issueDate: new Date("2026-06-05"),
+        paidAt: null,
+        items: [
+          {
+            productId: "p1",
+            qty: D(10),
+            subtotal: D(40),
+            product: { name: "Flour", isTobacco: false },
+          },
+          {
+            productId: "p2",
+            qty: D(2),
+            subtotal: D(90),
+            product: { name: "Sugar", isTobacco: false },
+          },
+          { productId: null, qty: D(1), subtotal: D(999), product: null }, // ad-hoc line
+        ],
+      },
+      {
+        issueDate: new Date("2026-06-10"),
+        paidAt: null,
+        items: [
+          {
+            productId: "p1",
+            qty: D(5),
+            subtotal: D(20),
+            product: { name: "Flour", isTobacco: false },
+          },
+        ],
+      },
+    ];
+
+    it("returns BOTH metrics per row; metric only picks the sort; ad-hoc lines drop", async () => {
+      prisma.invoice.findMany.mockResolvedValue(invoiceFixture);
+
+      const byRevenue = await service.getTopProducts("revenue", 10);
+      expect(byRevenue).toEqual([
+        { id: "p2", name: "Sugar", unitsSold: 2, totalRevenue: 90 },
+        { id: "p1", name: "Flour", unitsSold: 15, totalRevenue: 60 },
       ]);
 
-      const result = await service.getTopProducts("units", 10);
+      const byUnits = await service.getTopProducts("units", 10);
+      expect(byUnits.map((p) => p.id)).toEqual(["p1", "p2"]);
+    });
 
-      expect(result).toEqual([
-        { id: "p1", name: "Flour", value: 6 },
-        { id: "p2", name: "Sugar", value: 3 },
+    it("sums revenue from subtotal — NEVER qty × unitPrice (boxed-line overcharge)", async () => {
+      // A boxed line: 2 cases + 3 packs @ unitsPerBox 12 stores qty 27. Re-deriving
+      // revenue as qty × unitPrice would report 1181.25 instead of the real 43.75.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(27),
+              unitPrice: D(43.75),
+              subtotal: D(43.75),
+              boxes: 2,
+              pieces: 3,
+              unitsPerBox: 12,
+              product: { name: "Water", isTobacco: false },
+            },
+          ],
+        },
       ]);
+
+      const res = await service.getTopProducts();
+
+      expect(res).toEqual([{ id: "p1", name: "Water", unitsSold: 27, totalRevenue: 43.75 }]);
+    });
+
+    it("windows on issueDate with real statuses and never touches the dead sources", async () => {
+      await service.getTopProducts("revenue", 10, "2026-01-01", "2026-06-30");
+
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      expect(args.where.issueDate.gte).toEqual(new Date("2026-01-01"));
+      expect(args.where.issueDate.lte.toISOString()).toContain("2026-06-30T23:59:59");
+      // The old sources are both dead: SALE movements have no writer, and
+      // TransactionItem never had one. Queried through Invoice (tenantId trap).
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+      expect(prisma.transactionItem.findMany).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("skips tobacco lines when the exclusion toggle is active", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "pt",
+              qty: D(3),
+              subtotal: D(60),
+              product: { name: "Cigars", isTobacco: true },
+            },
+            {
+              productId: "pn",
+              qty: D(5),
+              subtotal: D(50),
+              product: { name: "Bread", isTobacco: false },
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.getTopProducts();
+
+      expect(res).toEqual([{ id: "pn", name: "Bread", unitsSold: 5, totalRevenue: 50 }]);
+    });
+  });
+
+  describe("getInventoryTurnover", () => {
+    it("computes unitsSold and turnoverRate from invoiced sales", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "p1", name: "Flour", currentStock: D(20) },
+        { id: "p2", name: "Sugar", currentStock: D(0) },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-06-05"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(10),
+              subtotal: D(40),
+              product: { name: "Flour", isTobacco: false },
+            },
+          ],
+        },
+      ]);
+
+      const res = await service.getInventoryTurnover();
+
+      expect(res).toEqual([
+        { id: "p1", name: "Flour", unitsSold: 10, currentStock: 20, turnoverRate: 0.5 },
+        { id: "p2", name: "Sugar", unitsSold: 0, currentStock: 0, turnoverRate: 0 },
+      ]);
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("keeps the tobacco exclusion on the products list", async () => {
+      addonService.hasAddon.mockResolvedValue(true);
+      systemConfig.get.mockResolvedValue("true");
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await service.getInventoryTurnover();
+
+      expect(prisma.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ isTobacco: false }),
+        }),
+      );
+    });
+  });
+
+  describe("getDeadStock", () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
+
+    it("a recent invoiced sale rescues a product no movement ever touched", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "selling", name: "Selling", currentStock: D(5) },
+        { id: "dead", name: "Dead", currentStock: D(9) },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: daysAgo(2), items: [{ productId: "selling" }] },
+        { issueDate: daysAgo(90), items: [{ productId: "dead" }] },
+      ]);
+      // No movements at all (both the recent-window and candidate-history calls).
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const res = await service.getDeadStock(30);
+
+      expect(res.map((r) => r.id)).toEqual(["dead"]);
+      expect(res[0].daysInactive).toBe(90);
+    });
+
+    it("reports the most recent of last movement vs last sale", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "P1", currentStock: D(3) }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: daysAgo(80), items: [{ productId: "p1" }] },
+      ]);
+      prisma.stockMovement.findMany
+        .mockResolvedValueOnce([]) // nothing since the cutoff
+        .mockResolvedValueOnce([{ productId: "p1", createdAt: daysAgo(40) }]);
+
+      const res = await service.getDeadStock(30);
+
+      expect(res).toHaveLength(1);
+      expect(res[0].daysInactive).toBe(40); // movement (40d) is newer than the sale (80d)
     });
   });
 
   describe("tobacco exclusion toggle", () => {
     const tobaccoInvoice = {
       total: D(110),
+      issueDate: new Date("2026-06-05"),
       items: [
-        { subtotal: D(60), taxRate: D(0), product: { isTobacco: true } },
-        { subtotal: D(50), taxRate: D(0), product: { isTobacco: false } },
+        {
+          productId: "pt",
+          qty: D(2),
+          subtotal: D(60),
+          taxRate: D(0),
+          product: { isTobacco: true },
+        },
+        {
+          productId: "pn",
+          qty: D(5),
+          subtotal: D(50),
+          taxRate: D(0),
+          product: { isTobacco: false },
+        },
       ],
     };
 
-    it("subtracts tobacco line revenue when addon + toggle are active", async () => {
+    it("subtracts tobacco revenue AND skips tobacco lines from COGS", async () => {
       addonService.hasAddon.mockResolvedValue(true);
       systemConfig.get.mockResolvedValue("true");
       prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice]);
-      prisma.stockMovement.findMany.mockResolvedValue([]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { productId: "pt", createdAt: new Date("2026-06-01"), avgCostAfter: D(10) },
+        { productId: "pn", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+      ]);
 
       const result = await service.getGrossMarginTrend();
 
       expect(result.revenue).toBe(50);
-      // COGS query filters tobacco products out
-      expect(prisma.stockMovement.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ product: { isTobacco: false } }),
-        }),
-      );
+      expect(result.cogs).toBe(10); // 5 × 2.00 — the tobacco line contributes nothing
     });
 
     it("is inert when the addon is inactive even if the config key is set", async () => {

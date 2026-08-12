@@ -125,6 +125,18 @@ real-time sync; offline queue for driver route completions.
   `check-duplicate` before saving (a failed probe proceeds — the server guard is the backstop) and
   routes a match into a 3-way prompt: Open existing bill / Create anyway (`allowDuplicate`) / Cancel;
   the same 409 is re-parsed in the create mutation's `onError` to cover the race.
+- **Scan archive wiring (2026-08-09):** `lib/api/vendor-bills.ts` `ScanResult` += `scanId` /
+  `priorScan` (`PriorScanSummary`, mirrors web) — set only when the uploaded BYTES hash to a scan
+  already on file, in which case the payload is the STORED extraction replayed with no second AI
+  call. `lib/vendor-bill-scan.ts` `buildBillDtoFromScan` stopped discarding what the OCR read:
+  `scanId`, `subtotal`, `taxAmount`, and per-line `sku`/`packSize`/`lineTotal`, all as PRINTED.
+  **`taxAmount` moves money** — the server adds it on top of the line sum, so `scanBillTotal` counts
+  it too or the duplicate probe stops matching the create-time guard (mobile previously sent no tax
+  at all, unlike web). New pure `priorScanPrompt(prior)` → `{title, message, billId, billLabel}`:
+  POSTED-with-a-bill reads "You already scanned this" and offers the bill; anything else reads
+  "Picking up where you left off" with nothing to open. `(operator)/vendor-bills/scan.tsx` fires it
+  through `chooseAction` on scan success AND keeps a standing `PriorScanBanner` in ReviewStep
+  (orange wash w/ bill link, green wash when merely restored).
 - **mobile↔web parity waves (2026-07-11, #225):** ~14 waves of mobile-only fixes bringing mobile to web parity across scan UX, money flows, compliance, invoicing, returns, and the buyer portal — see the dedicated "Where to find" rows above (Returns, Continuous barcode scan, Always-visible scanned cart rows, Incremental order-item edit, Regulated-license guard, Buyer favorites/finances/licenses, Buyer cart promotions, Scan-driven stock count, Product cost-basis tools + photos, Post-delivery invoice send, Invoice write-off/payment edit, Save order as draft/reopen/recurring create, Live margin hint). Also: `store/cartStore.ts` `CartItem` gained `category` (so CATEGORY-scoped buyer promos can match a cart line); `package.json` added `expo-image-manipulator ~55.0.16` (JPEG transcode for product-photo upload — needs a native rebuild on deploy); `lib/api/admin.ts` `AdminOrder.customer` widened with `mobile`/`email` (feeds the send-invoice sheet) + new `useAdminProductsInfinite` (pages the whole catalog, was a single `limit:100` call that silently dropped rows past 100 — same fix on the buyer side via `useBuyerProductsInfinite` in `lib/api/buyer.ts`). Two waves described in the PR's commit messages (ProductForm "Variant of" create-link UI, product-detail "Variant(s)" card) did **not** land in the final reconciled merge — verified absent from `ProductForm.tsx`/`products/[id].tsx`; only the photo-upload half of that wave (12) is present.
 
 ## Screens by role (`app/`)

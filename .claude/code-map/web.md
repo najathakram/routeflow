@@ -84,7 +84,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   edit path AND `CreateOrderModal` (inline dup removed); with a `productId` the cost text opens a
   **cost-history popover** (portaled to `<body>` to clear the modal's transform+overflow) via
   **`lib/api/cost-history.ts`** `useCostHistory(productId)` (also backs products/[id] `CostHistoryCard`;
-  `GET /analytics/cost-history/:id`). Analytics **Gross Margin** card states the configured costing method.
+  `GET /analytics/cost-history/:id`). Analytics **Gross Margin** card caption (2026-07-31): static "COGS is estimated from each product's average cost at the time of sale" — the per-costing-method caption (and its `useMarginConfig` call) was dropped when API COGS became an invoice-sourced point-in-time average estimate (see api `common/invoiced-sales.ts`). Top Products' `{unitsSold,totalRevenue}` columns and Turnover/Forecasting/P&L populate from the same re-sourcing with zero web changes.
 - **Minimize & resume drafts (Phase 2 §2, pos-cost-roles-spec).** `lib/api/drafts.ts` — `useDrafts`/
   `useDraft(id)`/`useCreateDraft`/`useUpdateDraft`/`useDeleteDraft` over `/drafts` (per-user,
   tenant-scoped; OPERATOR/DRIVER, TENANT_ADMIN satisfies OPERATOR). `lib/drafts.ts` — `OrderDraftPayload`
@@ -318,6 +318,20 @@ Run: `cd apps/web && npx playwright test` (all projects) or `--project=critical-
   "Created X of Y — N skipped as duplicates". A skipped duplicate is not a failure and gets no
   `inv.error`. `createOne` also re-parses a 409 in its catch, which covers the same number appearing
   twice inside ONE batch (invoice 1 creates the bill, invoice 3 then 409s) without aborting the loop.
+- **Scan archive wiring in `ScanInvoiceModal.tsx` (2026-08-09):** `POST /vendor-bills/scan-invoice`
+  now answers with `scanId` and, when the uploaded BYTES hash to a scan already on file, a
+  `priorScan` block (`{scanId, scannedAt, status, vendorBillId, billNumber, supplierInvoiceNumber,
+total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`ScanArchive`, folded in
+  at the modal as `ArchivedScanResult = ScanResult & ScanArchive` because `lib/api/invoice-scan.ts`
+  stays a plain transport type. `PriorScanBanner` (top of the review panel, `data-testid=
+"prior-scan-banner"`, plus a marker in `InvoiceNavigator` suppressed when the duplicate marker
+  already says it) has two shapes: **amber** when the earlier scan is POSTED with a bill (offers
+  "Open BILL-…"), **green** when a review was abandoned — that payload is the STORED extraction
+  replayed with no second AI call, so the form fills in exactly as a fresh scan would. `createOne`
+  stopped discarding what the OCR read: `scanId` (links bill↔scan and marks it POSTED), `subtotal`,
+  and per-line `sku`/`packSize`/`lineTotal`, all as PRINTED — an operator edit to qty/unitCost does
+  not rewrite them. **Split rows deliberately send none of the three**: the printed code and amount
+  describe the whole line, not each variant.
 - **Date fields (2026-08-07):** `CreateOrderModal.tsx` has an optional "Order date" (`max=today`)
   beside Requested Delivery Date; `invoices/new/page.tsx` relabels its issue-date field "Sale date" in
   SALE mode and sends `orderDate` ONLY when it differs from today (so the default path stays

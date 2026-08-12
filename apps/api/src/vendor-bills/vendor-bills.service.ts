@@ -19,8 +19,11 @@ import { buildTokenWeights, composedProductName, matchLine } from "./product-mat
 import {
   DuplicateMatchService,
   extractSupplierInvoiceNumber,
+  normalizeInvoiceNumber,
   type VendorBillDuplicateMatch,
 } from "../import/duplicate-match.service";
+import { StorageService } from "../storage/storage.service";
+import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 
 /** What clients render when a bill is blocked as a duplicate. */
@@ -34,9 +37,72 @@ export interface VendorBillDuplicatePayload {
   receivedDate: Date | null;
   supplierName: string | null;
   itemCount: number;
-  matchedBy: "number" | "fuzzy";
+  matchedBy: "number" | "fuzzy" | "lines";
   totalMatches: boolean;
 }
+
+/** One uploaded page. `fileName`/`size` are metadata only — the bytes are the document. */
+export interface ScanInvoiceFile {
+  buffer: Buffer;
+  mimeType: string;
+  fileName?: string;
+  size?: number;
+}
+
+/**
+ * What happened the last time these exact bytes were uploaded. Returned instead
+ * of a fresh extraction so a repeat upload is instant, free, and tells the
+ * operator whether the document already became a bill.
+ */
+export interface PriorScanSummary {
+  scanId: string;
+  scannedAt: Date;
+  status: string;
+  vendorBillId: string | null;
+  billNumber: string | null;
+  supplierInvoiceNumber: string | null;
+  total: number | null;
+}
+
+/** Phase-1 OCR model. Persisted with each scan, so the constant is the single source. */
+const SCAN_MODEL = "claude-haiku-4-5";
+
+/** Extension per accepted upload type — the stored key keeps the original bytes readable. */
+const SCAN_FILE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "application/pdf": "pdf",
+};
+
+const INVOICE_SCAN_STATUSES = ["SCANNED", "POSTED", "DISCARDED", "DUPLICATE"] as const;
+
+/** Promoted columns only — `extractedPayload` is far too large for a list response. */
+const INVOICE_SCAN_LIST_SELECT = {
+  id: true,
+  fileName: true,
+  mimeType: true,
+  pageCount: true,
+  byteSize: true,
+  fileKey: true,
+  supplierNameRaw: true,
+  supplierId: true,
+  supplierInvoiceNumber: true,
+  invoiceDate: true,
+  subtotal: true,
+  tax: true,
+  total: true,
+  lineCount: true,
+  status: true,
+  vendorBillId: true,
+  scannedById: true,
+  createdAt: true,
+  supplier: { select: { id: true, name: true } },
+  vendorBill: { select: { id: true, billNumber: true, status: true } },
+} as const;
 
 @Injectable()
 export class VendorBillsService {
@@ -47,6 +113,7 @@ export class VendorBillsService {
     private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
     private readonly duplicateMatch: DuplicateMatchService,
+    private readonly storage: StorageService,
   ) {}
 
   private async nextBillNumber() {
@@ -111,6 +178,10 @@ export class VendorBillsService {
       }
     }
 
+    if (!dto.allowDuplicate) {
+      await this.assertNoPostedLineMatch(dto, totalOwed, supplierId ?? null);
+    }
+
     const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
@@ -118,6 +189,10 @@ export class VendorBillsService {
         status: "DRAFT",
         totalOwed,
         ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
+        // Kept alongside totalOwed (which already includes the tax) so an edit
+        // recomputing totals from line items can no longer silently drop them.
+        taxAmount: this.moneyOrNull(dto.taxAmount),
+        subtotal: this.moneyOrNull(dto.subtotal),
         billDate,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         notes: dto.notes,
@@ -130,6 +205,14 @@ export class VendorBillsService {
                     description: item.description || item.name || "",
                     qty: new Prisma.Decimal(item.qty || 1),
                     unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                    // Read off the invoice and previously discarded here. `sku`
+                    // is what matches this line to a product on the next scan
+                    // from the same supplier.
+                    sku: item.sku || null,
+                    packSize: Number.isFinite(Number(item.packSize))
+                      ? Math.trunc(Number(item.packSize))
+                      : null,
+                    lineTotal: this.moneyOrNull(item.lineTotal),
                   })),
                 },
               }
@@ -143,7 +226,132 @@ export class VendorBillsService {
       },
     });
 
+    await this.markScanPosted(dto.scanId, bill.id);
+
     return bill;
+  }
+
+  /** Round every monetary write; absent stays absent rather than becoming 0. */
+  private moneyOrNull(value: unknown): Prisma.Decimal | null {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? new Prisma.Decimal(roundMoney(n)) : null;
+  }
+
+  /**
+   * Block a bill whose line numbers exactly repeat a scan that was already
+   * posted. This is the layer that covers documents whose printed invoice
+   * number was never legible — the number guard above can say nothing about
+   * them, and until now nothing else could either.
+   *
+   * Identity-grade, so it is allowed to block: the same quantities at the same
+   * unit costs summing to the same total is the same document. A VOID or
+   * deleted bill never blocks — voiding is how an operator undoes a bad post.
+   */
+  private async assertNoPostedLineMatch(
+    dto: any,
+    totalOwed: number,
+    supplierId: string | null,
+  ): Promise<void> {
+    const fingerprint = await this.resolveLineFingerprint(dto, totalOwed);
+    if (!fingerprint) return;
+
+    const priorScan = await this.duplicateMatch.findScanDuplicate({
+      lineFingerprint: fingerprint,
+      supplierId,
+    });
+    if (
+      !priorScan ||
+      priorScan.matchedBy !== "lines" ||
+      priorScan.status !== "POSTED" ||
+      !priorScan.vendorBillId ||
+      priorScan.id === dto.scanId
+    ) {
+      return;
+    }
+
+    const match = await this.vendorBillMatchById(priorScan.vendorBillId, totalOwed);
+    if (!match) return;
+    throw new ConflictException({
+      code: "DUPLICATE_VENDOR_BILL",
+      message: this.duplicateMessage(priorScan.supplierInvoiceNumber, match),
+      duplicate: await this.toDuplicatePayload(match),
+    });
+  }
+
+  /**
+   * A scan's own stored fingerprint when the bill came from one, so two scans
+   * of the same paper are compared on values computed identically at scan time.
+   * Hand-keyed bills fall back to the lines in front of us — best-effort, since
+   * a typed total includes tax the scan may have recorded separately.
+   */
+  private async resolveLineFingerprint(dto: any, totalOwed: number): Promise<string | null> {
+    if (dto.scanId) {
+      const scan = await this.prisma
+        .forTenant()
+        .invoiceScan.findUnique({
+          where: { id: dto.scanId },
+          select: { lineFingerprint: true },
+        })
+        .catch(() => null);
+      if (scan?.lineFingerprint) return scan.lineFingerprint;
+    }
+    const lines = (dto.items ?? []).map((item: any) => ({
+      qty: item.qty ?? 1,
+      unitCost: item.unitCost ?? item.unitPrice ?? 0,
+    }));
+    return lineFingerprint(lines, totalOwed);
+  }
+
+  /** The bill behind a posted scan, as the duplicate matcher would report it. */
+  private async vendorBillMatchById(
+    billId: string,
+    total: number,
+  ): Promise<VendorBillDuplicateMatch | null> {
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id: billId },
+      select: {
+        id: true,
+        billNumber: true,
+        status: true,
+        totalOwed: true,
+        billDate: true,
+        receivedDate: true,
+        supplierId: true,
+        _count: { select: { items: true } },
+      },
+    });
+    if (!bill || bill.status === "VOID") return null;
+    const totalOwed = Number(bill.totalOwed);
+    return {
+      id: bill.id,
+      billNumber: bill.billNumber,
+      status: bill.status,
+      totalOwed,
+      billDate: bill.billDate ?? null,
+      receivedDate: bill.receivedDate ?? null,
+      supplierId: bill.supplierId ?? null,
+      itemCount: bill._count.items,
+      matchedBy: "lines",
+      totalMatches: Math.abs(totalOwed - total) <= 0.005,
+    };
+  }
+
+  /**
+   * Close the loop from bill back to the document it came from. A bad or
+   * foreign scanId must not fail a bill that is already written — `updateMany`
+   * stays tenant-scoped and simply matches nothing.
+   */
+  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
+    if (!scanId) return;
+    try {
+      await this.prisma.forTenant().invoiceScan.updateMany({
+        where: { id: scanId },
+        data: { status: "POSTED", vendorBillId },
+      });
+    } catch (e) {
+      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -218,7 +426,11 @@ export class VendorBillsService {
    * `response.data.message` verbatim, so the sentence has to stand alone.
    */
   private duplicateMessage(number: string | null, match: VendorBillDuplicateMatch): string {
-    const document = number ? `Supplier invoice ${number}` : "This supplier invoice";
+    const document = number
+      ? `Supplier invoice ${number}`
+      : match.matchedBy === "lines"
+        ? "An invoice with identical quantities and unit costs"
+        : "This supplier invoice";
     return match.status === "DRAFT"
       ? `${document} is already saved as draft bill ${match.billNumber} — open it to finish receiving instead of creating a second bill.`
       : `${document} was already recorded as bill ${match.billNumber} — creating it again would double stock and amounts owed.`;
@@ -653,7 +865,23 @@ export class VendorBillsService {
     });
   }
 
-  async scanInvoice(files: Array<{ buffer: Buffer; mimeType: string }>) {
+  /**
+   * Extract a supplier invoice, and keep every part of it: the document, the
+   * verbatim model output, and the keys that identify it. The scan was
+   * previously stateless — abandoning a review lost the extraction and the
+   * spend, and nothing recorded that a document had been seen at all.
+   *
+   * Re-uploading bytes already scanned returns the stored payload WITHOUT
+   * calling the model: instant, free, and the strongest duplicate signal there
+   * is. Neither persistence nor storage may fail the scan — by the time either
+   * runs the operator's document has already been read, and that is the part
+   * worth keeping.
+   */
+  async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
+    const fileHash = hashFile(files.map((f) => f.buffer));
+    const prior = await this.findScanByHash(fileHash);
+    if (prior) return prior;
+
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
     const apiKey =
@@ -761,10 +989,11 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // keep paying for a scan the browser already abandoned (the SDK retries
     // 429/5xx internally before we map the error).
     let message: Anthropic.Message;
+    const startedAt = Date.now();
     try {
       message = await anthropic.messages.create(
         {
-          model: "claude-haiku-4-5",
+          model: SCAN_MODEL,
           max_tokens: 4096,
           messages: [
             {
@@ -800,6 +1029,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         code: "AI_UNAVAILABLE",
       });
     }
+    const scanDurationMs = Date.now() - startedAt;
 
     const content = message.content[0];
     if (content.type !== "text") {
@@ -905,7 +1135,180 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       return { ...item, ...match };
     });
 
-    return { ...parsed, items };
+    const result = { ...parsed, items };
+    const scan = await this.persistScan({
+      files,
+      fileHash,
+      parsed,
+      items,
+      result,
+      scanDurationMs,
+      scannedById,
+    });
+    return { ...result, scanId: scan?.id ?? null };
+  }
+
+  /**
+   * The stored payload for bytes already scanned, shaped exactly like a fresh
+   * scan so existing clients see no difference beyond the extra `priorScan`
+   * block. A read failure here is not worth failing on — the caller simply pays
+   * for a re-scan.
+   */
+  private async findScanByHash(fileHash: string) {
+    let scan;
+    try {
+      scan = await this.prisma.forTenant().invoiceScan.findFirst({
+        where: { fileHash, status: { not: "DISCARDED" } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          createdAt: true,
+          status: true,
+          vendorBillId: true,
+          supplierInvoiceNumber: true,
+          total: true,
+          extractedPayload: true,
+          vendorBill: { select: { billNumber: true } },
+        },
+      });
+    } catch (e) {
+      this.logger.error(`scanInvoice: prior-scan lookup failed: ${(e as Error).message}`);
+      return null;
+    }
+    const payload = scan?.extractedPayload;
+    if (!scan || typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return null;
+    }
+
+    const priorScan: PriorScanSummary = {
+      scanId: scan.id,
+      scannedAt: scan.createdAt,
+      status: scan.status,
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber: scan.vendorBill?.billNumber ?? null,
+      supplierInvoiceNumber: scan.supplierInvoiceNumber ?? null,
+      total: scan.total == null ? null : Number(scan.total),
+    };
+    return { ...(payload as Record<string, unknown>), scanId: scan.id, priorScan } as Record<
+      string,
+      any
+    >;
+  }
+
+  /** Record the scan and file it under all three duplicate keys. Never throws. */
+  private async persistScan(args: {
+    files: ScanInvoiceFile[];
+    fileHash: string;
+    parsed: Record<string, unknown>;
+    items: any[];
+    result: Record<string, unknown>;
+    scanDurationMs: number;
+    scannedById?: string;
+  }): Promise<{ id: string } | null> {
+    const { files, fileHash, parsed, items, result } = args;
+    try {
+      const invoiceNumber = normalizeInvoiceNumber(
+        typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : null,
+      );
+      const scan = await this.prisma.forTenant().invoiceScan.create({
+        data: {
+          fileName: files[0]?.fileName ?? null,
+          mimeType: files[0]?.mimeType ?? null,
+          byteSize: files.reduce((sum, f) => sum + f.buffer.length, 0),
+          pageCount: files.length,
+          fileHash,
+          extractedPayload: result as unknown as Prisma.InputJsonValue,
+          model: SCAN_MODEL,
+          scanDurationMs: args.scanDurationMs,
+          supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
+          supplierInvoiceNumber: invoiceNumber || null,
+          invoiceDate: this.parseDate(parsed.invoiceDate as string | null),
+          subtotal: this.moneyOrNull(parsed.subtotal),
+          tax: this.moneyOrNull(parsed.tax),
+          total: this.moneyOrNull(parsed.total),
+          lineCount: items.length,
+          lineFingerprint: lineFingerprint(items, parsed.total as number | null),
+          scannedById: args.scannedById ?? null,
+        },
+        select: { id: true },
+      });
+
+      const fileKey = await this.storeScanFiles(scan.id, files);
+      if (fileKey) {
+        await this.prisma
+          .forTenant()
+          .invoiceScan.update({ where: { id: scan.id }, data: { fileKey } });
+      }
+      return scan;
+    } catch (e) {
+      this.logger.error(`scanInvoice: failed to persist scan: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Store the pages as received (not the sharp-converted copies) and return the
+   * FIRST page's key — `fileKey` is singular, so the remaining pages live
+   * alongside it under the same `invoice-scans/<scanId>/` prefix and are found
+   * by `pageCount`. Returns null on any failure: the extraction is what the
+   * operator is waiting for, the file is a convenience.
+   */
+  private async storeScanFiles(scanId: string, files: ScanInvoiceFile[]): Promise<string | null> {
+    try {
+      const keys = await Promise.all(
+        files.map((f, i) => {
+          const ext = SCAN_FILE_EXTENSIONS[f.mimeType] ?? "bin";
+          const key = `invoice-scans/${scanId}/${i + 1}.${ext}`;
+          return this.storage.upload(key, f.buffer, f.mimeType);
+        }),
+      );
+      return keys[0] ?? null;
+    } catch (e) {
+      this.logger.error(
+        `scanInvoice: failed to store scan ${scanId} files: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Every document ever read, newest first — including the reviews nobody finished. */
+  async listScans(status?: string, page = 1, limit = 20) {
+    if (
+      status &&
+      !INVOICE_SCAN_STATUSES.includes(status as (typeof INVOICE_SCAN_STATUSES)[number])
+    ) {
+      throw new BadRequestException(
+        `Unknown scan status "${status}" — expected one of ${INVOICE_SCAN_STATUSES.join(", ")}.`,
+      );
+    }
+    const where = status ? { status: status as any } : {};
+    const [data, total] = await Promise.all([
+      this.prisma.forTenant().invoiceScan.findMany({
+        where,
+        select: INVOICE_SCAN_LIST_SELECT,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.forTenant().invoiceScan.count({ where }),
+    ]);
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async getScan(id: string) {
+    const scan = await this.prisma.forTenant().invoiceScan.findUnique({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
+      },
+    });
+    if (!scan) throw new NotFoundException("Invoice scan not found");
+    // A missing or unreachable file must not hide the extraction behind it.
+    const fileUrl = scan.fileKey
+      ? await this.storage.presignedUrl(scan.fileKey).catch(() => null)
+      : null;
+    return { ...scan, fileUrl };
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {

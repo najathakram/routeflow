@@ -3,12 +3,26 @@ import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { DuplicateMatchService } from "./duplicate-match.service";
 
+/**
+ * `createMockPrisma` predates InvoiceScan. Graft the model onto the very object
+ * `forTenant()` hands back, so a tenant-scoped call and a direct one see the
+ * same jest mocks.
+ */
+function graftInvoiceScan(prisma: ReturnType<typeof createMockPrisma>) {
+  const model = { findFirst: jest.fn().mockResolvedValue(null) };
+  (prisma as any).invoiceScan = model;
+  (prisma.forTenant() as any).invoiceScan = model;
+  return model;
+}
+
 describe("DuplicateMatchService", () => {
   let service: DuplicateMatchService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let invoiceScan: ReturnType<typeof graftInvoiceScan>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    invoiceScan = graftInvoiceScan(prisma);
     const moduleRef = await Test.createTestingModule({
       providers: [DuplicateMatchService, { provide: PrismaService, useValue: prisma }],
     }).compile();
@@ -268,6 +282,123 @@ describe("DuplicateMatchService", () => {
         matchedBy: "number",
         totalMatches: true,
       });
+    });
+  });
+
+  describe("findScanDuplicate", () => {
+    const scanRow = (overrides: Record<string, unknown> = {}) => ({
+      id: "scan-1",
+      status: "POSTED",
+      createdAt: new Date("2026-08-01"),
+      vendorBillId: "vb-1",
+      supplierInvoiceNumber: "INV-1",
+      total: 117,
+      ...overrides,
+    });
+
+    /** Each key is a separate findFirst; answer per the `where` it was given. */
+    const respondByKey = (byKey: Record<string, unknown>) =>
+      invoiceScan.findFirst.mockImplementation((args: any) => {
+        if (args.where.fileHash !== undefined) return Promise.resolve(byKey.file ?? null);
+        if (args.where.lineFingerprint !== undefined) return Promise.resolve(byKey.lines ?? null);
+        return Promise.resolve(byKey.number ?? null);
+      });
+
+    it("prefers the file hash over the line fingerprint and the number", async () => {
+      respondByKey({
+        file: scanRow({ id: "by-file" }),
+        lines: scanRow({ id: "by-lines" }),
+        number: scanRow({ id: "by-number" }),
+      });
+
+      await expect(
+        service.findScanDuplicate({ fileHash: "h", lineFingerprint: "f", number: "INV-1" }),
+      ).resolves.toMatchObject({ id: "by-file", matchedBy: "file" });
+      expect(invoiceScan.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("prefers the line fingerprint over the number", async () => {
+      respondByKey({ lines: scanRow({ id: "by-lines" }), number: scanRow({ id: "by-number" }) });
+
+      await expect(
+        service.findScanDuplicate({ fileHash: "h", lineFingerprint: "f", number: "INV-1" }),
+      ).resolves.toMatchObject({ id: "by-lines", matchedBy: "lines" });
+    });
+
+    it("falls through to the printed invoice number, normalized", async () => {
+      respondByKey({ number: scanRow({ id: "by-number" }) });
+
+      await expect(
+        service.findScanDuplicate({ fileHash: "h", lineFingerprint: "f", number: "inv 1" }),
+      ).resolves.toMatchObject({ id: "by-number", matchedBy: "number" });
+      expect(invoiceScan.findFirst.mock.calls[2][0].where.supplierInvoiceNumber).toBe("INV1");
+    });
+
+    it("returns null when no key hits", async () => {
+      respondByKey({});
+      await expect(
+        service.findScanDuplicate({ fileHash: "h", lineFingerprint: "f", number: "INV-1" }),
+      ).resolves.toBeNull();
+    });
+
+    it("ignores DISCARDED scans on every key", async () => {
+      respondByKey({});
+      await service.findScanDuplicate({ fileHash: "h", lineFingerprint: "f", number: "INV-1" });
+
+      const wheres = invoiceScan.findFirst.mock.calls.map((c: any[]) => c[0].where);
+      expect(wheres).toHaveLength(3);
+      for (const where of wheres) expect(where.status).toEqual({ not: "DISCARDED" });
+    });
+
+    it("is tenant-scoped — every read goes through forTenant()", async () => {
+      respondByKey({});
+      await service.findScanDuplicate({ fileHash: "h" });
+      expect(prisma.forTenant).toHaveBeenCalled();
+    });
+
+    it("narrows the fingerprint and number lookups by supplier, but not the file lookup", async () => {
+      // Identical bytes are the same document whoever sent it, so fileHash must
+      // stay unscoped. Identical qty/unit-cost figures from a different supplier
+      // are a coincidence — a repeat standing order must not be flagged against
+      // an unrelated vendor — so lines and number both narrow.
+      respondByKey({});
+      await service.findScanDuplicate({
+        fileHash: "h",
+        lineFingerprint: "f",
+        number: "INV-1",
+        supplierId: "sup-1",
+      });
+
+      const fileWhere = invoiceScan.findFirst.mock.calls[0][0].where;
+      expect(fileWhere.OR).toBeUndefined();
+      expect(fileWhere.supplierId).toBeUndefined();
+
+      const linesWhere = invoiceScan.findFirst.mock.calls[1][0].where;
+      expect(linesWhere.OR).toEqual([{ supplierId: "sup-1" }, { supplierId: null }]);
+
+      const numberWhere = invoiceScan.findFirst.mock.calls[2][0].where;
+      expect(numberWhere.OR).toEqual([{ supplierId: "sup-1" }, { supplierId: null }]);
+    });
+
+    it("skips a key that wasn't supplied instead of matching on an empty value", async () => {
+      respondByKey({ file: scanRow() });
+      await expect(service.findScanDuplicate({ lineFingerprint: "f" })).resolves.toBeNull();
+      expect(invoiceScan.findFirst).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports the newest handling of the document", async () => {
+      respondByKey({ file: scanRow({ status: "SCANNED", vendorBillId: null, total: null }) });
+
+      await expect(service.findScanDuplicate({ fileHash: "h" })).resolves.toEqual({
+        id: "scan-1",
+        status: "SCANNED",
+        createdAt: new Date("2026-08-01"),
+        vendorBillId: null,
+        supplierInvoiceNumber: "INV-1",
+        total: null,
+        matchedBy: "file",
+      });
+      expect(invoiceScan.findFirst.mock.calls[0][0].orderBy).toEqual({ createdAt: "desc" });
     });
   });
 });

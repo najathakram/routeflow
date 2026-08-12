@@ -238,6 +238,13 @@ enum VendorBillStatus {
   VOID
 }
 
+enum InvoiceScanStatus {
+  SCANNED // extracted, not yet turned into a bill (an abandoned review stops here)
+  POSTED // became `vendorBillId`
+  DISCARDED // operator threw it away on purpose
+  DUPLICATE // repeats `duplicateOfId`; never posted
+}
+
 enum ReturnReason {
   DAMAGED
   WRONG_ITEM
@@ -361,6 +368,7 @@ model Tenant {
   estimates              Estimate[]
   estimateItems          EstimateItem[]
   vendorBills            VendorBill[]
+  invoiceScans           InvoiceScan[]
   vendorBillItems        VendorBillItem[]
   billPayments           BillPayment[]
   productMappings        ProductMapping[]
@@ -878,7 +886,10 @@ model Product {
   barcode              String?
   currentStock         Decimal       @default(0) @db.Decimal(10, 3)
   averageCost          Decimal?      @db.Decimal(10, 4)
-  costingMethod        CostingMethod @default(FIFO)
+  // AVCO because every write path maintains `averageCost` via nextAverageCost and
+  // valuation reads it back; the FIFO/LIFO lot-consumption path exists but has no
+  // caller, so labelling products FIFO promised a costing basis nothing computed.
+  costingMethod        CostingMethod @default(AVCO)
   standardCost         Decimal?      @db.Decimal(10, 4)
   reorderPoint         Int?
   reorderQty           Int?
@@ -1635,6 +1646,7 @@ model Supplier {
   stockMovements StockMovement[]
   purchaseOrders PurchaseOrder[]
   vendorBills    VendorBill[]
+  invoiceScans   InvoiceScan[]
   expenses       Expense[]
 
   @@index([isActive])
@@ -2246,10 +2258,17 @@ model VendorBill {
   updatedAt             DateTime         @updatedAt
   tenantId              String?
 
+  // Sales tax as printed on the supplier's invoice. `totalOwed` already includes
+  // it, but without its own column an edit recomputes totalOwed from line items
+  // and silently drops the tax.
+  taxAmount Decimal? @db.Decimal(12, 2)
+  subtotal  Decimal? @db.Decimal(12, 2)
+
   supplier Supplier?        @relation(fields: [supplierId], references: [id])
   tenant   Tenant?          @relation(fields: [tenantId], references: [id])
   payments BillPayment[]
   items    VendorBillItem[]
+  scans    InvoiceScan[]
 
   @@unique([tenantId, billNumber])
   @@index([supplierId])
@@ -2259,6 +2278,70 @@ model VendorBill {
   @@index([tenantId, supplierInvoiceNumber])
 }
 
+/// Durable record of every purchase-invoice scan, written when the document is
+/// read rather than when a bill is created — so an abandoned review still leaves
+/// the extraction (and the AI spend) recoverable, and so a document can be
+/// recognised on sight the next time someone uploads it.
+///
+/// Carries three duplicate keys, strongest first:
+///   1. `fileHash`        — same bytes. Checked BEFORE the AI call, so a re-run of
+///                          the same PDF costs nothing and answers instantly.
+///   2. `lineFingerprint` — same numbers (sorted qty@unitCost + total). Survives
+///                          re-photographing and OCR wording drift, which is what
+///                          defeated text comparison on the 2026-08 duplicates.
+///   3. `supplierInvoiceNumber` + supplier — the printed identity, when readable.
+/// `extractedPayload` keeps the FULL model output (per-line sku, packSize,
+/// lineTotal, confidence, candidates) that the VendorBill columns cannot hold.
+model InvoiceScan {
+  id       String  @id @default(uuid())
+  tenantId String?
+
+  // The document exactly as received.
+  fileKey   String? // storage key; null once the file is pruned
+  fileName  String?
+  mimeType  String?
+  byteSize  Int?
+  pageCount Int?
+  fileHash  String
+
+  // What the model read, verbatim and lossless.
+  extractedPayload Json
+  model            String?
+  scanDurationMs   Int?
+
+  // Key parameters promoted out of the payload so they can be queried and indexed.
+  supplierNameRaw       String?
+  supplierId            String?
+  supplierInvoiceNumber String? // NORMALIZED, same rule as VendorBill
+  invoiceDate           DateTime?
+  subtotal              Decimal?  @db.Decimal(12, 2)
+  tax                   Decimal?  @db.Decimal(12, 2)
+  total                 Decimal?  @db.Decimal(12, 2)
+  lineCount             Int?
+  lineFingerprint       String?
+
+  status        InvoiceScanStatus @default(SCANNED)
+  vendorBillId  String?
+  duplicateOfId String?
+  scannedById   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant?       @relation(fields: [tenantId], references: [id])
+  supplier    Supplier?     @relation(fields: [supplierId], references: [id])
+  vendorBill  VendorBill?   @relation(fields: [vendorBillId], references: [id])
+  duplicateOf InvoiceScan?  @relation("ScanDuplicate", fields: [duplicateOfId], references: [id])
+  duplicates  InvoiceScan[] @relation("ScanDuplicate")
+
+  @@index([tenantId, fileHash])
+  @@index([tenantId, lineFingerprint])
+  @@index([tenantId, supplierInvoiceNumber])
+  @@index([tenantId, status])
+  @@index([vendorBillId])
+  @@index([supplierId])
+}
+
 model VendorBillItem {
   id           String   @id @default(uuid())
   vendorBillId String
@@ -2266,6 +2349,12 @@ model VendorBillItem {
   description  String
   qty          Decimal  @db.Decimal(10, 3)
   unitCost     Decimal  @db.Decimal(10, 4)
+  // Read off the invoice line and previously discarded at the create boundary.
+  // `sku` is the supplier's own item code — the strongest signal for matching a
+  // line to a catalog product on the NEXT scan from the same supplier.
+  sku          String?
+  packSize     Int?
+  lineTotal    Decimal? @db.Decimal(12, 2)
   createdAt    DateTime @default(now())
   tenantId     String?
 
