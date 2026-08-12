@@ -338,6 +338,58 @@ export default function CustomerDetailScreen() {
                 style={{ marginLeft: "auto" }}
               />
             </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/licenses`)}
+            >
+              <Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Licenses</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/standing-orders`)}
+            >
+              <Ionicons name="repeat-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Standing orders</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/contacts`)}
+            >
+              <Ionicons name="people-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Contacts</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/comments`)}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Comments</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
           </View>
 
           <Pressable style={styles.deleteBtn} onPress={handleDelete} disabled={deleteMut.isPending}>

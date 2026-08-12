@@ -8,12 +8,14 @@ import { useBuyerTemplates, useBuyerReorder, useBuyerUpdateTemplate } from "../.
 import { showToast } from "../../lib/toast";
 import { confirm } from "../../lib/confirm";
 
-const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// ISO weekdays (Mon=1 … Sun=7) — indexing the old Sun-first 0-indexed array by
+// the raw value silently dropped Sunday (7 → undefined) and shifted every label.
+const ISO_DAY_ABBR = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 function formatDaysOfWeek(days: number[] | undefined): string {
   if (!days?.length) return "";
   return [...days]
     .sort((a, b) => a - b)
-    .map((d) => DAY_ABBR[d] ?? "")
+    .map((d) => ISO_DAY_ABBR[d] ?? "")
     .filter(Boolean)
     .join(" · ");
 }

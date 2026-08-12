@@ -21,12 +21,8 @@ const NAV_ITEMS: Array<{
   { id: "customers", label: "My Customers", icon: "people-outline", path: "/(driver)/customers" },
   { id: "stock", label: "Stock Check", icon: "cube-outline", path: "/(driver)/inventory" },
   { id: "history", label: "Delivery History", icon: "time-outline", path: "/(driver)/history" },
-  {
-    id: "standing-orders",
-    label: "Standing Orders",
-    icon: "repeat-outline",
-    path: "/(driver)/standing-orders",
-  },
+  // No "Standing Orders" item: /(driver)/standing-orders never existed — the
+  // row dead-ended. Standing orders live on the operator customer file.
   {
     id: "purchase-orders",
     label: "Purchase Orders",
