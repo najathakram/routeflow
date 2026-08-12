@@ -449,3 +449,31 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`packages/ui` SearchBar** — cross-platform clear X (`accessibilityLabel="Clear search"`),
   gated `Platform.OS !== "ios"` (native iOS already renders `clearButtonMode`'s X; RNW/Android
   previously had NO one-tap clear at all).
+
+### Wave 3 2026-08-12 — payments at the door (mobile-first program)
+
+- **`lib/payments-logic.ts`** — + `CHECK_TRANSITIONS` (server mirror; null stored status =
+  RECORDED) + `checkNextStates` (CHECK & not-VOID only); `waterfallAllocations` /
+  `allocationTotals` / `oldestInvoicesFirst` — the standalone endpoint applies allocations
+  VERBATIM (no rounding, no per-invoice cap, no sum≤total guard, `PAY-####` numbers lack the
+  tenant hash), so ALL safety is client-side. Specs extended (31 cases).
+- **`lib/api/payments.ts`** — `useRecordPaymentStandalone` (`POST /invoices/payments/record`;
+  excess>0.001 → AdvancePayment), `useSetCheckStatus` (+`settledAt`, which web's DTO omits);
+  `AllPayment` + check columns (always on the wire, previously untyped).
+- **`lib/api/customers.ts`** — `AdvancePayment` (wallet = `balance`; used = amount−balance, NO
+  amountUsed column) + list/create/apply hooks. Advance routes are `@Body dto:any` server-side —
+  zero validation; apply's INLINE status recompute loses DRAFT-is-terminal, so apply-advance UI
+  gates to SENT/VIEWED/PARTIAL/OVERDUE.
+- **`payments/record.tsx` (new)** — customer pick → amount/method chips → oldest-first waterfall
+  over open invoices (`status=SENT,VIEWED,PARTIAL,OVERDUE`, balanceDue>0), rows capped at
+  balanceDue, Allocated/Received/Unallocated strip (excess → advance), save-as-draft toggle,
+  receipt photo (HEIC→JPEG vs payments[0].id). Submit blocks on over-allocation.
+- **`payments/index.tsx`** — '+' Record entry (NavBar trailing), method chips (7), check badge
+  replaces the method pill on check rows, load-more (`meta.total`). Deferred deliberately:
+  date-range/customer filters + CSV export (desktop chores).
+- **`payments/[id].tsx`** — check badge + deposited/cleared/bounced KV rows; Mark deposited
+  (confirm) / Mark cleared (optional bank-date → settledAt) / Mark bounced (NSF-fee modal:
+  voids the row, re-opens the invoice, non-taxable fee line + stored-total bump server-side).
+- **`(tabs)/invoices/[id].tsx`** — `ApplyAdvanceSheet` (wallet rows balance>0; first client for
+  this action — web's `useApplyAdvanceToInvoice` is dead code). **`customers/[id].tsx`** —
+  Record-advance modal + "Record advance payment" row in Account standing.
