@@ -13,7 +13,7 @@ import {
   type PaymentListParams,
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
-import { useInvoices } from "@/lib/api/invoices";
+import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -46,6 +46,11 @@ const fieldCls =
 const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
+/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
+ *  validates `status` as a single enum value, so a comma-list 400s server-side
+ *  (mirrors mobile payments/record). */
+const OPEN_STATUSES: InvoiceStatus[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 // ─── Sort helper ───────────────────────────────────────────────────────────────
 
@@ -80,18 +85,20 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [file, setFile] = React.useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const { data: invoicesData } = useInvoices({
-    status: "SENT,VIEWED,PARTIAL,OVERDUE",
-    page: 1,
-    limit: 50,
-  });
+  const { data: invoicesData } = useInvoices(
+    { customerId: customerId || undefined, page: 1, limit: 50 },
+    { enabled: !!customerId },
+  );
 
+  // Open invoices, oldest first — the array order IS the pre-fill allocation order.
   const customerInvoices = React.useMemo(() => {
     if (!customerId || !invoicesData?.data) return [];
-    return invoicesData.data.filter(
-      (inv) => inv.customerId === customerId && inv.balanceDue && inv.balanceDue > 0,
-    );
-  }, [customerId, invoicesData, invoicesData?.data]);
+    return invoicesData.data
+      .filter((inv) => OPEN_STATUSES.includes(inv.status) && (inv.balanceDue ?? 0) > 0.001)
+      .sort((a, b) =>
+        (a.issueDate ?? a.createdAt ?? "").localeCompare(b.issueDate ?? b.createdAt ?? ""),
+      );
+  }, [customerId, invoicesData]);
 
   // When customer changes, reset allocations and pre-fill greedily
   React.useEffect(() => {

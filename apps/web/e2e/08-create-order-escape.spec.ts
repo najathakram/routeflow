@@ -27,9 +27,14 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     const title = page.getByRole("heading", { name: "Create Order" });
     await expect(title).toBeVisible({ timeout: 10_000 });
     // Pick the first customer so the product search renders. "e" matches most
-    // seeded business names on the e2e tenant.
+    // seeded business names on the e2e tenant. The suggestion list is a
+    // SIBLING of the search input — a page-wide "ul li button" grabs the
+    // sidebar nav toggle first (the selector this replaces did exactly that).
     await page.getByPlaceholder("Search by business name…").fill("e");
-    await page.locator("ul li button").first().click({ timeout: 10_000 });
+    await page
+      .locator('input[placeholder="Search by business name…"] ~ ul li button')
+      .first()
+      .click({ timeout: 10_000 });
     return title;
   }
 
