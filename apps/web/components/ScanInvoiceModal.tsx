@@ -105,7 +105,12 @@ interface ReviewItem {
   splits?: VarietySplit[];
 }
 
-type InvoiceStatus = "scanning" | "scanned" | "failed" | "created";
+// "skipped" = the operator dropped a pre-existing (already-recorded) invoice
+// from the batch. Status-based rather than array removal so object URLs stay
+// valid for undo, the navigator index stays stable mid-submit, and every
+// status-filtered consumer (targets/creatable/leftBehind/firstUnposted)
+// excludes it without separate bookkeeping.
+type InvoiceStatus = "scanning" | "scanned" | "failed" | "created" | "skipped";
 
 interface PagePreview {
   url: string;
@@ -364,7 +369,13 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   // Both identity fields feed the duplicate probe, so editing either re-checks
   // and drops any override the operator had granted for the previous identity.
   const setSupplierId = (v: string) => {
-    updateActive({ supplierId: v, supplierMatchAmbiguous: false, allowDuplicate: false });
+    updateActive({
+      supplierId: v,
+      supplierMatchAmbiguous: false,
+      allowDuplicate: false,
+      // A new identity may no longer be the duplicate the operator dropped.
+      ...(active?.status === "skipped" ? { status: "scanned" as const } : {}),
+    });
     if (active) scheduleDuplicateCheck(active.id);
   };
   const billDate = active?.billDate ?? new Date().toISOString().slice(0, 10);
@@ -373,7 +384,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const setDueDate = (v: string) => updateActive({ dueDate: v });
   const invoiceNumber = active?.invoiceNumber ?? "";
   const setInvoiceNumber = (v: string) => {
-    updateActive({ invoiceNumber: v, allowDuplicate: false });
+    updateActive({
+      invoiceNumber: v,
+      allowDuplicate: false,
+      ...(active?.status === "skipped" ? { status: "scanned" as const } : {}),
+    });
     if (active) scheduleDuplicateCheck(active.id);
   };
 
@@ -973,6 +988,40 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
   const blockingDuplicateOf = (inv: InvoiceGroup) =>
     inv.createMode !== "expense" && !inv.allowDuplicate ? inv.duplicate : null;
 
+  /**
+   * Either "already in the system" signal — the number/fuzzy BILL match, or a
+   * byte/line-level PRIOR SCAN that was POSTED. One predicate so the banners,
+   * the navigator, the skip affordances and the create-all partition can never
+   * disagree about what counts as pre-existing. ("Create anyway" lifts both —
+   * the server's allowDuplicate flag bypasses both guards too.)
+   */
+  const alreadyInSystem = (inv: InvoiceGroup) =>
+    !!blockingDuplicateOf(inv) ||
+    (inv.createMode !== "expense" &&
+      !inv.allowDuplicate &&
+      inv.scanResult?.priorScan?.status === "POSTED" &&
+      !!inv.scanResult.priorScan.vendorBillId);
+
+  /** Drop ONE pre-existing invoice from the batch. Reversible (undo / editing
+   *  the invoice number restores it) — never removes the group from the array. */
+  const skipInvoice = (id: string) => patchInvoiceById(id, { status: "skipped" });
+  const unskipInvoice = (id: string) => patchInvoiceById(id, { status: "scanned" });
+
+  /** How many reviewable invoices are known pre-existing right now. */
+  const skippableDupCount = invoices.filter(
+    (inv) => inv.status === "scanned" && alreadyInSystem(inv),
+  ).length;
+
+  /** Batch affordance: drop every known pre-existing invoice in one tap. */
+  const skipAllDuplicates = () =>
+    setInvoices((prev) =>
+      prev.map((inv) =>
+        inv.status === "scanned" && alreadyInSystem(inv)
+          ? { ...inv, status: "skipped" as const }
+          : inv,
+      ),
+    );
+
   /** Debounced re-check while the operator retypes the invoice # or swaps supplier. */
   const scheduleDuplicateCheck = (invoiceId: string) => {
     const existing = dupTimersRef.current.get(invoiceId);
@@ -1166,13 +1215,35 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       .filter(({ inv }) => inv.status === "scanned");
     if (targets.length === 0 || isSubmittingAll) return;
 
-    // A known duplicate is left alone rather than blocking the batch: the rest
-    // of the invoices still post, and the operator resolves it afterwards from
-    // the banner (open the existing bill, or override with "Create anyway").
-    const postable = targets.filter(({ inv }) => !blockingDuplicateOf(inv));
+    // A known pre-existing invoice (bill match OR posted prior scan) is left
+    // alone rather than blocking the batch: the rest still post, and the
+    // operator resolves it from the banner — open the existing bill, Skip it,
+    // or override with "Create anyway".
+    const postable = targets.filter(({ inv }) => !alreadyInSystem(inv));
     if (postable.length === 0) {
+      // Everything left is already in the system. Offer to drop the lot and
+      // finish — the old dead end (toast + return) forced a per-invoice grind.
+      const proceed = window.confirm(
+        targets.length === 1
+          ? "This invoice is already recorded. Skip it and close?"
+          : `All ${targets.length} remaining invoices are already recorded. Skip them and close?`,
+      );
+      if (proceed) {
+        skipAllDuplicates();
+        toast({
+          title:
+            targets.length === 1
+              ? "Skipped — already recorded"
+              : `Skipped ${targets.length} already-recorded invoices`,
+          description: "Nothing new to create. The existing bills are untouched.",
+          variant: "success",
+        });
+        onCreated?.();
+        onClose();
+        return;
+      }
       const firstDup = invoices.findIndex(
-        (inv) => inv.status === "scanned" && !!blockingDuplicateOf(inv),
+        (inv) => inv.status === "scanned" && alreadyInSystem(inv),
       );
       if (firstDup >= 0) {
         setActiveIndex(firstDup);
@@ -1183,7 +1254,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           targets.length === 1
             ? "This invoice was already recorded"
             : `All ${targets.length} invoices were already recorded`,
-        description: "Open the existing bill, or choose Create anyway to record it a second time.",
+        description:
+          "Open the existing bill, Skip this invoice, or choose Create anyway to record it a second time.",
         variant: "warning",
       });
       return;
@@ -1232,32 +1304,42 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     try {
       let created = 0;
       let failed = 0;
-      let skipped = targets.length - postable.length;
+      // Two very different kinds of "not posted": autoSkipped = still-blocked
+      // duplicates the operator hasn't resolved (unfinished work → keep the
+      // modal open); dropped = invoices the operator explicitly Skipped (a
+      // completed decision — they must never hold the batch hostage).
+      let autoSkipped = targets.length - postable.length;
       const allNotes: string[] = [];
       for (const { inv } of postable) {
         const { ok, duplicate, notes } = await createOne(inv.id);
         if (ok) created++;
-        else if (duplicate) skipped++;
+        else if (duplicate) autoSkipped++;
         else failed++;
         allNotes.push(...notes);
       }
+      const dropped = invoicesRef.current.filter((x) => x.status === "skipped").length;
       // Invoices that couldn't be posted this pass (scan failed / still scanning)
       // must not vanish with the modal — keep it open so they can be retried.
+      // "skipped" is deliberately NOT counted: a dropped duplicate is done.
       const leftBehind = invoicesRef.current.filter(
         (x) => x.status === "failed" || x.status === "scanning",
       ).length;
-      if (failed === 0 && skipped === 0 && leftBehind === 0) {
+      const droppedNote = dropped > 0 ? `${dropped} skipped as already recorded` : "";
+      if (failed === 0 && autoSkipped === 0 && leftBehind === 0) {
         toast({
           title:
-            targets.length === 1
+            targets.length === 1 && created === 1
               ? allNotes.join(" & ") + " successfully!"
               : `Created ${created} invoice${created === 1 ? "" : "s"} successfully!`,
-          description: targets.length > 1 ? allNotes.join(" · ") : undefined,
+          description:
+            [targets.length > 1 ? allNotes.join(" · ") : "", droppedNote]
+              .filter(Boolean)
+              .join(" · ") || undefined,
           variant: "success",
         });
         onCreated?.();
         onClose();
-      } else if (failed === 0 && skipped === 0) {
+      } else if (failed === 0 && autoSkipped === 0) {
         // NOTE: onCreated is deliberately NOT called on the keep-open branches —
         // both entry points close the modal in that callback, which would strand
         // the not-yet-posted invoices. The mutation hooks already invalidate the
@@ -1268,7 +1350,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           variant: "warning",
         });
       } else {
-        // Keep the modal open: skipped duplicates and failed invoices stay
+        // Keep the modal open: unresolved duplicates and failed invoices stay
         // editable, succeeded ones are marked created and will be skipped on
         // the next attempt.
         const firstUnposted = invoicesRef.current.findIndex((x) => x.status === "scanned");
@@ -1277,7 +1359,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           setCreateFromRow(null);
         }
         const tail = [
-          skipped > 0 ? `${skipped} skipped as duplicate${skipped === 1 ? "" : "s"}` : "",
+          autoSkipped > 0 ? `${autoSkipped} already recorded (resolve or skip)` : "",
+          droppedNote,
           failed > 0 ? `${failed} failed` : "",
         ]
           .filter(Boolean)
@@ -1285,8 +1368,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         toast({
           title: `Created ${created} of ${targets.length} — ${tail}`,
           description: [
-            skipped > 0
-              ? "Duplicates weren't recorded — open the existing bill, or use Create anyway to record one a second time."
+            autoSkipped > 0
+              ? "Already-recorded invoices weren't posted — open the existing bill, Skip this invoice, or use Create anyway to record one a second time."
               : "",
             failed > 0
               ? "Fix the failed invoices and click Create again. Already-created bills won't be duplicated."
@@ -1450,6 +1533,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                   invoices={invoices}
                   activeIndex={activeIndex}
                   disabled={isPending}
+                  skippableDupCount={skippableDupCount}
+                  onSkipAll={skipAllDuplicates}
                   onNavigate={(i) => {
                     setActiveIndex(Math.max(0, Math.min(invoices.length - 1, i)));
                     setCreateFromRow(null);
@@ -1591,9 +1676,40 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                           </p>
                         </div>
                       )}
-                      {active?.status !== "created" && scanResult?.priorScan && (
-                        <PriorScanBanner prior={scanResult.priorScan} />
+                      {active?.status === "skipped" && (
+                        <div
+                          className="flex items-start justify-between gap-2 rounded-lg border border-surface-border bg-surface-raised p-3"
+                          data-testid="duplicate-skipped"
+                        >
+                          <p className="text-xs text-navy/70">
+                            Skipped — already recorded
+                            {active.duplicate?.billNumber
+                              ? ` as ${active.duplicate.billNumber}`
+                              : active.scanResult?.priorScan?.billNumber
+                                ? ` as ${active.scanResult.priorScan.billNumber}`
+                                : ""}
+                            . It won&apos;t be posted with this batch.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => unskipInvoice(active.id)}
+                            disabled={isPending}
+                            className="flex shrink-0 items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Undo2 className="h-3.5 w-3.5" />
+                            Undo skip
+                          </button>
+                        </div>
                       )}
+                      {active?.status !== "created" &&
+                        active?.status !== "skipped" &&
+                        scanResult?.priorScan && (
+                          <PriorScanBanner
+                            prior={scanResult.priorScan}
+                            disabled={isPending}
+                            onSkip={active ? () => skipInvoice(active.id) : undefined}
+                          />
+                        )}
                       {active?.status === "scanned" && active.error && (
                         <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-bg p-3">
                           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
@@ -1696,6 +1812,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                 disabled={isPending}
                                 onAllow={() => updateActive({ allowDuplicate: true })}
                                 onUndo={() => updateActive({ allowDuplicate: false })}
+                                onSkip={() => skipInvoice(active.id)}
                               />
                             )}
                           </div>
@@ -2369,6 +2486,7 @@ const STATUS_DOT: Record<InvoiceStatus, { cls: string; label: string }> = {
   scanned: { cls: "bg-brand-500", label: "Ready to review" },
   failed: { cls: "bg-danger", label: "Scan failed" },
   created: { cls: "bg-success", label: "Created" },
+  skipped: { cls: "bg-navy/20", label: "Skipped — already recorded" },
 };
 
 /**
@@ -2377,7 +2495,17 @@ const STATUS_DOT: Record<InvoiceStatus, { cls: string; label: string }> = {
  * paying twice in stock and cash), or an abandoned review just came back
  * whole, off the archive, with no second AI call.
  */
-function PriorScanBanner({ prior }: { prior: PriorScanSummary }) {
+function PriorScanBanner({
+  prior,
+  disabled,
+  onSkip,
+}: {
+  prior: PriorScanSummary;
+  disabled?: boolean;
+  /** Drop this pre-existing invoice from the batch — only offered when the
+   *  prior scan was POSTED (the green "restored" variant isn't a duplicate). */
+  onSkip?: () => void;
+}) {
   const recorded = prior.status === "POSTED" && !!prior.vendorBillId;
   // fmtDate answers with an em-dash for anything unparseable; a missing
   // timestamp should drop the clause entirely rather than read "on —".
@@ -2418,7 +2546,7 @@ function PriorScanBanner({ prior }: { prior: PriorScanSummary }) {
           )}
         </p>
         {recorded && prior.vendorBillId && (
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <a
               href={`/vendor-bills/${prior.vendorBillId}`}
               target="_blank"
@@ -2428,6 +2556,17 @@ function PriorScanBanner({ prior }: { prior: PriorScanSummary }) {
               <ExternalLink className="h-3.5 w-3.5" />
               Open {prior.billNumber ?? "existing bill"}
             </a>
+            {onSkip && (
+              <button
+                type="button"
+                onClick={onSkip}
+                disabled={disabled}
+                data-testid="duplicate-skip"
+                className="rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Skip this invoice
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -2447,6 +2586,7 @@ function DuplicateBanner({
   disabled,
   onAllow,
   onUndo,
+  onSkip,
 }: {
   duplicate: DuplicateVendorBillInfo | null;
   pending: boolean;
@@ -2454,6 +2594,8 @@ function DuplicateBanner({
   disabled?: boolean;
   onAllow: () => void;
   onUndo: () => void;
+  /** Drop this pre-existing invoice from the batch (status → "skipped"). */
+  onSkip: () => void;
 }) {
   if (!duplicate) {
     return pending ? (
@@ -2531,6 +2673,15 @@ function DuplicateBanner({
           </a>
           <button
             type="button"
+            onClick={onSkip}
+            disabled={disabled}
+            data-testid="duplicate-skip"
+            className="rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Skip this invoice
+          </button>
+          <button
+            type="button"
             onClick={onAllow}
             disabled={disabled}
             className="rounded-lg border border-surface-border bg-white px-2.5 py-1 text-xs font-medium text-navy transition-colors hover:border-brand-300 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
@@ -2553,11 +2704,17 @@ function InvoiceNavigator({
   activeIndex,
   disabled,
   onNavigate,
+  skippableDupCount = 0,
+  onSkipAll,
 }: {
   invoices: InvoiceGroup[];
   activeIndex: number;
   disabled?: boolean;
   onNavigate: (index: number) => void;
+  /** Reviewable invoices currently matching something already in the system. */
+  skippableDupCount?: number;
+  /** Batch affordance: drop them all without paging through each one. */
+  onSkipAll?: () => void;
 }) {
   const active = invoices[activeIndex];
   const label = active
@@ -2607,36 +2764,54 @@ function InvoiceNavigator({
         </p>
         <p className="truncate text-[11px] text-navy/60" title={label}>
           {label}
-          {isDuplicate && (
-            <span className="font-medium text-amber-600">
-              {" "}
-              — same invoice # as another file in this batch
-            </span>
-          )}
-          {existingBill && (
-            <span
-              className={cn(
-                "font-medium",
-                existingBill.resumable ? "text-amber-600" : "text-danger",
+          {/* "Skipped" outranks every other marker — the decision is made. */}
+          {active?.status === "skipped" ? (
+            <span className="font-medium text-navy/50"> — skipped (already recorded)</span>
+          ) : (
+            <>
+              {isDuplicate && (
+                <span className="font-medium text-amber-600">
+                  {" "}
+                  — same invoice # as another file in this batch
+                </span>
               )}
-            >
-              {" "}
-              — already {existingBill.resumable ? "saved as draft" : "imported as"}{" "}
-              {existingBill.billNumber}
-            </span>
-          )}
-          {prior && (
-            <span
-              className={cn("font-medium", priorRecorded ? "text-amber-600" : "text-green-700")}
-            >
-              {" "}
-              —{" "}
-              {priorRecorded
-                ? `already recorded as ${prior.billNumber ?? "a bill"}`
-                : "restored from an earlier scan"}
-            </span>
+              {existingBill && (
+                <span
+                  className={cn(
+                    "font-medium",
+                    existingBill.resumable ? "text-amber-600" : "text-danger",
+                  )}
+                >
+                  {" "}
+                  — already {existingBill.resumable ? "saved as draft" : "imported as"}{" "}
+                  {existingBill.billNumber}
+                </span>
+              )}
+              {prior && (
+                <span
+                  className={cn("font-medium", priorRecorded ? "text-amber-600" : "text-green-700")}
+                >
+                  {" "}
+                  —{" "}
+                  {priorRecorded
+                    ? `already recorded as ${prior.billNumber ?? "a bill"}`
+                    : "restored from an earlier scan"}
+                </span>
+              )}
+            </>
           )}
         </p>
+        {skippableDupCount > 1 && onSkipAll && (
+          <button
+            type="button"
+            onClick={onSkipAll}
+            disabled={disabled}
+            data-testid="skip-all-duplicates"
+            className="mt-0.5 text-[11px] font-medium text-brand-600 transition-colors hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {skippableDupCount} already recorded · Skip them
+          </button>
+        )}
         <div className="mt-1 flex items-center justify-center gap-1.5">
           {invoices.map((inv, i) => (
             <button

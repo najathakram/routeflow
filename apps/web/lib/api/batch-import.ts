@@ -147,7 +147,15 @@ export function useUpdateBatchItem() {
 
 export function usePostBatch() {
   const qc = useQueryClient();
-  return useMutation<{ posted: number; batchStatus: string }, Error, { id: string }>({
+  // `adopted` = a create-time 409 matched an existing bill by number and the
+  // item was linked to it instead of double-created; `duplicates` = items
+  // pushed back to DUPLICATE. Both were returned by the server all along —
+  // dropping them made an all-adopted run report "Posted 0 bills".
+  return useMutation<
+    { posted: number; adopted: number; duplicates: number; batchStatus: string },
+    Error,
+    { id: string }
+  >({
     mutationFn: ({ id }) => apiClient.post(`/import/batch/${id}/post`).then((r) => r.data),
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: [...KEY, id] });

@@ -135,8 +135,14 @@ export default function BatchImportPage() {
       {
         onSuccess: (r) =>
           toast({
-            title: `Posted ${r.posted} bills`,
-            description: "Stock and costs updated",
+            title: `Posted ${r.posted} bill${r.posted === 1 ? "" : "s"}`,
+            description: [
+              "Stock and costs updated",
+              r.adopted > 0 ? `${r.adopted} linked to existing bills` : "",
+              r.duplicates > 0 ? `${r.duplicates} held as duplicates` : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
             variant: "success",
           }),
         onError: (e: any) =>
