@@ -1,17 +1,31 @@
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { usePayment, useVoidPayment } from "../../../lib/api/payments";
+import { usePayment, useSetCheckStatus, useVoidPayment } from "../../../lib/api/payments";
 import {
+  checkNextStates,
   paymentActionFlags,
   paymentMethodPill,
   paymentStatusPill,
 } from "../../../lib/payments-logic";
+import { checkBadgeFor } from "../../../lib/check-badge";
+import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { roundMoney } from "../../../lib/pricing";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -26,6 +40,13 @@ export default function PaymentDetailScreen() {
 
   const { data: payment, isLoading, refetch } = usePayment(id ?? "");
   const voidMut = useVoidPayment();
+  const checkMut = useSetCheckStatus();
+  // Bounce needs an NSF-fee prompt; Cleared offers a bank-date. Both are small
+  // modals; deposit is a plain confirm.
+  const [bounceOpen, setBounceOpen] = useState(false);
+  const [nsfFee, setNsfFee] = useState<number | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearBankDate, setClearBankDate] = useState("");
 
   if (isLoading || !payment) {
     return (
@@ -42,6 +63,31 @@ export default function PaymentDetailScreen() {
   const m = paymentMethodPill(payment.method);
   const flags = paymentActionFlags(payment.status, payment.method);
   const received = payment.paidAt ?? payment.createdAt;
+  const check = checkBadgeFor(payment);
+  const nextCheckStates = checkNextStates(payment);
+
+  const runCheckStatus = (
+    status: "DEPOSITED" | "CLEARED" | "BOUNCED",
+    extra?: { nsfFeeAmount?: number; settledAt?: string },
+  ) => {
+    if (!id) return;
+    checkMut.mutate(
+      { invoiceId: payment.invoice.id, paymentId: id, status, ...extra },
+      {
+        onSuccess: () => {
+          showToast(
+            status === "BOUNCED"
+              ? "Check marked as bounced"
+              : `Check marked as ${status.toLowerCase()}`,
+          );
+          setBounceOpen(false);
+          setClearOpen(false);
+          refetch();
+        },
+        onError: onErr,
+      },
+    );
+  };
 
   const handleVoid = () => {
     if (!id) return;
@@ -74,14 +120,26 @@ export default function PaymentDetailScreen() {
         <View style={{ padding: 16, gap: 14 }}>
           {/* Header */}
           <View style={styles.card}>
-            <Pill variant={s.variant} dot>
-              {s.label}
-            </Pill>
+            <View style={styles.headerPills}>
+              <Pill variant={s.variant} dot>
+                {s.label}
+              </Pill>
+              {check ? (
+                <Pill variant={check.variant} dot>
+                  {check.label}
+                </Pill>
+              ) : null}
+            </View>
             <Text style={styles.customer}>
               {payment.invoice.customer?.businessName ?? "Customer"}
             </Text>
             <Text style={styles.total}>{fmtCurrency(payment.amount)}</Text>
             <Text style={styles.dates}>Received {new Date(received).toLocaleDateString()}</Text>
+            {payment.checkStatus === "BOUNCED" && Number(payment.nsfFeeAmount ?? 0) > 0 ? (
+              <Text style={styles.nsfLine}>
+                + {fmtCurrency(payment.nsfFeeAmount ?? 0)} NSF fee billed to the invoice
+              </Text>
+            ) : null}
           </View>
 
           {/* Receipt */}
@@ -99,6 +157,15 @@ export default function PaymentDetailScreen() {
               />
             ) : null}
             <KVRow label="Payment mode" value={m.label} icon={m.icon} />
+            {payment.depositedAt ? (
+              <KVRow label="Deposited" value={new Date(payment.depositedAt).toLocaleDateString()} />
+            ) : null}
+            {payment.clearedAt ? (
+              <KVRow label="Cleared" value={new Date(payment.clearedAt).toLocaleDateString()} />
+            ) : null}
+            {payment.bouncedAt ? (
+              <KVRow label="Bounced" value={new Date(payment.bouncedAt).toLocaleDateString()} />
+            ) : null}
             {payment.reference ? <KVRow label="Reference" value={payment.reference} /> : null}
             {payment.bankCharges && payment.bankCharges > 0 ? (
               <KVRow label="Bank charges" value={`-${fmtCurrency(payment.bankCharges)}`} />
@@ -116,15 +183,53 @@ export default function PaymentDetailScreen() {
             </Pressable>
           </View>
 
-          {/* Void action */}
-          {flags.canVoid ? (
+          {/* Actions — check lifecycle first (gated by the server transition
+              table mirror), then void. */}
+          {flags.canVoid || nextCheckStates.length > 0 ? (
             <View style={styles.actionsGrid}>
-              <ActionTile
-                icon="ban-outline"
-                label={voidMut.isPending ? "Voiding…" : "Void payment"}
-                tone="danger"
-                onPress={handleVoid}
-              />
+              {nextCheckStates.includes("DEPOSITED") ? (
+                <ActionTile
+                  icon="business-outline"
+                  label={checkMut.isPending ? "Saving…" : "Mark deposited"}
+                  onPress={() =>
+                    confirm(
+                      "Mark check as deposited?",
+                      "Bookkeeping only — the invoice balance doesn't change.",
+                      () => runCheckStatus("DEPOSITED"),
+                      { confirmText: "Deposited" },
+                    )
+                  }
+                />
+              ) : null}
+              {nextCheckStates.includes("CLEARED") ? (
+                <ActionTile
+                  icon="checkmark-circle-outline"
+                  label={checkMut.isPending ? "Saving…" : "Mark cleared"}
+                  onPress={() => {
+                    setClearBankDate("");
+                    setClearOpen(true);
+                  }}
+                />
+              ) : null}
+              {nextCheckStates.includes("BOUNCED") ? (
+                <ActionTile
+                  icon="alert-circle-outline"
+                  label="Mark bounced…"
+                  tone="danger"
+                  onPress={() => {
+                    setNsfFee(null);
+                    setBounceOpen(true);
+                  }}
+                />
+              ) : null}
+              {flags.canVoid ? (
+                <ActionTile
+                  icon="ban-outline"
+                  label={voidMut.isPending ? "Voiding…" : "Void payment"}
+                  tone="danger"
+                  onPress={handleVoid}
+                />
+              ) : null}
             </View>
           ) : (
             <Text style={styles.readonly}>This payment has been voided.</Text>
@@ -140,6 +245,107 @@ export default function PaymentDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {/* Mark cleared — optional true bank landing date (sets clearedAt AND
+          settledAt; cash-basis reporting windows on settledAt). */}
+      <Modal
+        visible={clearOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setClearOpen(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setClearOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Mark check as cleared?</Text>
+            <Text style={styles.modalBody}>
+              Optionally record the day the funds actually landed — it drives cash-basis reporting.
+              Leave blank to keep the payment&apos;s current bank date.
+            </Text>
+            <Text style={styles.modalLabel}>Bank landing date (YYYY-MM-DD, optional)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={clearBankDate}
+              onChangeText={setClearBankDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={ios.label3}
+              keyboardType="numbers-and-punctuation"
+            />
+            <View style={styles.modalBtns}>
+              <Pressable style={styles.modalBtnGhost} onPress={() => setClearOpen(false)}>
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtnFill, checkMut.isPending && { opacity: 0.6 }]}
+                disabled={checkMut.isPending}
+                onPress={() => {
+                  const d = clearBankDate.trim();
+                  if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+                    showToast("Bank date must be YYYY-MM-DD (or blank).");
+                    return;
+                  }
+                  runCheckStatus("CLEARED", d ? { settledAt: d } : undefined);
+                }}
+              >
+                <Text style={styles.modalBtnFillText}>
+                  {checkMut.isPending ? "Saving…" : "Mark cleared"}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Mark bounced — voids the payment, re-opens the invoice, optional NSF
+          fee billed as a non-taxable line. */}
+      <Modal
+        visible={bounceOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setBounceOpen(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setBounceOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.modalTitle}>Mark check as bounced?</Text>
+            <Text style={styles.modalBody}>
+              This check for {fmtCurrency(payment.amount)} will be voided (NSF) and{" "}
+              {payment.invoice.invoiceNumber}&apos;s balance will re-open. This can&apos;t be
+              undone.
+            </Text>
+            <Text style={styles.modalLabel}>NSF fee ($, optional)</Text>
+            <View style={styles.modalMoneyRow}>
+              <Text style={styles.modalCurrency}>$</Text>
+              <MoneyTextInput
+                style={styles.modalMoneyInput}
+                value={nsfFee}
+                onChangeValue={setNsfFee}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
+            </View>
+            <Text style={styles.modalHelp}>
+              Adds a non-taxable fee line to the invoice for the returned-check charge.
+            </Text>
+            <View style={styles.modalBtns}>
+              <Pressable style={styles.modalBtnGhost} onPress={() => setBounceOpen(false)}>
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtnDanger, checkMut.isPending && { opacity: 0.6 }]}
+                disabled={checkMut.isPending}
+                onPress={() =>
+                  runCheckStatus("BOUNCED", {
+                    nsfFeeAmount: nsfFee != null && nsfFee > 0 ? roundMoney(nsfFee) : 0,
+                  })
+                }
+              >
+                <Text style={styles.modalBtnFillText}>
+                  {checkMut.isPending ? "Saving…" : "Mark bounced"}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -189,6 +395,83 @@ const styles = StyleSheet.create({
   center: { padding: 40, alignItems: "center" },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14 },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginBottom: 8 },
+  headerPills: { flexDirection: "row", alignItems: "center", gap: 6 },
+  nsfLine: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.system.redInk,
+    marginTop: 4,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 360,
+    gap: 8,
+  },
+  modalTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label },
+  modalBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2, lineHeight: 19 },
+  modalLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    marginTop: 6,
+  },
+  modalInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: ios.label,
+  },
+  modalMoneyRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  modalCurrency: { fontSize: 15, fontFamily: "Inter_400Regular", color: ios.label2 },
+  modalMoneyInput: {
+    flex: 1,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  modalHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
+  modalBtns: { flexDirection: "row", gap: 10, marginTop: 8 },
+  modalBtnGhost: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.fill3,
+  },
+  modalBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  modalBtnFill: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.brand,
+  },
+  modalBtnDanger: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.system.red,
+  },
+  modalBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
   customer: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginTop: 8 },
   total: {
     fontSize: 32,

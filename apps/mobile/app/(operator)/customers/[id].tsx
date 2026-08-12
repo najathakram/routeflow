@@ -1,11 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,8 +15,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
-import { useCustomer, useCustomerStatement, useDeleteCustomer } from "../../../lib/api/customers";
+import {
+  useCreateAdvancePayment,
+  useCustomer,
+  useCustomerStatement,
+  useDeleteCustomer,
+} from "../../../lib/api/customers";
+import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
+import { roundMoney } from "../../../lib/pricing";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -38,6 +47,7 @@ export default function CustomerDetailScreen() {
   const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
   const { data: statement } = useCustomerStatement(isCreateAlias ? "" : (id ?? ""));
   const deleteMut = useDeleteCustomer();
+  const [advanceOpen, setAdvanceOpen] = useState(false);
 
   if (isLoading || !customer) {
     return (
@@ -247,6 +257,10 @@ export default function CustomerDetailScreen() {
               <Text style={styles.linkText}>View custom prices</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
             </Pressable>
+            <Pressable style={styles.linkRow} onPress={() => setAdvanceOpen(true)}>
+              <Text style={styles.linkText}>Record advance payment</Text>
+              <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+            </Pressable>
           </View>
 
           {/* Account details */}
@@ -333,7 +347,128 @@ export default function CustomerDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {advanceOpen && id ? (
+        <RecordAdvanceModal
+          customerId={id}
+          customerName={customer.businessName}
+          onClose={() => setAdvanceOpen(false)}
+        />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+/**
+ * Take a deposit into the customer's advance wallet (Wave 3). The server has
+ * NO validation on this route beyond amount > 0 — everything else is enforced
+ * here (cents rounding, method allowlist). Mirrors web's Record Advance
+ * Payment modal on the customer page.
+ */
+function RecordAdvanceModal({
+  customerId,
+  customerName,
+  onClose,
+}: {
+  customerId: string;
+  customerName: string;
+  onClose: () => void;
+}) {
+  const mut = useCreateAdvancePayment();
+  const [method, setMethod] = useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [amount, setAmount] = useState<number | null>(null);
+  const [reference, setReference] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const submit = () => {
+    const amt = amount != null ? roundMoney(amount) : 0;
+    if (amt <= 0) {
+      showToast("Enter a positive amount.");
+      return;
+    }
+    mut.mutate(
+      {
+        customerId,
+        amount: amt,
+        method,
+        ...(reference.trim() ? { reference: reference.trim() } : {}),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      },
+      {
+        onSuccess: () => {
+          showToast("Advance recorded");
+          onClose();
+        },
+        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+      },
+    );
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.advOverlay} onPress={onClose}>
+        <Pressable style={styles.advCard} onPress={(e) => e.stopPropagation()}>
+          <Text style={styles.advTitle}>Record advance payment</Text>
+          <Text style={styles.advBody}>
+            A pre-payment from {customerName} that can be applied to future invoices.
+          </Text>
+          <View style={styles.advChips}>
+            {(["CASH", "CHECK", "ACH", "OTHER"] as const).map((m) => (
+              <Pressable
+                key={m}
+                style={[styles.advChip, method === m ? styles.advChipOn : styles.advChipOff]}
+                onPress={() => setMethod(m)}
+              >
+                <Text
+                  style={[
+                    styles.advChipText,
+                    method === m ? styles.advChipTextOn : styles.advChipTextOff,
+                  ]}
+                >
+                  {m === "ACH" ? "ACH" : m.charAt(0) + m.slice(1).toLowerCase()}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={styles.advLabel}>Amount ($)</Text>
+          <MoneyTextInput
+            style={styles.advInput}
+            value={amount}
+            onChangeValue={setAmount}
+            placeholder="0.00"
+            returnKeyType="done"
+          />
+          <Text style={styles.advLabel}>Reference (optional)</Text>
+          <TextInput
+            style={styles.advInput}
+            value={reference}
+            onChangeText={setReference}
+            placeholder="Check #, txn ID…"
+            placeholderTextColor={ios.label3}
+          />
+          <Text style={styles.advLabel}>Notes (optional)</Text>
+          <TextInput
+            style={styles.advInput}
+            value={notes}
+            onChangeText={setNotes}
+            placeholder="Internal notes…"
+            placeholderTextColor={ios.label3}
+          />
+          <View style={styles.advBtns}>
+            <Pressable style={styles.advBtnGhost} onPress={onClose}>
+              <Text style={styles.advBtnGhostText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.advBtnFill, mut.isPending && { opacity: 0.6 }]}
+              disabled={mut.isPending}
+              onPress={submit}
+            >
+              <Text style={styles.advBtnFillText}>{mut.isPending ? "Saving…" : "Record"}</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -348,6 +483,68 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
+  // ── Record-advance modal ──────────────────────────────────────────────────
+  advOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  advCard: {
+    backgroundColor: ios.bgElev,
+    borderRadius: 20,
+    padding: 20,
+    width: "100%",
+    maxWidth: 380,
+    gap: 6,
+  },
+  advTitle: { fontSize: 17, fontFamily: "Inter_700Bold", color: ios.label },
+  advBody: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 6,
+  },
+  advChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 4 },
+  advChip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
+  advChipOn: { backgroundColor: ios.brand },
+  advChipOff: { backgroundColor: ios.fill3 },
+  advChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  advChipTextOn: { color: "#fff" },
+  advChipTextOff: { color: ios.label },
+  advLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    marginTop: 6,
+  },
+  advInput: {
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+  },
+  advBtns: { flexDirection: "row", gap: 10, marginTop: 12 },
+  advBtnGhost: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.fill3,
+  },
+  advBtnGhostText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  advBtnFill: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    alignItems: "center",
+    backgroundColor: ios.brand,
+  },
+  advBtnFillText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
   center: { padding: 40, alignItems: "center" },
   card: { backgroundColor: ios.bgElev, borderRadius: 14, padding: 14, gap: 6 },
   cardHeader: {

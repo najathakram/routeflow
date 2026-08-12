@@ -31,6 +31,7 @@ import {
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
 import { useApplyCreditNote, useCreditNotes } from "../../../../lib/api/credit-notes";
+import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import {
@@ -125,6 +126,7 @@ export default function InvoiceDetailScreen() {
   const [dueDateInput, setDueDateInput] = useState("");
   const [shipmentModal, setShipmentModal] = useState(false);
   const [creditSheetOpen, setCreditSheetOpen] = useState(false);
+  const [advanceSheetOpen, setAdvanceSheetOpen] = useState(false);
   // Draft/Final PDF stage — null means follow the smart default (deriveInvoiceVariant).
   const [pdfVariantOverride, setPdfVariantOverride] = useState<InvoicePdfVariant | null>(null);
 
@@ -531,6 +533,17 @@ export default function InvoiceDetailScreen() {
                 onPress={() => setCreditSheetOpen(true)}
               />
             ) : null}
+            {/* Apply-advance is narrower than apply-credit: the server's inline
+                status recompute doesn't preserve DRAFT (customers.service
+                applyAdvancePaymentToInvoice), so a draft would silently flip
+                to SENT — gate to the post-send statuses only. */}
+            {["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(invoice.status) ? (
+              <ActionTile
+                icon="wallet-outline"
+                label="Apply advance"
+                onPress={() => setAdvanceSheetOpen(true)}
+              />
+            ) : null}
             {moreActions.length > 0 ? (
               <ActionTile icon="ellipsis-horizontal" label="More" onPress={handleMore} />
             ) : null}
@@ -782,7 +795,123 @@ export default function InvoiceDetailScreen() {
           onClose={() => setCreditSheetOpen(false)}
         />
       ) : null}
+
+      {advanceSheetOpen && invoice.customer?.id ? (
+        <ApplyAdvanceSheet
+          customerId={invoice.customer.id}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+          balanceDue={Number(balance) || 0}
+          onClose={() => setAdvanceSheetOpen(false)}
+        />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+/**
+ * Invoice-side "Apply advance" — lists the customer's advance-payment wallet
+ * rows with remaining balance and applies the tapped one (server caps at
+ * min(wallet balance, invoice balance); reference AP-<id-8>). Mobile is the
+ * FIRST client for this action — web's hook is dead code with no UI.
+ */
+function ApplyAdvanceSheet({
+  customerId,
+  invoiceId,
+  invoiceNumber,
+  balanceDue,
+  onClose,
+}: {
+  customerId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  balanceDue: number;
+  onClose: () => void;
+}) {
+  const { data, isLoading } = useCustomerAdvancePayments(customerId);
+  const applyMut = useApplyAdvancePayment();
+  const open = (data ?? []).filter((ap) => Number(ap.balance) > 0.001);
+
+  const handleApply = (apId: string, remaining: number) => {
+    const applied = Math.min(remaining, balanceDue);
+    confirm(
+      "Apply advance?",
+      `${fmtCurrency(applied)} of the customer's advance will be applied to ${invoiceNumber}.`,
+      () =>
+        applyMut.mutate(
+          { customerId, advanceId: apId, invoiceId },
+          {
+            onSuccess: () => {
+              showToast("Advance applied");
+              onClose();
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          },
+        ),
+      { confirmText: "Apply" },
+    );
+  };
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.creditBackdrop} onPress={onClose}>
+        <Pressable style={styles.creditSheet} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.creditHeader}>
+            <Text style={styles.creditTitle}>Apply advance</Text>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <Ionicons name="close" size={22} color={ios.label2} />
+            </Pressable>
+          </View>
+          {isLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : open.length === 0 ? (
+            <View style={styles.center}>
+              <Text style={styles.creditEmpty}>
+                No advance balance for this customer. Record one from the customer screen, or an
+                overpaid standalone payment creates one automatically.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {open.map((ap, i) => {
+                const remaining = Number(ap.balance) || 0;
+                return (
+                  <Pressable
+                    key={ap.id}
+                    style={[
+                      styles.creditRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                      applyMut.isPending && { opacity: 0.5 },
+                    ]}
+                    disabled={applyMut.isPending}
+                    onPress={() => handleApply(ap.id, remaining)}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.creditNumber} numberOfLines={1}>
+                        {ap.method}
+                        {ap.reference ? ` — ${ap.reference}` : ""}
+                      </Text>
+                      <Text style={styles.creditMeta}>
+                        Received {new Date(ap.receivedAt ?? ap.createdAt).toLocaleDateString()} · of{" "}
+                        {fmtCurrency(ap.amount)}
+                      </Text>
+                    </View>
+                    <Text style={styles.creditRemaining}>{fmtCurrency(remaining)}</Text>
+                    <Ionicons name="chevron-forward" size={14} color={ios.label3} />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
