@@ -49,12 +49,14 @@ export function parseRegulatedAuthError(err: unknown): BlockedCategory[] | null 
   return null;
 }
 
-/** The override-reason options (mirror web's OVERRIDE_REASONS). */
+/** The override-reason options — kept BYTE-IDENTICAL to web's LicenseGuardModal
+ *  OVERRIDE_REASONS (the reason is a free string server-side, but drifted
+ *  vocabularies make the audit trail read as two different policies). */
 export const OVERRIDE_REASONS = [
-  "Existing customer, license on file offline",
-  "License renewal in progress",
-  "Verbal confirmation from management",
-  "Other (see acknowledgement)",
+  "License on file but not yet recorded",
+  "Verbal confirmation from customer",
+  "Time-sensitive / emergency order",
+  "Other",
 ] as const;
 
 /**
