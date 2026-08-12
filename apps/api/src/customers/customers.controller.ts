@@ -25,6 +25,8 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CustomersService } from "./customers.service";
+import { StatementService } from "../buyer/statement.service";
+import { StatementPdfService } from "../buyer/statement-pdf.service";
 import { PortalInviteDto } from "../buyer/dto/portal-invite.dto";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -39,7 +41,11 @@ import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
 @Controller("customers")
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CustomersController {
-  constructor(private readonly customersService: CustomersService) {}
+  constructor(
+    private readonly customersService: CustomersService,
+    private readonly statementService: StatementService,
+    private readonly statementPdfService: StatementPdfService,
+  ) {}
 
   @Get()
   @Roles(UserRole.OPERATOR)
@@ -181,6 +187,24 @@ export class CustomersController {
   @Roles(UserRole.OPERATOR)
   getStatement(@Param("id") id: string) {
     return this.customersService.getStatementForOperator(id);
+  }
+
+  // Operator twins of the buyer statement-PDF endpoints (P5-15) — same
+  // services, tenant-scoped by customerId. Until now a downloadable customer
+  // statement existed ONLY in the buyer portal.
+  @Get(":id/statements")
+  @Roles(UserRole.OPERATOR)
+  getStatementMonths(@Param("id") id: string) {
+    return this.statementService.listAvailableMonths(id);
+  }
+
+  @Get(":id/statements/:month")
+  @Roles(UserRole.OPERATOR)
+  async getStatementPdf(@Param("id") id: string, @Param("month") month: string) {
+    // Presigned URL (R2 GET or local HMAC) — downloads WITHOUT a JWT. Month
+    // format + customer existence validated inside buildMonthlyStatement.
+    const url = await this.statementPdfService.generateAndUpload(id, month);
+    return { url };
   }
 
   @Post(":id/advance-payments")

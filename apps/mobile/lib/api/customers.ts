@@ -79,6 +79,24 @@ export function useCustomerStatement(id: string) {
   });
 }
 
+/** Month buckets with a downloadable statement PDF — operator twin of the
+ *  buyer portal's `GET /buyer/statements` (newest first, ≤12). */
+export function useCustomerStatementMonths(id: string) {
+  return useQuery<{ months: string[] }>({
+    queryKey: ["customers", id, "statement-months"],
+    queryFn: () => apiClient.get(`/customers/${id}/statements`).then((r) => r.data),
+    enabled: !!id,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Imperative (not a query): render + upload the month's statement PDF and
+ *  return its presigned URL — mirrors the buyer `fetchStatementPdfUrl`. */
+export async function fetchCustomerStatementPdfUrl(id: string, month: string): Promise<string> {
+  const r = await apiClient.get<{ url: string }>(`/customers/${id}/statements/${month}`);
+  return r.data.url;
+}
+
 // ─── Advance payments (Wave 3 — mobile is the FIRST client for apply) ────────
 
 export interface AdvancePayment {

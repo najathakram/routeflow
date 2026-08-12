@@ -261,6 +261,13 @@ export default function CustomerDetailScreen() {
               <Text style={styles.linkText}>Record advance payment</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
             </Pressable>
+            <Pressable
+              style={styles.linkRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/statement`)}
+            >
+              <Text style={styles.linkText}>View full statement</Text>
+              <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+            </Pressable>
           </View>
 
           {/* Account details */}
