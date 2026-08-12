@@ -12,6 +12,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const mockAnthropicCreate = jest.fn();
@@ -79,6 +80,11 @@ const storage = {
   presignedUrl: jest.fn(),
 };
 
+const inventory = {
+  recomputeProductInTx: jest.fn(),
+  fireStockAlerts: jest.fn(),
+};
+
 /**
  * `createMockPrisma` predates InvoiceScan. Graft the model onto the very object
  * `forTenant()` hands back, so a tenant-scoped call and a direct one see the
@@ -124,8 +130,11 @@ describe("VendorBillsService", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
+        { provide: InventoryService, useValue: inventory },
       ],
     }).compile();
+    inventory.recomputeProductInTx.mockReset();
+    inventory.fireStockAlerts.mockReset();
 
     service = module.get<VendorBillsService>(VendorBillsService);
   });
@@ -210,9 +219,85 @@ describe("VendorBillsService", () => {
     });
 
     it("still rejects double-receive (RF-084)", async () => {
-      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "RECEIVED" }));
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
 
       await expect(service.receive("bill-1")).rejects.toThrow("Bill already received");
+    });
+
+    it("G1: rejects receiving a PAID bill that was already received — status alone lies", async () => {
+      // recordPayment overwrites status to PAID; the receipt marker is receivedDate.
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "PAID", receivedDate: new Date("2026-06-02") }),
+      );
+
+      await expect(service.receive("bill-1")).rejects.toThrow("Bill already received");
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("G2: converts a case-priced line (packSize) to pieces + per-piece cost", async () => {
+      // 2 cases of 6 @ $12/case → 12 pieces @ $2/piece.
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(
+        bill({ items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })] }),
+      );
+      prisma.product.findUnique.mockResolvedValue({
+        currentStock: D(0),
+        averageCost: null,
+        costingMethod: "AVCO",
+      });
+
+      await service.receive("bill-1", undefined, "user-1");
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.quantity.toString()).toBe("12");
+      expect(movementArgs.unitCost.toString()).toBe("2");
+      expect(movementArgs.avgCostAfter.toString()).toBe("2");
+      const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
+      expect(lotArgs.qty.toString()).toBe("12");
+      expect(lotArgs.unitCost.toString()).toBe("2");
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock).toEqual({ increment: movementArgs.quantity });
+      expect(productArgs.averageCost.toString()).toBe("2");
+    });
+
+    it("G7: a STANDARD product keeps its cost — averageCost untouched by receive", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
+      prisma.product.findUnique.mockResolvedValue({
+        currentStock: D(10),
+        averageCost: D(2),
+        costingMethod: "STANDARD",
+      });
+
+      await service.receive("bill-1", undefined, "user-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.avgCostAfter.toString()).toBe("2"); // snapshot of the kept average
+    });
+
+    it("G7: stamps the PURCHASE movement at the bill date (matching the lot)", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+
+      await service.receive("bill-1", undefined, "user-1");
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.createdAt).toEqual(new Date("2026-06-01"));
+      const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
+      expect(lotArgs.purchaseDate).toEqual(new Date("2026-06-01"));
+    });
+
+    it("G7: a backdated bill with later movements triggers the replay repair", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.stockMovement.count.mockResolvedValue(3); // newer movements exist
+
+      await service.receive("bill-1", undefined, "user-1");
+
+      expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1");
+      expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
     });
   });
 
@@ -221,7 +306,9 @@ describe("VendorBillsService", () => {
   describe("revertToDraft", () => {
     it("restores the prior average exactly", async () => {
       // Product is at 15 @ 2.50 after receiving 5 @ 3.50 — reverting must yield 2.00
-      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "RECEIVED" }));
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
       prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
@@ -233,7 +320,9 @@ describe("VendorBillsService", () => {
     });
 
     it("KEEPS the average when the revert empties stock (no more zeroing)", async () => {
-      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "RECEIVED" }));
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
       prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
@@ -245,7 +334,9 @@ describe("VendorBillsService", () => {
     });
 
     it("deletes untouched lots and zeroes partially-consumed ones", async () => {
-      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "RECEIVED" }));
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
       prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([
         { id: "lot-1", qty: D(5), remainingQty: D(5), notes: null },
@@ -260,13 +351,45 @@ describe("VendorBillsService", () => {
         data: expect.objectContaining({ remainingQty: 0 }),
       });
     });
+
+    it("G1: refuses to revert a PARTIAL bill that was never received (payment-only status)", async () => {
+      // recordPayment can set PARTIAL on a DRAFT bill; reversing would drain
+      // stock that was never added.
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "PARTIAL", receivedDate: null }),
+      );
+
+      await expect(service.revertToDraft("bill-1")).rejects.toThrow("never received");
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      expect(prisma.stockMovement.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("G2: reverses a case-priced line in the SAME converted denomination", async () => {
+      // Received as 12 pieces (2 cases × 6); revert must decrement 12, not 2.
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({
+          status: "RECEIVED",
+          receivedDate: new Date("2026-06-02"),
+          items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+
+      await service.revertToDraft("bill-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock).toEqual({ decrement: D(2).mul(6) });
+    });
   });
 
   // ─── voidBill ───────────────────────────────────────────────────────────────
 
   describe("voidBill", () => {
     it("writes a costed compensating ADJUSTMENT with snapshots and keeps avg on stock-empty", async () => {
-      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "RECEIVED" }));
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
+      );
       prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
@@ -283,6 +406,19 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost).toBeUndefined();
+    });
+
+    it("G1: voiding a PAID-but-never-received bill skips the stock reversal", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ status: "PAID", receivedDate: null }));
+
+      await service.voidBill("bill-1", "user-1");
+
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+      // The bill itself still gets voided.
+      expect(prisma.vendorBill.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "VOID" }) }),
+      );
     });
   });
 
@@ -760,6 +896,7 @@ describe("VendorBillsService", () => {
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },
+          { provide: InventoryService, useValue: inventory },
         ],
       }).compile();
       service = module.get<VendorBillsService>(VendorBillsService);

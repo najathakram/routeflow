@@ -23,6 +23,7 @@ import {
   type VendorBillDuplicateMatch,
 } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 
@@ -114,7 +115,33 @@ export class VendorBillsService {
     private readonly systemConfig: SystemConfigService,
     private readonly duplicateMatch: DuplicateMatchService,
     private readonly storage: StorageService,
+    private readonly inventory: InventoryService,
   ) {}
+
+  /**
+   * A bill line's INVENTORY denomination. Suppliers price lines in whatever
+   * unit the invoice prints — usually CASES for boxed goods — while
+   * `Product.currentStock` and `Product.averageCost` are contractually per
+   * PIECE (common/pricing.ts `costPerSellingUnit`). A line with
+   * `packSize > 1` is a case line: pieces = qty × packSize, per-piece cost =
+   * unitCost ÷ packSize. The bill's own money is untouched — `totalOwed`
+   * stays Σ qty × unitCost in invoice denomination, matching the printed
+   * line totals. Receive, revert and void MUST all convert through this one
+   * helper or reversals stop matching receipts.
+   */
+  private lineInventoryDelta(item: {
+    qty: Prisma.Decimal | number | string;
+    unitCost: Prisma.Decimal | number | string;
+    packSize?: number | null;
+  }): { qty: Prisma.Decimal; unitCost: Prisma.Decimal } {
+    const rawQty = new Prisma.Decimal(item.qty as Prisma.Decimal.Value);
+    const rawCost = costDecimal(item.unitCost);
+    const pack = item.packSize ?? 0;
+    if (pack > 1) {
+      return { qty: rawQty.mul(pack), unitCost: costDecimal(rawCost.div(pack)) };
+    }
+    return { qty: rawQty, unitCost: rawCost };
+  }
 
   private async nextBillNumber() {
     const year = new Date().getFullYear();
@@ -443,14 +470,20 @@ export class VendorBillsService {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
     }
 
-    // Recalculate total if items are provided
+    // Recalculate total if items are provided. Mirror create(): fold the
+    // bill's tax back in and round — the old recompute dropped taxAmount on
+    // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
+    // added to make recoverable) and skipped roundMoney.
     let totalOwed: number | undefined;
     if (dto.items && Array.isArray(dto.items)) {
-      totalOwed = dto.items.reduce(
+      const itemsTotal = dto.items.reduce(
         (sum: number, item: any) =>
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
+      const tax =
+        dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      totalOwed = roundMoney(itemsTotal + tax);
     }
 
     return this.prisma.tenantTransaction(async (tx) => {
@@ -509,8 +542,13 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
-    // RF-084: idempotency guard — prevent double-receive doubling stock
-    if (bill.status === "RECEIVED") throw new ConflictException("Bill already received");
+    // RF-084: idempotency guard — prevent double-receive doubling stock.
+    // Guarded on receivedDate, NOT status: recordPayment overwrites status to
+    // PAID/PARTIAL, so a status-only check let a paid bill be received a
+    // second time (stock incremented twice, average cost blended twice).
+    if (bill.status === "RECEIVED" || bill.receivedDate != null) {
+      throw new ConflictException("Bill already received");
+    }
 
     // Cost-integrity guard: unmapped lines don't update inventory or costs.
     // Warn-and-confirm rather than hard block — bills legitimately carry
@@ -546,18 +584,22 @@ export class VendorBillsService {
         },
       });
 
-      // Sync inventory for each product-linked item
+      // Sync inventory for each product-linked item. The whole block works in
+      // INVENTORY denomination: lineInventoryDelta converts a case-priced line
+      // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
+      // its per-PIECE contract (margins previously inflated by unitsPerBox²).
+      const effectiveDate = bill.billDate ?? new Date();
+      const restockedIds: string[] = [];
       for (const item of bill.items) {
         if (!item.productId || !item.product) continue;
 
-        const qty = new Prisma.Decimal(item.qty);
-        const unitCost = costDecimal(item.unitCost);
+        const { qty, unitCost } = this.lineInventoryDelta(item);
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
         const product = await tx.product.findUnique({
           where: { id: item.productId },
-          select: { currentStock: true, averageCost: true },
+          select: { currentStock: true, averageCost: true, costingMethod: true },
         });
         if (!product) continue;
 
@@ -567,13 +609,16 @@ export class VendorBillsService {
           qty,
           unitCost,
         );
+        // STANDARD keeps its operator-set cost — mirrors recordPurchase; bill
+        // receive used to clobber it (G7).
+        const updatesAverage = product.costingMethod !== "STANDARD";
         const stockAfter = product.currentStock.add(qty);
 
         // StockLot keeps FIFO/LIFO parity with manual purchases and PO receive
         await tx.stockLot.create({
           data: {
             productId: item.productId,
-            purchaseDate: bill.billDate ?? new Date(),
+            purchaseDate: effectiveDate,
             qty,
             remainingQty: qty,
             unitCost,
@@ -587,12 +632,16 @@ export class VendorBillsService {
             type: MovementType.PURCHASE,
             quantity: qty,
             unitCost,
-            avgCostAfter: newAvgCost,
+            avgCostAfter: updatesAverage ? newAvgCost : (product.averageCost ?? null),
             stockAfter,
             supplierId: bill.supplierId,
             reference: bill.billNumber,
             notes: `Auto-synced from vendor bill ${bill.billNumber}`,
             performedById: performedById ?? null,
+            // Stamp the movement at the BILL date, matching the lot — a
+            // backdated bill's cost snapshot must sit at the right point in
+            // the ledger (the lot and the movement used to disagree).
+            createdAt: effectiveDate,
           },
         });
 
@@ -600,15 +649,30 @@ export class VendorBillsService {
           where: { id: item.productId },
           data: {
             currentStock: { increment: qty },
-            averageCost: newAvgCost,
+            ...(updatesAverage ? { averageCost: newAvgCost } : {}),
           },
         });
+
+        // Backdated bill: later movements' snapshots (and possibly the
+        // average) are now stale — replay the product, like recordPurchase.
+        const newer = await tx.stockMovement.count({
+          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+        });
+        if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
+
+        restockedIds.push(item.productId);
       }
 
-      return updatedBill;
+      return { updatedBill, restockedIds };
     });
 
-    return updated;
+    // Bill receive is the main restock path — fire the same low-stock-cleared
+    // alerts a manual purchase does (it never did).
+    if (updated.restockedIds.length > 0) {
+      this.inventory.fireStockAlerts([...new Set(updated.restockedIds)]);
+    }
+
+    return updated.updatedBill;
   }
 
   async revertToDraft(id: string) {
@@ -625,14 +689,23 @@ export class VendorBillsService {
         `Only RECEIVED or PARTIAL bills can be reverted to DRAFT. Current status: ${bill.status}`,
       );
     }
+    // A PARTIAL status can mean "partially PAID, never received" (recordPayment
+    // overwrites status). Reversing a receipt that never happened would drain
+    // real stock and corrupt the average — the receipt marker is receivedDate.
+    if (bill.receivedDate == null) {
+      throw new BadRequestException(
+        "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
+      );
+    }
 
     return this.prisma.tenantTransaction(async (tx) => {
-      // Reverse inventory for each product-linked item
+      // Reverse inventory for each product-linked item — in the SAME
+      // inventory denomination receive() applied (case lines converted to
+      // pieces + per-piece cost), or the reversal stops matching the receipt.
       for (const item of bill.items) {
         if (!item.productId) continue;
 
-        const qty = new Prisma.Decimal(item.qty);
-        const unitCost = costDecimal(item.unitCost);
+        const { qty, unitCost } = this.lineInventoryDelta(item);
 
         // Delete the stock movement created when this bill was received
         await tx.stockMovement.deleteMany({
@@ -715,15 +788,20 @@ export class VendorBillsService {
     });
     if (!bill) throw new NotFoundException("Bill not found");
 
-    // RF-085: reverse stock movements when voiding a RECEIVED bill
+    // RF-085: reverse stock movements when voiding a bill that was actually
+    // RECEIVED. Status alone can't tell — recordPayment overwrites it to
+    // PAID/PARTIAL, so a paid-but-never-received bill used to get a phantom
+    // reversal (negative adjustment draining stock that was never added).
+    // receivedDate is the receipt marker.
     const needsReversal =
-      bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID";
+      (bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID") &&
+      bill.receivedDate != null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
-          const qty = new Prisma.Decimal(item.qty);
-          const unitCost = costDecimal(item.unitCost);
+          // Same inventory denomination receive() applied — see lineInventoryDelta.
+          const { qty, unitCost } = this.lineInventoryDelta(item);
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },

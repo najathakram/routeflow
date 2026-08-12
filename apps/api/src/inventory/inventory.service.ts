@@ -37,7 +37,9 @@ export class InventoryService {
    * context is retained by the detached continuations, and any error is logged
    * (fireForProducts already swallows per-alert push failures internally).
    */
-  private fireStockAlerts(productIds: string[]): void {
+  // Public: vendor-bill receive is the main restock path and must fire the
+  // same alerts as a manual purchase (it never did — a G7 gap).
+  fireStockAlerts(productIds: string[]): void {
     if (productIds.length === 0) return;
     void this.stockAlerts.fireForProducts(productIds).catch((err) => {
       this.logger.warn(`Stock-alert fire failed (non-fatal): ${(err as Error).message}`);
@@ -938,7 +940,11 @@ export class InventoryService {
   }
 
   /** Repair a single product's snapshots/average inside an existing transaction. */
-  private async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
+  // Public: the backdated-movement repair primitive. Every stock writer that
+  // supports an effective date in the past (manual purchase, adjustment, and
+  // now vendor-bill receive stamping at billDate) must replay the product so
+  // later snapshots stay true.
+  async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
     const product = await tx.product.findUnique({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },
