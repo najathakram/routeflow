@@ -46,3 +46,46 @@ export function daysLabel(daysOfWeek: number[] | undefined): string {
     .filter(Boolean)
     .join(", ");
 }
+
+/** ISO day chips for schedule pickers — value 1..7 with the same Mon-first labels. */
+export const ISO_DAY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 7, label: "Sun" },
+];
+
+/**
+ * The staff list endpoint returns a `{data, meta}` envelope; some endpoints
+ * (and older builds) return bare arrays. One tolerant unwrap so no consumer
+ * ever calls `.filter` on the envelope again (the crash this fixes).
+ */
+export function unwrapListEnvelope<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  const data = (payload as { data?: unknown } | null | undefined)?.data;
+  return Array.isArray(data) ? (data as T[]) : [];
+}
+
+export interface TemplateFormInput {
+  name: string;
+  daysOfWeek: number[];
+  items: { productId: string; qty: number }[];
+}
+
+/**
+ * The exact create rules web's StandingOrderModal enforces: a name, at least
+ * one ISO day, at least one item with qty ≥ 1. Returns the first human error
+ * or null when submittable.
+ */
+export function validateTemplateForm(form: TemplateFormInput): string | null {
+  if (!form.name.trim()) return "Give this standing order a name.";
+  if (!form.daysOfWeek.length) return "Pick at least one delivery day.";
+  if (!form.items.length) return "Add at least one product.";
+  if (form.items.some((i) => !i.productId || !Number.isFinite(i.qty) || i.qty < 1)) {
+    return "Every line needs a product and a quantity of at least 1.";
+  }
+  return null;
+}

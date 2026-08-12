@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { unwrapListEnvelope } from "../order-templates-logic";
 
 // ─── Types (mirror apps/web/lib/api/order-templates.ts) ─────────────────────────
 
@@ -24,7 +25,7 @@ export interface OrderTemplate {
   updatedAt: string;
 }
 
-// ─── Queries (list endpoint returns a BARE array, not paginated) ────────────────
+// ─── Queries ────────────────────────────────────────────────────────────────────
 
 export function useOrderTemplates(customerId?: string) {
   return useQuery<OrderTemplate[]>({
@@ -32,7 +33,11 @@ export function useOrderTemplates(customerId?: string) {
     queryFn: () =>
       apiClient
         .get("/order-templates", { params: customerId ? { customerId } : undefined })
-        .then((r) => r.data),
+        // The staff list endpoint returns the `{data, meta}` ENVELOPE (and has
+        // since 2026-03) — the old bare-array assumption made every consumer
+        // call `.filter` on the envelope and crash. Unwrap defensively like
+        // web's hook does.
+        .then((r) => unwrapListEnvelope<OrderTemplate>(r.data)),
     staleTime: 60_000,
   });
 }
@@ -73,16 +78,23 @@ export function useGenerateTemplateOrder() {
 }
 
 /**
- * Pause/Resume a template — `PATCH /:id { isActive }`. Unlike recurring-invoices
- * (whose whitelist ValidationPipe + required DTO blocked the isActive patch, so
- * resume needed a dedicated endpoint), the order-template UpdateDto is all-optional
- * and update() maps isActive both ways — so the single PATCH is the toggle.
+ * Update a template — `PATCH /:id`. The UpdateDto is all-optional and maps
+ * `isActive` both ways, so this one PATCH is both the pause/resume toggle and
+ * the header edit (name / ISO daysOfWeek / notes). Unlike recurring-invoices,
+ * no dedicated resume endpoint is needed.
  */
+export interface UpdateOrderTemplateDto {
+  name?: string;
+  daysOfWeek?: number[]; // ISO 1–7 (Mon..Sun)
+  isActive?: boolean;
+  notes?: string;
+}
+
 export function useUpdateOrderTemplate() {
   const qc = useQueryClient();
-  return useMutation<OrderTemplate, Error, { id: string; isActive: boolean }>({
-    mutationFn: ({ id, isActive }) =>
-      apiClient.patch(`/order-templates/${id}`, { isActive }).then((r) => r.data),
+  return useMutation<OrderTemplate, Error, { id: string } & UpdateOrderTemplateDto>({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => invalidateOrderTemplates(qc, id),
   });
 }
@@ -96,6 +108,44 @@ export function useDeleteOrderTemplate() {
   });
 }
 
-// Not wired (the builder surface — deferred, consistent with the other read+act
-// parity screens): POST / (create), POST /:id/items, DELETE /:id/items/:itemId,
-// and header-field PATCH beyond the isActive toggle.
+// ─── Builder mutations (Wave 4 — per-customer standing-orders surface) ─────────
+
+export interface CreateOrderTemplateDto {
+  /** Required for staff callers — the service 400s without it. */
+  customerId: string;
+  name: string;
+  daysOfWeek: number[]; // ISO 1–7 (Mon..Sun)
+  notes?: string;
+  /** ≥1 item; template items carry NO price — generation prices at order time. */
+  items: { productId: string; qty: number; notes?: string }[];
+}
+
+export function useCreateOrderTemplate() {
+  const qc = useQueryClient();
+  return useMutation<OrderTemplate, Error, CreateOrderTemplateDto>({
+    mutationFn: (dto) => apiClient.post("/order-templates", dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["order-templates"] }),
+  });
+}
+
+export function useAddTemplateItem() {
+  const qc = useQueryClient();
+  return useMutation<
+    OrderTemplateItem,
+    Error,
+    { templateId: string; productId: string; qty: number; notes?: string }
+  >({
+    mutationFn: ({ templateId, ...item }) =>
+      apiClient.post(`/order-templates/${templateId}/items`, item).then((r) => r.data),
+    onSuccess: (_, { templateId }) => invalidateOrderTemplates(qc, templateId),
+  });
+}
+
+export function useRemoveTemplateItem() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, { templateId: string; itemId: string }>({
+    mutationFn: ({ templateId, itemId }) =>
+      apiClient.delete(`/order-templates/${templateId}/items/${itemId}`).then((r) => r.data),
+    onSuccess: (_, { templateId }) => invalidateOrderTemplates(qc, templateId),
+  });
+}

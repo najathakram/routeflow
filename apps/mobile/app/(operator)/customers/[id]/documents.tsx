@@ -1,6 +1,7 @@
 import * as React from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -14,14 +15,20 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
+import * as ImagePicker from "expo-image-picker";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
-import { ListGroup, ListRow, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
+import { ListGroup, ListRow, NavAction, NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import {
+  CUSTOMER_DOC_TYPES,
   useCustomer,
   useCustomerDocuments,
   useDeleteCustomerDocument,
+  useUploadCustomerDocuments,
   type CustomerDocument,
 } from "../../../../lib/api/customers";
+import { productImageFile } from "../../../../lib/product-image";
+import { OptionPickerSheet } from "../../../../components/OptionPickerSheet";
 import { sharePdf } from "../../../../lib/share-pdf";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
@@ -44,8 +51,11 @@ function formatDate(iso: string): string {
 }
 
 /**
- * Customer document library — view, share, and delete. Upload is out of scope
- * for this screen (see docs modal on the web dashboard for that flow).
+ * Customer document library — photograph-and-file (Wave 4), view, share,
+ * delete. "Add" asks for the document type (same vocabulary as web's
+ * Documents tab), then opens the camera (native) / library (web); the shot is
+ * transcoded to JPEG (HEIC never reaches the server's fileFilter) and
+ * uploaded multipart — the server re-compresses to ≤1600px.
  *
  * Tapping a row VIEWS the document in-app: on native via expo-web-browser's
  * in-app browser sheet (the presigned `url` carries its own auth, no header
@@ -61,8 +71,48 @@ export default function CustomerDocumentsScreen() {
   const { data: customer } = useCustomer(customerId);
   const { data: docs = [], isLoading, isFetching, refetch } = useCustomerDocuments(customerId);
   const deleteMut = useDeleteCustomerDocument(customerId);
+  const uploadMut = useUploadCustomerDocuments(customerId);
 
   const [webViewing, setWebViewing] = React.useState<CustomerDocument | null>(null);
+  const [typePickerOpen, setTypePickerOpen] = React.useState(false);
+
+  const captureAndUpload = async (docType: string) => {
+    let result: ImagePicker.ImagePickerResult;
+    if (Platform.OS === "web") {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+    } else {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Camera access is required to photograph the document.");
+        return;
+      }
+      result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+    }
+    if (result.canceled || !result.assets[0]) return;
+    try {
+      // Force JPEG: an iOS HEIC would fail the server's mime allowlist.
+      const jpeg = await manipulateAsync(result.assets[0].uri, [], {
+        compress: 0.8,
+        format: SaveFormat.JPEG,
+      });
+      const file = productImageFile({ uri: jpeg.uri, mimeType: "image/jpeg" });
+      await uploadMut.mutateAsync({
+        docType,
+        files: [{ ...file, name: `${docType.replace(/\W+/g, "-").toLowerCase()}.jpg` }],
+      });
+      showToast("Document filed");
+    } catch (e: any) {
+      showToast(e?.response?.data?.message ?? e?.message ?? "Upload failed — try again.");
+    }
+  };
 
   const onView = async (doc: CustomerDocument) => {
     if (Platform.OS === "web") {
@@ -110,6 +160,13 @@ export default function CustomerDocumentsScreen() {
             }
           />
         }
+        trailing={
+          uploadMut.isPending ? (
+            <ActivityIndicator color={ios.brand} />
+          ) : (
+            <NavAction label="Add" bold onPress={() => setTypePickerOpen(true)} />
+          )
+        }
       />
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -124,7 +181,9 @@ export default function CustomerDocumentsScreen() {
         ) : docs.length === 0 ? (
           <View style={styles.center}>
             <Ionicons name="document-text-outline" size={32} color={ios.gray[3]} />
-            <Text style={styles.emptyText}>No documents on file.</Text>
+            <Text style={styles.emptyText}>
+              No documents on file. Photograph a license, W-9 or certificate to file it here.
+            </Text>
           </View>
         ) : (
           <ListGroup>
@@ -166,6 +225,17 @@ export default function CustomerDocumentsScreen() {
         )}
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      <OptionPickerSheet
+        visible={typePickerOpen}
+        title="What is this document?"
+        options={CUSTOMER_DOC_TYPES.map((t) => ({ id: t, label: t }))}
+        onClose={() => setTypePickerOpen(false)}
+        onSelect={(opt) => {
+          setTypePickerOpen(false);
+          void captureAndUpload(opt.id);
+        }}
+      />
 
       {Platform.OS === "web" ? (
         <Modal

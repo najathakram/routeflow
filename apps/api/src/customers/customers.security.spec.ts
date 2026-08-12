@@ -71,3 +71,25 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
     expect(orderByFromCall()).toEqual({ createdAt: "desc" });
   });
 });
+
+// ─── Wave 4: operator statement-PDF endpoints stay OPERATOR-gated ─────────────
+// The monthly statement exposes a customer's full financial position; both new
+// routes must carry the same @Roles(OPERATOR) guard as their siblings.
+// Reflection-only (no DI) — mirrors vendor-bills.security.spec's pattern.
+import "reflect-metadata";
+import { UserRole } from "@prisma/client";
+import { CustomersController } from "./customers.controller";
+import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+
+describe("CustomersController — statement endpoints role guard", () => {
+  it.each([["getStatementMonths"], ["getStatementPdf"]] as const)(
+    "%s requires OPERATOR",
+    (method) => {
+      const roles = Reflect.getMetadata(
+        ROLES_KEY,
+        CustomersController.prototype[method as keyof CustomersController] as object,
+      );
+      expect(roles).toEqual([UserRole.OPERATOR]);
+    },
+  );
+});

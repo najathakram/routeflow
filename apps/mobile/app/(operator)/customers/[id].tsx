@@ -261,6 +261,13 @@ export default function CustomerDetailScreen() {
               <Text style={styles.linkText}>Record advance payment</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
             </Pressable>
+            <Pressable
+              style={styles.linkRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/statement`)}
+            >
+              <Text style={styles.linkText}>View full statement</Text>
+              <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+            </Pressable>
           </View>
 
           {/* Account details */}
@@ -331,6 +338,58 @@ export default function CustomerDetailScreen() {
             >
               <Ionicons name="folder-outline" size={16} color={ios.brand} />
               <Text style={styles.actionListText}>Documents</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/licenses`)}
+            >
+              <Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Licenses</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/standing-orders`)}
+            >
+              <Ionicons name="repeat-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Standing orders</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/contacts`)}
+            >
+              <Ionicons name="people-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Contacts</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={ios.label3}
+                style={{ marginLeft: "auto" }}
+              />
+            </Pressable>
+            <Pressable
+              style={styles.actionListRow}
+              onPress={() => router.push(`/(operator)/customers/${id}/comments`)}
+            >
+              <Ionicons name="chatbubble-ellipses-outline" size={16} color={ios.brand} />
+              <Text style={styles.actionListText}>Comments</Text>
               <Ionicons
                 name="chevron-forward"
                 size={14}
