@@ -465,7 +465,8 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
   zero validation; apply's INLINE status recompute loses DRAFT-is-terminal, so apply-advance UI
   gates to SENT/VIEWED/PARTIAL/OVERDUE.
 - **`payments/record.tsx` (new)** — customer pick → amount/method chips → oldest-first waterfall
-  over open invoices (`status=SENT,VIEWED,PARTIAL,OVERDUE`, balanceDue>0), rows capped at
+  over open invoices (client-side OPEN_STATUSES + balanceDue>0 filter — ListInvoicesDto.status
+  takes ONE enum value; the comma list web's modal sends 400s silently), rows capped at
   balanceDue, Allocated/Received/Unallocated strip (excess → advance), save-as-draft toggle,
   receipt photo (HEIC→JPEG vs payments[0].id). Submit blocks on over-allocation.
 - **`payments/index.tsx`** — '+' Record entry (NavBar trailing), method chips (7), check badge
