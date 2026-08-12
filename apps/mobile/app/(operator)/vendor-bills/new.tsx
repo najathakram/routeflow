@@ -16,6 +16,13 @@ interface LineItem {
   description: string;
   qty: string;
   unitCost: string;
+  /** Catalog link — WITHOUT it, receiving the bill updates no stock and no
+   *  cost (server skips unlinked lines). Mobile bills used to never set it. */
+  productId: string | null;
+  /** Pieces per case when the line is priced per CASE (server converts
+   *  qty × packSize pieces at unitCost ÷ packSize on receive). Blank = the
+   *  line is already per piece/unit. */
+  packSize: string;
   productSearch: string;
   showSuggestions: boolean;
 }
@@ -24,6 +31,8 @@ const EMPTY_ITEM: LineItem = {
   description: "",
   qty: "",
   unitCost: "",
+  productId: null,
+  packSize: "",
   productSearch: "",
   showSuggestions: false,
 };
@@ -43,8 +52,8 @@ export default function NewVendorBillScreen() {
 
   const pickSupplier = () => setSupplierPickerOpen(true);
 
-  const updateItem = (index: number, field: keyof LineItem, value: string) =>
-    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)));
+  const updateItem = (index: number, patch: Partial<LineItem>) =>
+    setItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
 
   const addItem = () => setItems((prev) => [...prev, { ...EMPTY_ITEM }]);
   const removeItem = (index: number) => setItems((prev) => prev.filter((_, i) => i !== index));
@@ -52,11 +61,16 @@ export default function NewVendorBillScreen() {
   const submit = () => {
     const parsedItems = items
       .filter((it) => it.description)
-      .map((it) => ({
-        description: it.description,
-        qty: Number(it.qty) || 1,
-        unitCost: Number(it.unitCost) || 0,
-      }));
+      .map((it) => {
+        const pack = Math.max(0, Math.trunc(Number(it.packSize) || 0));
+        return {
+          description: it.description,
+          qty: Number(it.qty) || 1,
+          unitCost: Number(it.unitCost) || 0,
+          ...(it.productId ? { productId: it.productId } : {}),
+          ...(pack > 1 ? { packSize: pack } : {}),
+        };
+      });
 
     if (parsedItems.length === 0) {
       showToast("Add at least one line item.");
@@ -168,6 +182,38 @@ export default function NewVendorBillScreen() {
   );
 }
 
+/** What a picked catalog product contributes to the line. */
+interface PickableProduct {
+  id: string;
+  name: string;
+  sku?: string;
+  pricePerUnit?: number | string;
+  averageCost?: number | string | null;
+  standardCost?: number | string | null;
+  unitsPerBox?: number | null;
+}
+
+/**
+ * Prefill for a linked line — COST-side truth, never the selling price (the
+ * old prefill used pricePerUnit, seeding supplier bills with retail prices).
+ * `averageCost` is per PIECE; a boxed product's invoice line is per CASE, so
+ * prefill the case cost (avg × unitsPerBox) and packSize together — receive()
+ * converts back to pieces at unitCost ÷ packSize.
+ */
+function linePrefillFor(p: PickableProduct): Partial<LineItem> {
+  const perPiece = Number(p.averageCost ?? p.standardCost ?? 0);
+  const upb = Number(p.unitsPerBox ?? 0);
+  const patch: Partial<LineItem> = { description: p.name, productId: p.id };
+  if (upb > 1) {
+    patch.packSize = String(upb);
+    if (perPiece > 0) patch.unitCost = (perPiece * upb).toFixed(2);
+  } else {
+    patch.packSize = "";
+    if (perPiece > 0) patch.unitCost = perPiece.toFixed(2);
+  }
+  return patch;
+}
+
 function LineItemRow({
   item,
   index,
@@ -178,7 +224,7 @@ function LineItemRow({
   item: LineItem;
   index: number;
   canRemove: boolean;
-  onUpdate: (i: number, field: keyof LineItem, value: string) => void;
+  onUpdate: (i: number, patch: Partial<LineItem>) => void;
   onRemove: (i: number) => void;
 }) {
   const [search, setSearch] = useState(item.description);
@@ -186,28 +232,21 @@ function LineItemRow({
     search: search.trim().length >= 2 ? search.trim() : undefined,
     limit: 8,
   });
-  const suggestions = (productData?.data ?? []) as Array<{
-    id: string;
-    name: string;
-    sku?: string;
-    pricePerUnit?: number | string;
-  }>;
+  const suggestions = (productData?.data ?? []) as PickableProduct[];
   const [showSugs, setShowSugs] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
 
   const handleDescChange = (v: string) => {
     setSearch(v);
-    onUpdate(index, "description", v);
+    // Hand-typing breaks the catalog link — an unlinked line updates no
+    // stock/cost on receive, and the receive flow will warn about it.
+    onUpdate(index, { description: v, productId: null });
     setShowSugs(v.trim().length >= 2);
   };
 
-  const pickSuggestion = (p: (typeof suggestions)[number]) => {
+  const pickSuggestion = (p: PickableProduct) => {
     setSearch(p.name);
-    onUpdate(index, "description", p.name);
-    if (p.pricePerUnit) {
-      const cost = Number(p.pricePerUnit);
-      if (cost > 0) onUpdate(index, "unitCost", cost.toFixed(2));
-    }
+    onUpdate(index, linePrefillFor(p));
     setShowSugs(false);
   };
 
@@ -225,19 +264,10 @@ function LineItemRow({
     const trimmed = code.trim();
     if (!trimmed) return;
     try {
-      const result = await resolveProductByCode<{
-        id: string;
-        name: string;
-        pricePerUnit?: number | string;
-      }>(trimmed);
-      if (!result.notFound) {
-        const product = result.product;
-        setSearch(product.name);
-        onUpdate(index, "description", product.name);
-        if (product.pricePerUnit) {
-          const cost = Number(product.pricePerUnit);
-          if (cost > 0) onUpdate(index, "unitCost", cost.toFixed(2));
-        }
+      const result = await resolveProductByCode<PickableProduct>(trimmed);
+      if (!result.notFound && result.product) {
+        setSearch(result.product.name);
+        onUpdate(index, linePrefillFor(result.product));
         setShowSugs(false);
         return;
       }
@@ -250,7 +280,17 @@ function LineItemRow({
   return (
     <View style={styles.itemBlock}>
       <View style={styles.itemHeader}>
-        <Text style={styles.itemLabel}>Item {index + 1}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Text style={styles.itemLabel}>Item {index + 1}</Text>
+          {item.productId ? (
+            <View style={styles.linkedChip}>
+              <Ionicons name="link-outline" size={11} color={ios.system.greenInk} />
+              <Text style={styles.linkedChipText}>Linked</Text>
+            </View>
+          ) : (
+            <Text style={styles.unlinkedHint}>not linked — won&apos;t update stock</Text>
+          )}
+        </View>
         {canRemove ? (
           <Pressable onPress={() => onRemove(index)} hitSlop={8}>
             <Text style={styles.removeText}>Remove</Text>
@@ -302,24 +342,42 @@ function LineItemRow({
           <TextInput
             style={styles.textInput}
             value={item.qty}
-            onChangeText={(v) => onUpdate(index, "qty", v)}
+            onChangeText={(v) => onUpdate(index, { qty: v })}
             placeholder="1"
             placeholderTextColor={ios.label3}
             keyboardType="number-pad"
           />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.fieldLabel}>Unit cost ($)</Text>
+          <Text style={styles.fieldLabel}>
+            {Number(item.packSize) > 1 ? "Cost / case ($)" : "Unit cost ($)"}
+          </Text>
           <TextInput
             style={styles.textInput}
             value={item.unitCost}
-            onChangeText={(v) => onUpdate(index, "unitCost", v)}
+            onChangeText={(v) => onUpdate(index, { unitCost: v })}
             placeholder="0.00"
             placeholderTextColor={ios.label3}
             keyboardType="decimal-pad"
           />
         </View>
+        <View style={{ width: 92 }}>
+          <Text style={styles.fieldLabel}>Pcs/case</Text>
+          <TextInput
+            style={styles.textInput}
+            value={item.packSize}
+            onChangeText={(v) => onUpdate(index, { packSize: v.replace(/[^0-9]/g, "") })}
+            placeholder="—"
+            placeholderTextColor={ios.label3}
+            keyboardType="number-pad"
+          />
+        </View>
       </View>
+      {Number(item.packSize) > 1 ? (
+        <Text style={styles.packHint}>
+          Case line: stock receives qty × {item.packSize} pieces at cost ÷ {item.packSize} each.
+        </Text>
+      ) : null}
       {scanOpen ? (
         <BarcodeScanner onScanned={handleScanned} onClose={() => setScanOpen(false)} />
       ) : null}
@@ -411,6 +469,18 @@ const styles = StyleSheet.create({
   scanIconText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: ios.brand },
   removeText: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.system.redInk },
   row2: { flexDirection: "row", gap: 10 },
+  linkedChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: ios.system.greenWash,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  linkedChipText: { fontSize: 10, fontFamily: "Inter_600SemiBold", color: ios.system.greenInk },
+  unlinkedHint: { fontSize: 10, fontFamily: "Inter_400Regular", color: ios.label3 },
+  packHint: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
   addItemBtn: {
     flexDirection: "row",
     alignItems: "center",

@@ -312,8 +312,8 @@ function RevertToDraftModal({
           can then edit the bill and mark it as received again.
         </p>
         <p className="rounded-lg border border-yellow-200 bg-yellow-50 p-3 text-yellow-700">
-          <strong>Note:</strong> Stock quantities will be decremented to reverse the original
-          receive operation. Product average costs are not reversed.
+          <strong>Note:</strong> Stock quantities are decremented and product average costs are
+          reversed to their pre-receipt values, exactly undoing the original receive.
         </p>
       </div>
     </Modal>
