@@ -62,6 +62,7 @@ import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
+import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -682,8 +683,14 @@ function EditableLineItems({
   const [customError, setCustomError] = React.useState("");
   const addRef = React.useRef<HTMLDivElement>(null);
   const addInputRef = React.useRef<HTMLInputElement>(null);
+  // Digit runs that look like a scanned code query the candidate-aware
+  // `scanCode` search — a suffix-less wedge scan lands here via the dropdown,
+  // and the raw decode contains-misses when the camera's digit count differs
+  // from the stored shape (iOS 13-digit vs 12-digit codes in numeric names).
+  const addTermIsScanCode = /^\d{8,14}$/.test(addSearch.trim());
   const { data: productsData } = useProducts({
-    search: addSearch || undefined,
+    search: addTermIsScanCode ? undefined : addSearch || undefined,
+    scanCode: addTermIsScanCode ? addSearch.trim() : undefined,
     limit: 20,
     isActive: true,
   });
@@ -743,41 +750,30 @@ function EditableLineItems({
     if (!code) return;
     setAddLoading(true);
     try {
-      // 1. Barcode endpoint
-      try {
-        const res = await apiClient.get(`/products/barcode/${encodeURIComponent(code)}`);
-        if (res.data?.id) {
-          addProduct(res.data);
-          return;
-        }
-      } catch {
-        /* not found */
-      }
-      // 2. Search by code — exact SKU match first, then single result fallback
-      try {
-        const res = await apiClient.get("/products", {
-          params: { search: code, limit: 10, isActive: true, includeVariants: true },
-        });
-        const matches: any[] = res.data?.data ?? [];
-        const skuMatch = matches.find((p) => (p.sku ?? "").toLowerCase() === code.toLowerCase());
-        if (skuMatch) {
-          addProduct(skuMatch);
-          return;
-        }
-        if (matches.length === 1) {
-          addProduct(matches[0]);
-          return;
-        }
-        if (matches.length > 1) {
+      // Shared lib ladder: barcode endpoint → candidate-aware scanCode search.
+      // Replaces the inline copy that swallowed 5xx/network as "not found" and
+      // skipped unitSku on the exact-match check.
+      const result = await resolveProductByCode(code);
+      if (!result.notFound && result.product) {
+        if (result.ambiguous) {
+          // Several substring hits — this surface has always offered the
+          // dropdown as its picker. Keep the code visible but SELECTED, so the
+          // next wedge scan (which types) overwrites it instead of appending:
+          // the operator can pick a row OR just scan the next label.
           setAddOpen(true);
+          setTimeout(() => addInputRef.current?.select(), 50);
           return;
         }
-      } catch {
-        /* fall through to create */
+        addProduct(result.product);
+        return;
       }
-      // 3. Nothing found — open create-product modal with scanned code as SKU
+      // Nothing found — open create-product modal with scanned code as SKU
       setCreateProductInitialSku(code);
       setCreateProductOpen(true);
+    } catch {
+      // Network / 5xx: keep the code selected for an easy rescan; don't treat
+      // a transient failure as "product doesn't exist".
+      setTimeout(() => addInputRef.current?.select(), 50);
     } finally {
       setAddLoading(false);
     }

@@ -958,11 +958,24 @@ function ProductPickView({
     updateUnlistedQty,
     removeUnlisted,
     unitsPerBox: (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0),
+    // Owner ask: after CHOOSING the searched item, the field clears. Only on
+    // the row's first Add (not stepper increments — the settled list must not
+    // swap mid-repeat-tap); the added row survives the swap back to the
+    // catalogue because cart lines are pinned (withCartRows), and the pending
+    // scroll brings it into view at its new position.
+    pickedFromSearch: (id: string) => {
+      if (!searchTerm) return;
+      setSearch("");
+      setPendingScroll((s) => requestScroll(s, id));
+    },
   };
   const actionsRef = useRef(rowActions);
   actionsRef.current = rowActions;
 
-  const onRowAdd = useCallback((id: string) => actionsRef.current.add(id), []);
+  const onRowAdd = useCallback((id: string) => {
+    actionsRef.current.add(id);
+    actionsRef.current.pickedFromSearch(id);
+  }, []);
   const onRowIncrement = useCallback((id: string) => actionsRef.current.add(id), []);
   const onRowDecrement = useCallback((id: string) => actionsRef.current.remove(id), []);
   const onRowChangeQty = useCallback(
