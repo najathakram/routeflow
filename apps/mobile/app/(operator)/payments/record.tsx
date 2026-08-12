@@ -48,8 +48,11 @@ const BANK_DATE_HELP =
   "When the funds actually landed — e.g. a post-dated check's clearing date. Leave blank if unknown.";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Statuses a payment can land on (matches web's candidate query). */
-const OPEN_STATUSES = "SENT,VIEWED,PARTIAL,OVERDUE";
+/** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
+ *  validates `status` as a single enum value, so the comma-list web's payments
+ *  modal sends actually 400s (verified live) — its "candidate" query silently
+ *  returns nothing and web falls back the same way. */
+const OPEN_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 export default function RecordStandalonePaymentScreen() {
   const router = useRouter();
@@ -144,17 +147,15 @@ function PaymentForm({
 }) {
   const mut = useRecordPaymentStandalone();
   const uploadImageMut = useUploadPaymentImage();
-  const { data: invoicesData } = useAdminInvoices({
-    customerId,
-    status: OPEN_STATUSES,
-    limit: 50,
-  });
+  const { data: invoicesData } = useAdminInvoices({ customerId, limit: 50 });
 
   // Open invoices, oldest first — the array order IS the allocation order.
   const openInvoices = useMemo(
     () =>
       oldestInvoicesFirst(
-        (invoicesData?.data ?? []).filter((inv) => Number(inv.balanceDue ?? 0) > 0.001),
+        (invoicesData?.data ?? []).filter(
+          (inv) => OPEN_STATUSES.includes(inv.status) && Number(inv.balanceDue ?? 0) > 0.001,
+        ),
       ),
     [invoicesData],
   );
