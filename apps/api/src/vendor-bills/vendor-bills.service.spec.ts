@@ -314,13 +314,14 @@ describe("VendorBillsService", () => {
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(movementArgs.quantity.toString()).toBe("12");
       expect(movementArgs.unitCost.toString()).toBe("2");
-      expect(prisma.vendorBillItem.update).toHaveBeenCalledWith({
-        where: { id: "item-1" },
-        data: { qtyReceived: D(0).add(D("2")) },
-      });
       const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
       expect(billArgs.status).toBe("PARTIAL");
       expect(billArgs.receivedDate).toBeInstanceOf(Date);
+      // Nested through the parent — items have null tenantId (nested create),
+      // so a direct scoped vendorBillItem.update would miss them.
+      expect(billArgs.items.update).toEqual([
+        { where: { id: "item-1" }, data: { qtyReceived: D("2") } },
+      ]);
     });
 
     it("G3: a top-up receives the remainder, completes the bill, and keeps the first receipt date", async () => {
@@ -338,13 +339,12 @@ describe("VendorBillsService", () => {
 
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
       expect(movementArgs.quantity.toString()).toBe("6");
-      expect(prisma.vendorBillItem.update).toHaveBeenCalledWith({
-        where: { id: "item-1" },
-        data: { qtyReceived: D(4).add(D("6")) },
-      });
       const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
       expect(billArgs.status).toBe("RECEIVED");
       expect(billArgs.receivedDate).toBe(firstReceipt);
+      expect(billArgs.items.update).toEqual([
+        { where: { id: "item-1" }, data: { qtyReceived: D("10") } },
+      ]);
     });
 
     it("G3: rejects receiving more than the outstanding quantity", async () => {
@@ -472,9 +472,9 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.currentStock).toEqual({ decrement: D("4") });
-      expect(prisma.vendorBillItem.updateMany).toHaveBeenCalledWith({
-        where: { vendorBillId: "bill-1" },
-        data: { qtyReceived: null },
+      const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(billArgs.items).toEqual({
+        updateMany: { where: {}, data: { qtyReceived: null } },
       });
     });
   });

@@ -736,22 +736,26 @@ export class VendorBillsService {
         });
         if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
 
-        // Per-line receipt progress, in bill denomination (top-ups accumulate).
-        await tx.vendorBillItem.update({
-          where: { id: item.id },
-          data: { qtyReceived: this.lineReceivedQty(bill, item).add(receiveQty) },
-        });
-
         restockedIds.push(item.productId);
       }
 
       // Bill update LAST so the response's items carry the fresh qtyReceived.
+      // Per-line receipt progress goes through the PARENT as nested updates:
+      // items are created nested, so their tenantId is null and a direct
+      // (tenant-scoped) vendorBillItem.update can't see them — the bill's own
+      // tenant scope makes the nested write tenant-safe by construction.
       // receivedDate keeps the FIRST receipt's date across top-ups.
       const updatedBill = await tx.vendorBill.update({
         where: { id },
         data: {
           status: fullyReceived ? "RECEIVED" : "PARTIAL",
           receivedDate: bill.receivedDate ?? new Date(),
+          items: {
+            update: plan.map(({ item, receiveQty }) => ({
+              where: { id: item.id },
+              data: { qtyReceived: this.lineReceivedQty(bill, item).add(receiveQty) },
+            })),
+          },
         },
         include: {
           supplier: { select: { id: true, name: true } },
@@ -848,16 +852,17 @@ export class VendorBillsService {
       // Reverse the lots this bill created (one per received line)
       await this.reverseBillLots(tx, bill.billNumber);
 
-      // Clear per-line receipt progress — the bill is back to never-received.
-      await tx.vendorBillItem.updateMany({
-        where: { vendorBillId: id },
-        data: { qtyReceived: null },
-      });
-
-      // Revert bill status to DRAFT
+      // Revert bill status to DRAFT and clear per-line receipt progress — the
+      // bill is back to never-received. Nested updateMany, not a direct
+      // vendorBillItem call: nested-created items have null tenantId, so the
+      // tenant-scoped model method can't see them; the parent's scope can.
       return tx.vendorBill.update({
         where: { id },
-        data: { status: "DRAFT", receivedDate: null },
+        data: {
+          status: "DRAFT",
+          receivedDate: null,
+          items: { updateMany: { where: {}, data: { qtyReceived: null } } },
+        },
         include: {
           supplier: { select: { id: true, name: true } },
           items: {

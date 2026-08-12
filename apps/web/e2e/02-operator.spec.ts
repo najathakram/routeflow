@@ -654,6 +654,95 @@ test.describe("Operator — Tenant Dashboard", () => {
     expect(scanCalls).toBe(callsBeforeRetry + 1);
   });
 
+  test("OP-17f batch scan: skip an already-recorded invoice, the other posts, modal closes", async ({
+    page,
+  }) => {
+    await page.route("**/vendor-bills/scan-invoice", (route) => {
+      const body = route.request().postData() ?? "";
+      const key = body.includes("invoice-b.pdf") ? "B" : "A";
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: batchScanPayload(key as "A" | "B"),
+      });
+    });
+    // The duplicate probe reports invoice A as already recorded; B is clean.
+    await page.route("**/vendor-bills/check-duplicate", (route) => {
+      const body = route.request().postDataJSON() as { supplierInvoiceNumber?: string };
+      const isDup = body?.supplierInvoiceNumber === "INV-A-1";
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          duplicate: isDup
+            ? {
+                billId: "vb-existing",
+                billNumber: "BILL-2026-0009",
+                status: "RECEIVED",
+                resumable: false,
+                totalOwed: 70,
+                billDate: "2026-07-01",
+                receivedDate: "2026-07-02",
+                supplierName: "E2E Batch Supplier A",
+                itemCount: 2,
+                matchedBy: "number",
+                totalMatches: true,
+              }
+            : null,
+        }),
+      });
+    });
+    const billBodies: any[] = [];
+    await page.route("**/vendor-bills", (route) => {
+      if (route.request().method() !== "POST") return void route.continue();
+      billBodies.push(route.request().postDataJSON());
+      void route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "fake-bill-1" }),
+      });
+    });
+    await page.route("**/vendor-bills/fake-bill-*/receive", (route) =>
+      route.fulfill({ status: 201, contentType: "application/json", body: "{}" }),
+    );
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([pdfFile("invoice-a.pdf"), pdfFile("invoice-b.pdf")]);
+    await expect(page.getByText("Invoice 1 of 2")).toBeVisible({ timeout: 15_000 });
+
+    // Selecting the supplier fires the probe → duplicate banner with a Skip action.
+    const supplierSelect = () =>
+      page.locator('select:has(option:text("— Select supplier —"))').first();
+    await supplierSelect().selectOption({ index: 1 });
+    await expect(page.getByTestId("duplicate-skip")).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId("duplicate-skip").click();
+    // The invoice collapses to a Skipped panel (undoable) — not removed from the batch.
+    await expect(page.getByTestId("duplicate-skipped")).toBeVisible();
+    await expect(page.getByRole("button", { name: /undo skip/i })).toBeVisible();
+
+    // The other invoice is still creatable; the batch is no longer dead-ended.
+    await page.getByTestId("invoice-nav-next").click();
+    await expect(page.getByText(/detected: e2e batch supplier b/i)).toBeVisible({
+      timeout: 15_000,
+    });
+    await supplierSelect().selectOption({ index: 1 });
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.getByRole("button", { name: /create 1 bill/i }).click();
+
+    // Exactly ONE bill posts — the clean invoice, not the skipped duplicate.
+    await expect.poll(() => billBodies.length, { timeout: 15_000 }).toBe(1);
+    expect(billBodies[0].notes).toBe("Supplier invoice #INV-B-1");
+    // Toast reports the drop, and the batch is DONE: the modal closes.
+    await expect(page.getByText(/1 skipped as already recorded/i).first()).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("invoice-nav-next")).toHaveCount(0);
+  });
+
   test("OP-17e both-mode partial failure: created bill is never re-posted on retry", async ({
     page,
   }) => {
