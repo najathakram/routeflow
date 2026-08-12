@@ -26,6 +26,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
@@ -39,6 +40,8 @@ const dupMatch = {
 };
 
 const storage = { upload: jest.fn(), presignedUrl: jest.fn() };
+
+const inventory = { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() };
 
 describe("VendorBillsService — F10-004 payment amount guard", () => {
   let service: VendorBillsService;
@@ -54,6 +57,7 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
+        { provide: InventoryService, useValue: inventory },
       ],
     }).compile();
     service = mod.get(VendorBillsService);
@@ -179,6 +183,7 @@ describe("check-duplicate — access control", () => {
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
+        { provide: InventoryService, useValue: inventory },
       ],
     }).compile();
     dupMatch.findVendorBillDuplicate.mockResolvedValue({
