@@ -443,38 +443,54 @@ describe("InventoryService", () => {
       expect(result.missingCostProducts).toEqual([{ id: "prod-2", name: "No-cost" }]);
     });
 
-    it("values FIFO/LIFO stock from the remaining lots, not the drifted moving average", async () => {
-      // Bought 10@1 then 10@3 (avg 2), sold 10 (FIFO drew down the 10@1 lot):
-      // 10 units remain, all in the 10@3 lot → true value 30, NOT 10×avg(2)=20.
+    it("values a FIFO-labelled product at the weighted average, ignoring stock lots", async () => {
+      // Lots are never drawn down (recordSale has no caller), so a lot set that
+      // outlives the stock it describes must not inflate the carrying value:
+      // 10 units at avg 2 = 20, regardless of a stale 40-unit lot at cost 3.
       prisma.product.findMany.mockResolvedValue([
         product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
       ]);
       prisma.stockLot.findMany.mockResolvedValue([
-        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+        { productId: "prod-1", remainingQty: D(40), unitCost: D(3) },
       ]);
 
       const result = await service.getValuation();
 
-      expect(result.totalValue).toBe(30);
+      expect(result.totalValue).toBe(20);
       expect(result.missingCostCount).toBe(0);
+      expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
+    });
+
+    it("values a product with zero stock at zero however many lots survive", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ costingMethod: "FIFO", currentStock: D(0), averageCost: D(5) }),
+      ]);
+      prisma.stockLot.findMany.mockResolvedValue([
+        { productId: "prod-1", remainingQty: D(7), unitCost: D(5) },
+      ]);
+
+      const result = await service.getValuation();
+
+      expect(result.totalValue).toBe(0);
     });
   });
 
   // ─── getStockOverview ─────────────────────────────────────────────────────────
 
   describe("getStockOverview", () => {
-    it("reports a FIFO row's value + unit cost from its open lots", async () => {
+    it("reports a FIFO row at the weighted average so it reconciles with getValuation", async () => {
       prisma.product.findMany.mockResolvedValue([
         product({ costingMethod: "FIFO", currentStock: D(10), averageCost: D(2) }),
       ]);
       prisma.stockLot.findMany.mockResolvedValue([
-        { productId: "prod-1", remainingQty: D(10), unitCost: D(3) },
+        { productId: "prod-1", remainingQty: D(40), unitCost: D(3) },
       ]);
 
       const [row] = await service.getStockOverview();
 
-      expect(row.totalValue).toBe(30);
-      expect(row.averageCost).toBe(3); // value ÷ stock, not the moving average of 2
+      expect(row.totalValue).toBe(20);
+      expect(row.averageCost).toBe(2);
+      expect(prisma.stockLot.findMany).not.toHaveBeenCalled();
     });
 
     it("selects trackedCategoryId and passes it through to the row (regulated-section filtering)", async () => {
@@ -552,6 +568,63 @@ describe("InventoryService", () => {
       expect(result.updated).toBe(0);
       expect(result.noHistory).toEqual([{ productId: "prod-1", name: "Flour 25lb" }]);
       expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── getForecasting ─────────────────────────────────────────────────────────
+
+  describe("getForecasting", () => {
+    it("computes 30-day usage from invoiced sales, not stock movements", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        product({ sku: "FL-25", unit: "bag", reorderPoint: 15, reorderQty: 40 }),
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date(),
+          paidAt: null,
+          items: [
+            {
+              productId: "prod-1",
+              qty: D(45),
+              subtotal: D(90),
+              product: { name: "Flour 25lb", isTobacco: false },
+            },
+            {
+              productId: "prod-1",
+              qty: D(15),
+              subtotal: D(30),
+              product: { name: "Flour 25lb", isTobacco: false },
+            },
+            { productId: null, qty: D(99), subtotal: D(1), product: null }, // ad-hoc — ignored
+          ],
+        },
+      ]);
+
+      const [row] = await service.getForecasting();
+
+      expect(row.totalUsed30Days).toBe(60);
+      expect(row.avgDailySales).toBe(2); // 60 / 30
+      expect(row.daysRemaining).toBe(5); // floor(10 / 2)
+      expect(row.needsReorder).toBe(true); // stock 10 < reorderPoint 15
+      // Invoiced sales windowed ~30 days on issueDate; the dead sources untouched.
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      const windowDays =
+        (args.where.issueDate.lte.getTime() - args.where.issueDate.gte.getTime()) / 86_400_000;
+      expect(Math.round(windowDays)).toBe(30);
+      expect(prisma.stockMovement.findMany).not.toHaveBeenCalled();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("reports zero demand and null daysRemaining when nothing was invoiced", async () => {
+      prisma.product.findMany.mockResolvedValue([product({ reorderPoint: null })]);
+
+      const [row] = await service.getForecasting();
+
+      expect(row.avgDailySales).toBe(0);
+      expect(row.totalUsed30Days).toBe(0);
+      expect(row.daysRemaining).toBeNull();
+      expect(row.needsReorder).toBe(false);
     });
   });
 });

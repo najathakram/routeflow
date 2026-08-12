@@ -25,6 +25,8 @@ import { VendorBillsController } from "./vendor-bills.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
+import { StorageService } from "../storage/storage.service";
+import { InventoryService } from "../inventory/inventory.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
@@ -34,7 +36,12 @@ import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.d
 const dupMatch = {
   normalizeNumber: (raw: string) => (raw ?? "").toUpperCase().replace(/\s+/g, ""),
   findVendorBillDuplicate: jest.fn().mockResolvedValue(null),
+  findScanDuplicate: jest.fn().mockResolvedValue(null),
 };
+
+const storage = { upload: jest.fn(), presignedUrl: jest.fn() };
+
+const inventory = { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() };
 
 describe("VendorBillsService — F10-004 payment amount guard", () => {
   let service: VendorBillsService;
@@ -49,6 +56,8 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
+        { provide: StorageService, useValue: storage },
+        { provide: InventoryService, useValue: inventory },
       ],
     }).compile();
     service = mod.get(VendorBillsService);
@@ -173,6 +182,8 @@ describe("check-duplicate — access control", () => {
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
+        { provide: StorageService, useValue: storage },
+        { provide: InventoryService, useValue: inventory },
       ],
     }).compile();
     dupMatch.findVendorBillDuplicate.mockResolvedValue({

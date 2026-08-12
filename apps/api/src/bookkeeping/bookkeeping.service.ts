@@ -9,6 +9,14 @@ import {
   PaymentStatus,
   CreditNoteStatus,
 } from "@prisma/client";
+import { roundMoney } from "../common/pricing";
+import {
+  estimateCogs,
+  fetchCostIndex,
+  fetchInvoicedSaleLines,
+  fetchProductCostFacts,
+  soldProductIds,
+} from "../common/invoiced-sales";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
 import { InvoiceService } from "./invoice.service";
@@ -736,6 +744,15 @@ export class BookkeepingService implements OnModuleInit {
   }
 
   // ── P&L Report ──
+  /**
+   * COGS is estimated from invoiced sales — the SAME invoice set as revenue
+   * (status PAID, windowed on paidAt), so both sides of gross profit share a
+   * basis. Each line is costed at qty × the product's point-in-time average
+   * cost at the invoice's issueDate (invoice lines carry no cost of their
+   * own; `StockMovement type:"SALE"` rows are dead — see
+   * common/invoiced-sales.ts). No tobacco exclusion here: accounting records
+   * always reflect real financials.
+   */
   async getProfitAndLoss(from?: string, to?: string) {
     const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
     const toDate = to
@@ -746,14 +763,16 @@ export class BookkeepingService implements OnModuleInit {
         })()
       : new Date();
 
-    const [revenueAgg, cogsMovements, expenses] = await Promise.all([
+    const [revenueAgg, cogsLines, expenses] = await Promise.all([
       this.prisma.forTenant().invoice.aggregate({
         where: { status: InvoiceStatus.PAID, paidAt: { gte: fromDate, lte: toDate } },
         _sum: { total: true },
       }),
-      this.prisma.forTenant().stockMovement.findMany({
-        where: { type: "SALE", createdAt: { gte: fromDate, lte: toDate } },
-        select: { quantity: true, unitCost: true },
+      fetchInvoicedSaleLines(this.prisma.forTenant(), {
+        from: fromDate,
+        to: toDate,
+        dateBasis: "paidAt",
+        status: InvoiceStatus.PAID,
       }),
       this.prisma.forTenant().expense.findMany({
         where: { deletedAt: null, date: { gte: fromDate, lte: toDate } },
@@ -762,15 +781,15 @@ export class BookkeepingService implements OnModuleInit {
     ]);
 
     const revenue = Number(revenueAgg._sum.total ?? 0);
-    // Signed COGS: SALE quantities are negative (-qty × unitCost adds cost);
-    // reopen-reversals are positive SALE rows and net their cost back out
-    const cogs = cogsMovements.reduce(
-      (s, m) => s + -Number(m.quantity) * Number(m.unitCost ?? 0),
-      0,
-    );
-    const grossProfit = revenue - cogs;
-    const opEx = expenses.reduce((s, e) => s + Number(e.amount), 0);
-    const netProfit = grossProfit - opEx;
+    const productIds = soldProductIds(cogsLines);
+    const [costIndex, costFacts] = await Promise.all([
+      fetchCostIndex(this.prisma.forTenant(), productIds, toDate),
+      fetchProductCostFacts(this.prisma.forTenant(), productIds),
+    ]);
+    const cogs = roundMoney(estimateCogs(cogsLines, costIndex, costFacts));
+    const grossProfit = roundMoney(revenue - cogs);
+    const opEx = roundMoney(expenses.reduce((s, e) => s + Number(e.amount), 0));
+    const netProfit = roundMoney(grossProfit - opEx);
 
     const byCategory = expenses.reduce((acc: any, e) => {
       const cat = e.category?.name ?? "Uncategorized";

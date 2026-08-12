@@ -24,6 +24,7 @@ import {
   useDeleteProductImage,
 } from "../../../lib/api/products";
 import { productImageFile } from "../../../lib/product-image";
+import { costPerSellingUnit } from "../../../lib/pricing";
 import { useInventoryMovements } from "../../../lib/api/inventory";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
@@ -241,8 +242,11 @@ export default function ProductDetailScreen() {
             <Row label="Unit" value={product.unit ?? "ea"} />
             <Row label="Price" value={`$${toNumber(product.pricePerUnit).toFixed(2)}`} />
             {(() => {
-              // Effective cost: standard cost for STANDARD products, else weighted average
-              const effectiveCost = product.standardCost ?? product.averageCost;
+              // averageCost-first precedence (matches NewOrderScreen's cost eye
+              // and the server's effectiveValue, which reads standardCost only
+              // for STANDARD products — the old standardCost-first order showed
+              // a stale hand-typed number over the live weighted average).
+              const effectiveCost = product.averageCost ?? product.standardCost;
               if (effectiveCost == null) {
                 return (
                   <View style={styles.detailRow}>
@@ -254,7 +258,10 @@ export default function ProductDetailScreen() {
                 );
               }
               const price = toNumber(product.pricePerUnit);
-              const cost = toNumber(effectiveCost);
+              // averageCost is per PIECE; pricePerUnit is per SELLING unit (a
+              // CASE when unitsPerBox > 1) — compare like with like or margins
+              // read inflated by the pack size.
+              const cost = costPerSellingUnit(toNumber(effectiveCost), product.unitsPerBox);
               const marginPct = price > 0 ? Math.round(((price - cost) / price) * 100) : null;
               const color =
                 marginPct == null || marginPct >= 25

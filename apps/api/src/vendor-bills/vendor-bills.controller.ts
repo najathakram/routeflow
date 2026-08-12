@@ -23,6 +23,7 @@ import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
+import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -62,7 +63,7 @@ export class VendorBillsController {
     // matches the field name exactly — clients MUST use "images").
     FilesInterceptor("images", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
   )
-  scanInvoice(@UploadedFiles() files: Express.Multer.File[]) {
+  scanInvoice(@UploadedFiles() files: Express.Multer.File[], @CurrentUser() user: { id: string }) {
     if (!files || files.length === 0) {
       throw new BadRequestException("No file provided");
     }
@@ -92,13 +93,32 @@ export class VendorBillsController {
       }
     }
     return this.vendorBillsService.scanInvoice(
-      files.map((f) => ({ buffer: f.buffer, mimeType: f.mimetype || "image/jpeg" })),
+      files.map((f) => ({
+        buffer: f.buffer,
+        mimeType: f.mimetype || "image/jpeg",
+        fileName: f.originalname,
+        size: f.size,
+      })),
+      user.id,
     );
   }
 
   // Must be before :id routes
   @Post("check-duplicate") checkDuplicate(@Body() dto: CheckVendorBillDuplicateDto) {
     return this.vendorBillsService.checkDuplicate(dto);
+  }
+
+  // Scan history — must be before the :id routes or "scans" is read as a bill id.
+  @Get("scans") listScans(
+    @Query("status") status?: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+  ) {
+    return this.vendorBillsService.listScans(status, page ? +page : 1, limit ? +limit : 20);
+  }
+
+  @Get("scans/:id") getScan(@Param("id") id: string) {
+    return this.vendorBillsService.getScan(id);
   }
 
   // Product mapping memory — must be before :id routes
@@ -129,7 +149,7 @@ export class VendorBillsController {
 
   @Post(":id/receive") receive(
     @Param("id") id: string,
-    @Body() dto: { acknowledgeUnlinked?: boolean } | undefined,
+    @Body() dto: ReceiveVendorBillDto | undefined,
     @CurrentUser() user: { id: string },
   ) {
     return this.vendorBillsService.receive(id, dto, user.id);

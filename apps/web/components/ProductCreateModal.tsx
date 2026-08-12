@@ -121,7 +121,7 @@ export function ProductCreateModal({
     pricePerUnit: initialPrice != null ? initialPrice.toFixed(2) : "",
     category: "",
     description: "",
-    costingMethod: "FIFO",
+    costingMethod: "AVCO",
     standardCost: initialCost != null && initialCost > 0 ? String(initialCost) : "",
     unitsPerBox: validUnitsPerBoxPrefill(initialUnitsPerBox) ? String(initialUnitsPerBox) : "",
     parentProductId: defaultParentId ?? "",
@@ -249,7 +249,7 @@ export function ProductCreateModal({
       pricePerUnit: "",
       category: "",
       description: "",
-      costingMethod: "FIFO",
+      costingMethod: "AVCO",
       standardCost: "",
       unitsPerBox: "",
       parentProductId: "",
@@ -293,7 +293,7 @@ export function ProductCreateModal({
         // (which is hidden/cleared in the form) when a type is selected.
         category: form.trackedCategoryId ? undefined : form.category || undefined,
         description: form.description || undefined,
-        costingMethod: form.costingMethod || "FIFO",
+        costingMethod: form.costingMethod || "AVCO",
         standardCost:
           form.costingMethod === "STANDARD" && form.standardCost ? form.standardCost : undefined,
         unitsPerBox: form.unitsPerBox ? parseInt(form.unitsPerBox, 10) : undefined,
@@ -539,8 +539,10 @@ export function ProductCreateModal({
                 {priceError && <p className="mt-1 text-xs text-danger">{priceError}</p>}
                 {initialCost != null && initialCost > 0 && (
                   <p className="mt-1 text-[11px] text-navy/70">
-                    Suggested from invoice cost ${initialCost.toFixed(2)} + 30%. For FIFO/AVCO
-                    products the actual cost is recorded when the bill is received.
+                    {validUnitsPerBoxPrefill(initialUnitsPerBox)
+                      ? `Suggested from the invoice case cost + 30%; cost saved per unit ($${initialCost.toFixed(2)}). `
+                      : `Suggested from invoice cost $${initialCost.toFixed(2)} + 30%. `}
+                    For FIFO/AVCO products the actual cost is recorded when the bill is received.
                   </p>
                 )}
               </div>

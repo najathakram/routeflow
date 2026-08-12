@@ -461,14 +461,10 @@ export function ProductForm({
       </FormSection>
 
       <FormSection title="Stock">
-        <FormField label="On-hand quantity">
-          <FormTextInput
-            value={form.currentStock}
-            onChangeText={(v) => set("currentStock", v)}
-            placeholder="0"
-            keyboardType="number-pad"
-          />
-        </FormField>
+        {/* No on-hand quantity input: currentStock is not on the product
+            create/update DTOs (forbidNonWhitelisted 400'd EVERY save that
+            filled it), and stock changes must go through the audited
+            Adjust-stock / Quick-receive flows so a movement is recorded. */}
         <FormField label="Reorder at">
           <FormTextInput
             value={form.reorderPoint}

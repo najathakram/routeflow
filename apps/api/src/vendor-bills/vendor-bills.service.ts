@@ -19,9 +19,14 @@ import { buildTokenWeights, composedProductName, matchLine } from "./product-mat
 import {
   DuplicateMatchService,
   extractSupplierInvoiceNumber,
+  normalizeInvoiceNumber,
   type VendorBillDuplicateMatch,
 } from "../import/duplicate-match.service";
+import { StorageService } from "../storage/storage.service";
+import { InventoryService } from "../inventory/inventory.service";
+import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
+import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -34,9 +39,72 @@ export interface VendorBillDuplicatePayload {
   receivedDate: Date | null;
   supplierName: string | null;
   itemCount: number;
-  matchedBy: "number" | "fuzzy";
+  matchedBy: "number" | "fuzzy" | "lines";
   totalMatches: boolean;
 }
+
+/** One uploaded page. `fileName`/`size` are metadata only — the bytes are the document. */
+export interface ScanInvoiceFile {
+  buffer: Buffer;
+  mimeType: string;
+  fileName?: string;
+  size?: number;
+}
+
+/**
+ * What happened the last time these exact bytes were uploaded. Returned instead
+ * of a fresh extraction so a repeat upload is instant, free, and tells the
+ * operator whether the document already became a bill.
+ */
+export interface PriorScanSummary {
+  scanId: string;
+  scannedAt: Date;
+  status: string;
+  vendorBillId: string | null;
+  billNumber: string | null;
+  supplierInvoiceNumber: string | null;
+  total: number | null;
+}
+
+/** Phase-1 OCR model. Persisted with each scan, so the constant is the single source. */
+const SCAN_MODEL = "claude-haiku-4-5";
+
+/** Extension per accepted upload type — the stored key keeps the original bytes readable. */
+const SCAN_FILE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "application/pdf": "pdf",
+};
+
+const INVOICE_SCAN_STATUSES = ["SCANNED", "POSTED", "DISCARDED", "DUPLICATE"] as const;
+
+/** Promoted columns only — `extractedPayload` is far too large for a list response. */
+const INVOICE_SCAN_LIST_SELECT = {
+  id: true,
+  fileName: true,
+  mimeType: true,
+  pageCount: true,
+  byteSize: true,
+  fileKey: true,
+  supplierNameRaw: true,
+  supplierId: true,
+  supplierInvoiceNumber: true,
+  invoiceDate: true,
+  subtotal: true,
+  tax: true,
+  total: true,
+  lineCount: true,
+  status: true,
+  vendorBillId: true,
+  scannedById: true,
+  createdAt: true,
+  supplier: { select: { id: true, name: true } },
+  vendorBill: { select: { id: true, billNumber: true, status: true } },
+} as const;
 
 @Injectable()
 export class VendorBillsService {
@@ -47,7 +115,53 @@ export class VendorBillsService {
     private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
     private readonly duplicateMatch: DuplicateMatchService,
+    private readonly storage: StorageService,
+    private readonly inventory: InventoryService,
   ) {}
+
+  /**
+   * A bill line's INVENTORY denomination. Suppliers price lines in whatever
+   * unit the invoice prints — usually CASES for boxed goods — while
+   * `Product.currentStock` and `Product.averageCost` are contractually per
+   * PIECE (common/pricing.ts `costPerSellingUnit`). A line with
+   * `packSize > 1` is a case line: pieces = qty × packSize, per-piece cost =
+   * unitCost ÷ packSize. The bill's own money is untouched — `totalOwed`
+   * stays Σ qty × unitCost in invoice denomination, matching the printed
+   * line totals. Receive, revert and void MUST all convert through this one
+   * helper or reversals stop matching receipts.
+   */
+  private lineInventoryDelta(item: {
+    qty: Prisma.Decimal | number | string;
+    unitCost: Prisma.Decimal | number | string;
+    packSize?: number | null;
+  }): { qty: Prisma.Decimal; unitCost: Prisma.Decimal } {
+    const rawQty = new Prisma.Decimal(item.qty as Prisma.Decimal.Value);
+    const rawCost = costDecimal(item.unitCost);
+    const pack = item.packSize ?? 0;
+    if (pack > 1) {
+      return { qty: rawQty.mul(pack), unitCost: costDecimal(rawCost.div(pack)) };
+    }
+    return { qty: rawQty, unitCost: rawCost };
+  }
+
+  /**
+   * How much of a line has actually been received, in BILL denomination.
+   * Null `qtyReceived` is ambiguous: on a bill received before per-line
+   * tracking existed (receivedDate set, EVERY line null) it means fully
+   * received; on a bill with tracking (any line non-null) it means that line
+   * was never received. Receive, revert and void all read through this one
+   * helper so top-ups and reversals stay consistent with what was applied.
+   */
+  private lineReceivedQty(
+    bill: { receivedDate: Date | null; items: { qtyReceived: Prisma.Decimal | null }[] },
+    item: { qty: Prisma.Decimal; qtyReceived: Prisma.Decimal | null },
+  ): Prisma.Decimal {
+    if (item.qtyReceived != null) return new Prisma.Decimal(item.qtyReceived);
+    const tracked = bill.items.some((i) => i.qtyReceived != null);
+    return bill.receivedDate != null && !tracked
+      ? new Prisma.Decimal(item.qty)
+      : new Prisma.Decimal(0);
+  }
 
   private async nextBillNumber() {
     const year = new Date().getFullYear();
@@ -111,6 +225,10 @@ export class VendorBillsService {
       }
     }
 
+    if (!dto.allowDuplicate) {
+      await this.assertNoPostedLineMatch(dto, totalOwed, supplierId ?? null);
+    }
+
     const bill = await this.prisma.forTenant().vendorBill.create({
       data: {
         billNumber: await this.nextBillNumber(),
@@ -118,6 +236,10 @@ export class VendorBillsService {
         status: "DRAFT",
         totalOwed,
         ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
+        // Kept alongside totalOwed (which already includes the tax) so an edit
+        // recomputing totals from line items can no longer silently drop them.
+        taxAmount: this.moneyOrNull(dto.taxAmount),
+        subtotal: this.moneyOrNull(dto.subtotal),
         billDate,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
         notes: dto.notes,
@@ -130,6 +252,14 @@ export class VendorBillsService {
                     description: item.description || item.name || "",
                     qty: new Prisma.Decimal(item.qty || 1),
                     unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                    // Read off the invoice and previously discarded here. `sku`
+                    // is what matches this line to a product on the next scan
+                    // from the same supplier.
+                    sku: item.sku || null,
+                    packSize: Number.isFinite(Number(item.packSize))
+                      ? Math.trunc(Number(item.packSize))
+                      : null,
+                    lineTotal: this.moneyOrNull(item.lineTotal),
                   })),
                 },
               }
@@ -143,7 +273,132 @@ export class VendorBillsService {
       },
     });
 
+    await this.markScanPosted(dto.scanId, bill.id);
+
     return bill;
+  }
+
+  /** Round every monetary write; absent stays absent rather than becoming 0. */
+  private moneyOrNull(value: unknown): Prisma.Decimal | null {
+    if (value === null || value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? new Prisma.Decimal(roundMoney(n)) : null;
+  }
+
+  /**
+   * Block a bill whose line numbers exactly repeat a scan that was already
+   * posted. This is the layer that covers documents whose printed invoice
+   * number was never legible — the number guard above can say nothing about
+   * them, and until now nothing else could either.
+   *
+   * Identity-grade, so it is allowed to block: the same quantities at the same
+   * unit costs summing to the same total is the same document. A VOID or
+   * deleted bill never blocks — voiding is how an operator undoes a bad post.
+   */
+  private async assertNoPostedLineMatch(
+    dto: any,
+    totalOwed: number,
+    supplierId: string | null,
+  ): Promise<void> {
+    const fingerprint = await this.resolveLineFingerprint(dto, totalOwed);
+    if (!fingerprint) return;
+
+    const priorScan = await this.duplicateMatch.findScanDuplicate({
+      lineFingerprint: fingerprint,
+      supplierId,
+    });
+    if (
+      !priorScan ||
+      priorScan.matchedBy !== "lines" ||
+      priorScan.status !== "POSTED" ||
+      !priorScan.vendorBillId ||
+      priorScan.id === dto.scanId
+    ) {
+      return;
+    }
+
+    const match = await this.vendorBillMatchById(priorScan.vendorBillId, totalOwed);
+    if (!match) return;
+    throw new ConflictException({
+      code: "DUPLICATE_VENDOR_BILL",
+      message: this.duplicateMessage(priorScan.supplierInvoiceNumber, match),
+      duplicate: await this.toDuplicatePayload(match),
+    });
+  }
+
+  /**
+   * A scan's own stored fingerprint when the bill came from one, so two scans
+   * of the same paper are compared on values computed identically at scan time.
+   * Hand-keyed bills fall back to the lines in front of us — best-effort, since
+   * a typed total includes tax the scan may have recorded separately.
+   */
+  private async resolveLineFingerprint(dto: any, totalOwed: number): Promise<string | null> {
+    if (dto.scanId) {
+      const scan = await this.prisma
+        .forTenant()
+        .invoiceScan.findUnique({
+          where: { id: dto.scanId },
+          select: { lineFingerprint: true },
+        })
+        .catch(() => null);
+      if (scan?.lineFingerprint) return scan.lineFingerprint;
+    }
+    const lines = (dto.items ?? []).map((item: any) => ({
+      qty: item.qty ?? 1,
+      unitCost: item.unitCost ?? item.unitPrice ?? 0,
+    }));
+    return lineFingerprint(lines, totalOwed);
+  }
+
+  /** The bill behind a posted scan, as the duplicate matcher would report it. */
+  private async vendorBillMatchById(
+    billId: string,
+    total: number,
+  ): Promise<VendorBillDuplicateMatch | null> {
+    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+      where: { id: billId },
+      select: {
+        id: true,
+        billNumber: true,
+        status: true,
+        totalOwed: true,
+        billDate: true,
+        receivedDate: true,
+        supplierId: true,
+        _count: { select: { items: true } },
+      },
+    });
+    if (!bill || bill.status === "VOID") return null;
+    const totalOwed = Number(bill.totalOwed);
+    return {
+      id: bill.id,
+      billNumber: bill.billNumber,
+      status: bill.status,
+      totalOwed,
+      billDate: bill.billDate ?? null,
+      receivedDate: bill.receivedDate ?? null,
+      supplierId: bill.supplierId ?? null,
+      itemCount: bill._count.items,
+      matchedBy: "lines",
+      totalMatches: Math.abs(totalOwed - total) <= 0.005,
+    };
+  }
+
+  /**
+   * Close the loop from bill back to the document it came from. A bad or
+   * foreign scanId must not fail a bill that is already written — `updateMany`
+   * stays tenant-scoped and simply matches nothing.
+   */
+  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
+    if (!scanId) return;
+    try {
+      await this.prisma.forTenant().invoiceScan.updateMany({
+        where: { id: scanId },
+        data: { status: "POSTED", vendorBillId },
+      });
+    } catch (e) {
+      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -218,7 +473,11 @@ export class VendorBillsService {
    * `response.data.message` verbatim, so the sentence has to stand alone.
    */
   private duplicateMessage(number: string | null, match: VendorBillDuplicateMatch): string {
-    const document = number ? `Supplier invoice ${number}` : "This supplier invoice";
+    const document = number
+      ? `Supplier invoice ${number}`
+      : match.matchedBy === "lines"
+        ? "An invoice with identical quantities and unit costs"
+        : "This supplier invoice";
     return match.status === "DRAFT"
       ? `${document} is already saved as draft bill ${match.billNumber} — open it to finish receiving instead of creating a second bill.`
       : `${document} was already recorded as bill ${match.billNumber} — creating it again would double stock and amounts owed.`;
@@ -231,14 +490,20 @@ export class VendorBillsService {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
     }
 
-    // Recalculate total if items are provided
+    // Recalculate total if items are provided. Mirror create(): fold the
+    // bill's tax back in and round — the old recompute dropped taxAmount on
+    // the FIRST edit (the G4 "tax lost on edit" bug the taxAmount column was
+    // added to make recoverable) and skipped roundMoney.
     let totalOwed: number | undefined;
     if (dto.items && Array.isArray(dto.items)) {
-      totalOwed = dto.items.reduce(
+      const itemsTotal = dto.items.reduce(
         (sum: number, item: any) =>
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
+      const tax =
+        dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
+      totalOwed = roundMoney(itemsTotal + tax);
     }
 
     return this.prisma.tenantTransaction(async (tx) => {
@@ -266,11 +531,17 @@ export class VendorBillsService {
             ? {
                 items: {
                   createMany: {
+                    // Carry the scan-captured fields through the recreate —
+                    // an edit used to silently drop sku/packSize/lineTotal,
+                    // losing the case-size the receive conversion depends on.
                     data: dto.items.map((item: any) => ({
                       productId: item.productId || null,
                       description: item.description || item.name || "",
                       qty: new Prisma.Decimal(item.qty || 1),
                       unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                      sku: item.sku || null,
+                      packSize: item.packSize != null && item.packSize > 0 ? item.packSize : null,
+                      lineTotal: item.lineTotal != null ? new Prisma.Decimal(item.lineTotal) : null,
                     })),
                   },
                 },
@@ -288,7 +559,7 @@ export class VendorBillsService {
     });
   }
 
-  async receive(id: string, dto?: { acknowledgeUnlinked?: boolean }, performedById?: string) {
+  async receive(id: string, dto?: ReceiveVendorBillDto, performedById?: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
@@ -297,15 +568,37 @@ export class VendorBillsService {
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
-    // RF-084: idempotency guard — prevent double-receive doubling stock
-    if (bill.status === "RECEIVED") throw new ConflictException("Bill already received");
+    // RF-084: idempotency guard — prevent double-receive doubling stock.
+    // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
+    // overwrites status to PAID/PARTIAL, so a status-only check let a paid bill
+    // be received a second time (stock incremented twice, average cost blended
+    // twice). A received bill may be received AGAIN only while per-line
+    // tracking shows quantity still outstanding (partial-receipt top-up).
+    const linked = bill.items.filter((i) => i.productId && i.product);
+    const remainingOf = (item: (typeof bill.items)[number]) => {
+      const remaining = new Prisma.Decimal(item.qty).sub(this.lineReceivedQty(bill, item));
+      return remaining.gt(0) ? remaining : new Prisma.Decimal(0);
+    };
+    if (bill.receivedDate != null) {
+      if (!linked.some((i) => remainingOf(i).gt(0))) {
+        throw new ConflictException("Bill already received");
+      }
+    } else if (bill.status === "RECEIVED") {
+      // Legacy rows: status defaulted to RECEIVED without a receivedDate.
+      throw new ConflictException("Bill already received");
+    }
 
     // Cost-integrity guard: unmapped lines don't update inventory or costs.
     // Warn-and-confirm rather than hard block — bills legitimately carry
     // non-inventory lines (freight, deposits). Clients catch code
-    // UNLINKED_ITEMS, show the skipped lines, and retry acknowledged.
+    // UNLINKED_ITEMS, show the skipped lines, and retry acknowledged. First
+    // receive event only — a top-up was already acknowledged once.
     const unlinkedItems = bill.items.filter((i) => !i.productId);
-    if (!dto?.acknowledgeUnlinked && (bill.items.length === 0 || unlinkedItems.length > 0)) {
+    if (
+      bill.receivedDate == null &&
+      !dto?.acknowledgeUnlinked &&
+      (bill.items.length === 0 || unlinkedItems.length > 0)
+    ) {
       throw new ConflictException({
         code: "UNLINKED_ITEMS",
         message:
@@ -321,31 +614,68 @@ export class VendorBillsService {
       });
     }
 
-    // Update bill status
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
-      const updatedBill = await tx.vendorBill.update({
-        where: { id },
-        data: { status: "RECEIVED", receivedDate: new Date() },
-        include: {
-          supplier: { select: { id: true, name: true } },
-          items: {
-            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
-          },
-        },
+    // The receive plan: explicit per-line quantities (partial receive), or the
+    // full remaining quantity on every linked line when none were given.
+    let plan: { item: (typeof bill.items)[number]; receiveQty: Prisma.Decimal }[];
+    if (dto?.items) {
+      if (dto.items.length === 0) throw new BadRequestException("No quantities to receive.");
+      const seen = new Set<string>();
+      plan = dto.items.map((req) => {
+        const item = bill.items.find((i) => i.id === req.itemId);
+        if (!item) throw new BadRequestException("A requested line is not on this bill.");
+        if (seen.has(item.id)) {
+          throw new BadRequestException(`"${item.description}" appears twice in the request.`);
+        }
+        seen.add(item.id);
+        if (!item.productId || !item.product) {
+          throw new BadRequestException(
+            `"${item.description}" is not linked to a product — link it before receiving it.`,
+          );
+        }
+        const receiveQty = new Prisma.Decimal(String(req.qty));
+        const remaining = remainingOf(item);
+        if (receiveQty.gt(remaining)) {
+          throw new BadRequestException(
+            `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
+          );
+        }
+        return { item, receiveQty };
       });
+    } else {
+      plan = linked
+        .map((item) => ({ item, receiveQty: remainingOf(item) }))
+        .filter((p) => p.receiveQty.gt(0));
+    }
 
-      // Sync inventory for each product-linked item
-      for (const item of bill.items) {
+    // Fully received once every linked line's cumulative receipt covers its
+    // qty. Status stays a lossy display blend (recordPayment overwrites it);
+    // receipt truth lives in receivedDate + per-line qtyReceived.
+    const fullyReceived = linked.every((item) => {
+      const adding = plan.find((p) => p.item.id === item.id)?.receiveQty ?? new Prisma.Decimal(0);
+      return this.lineReceivedQty(bill, item).add(adding).gte(new Prisma.Decimal(item.qty));
+    });
+
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      // Sync inventory for each line in the plan. The whole block works in
+      // INVENTORY denomination: lineInventoryDelta converts a case-priced line
+      // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
+      // its per-PIECE contract (margins previously inflated by unitsPerBox²).
+      const effectiveDate = bill.billDate ?? new Date();
+      const restockedIds: string[] = [];
+      for (const { item, receiveQty } of plan) {
         if (!item.productId || !item.product) continue;
 
-        const qty = new Prisma.Decimal(item.qty);
-        const unitCost = costDecimal(item.unitCost);
+        const { qty, unitCost } = this.lineInventoryDelta({
+          qty: receiveQty,
+          unitCost: item.unitCost,
+          packSize: item.packSize,
+        });
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
         const product = await tx.product.findUnique({
           where: { id: item.productId },
-          select: { currentStock: true, averageCost: true },
+          select: { currentStock: true, averageCost: true, costingMethod: true },
         });
         if (!product) continue;
 
@@ -355,13 +685,16 @@ export class VendorBillsService {
           qty,
           unitCost,
         );
+        // STANDARD keeps its operator-set cost — mirrors recordPurchase; bill
+        // receive used to clobber it (G7).
+        const updatesAverage = product.costingMethod !== "STANDARD";
         const stockAfter = product.currentStock.add(qty);
 
         // StockLot keeps FIFO/LIFO parity with manual purchases and PO receive
         await tx.stockLot.create({
           data: {
             productId: item.productId,
-            purchaseDate: bill.billDate ?? new Date(),
+            purchaseDate: effectiveDate,
             qty,
             remainingQty: qty,
             unitCost,
@@ -375,12 +708,16 @@ export class VendorBillsService {
             type: MovementType.PURCHASE,
             quantity: qty,
             unitCost,
-            avgCostAfter: newAvgCost,
+            avgCostAfter: updatesAverage ? newAvgCost : (product.averageCost ?? null),
             stockAfter,
             supplierId: bill.supplierId,
             reference: bill.billNumber,
             notes: `Auto-synced from vendor bill ${bill.billNumber}`,
             performedById: performedById ?? null,
+            // Stamp the movement at the BILL date, matching the lot — a
+            // backdated bill's cost snapshot must sit at the right point in
+            // the ledger (the lot and the movement used to disagree).
+            createdAt: effectiveDate,
           },
         });
 
@@ -388,15 +725,56 @@ export class VendorBillsService {
           where: { id: item.productId },
           data: {
             currentStock: { increment: qty },
-            averageCost: newAvgCost,
+            ...(updatesAverage ? { averageCost: newAvgCost } : {}),
           },
         });
+
+        // Backdated bill: later movements' snapshots (and possibly the
+        // average) are now stale — replay the product, like recordPurchase.
+        const newer = await tx.stockMovement.count({
+          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+        });
+        if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
+
+        restockedIds.push(item.productId);
       }
 
-      return updatedBill;
+      // Bill update LAST so the response's items carry the fresh qtyReceived.
+      // Per-line receipt progress goes through the PARENT as nested updates:
+      // items are created nested, so their tenantId is null and a direct
+      // (tenant-scoped) vendorBillItem.update can't see them — the bill's own
+      // tenant scope makes the nested write tenant-safe by construction.
+      // receivedDate keeps the FIRST receipt's date across top-ups.
+      const updatedBill = await tx.vendorBill.update({
+        where: { id },
+        data: {
+          status: fullyReceived ? "RECEIVED" : "PARTIAL",
+          receivedDate: bill.receivedDate ?? new Date(),
+          items: {
+            update: plan.map(({ item, receiveQty }) => ({
+              where: { id: item.id },
+              data: { qtyReceived: this.lineReceivedQty(bill, item).add(receiveQty) },
+            })),
+          },
+        },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+        },
+      });
+
+      return { updatedBill, restockedIds };
     });
 
-    return updated;
+    // Bill receive is the main restock path — fire the same low-stock-cleared
+    // alerts a manual purchase does (it never did).
+    if (updated.restockedIds.length > 0) {
+      this.inventory.fireStockAlerts([...new Set(updated.restockedIds)]);
+    }
+
+    return updated.updatedBill;
   }
 
   async revertToDraft(id: string) {
@@ -413,14 +791,31 @@ export class VendorBillsService {
         `Only RECEIVED or PARTIAL bills can be reverted to DRAFT. Current status: ${bill.status}`,
       );
     }
+    // A PARTIAL status can mean "partially PAID, never received" (recordPayment
+    // overwrites status). Reversing a receipt that never happened would drain
+    // real stock and corrupt the average — the receipt marker is receivedDate.
+    if (bill.receivedDate == null) {
+      throw new BadRequestException(
+        "This bill was never received — there is no stock or cost to revert. Its payments keep it out of DRAFT.",
+      );
+    }
 
     return this.prisma.tenantTransaction(async (tx) => {
-      // Reverse inventory for each product-linked item
+      // Reverse inventory for each product-linked item — in the SAME
+      // inventory denomination receive() applied (case lines converted to
+      // pieces + per-piece cost), and only the quantity ACTUALLY received
+      // (partial receipts reverse partially), or the reversal stops matching
+      // the receipt.
       for (const item of bill.items) {
         if (!item.productId) continue;
 
-        const qty = new Prisma.Decimal(item.qty);
-        const unitCost = costDecimal(item.unitCost);
+        const receivedQty = this.lineReceivedQty(bill, item);
+        if (receivedQty.lte(0)) continue;
+        const { qty, unitCost } = this.lineInventoryDelta({
+          qty: receivedQty,
+          unitCost: item.unitCost,
+          packSize: item.packSize,
+        });
 
         // Delete the stock movement created when this bill was received
         await tx.stockMovement.deleteMany({
@@ -457,10 +852,17 @@ export class VendorBillsService {
       // Reverse the lots this bill created (one per received line)
       await this.reverseBillLots(tx, bill.billNumber);
 
-      // Revert bill status to DRAFT
+      // Revert bill status to DRAFT and clear per-line receipt progress — the
+      // bill is back to never-received. Nested updateMany, not a direct
+      // vendorBillItem call: nested-created items have null tenantId, so the
+      // tenant-scoped model method can't see them; the parent's scope can.
       return tx.vendorBill.update({
         where: { id },
-        data: { status: "DRAFT", receivedDate: null },
+        data: {
+          status: "DRAFT",
+          receivedDate: null,
+          items: { updateMany: { where: {}, data: { qtyReceived: null } } },
+        },
         include: {
           supplier: { select: { id: true, name: true } },
           items: {
@@ -503,15 +905,27 @@ export class VendorBillsService {
     });
     if (!bill) throw new NotFoundException("Bill not found");
 
-    // RF-085: reverse stock movements when voiding a RECEIVED bill
+    // RF-085: reverse stock movements when voiding a bill that was actually
+    // RECEIVED. Status alone can't tell — recordPayment overwrites it to
+    // PAID/PARTIAL, so a paid-but-never-received bill used to get a phantom
+    // reversal (negative adjustment draining stock that was never added).
+    // receivedDate is the receipt marker.
     const needsReversal =
-      bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID";
+      (bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID") &&
+      bill.receivedDate != null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
-          const qty = new Prisma.Decimal(item.qty);
-          const unitCost = costDecimal(item.unitCost);
+          // Same inventory denomination receive() applied — see
+          // lineInventoryDelta — and only what was actually received.
+          const receivedQty = this.lineReceivedQty(bill, item);
+          if (receivedQty.lte(0)) continue;
+          const { qty, unitCost } = this.lineInventoryDelta({
+            qty: receivedQty,
+            unitCost: item.unitCost,
+            packSize: item.packSize,
+          });
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },
@@ -653,7 +1067,23 @@ export class VendorBillsService {
     });
   }
 
-  async scanInvoice(files: Array<{ buffer: Buffer; mimeType: string }>) {
+  /**
+   * Extract a supplier invoice, and keep every part of it: the document, the
+   * verbatim model output, and the keys that identify it. The scan was
+   * previously stateless — abandoning a review lost the extraction and the
+   * spend, and nothing recorded that a document had been seen at all.
+   *
+   * Re-uploading bytes already scanned returns the stored payload WITHOUT
+   * calling the model: instant, free, and the strongest duplicate signal there
+   * is. Neither persistence nor storage may fail the scan — by the time either
+   * runs the operator's document has already been read, and that is the part
+   * worth keeping.
+   */
+  async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
+    const fileHash = hashFile(files.map((f) => f.buffer));
+    const prior = await this.findScanByHash(fileHash);
+    if (prior) return prior;
+
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
     const apiKey =
@@ -761,10 +1191,11 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // keep paying for a scan the browser already abandoned (the SDK retries
     // 429/5xx internally before we map the error).
     let message: Anthropic.Message;
+    const startedAt = Date.now();
     try {
       message = await anthropic.messages.create(
         {
-          model: "claude-haiku-4-5",
+          model: SCAN_MODEL,
           max_tokens: 4096,
           messages: [
             {
@@ -800,6 +1231,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         code: "AI_UNAVAILABLE",
       });
     }
+    const scanDurationMs = Date.now() - startedAt;
 
     const content = message.content[0];
     if (content.type !== "text") {
@@ -905,7 +1337,180 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       return { ...item, ...match };
     });
 
-    return { ...parsed, items };
+    const result = { ...parsed, items };
+    const scan = await this.persistScan({
+      files,
+      fileHash,
+      parsed,
+      items,
+      result,
+      scanDurationMs,
+      scannedById,
+    });
+    return { ...result, scanId: scan?.id ?? null };
+  }
+
+  /**
+   * The stored payload for bytes already scanned, shaped exactly like a fresh
+   * scan so existing clients see no difference beyond the extra `priorScan`
+   * block. A read failure here is not worth failing on — the caller simply pays
+   * for a re-scan.
+   */
+  private async findScanByHash(fileHash: string) {
+    let scan;
+    try {
+      scan = await this.prisma.forTenant().invoiceScan.findFirst({
+        where: { fileHash, status: { not: "DISCARDED" } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          createdAt: true,
+          status: true,
+          vendorBillId: true,
+          supplierInvoiceNumber: true,
+          total: true,
+          extractedPayload: true,
+          vendorBill: { select: { billNumber: true } },
+        },
+      });
+    } catch (e) {
+      this.logger.error(`scanInvoice: prior-scan lookup failed: ${(e as Error).message}`);
+      return null;
+    }
+    const payload = scan?.extractedPayload;
+    if (!scan || typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+      return null;
+    }
+
+    const priorScan: PriorScanSummary = {
+      scanId: scan.id,
+      scannedAt: scan.createdAt,
+      status: scan.status,
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber: scan.vendorBill?.billNumber ?? null,
+      supplierInvoiceNumber: scan.supplierInvoiceNumber ?? null,
+      total: scan.total == null ? null : Number(scan.total),
+    };
+    return { ...(payload as Record<string, unknown>), scanId: scan.id, priorScan } as Record<
+      string,
+      any
+    >;
+  }
+
+  /** Record the scan and file it under all three duplicate keys. Never throws. */
+  private async persistScan(args: {
+    files: ScanInvoiceFile[];
+    fileHash: string;
+    parsed: Record<string, unknown>;
+    items: any[];
+    result: Record<string, unknown>;
+    scanDurationMs: number;
+    scannedById?: string;
+  }): Promise<{ id: string } | null> {
+    const { files, fileHash, parsed, items, result } = args;
+    try {
+      const invoiceNumber = normalizeInvoiceNumber(
+        typeof parsed.invoiceNumber === "string" ? parsed.invoiceNumber : null,
+      );
+      const scan = await this.prisma.forTenant().invoiceScan.create({
+        data: {
+          fileName: files[0]?.fileName ?? null,
+          mimeType: files[0]?.mimeType ?? null,
+          byteSize: files.reduce((sum, f) => sum + f.buffer.length, 0),
+          pageCount: files.length,
+          fileHash,
+          extractedPayload: result as unknown as Prisma.InputJsonValue,
+          model: SCAN_MODEL,
+          scanDurationMs: args.scanDurationMs,
+          supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
+          supplierInvoiceNumber: invoiceNumber || null,
+          invoiceDate: this.parseDate(parsed.invoiceDate as string | null),
+          subtotal: this.moneyOrNull(parsed.subtotal),
+          tax: this.moneyOrNull(parsed.tax),
+          total: this.moneyOrNull(parsed.total),
+          lineCount: items.length,
+          lineFingerprint: lineFingerprint(items, parsed.total as number | null),
+          scannedById: args.scannedById ?? null,
+        },
+        select: { id: true },
+      });
+
+      const fileKey = await this.storeScanFiles(scan.id, files);
+      if (fileKey) {
+        await this.prisma
+          .forTenant()
+          .invoiceScan.update({ where: { id: scan.id }, data: { fileKey } });
+      }
+      return scan;
+    } catch (e) {
+      this.logger.error(`scanInvoice: failed to persist scan: ${(e as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Store the pages as received (not the sharp-converted copies) and return the
+   * FIRST page's key — `fileKey` is singular, so the remaining pages live
+   * alongside it under the same `invoice-scans/<scanId>/` prefix and are found
+   * by `pageCount`. Returns null on any failure: the extraction is what the
+   * operator is waiting for, the file is a convenience.
+   */
+  private async storeScanFiles(scanId: string, files: ScanInvoiceFile[]): Promise<string | null> {
+    try {
+      const keys = await Promise.all(
+        files.map((f, i) => {
+          const ext = SCAN_FILE_EXTENSIONS[f.mimeType] ?? "bin";
+          const key = `invoice-scans/${scanId}/${i + 1}.${ext}`;
+          return this.storage.upload(key, f.buffer, f.mimeType);
+        }),
+      );
+      return keys[0] ?? null;
+    } catch (e) {
+      this.logger.error(
+        `scanInvoice: failed to store scan ${scanId} files: ${(e as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Every document ever read, newest first — including the reviews nobody finished. */
+  async listScans(status?: string, page = 1, limit = 20) {
+    if (
+      status &&
+      !INVOICE_SCAN_STATUSES.includes(status as (typeof INVOICE_SCAN_STATUSES)[number])
+    ) {
+      throw new BadRequestException(
+        `Unknown scan status "${status}" — expected one of ${INVOICE_SCAN_STATUSES.join(", ")}.`,
+      );
+    }
+    const where = status ? { status: status as any } : {};
+    const [data, total] = await Promise.all([
+      this.prisma.forTenant().invoiceScan.findMany({
+        where,
+        select: INVOICE_SCAN_LIST_SELECT,
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.forTenant().invoiceScan.count({ where }),
+    ]);
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async getScan(id: string) {
+    const scan = await this.prisma.forTenant().invoiceScan.findUnique({
+      where: { id },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
+      },
+    });
+    if (!scan) throw new NotFoundException("Invoice scan not found");
+    // A missing or unreachable file must not hide the extraction behind it.
+    const fileUrl = scan.fileKey
+      ? await this.storage.presignedUrl(scan.fileKey).catch(() => null)
+      : null;
+    return { ...scan, fileUrl };
   }
 
   async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {

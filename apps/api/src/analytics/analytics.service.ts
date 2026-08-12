@@ -1,7 +1,15 @@
 import { Injectable } from "@nestjs/common";
-import { InvoiceStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
+import {
+  REAL_INVOICE_STATUSES,
+  estimateCogs,
+  fetchCostIndex,
+  fetchInvoicedSaleLines,
+  fetchProductCostFacts,
+  roundQty,
+  soldProductIds,
+} from "../common/invoiced-sales";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import {
@@ -13,25 +21,6 @@ import {
 
 export const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
-
-/**
- * Invoice statuses that represent a real sale — mirrors the tobacco report services.
- * Uses the generated enum rather than string literals so a schema change can't silently
- * drift the filter (the sibling copies use `as any` on a string array).
- */
-const REAL_INVOICE_STATUSES = {
-  notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-};
-
-/**
- * Quantities are `Decimal(10,3)`, so they round to 3dp — NOT through `roundMoney`,
- * which is 2dp and would silently truncate a fractional imported qty. Money still
- * goes through `roundMoney` per the repo's money discipline.
- */
-function roundQty(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.round((n + Number.EPSILON) * 1000) / 1000;
-}
 
 /** One bucket of the per-product demand series. Both metrics ship together. */
 export interface ProductDemandBucket {
@@ -147,44 +136,47 @@ export class AnalyticsService {
       .sort((a, b) => a.period.localeCompare(b.period));
   }
 
-  async getTopProducts(metric = "revenue", limit = 10) {
+  /**
+   * Top products for the analytics page. Source is invoiced sales (see
+   * common/invoiced-sales.ts — the old sources are both dead: SALE stock
+   * movements have no writer, and TransactionItem never had one). Both
+   * metrics are computed in one pass and returned on every row, so the
+   * client's revenue/units toggle only changes the sort; `metric` picks the
+   * sort key. Windowed on Invoice.issueDate via dateRange (defaults
+   * Jan 1 of the current year → now — previously all-time, which only ever
+   * returned an empty list in production anyway).
+   */
+  async getTopProducts(metric = "revenue", limit = 10, from?: string, to?: string) {
+    const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
-    if (metric === "revenue") {
-      const items = await this.prisma.forTenant().transactionItem.findMany({
-        include: {
-          orderItem: {
-            include: { product: { select: { id: true, name: true, isTobacco: true } } },
-          },
-        },
-      });
-      const map: Record<string, { name: string; value: number }> = {};
-      for (const i of items) {
-        const prod = i.orderItem?.product;
-        if (!prod) continue;
-        if (excludeTobacco && prod.isTobacco) continue;
-        if (!map[prod.id]) map[prod.id] = { name: prod.name, value: 0 };
-        map[prod.id].value += Number(i.subtotal);
-      }
-      return Object.entries(map)
-        .map(([id, v]) => ({ id, name: v.name, value: v.value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, limit);
-    }
-    // units sold
-    const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE", ...(excludeTobacco ? { product: { isTobacco: false } } : {}) },
-      include: { product: { select: { id: true, name: true } } },
+    const lines = await fetchInvoicedSaleLines(this.prisma.forTenant(), {
+      from: fromDate,
+      to: toDate,
+      dateBasis: "issueDate",
     });
-    const map: Record<string, { name: string; value: number }> = {};
-    for (const m of movements) {
-      if (!map[m.productId]) map[m.productId] = { name: m.product.name, value: 0 };
-      // SALE rows are negative; positive SALE rows are reopen-reversals that
-      // must net out — signed sum, not abs
-      map[m.productId].value += -Number(m.quantity);
+    const map = new Map<string, { name: string; unitsSold: number; totalRevenue: number }>();
+    for (const line of lines) {
+      if (!line.productId) continue; // ad-hoc lines have no product identity
+      if (excludeTobacco && line.isTobacco) continue;
+      const entry = map.get(line.productId) ?? {
+        name: line.productName ?? "",
+        unitsSold: 0,
+        totalRevenue: 0,
+      };
+      entry.unitsSold += line.qty;
+      entry.totalRevenue += line.subtotal;
+      map.set(line.productId, entry);
     }
-    return Object.entries(map)
-      .map(([id, v]) => ({ id, name: v.name, value: v.value }))
-      .sort((a, b) => b.value - a.value)
+    return [...map.entries()]
+      .map(([id, v]) => ({
+        id,
+        name: v.name,
+        unitsSold: roundQty(v.unitsSold),
+        totalRevenue: roundMoney(v.totalRevenue),
+      }))
+      .sort((a, b) =>
+        metric === "units" ? b.unitsSold - a.unitsSold : b.totalRevenue - a.totalRevenue,
+      )
       .slice(0, limit);
   }
 
@@ -277,33 +269,43 @@ export class AnalyticsService {
     }));
   }
 
+  /**
+   * Units sold per active product over the window, from invoiced sales (see
+   * common/invoiced-sales.ts — SALE stock movements are dead). The tobacco
+   * exclusion is governed by the products list: excluded products never
+   * appear in the output, so stray tobacco keys in salesMap are inert.
+   */
   async getInventoryTurnover(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
     const products = await this.prisma.forTenant().product.findMany({
       where: { isActive: true, ...(excludeTobacco ? { isTobacco: false } : {}) },
     });
-    const sales = await this.prisma.forTenant().stockMovement.findMany({
-      where: {
-        type: "SALE",
-        createdAt: { gte: fromDate, lte: toDate },
-        ...(excludeTobacco ? { product: { isTobacco: false } } : {}),
-      },
-      select: { productId: true, quantity: true },
+    const lines = await fetchInvoicedSaleLines(this.prisma.forTenant(), {
+      from: fromDate,
+      to: toDate,
+      dateBasis: "issueDate",
     });
     const salesMap: Record<string, number> = {};
-    // Signed: reopen-reversals (positive SALE rows) net out of units sold
-    for (const s of sales)
-      salesMap[s.productId] = (salesMap[s.productId] ?? 0) + -Number(s.quantity);
+    for (const line of lines) {
+      if (line.productId) salesMap[line.productId] = (salesMap[line.productId] ?? 0) + line.qty;
+    }
     return products.map((p) => ({
       id: p.id,
       name: p.name,
-      unitsSold: salesMap[p.id] ?? 0,
+      unitsSold: roundQty(salesMap[p.id] ?? 0),
       currentStock: Number(p.currentStock),
       turnoverRate: Number(p.currentStock) > 0 ? (salesMap[p.id] ?? 0) / Number(p.currentStock) : 0,
     }));
   }
 
+  /**
+   * Stocked products with no recent activity. "Activity" is a stock movement
+   * OR an invoiced sale — movement recency alone is wrong now that SALE
+   * movements are dead (a daily-selling but rarely-restocked product would
+   * read as dead stock; see common/invoiced-sales.ts). `lastMovement` /
+   * `daysInactive` report the most recent of the two signals.
+   */
   async getDeadStock(daysInactive = 30) {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - daysInactive);
@@ -315,31 +317,62 @@ export class AnalyticsService {
         ...(excludeTobacco ? { isTobacco: false } : {}),
       },
     });
-    const result: {
-      id: string;
-      name: string;
-      currentStock: number;
-      lastMovement: Date | null;
-      daysInactive: number | null;
-    }[] = [];
-    for (const p of activeProducts) {
-      const lastMovement = await this.prisma.forTenant().stockMovement.findFirst({
-        where: { productId: p.id },
-        orderBy: { createdAt: "desc" },
-      });
-      if (!lastMovement || lastMovement.createdAt < cutoff) {
-        result.push({
-          id: p.id,
-          name: p.name,
-          currentStock: Number(p.currentStock),
-          lastMovement: lastMovement?.createdAt ?? null,
-          daysInactive: lastMovement
-            ? Math.floor((Date.now() - lastMovement.createdAt.getTime()) / 86400000)
-            : null,
-        });
+    if (activeProducts.length === 0) return [];
+    const productIds = activeProducts.map((p) => p.id);
+
+    // Last-sale dates in one pass over invoice history (through Invoice —
+    // never invoiceItem.findMany; see common/invoiced-sales.ts).
+    const invoices = await this.prisma.forTenant().invoice.findMany({
+      where: { status: REAL_INVOICE_STATUSES },
+      select: { issueDate: true, items: { select: { productId: true } } },
+    });
+    const lastSaleAt = new Map<string, Date>();
+    for (const inv of invoices) {
+      for (const item of inv.items ?? []) {
+        if (!item.productId) continue;
+        const prev = lastSaleAt.get(item.productId);
+        if (!prev || inv.issueDate > prev) lastSaleAt.set(item.productId, inv.issueDate);
       }
     }
-    return result;
+
+    // Products with any stock movement since the cutoff are active.
+    const recentMovements = await this.prisma.forTenant().stockMovement.findMany({
+      where: { productId: { in: productIds }, createdAt: { gte: cutoff } },
+      select: { productId: true },
+      distinct: ["productId"],
+    });
+    const recentlyMoved = new Set(recentMovements.map((m: { productId: string }) => m.productId));
+
+    const deadCandidates = activeProducts.filter((p) => {
+      const sale = lastSaleAt.get(p.id);
+      return !recentlyMoved.has(p.id) && (!sale || sale < cutoff);
+    });
+    if (deadCandidates.length === 0) return [];
+
+    // Last movement dates only for the dead candidates — a small set, which
+    // replaces the old per-product findFirst over EVERY stocked product.
+    const movementRows = await this.prisma.forTenant().stockMovement.findMany({
+      where: { productId: { in: deadCandidates.map((p) => p.id) } },
+      orderBy: { createdAt: "desc" },
+      select: { productId: true, createdAt: true },
+    });
+    const lastMovementAt = new Map<string, Date>();
+    for (const m of movementRows) {
+      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.createdAt);
+    }
+
+    return deadCandidates.map((p) => {
+      const moved = lastMovementAt.get(p.id) ?? null;
+      const sold = lastSaleAt.get(p.id) ?? null;
+      const last = moved && sold ? (moved > sold ? moved : sold) : (moved ?? sold);
+      return {
+        id: p.id,
+        name: p.name,
+        currentStock: Number(p.currentStock),
+        lastMovement: last,
+        daysInactive: last ? Math.floor((Date.now() - last.getTime()) / 86400000) : null,
+      };
+    });
   }
 
   async getMarginAlerts() {
@@ -516,21 +549,35 @@ export class AnalyticsService {
       .sort((a, b) => b.revenue - a.revenue);
   }
 
+  /**
+   * Gross margin for the window. Revenue = invoice totals (real statuses,
+   * issueDate window) — unchanged. COGS is estimated from the SAME invoices'
+   * lines, each costed at qty × the product's point-in-time average cost at
+   * the invoice's issueDate (see common/invoiced-sales.ts — invoice lines
+   * carry no cost of their own, and SALE stock movements are dead). Basis
+   * alignment between revenue and COGS is true by construction: one fetch
+   * feeds both.
+   */
   async getGrossMarginTrend(from?: string, to?: string) {
     const { fromDate, toDate } = this.dateRange(from, to);
     const excludeTobacco = await this.tobaccoExclusionActive();
     const invoices = await this.prisma.forTenant().invoice.findMany({
       where: {
         issueDate: { gte: fromDate, lte: toDate },
-        status: { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] },
+        status: REAL_INVOICE_STATUSES,
       },
-      select: { total: true, ...(excludeTobacco ? TOBACCO_LINE_SELECT : {}) },
-    });
-    const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: {
-        type: "SALE",
-        createdAt: { gte: fromDate, lte: toDate },
-        ...(excludeTobacco ? { product: { isTobacco: false } } : {}),
+      select: {
+        total: true,
+        issueDate: true,
+        items: {
+          select: {
+            productId: true,
+            qty: true,
+            subtotal: true,
+            taxRate: true,
+            product: { select: { isTobacco: true } },
+          },
+        },
       },
     });
     const revenue = roundMoney(
@@ -538,16 +585,25 @@ export class AnalyticsService {
         (s, inv) =>
           s +
           (excludeTobacco
-            ? Number(inv.total) - this.tobaccoPortion((inv as { items?: any[] }).items ?? [])
+            ? Number(inv.total) - this.tobaccoPortion(inv.items ?? [])
             : Number(inv.total)),
         0,
       ),
     );
-    // Signed COGS: SALE quantities are negative, so -qty × unitCost adds cost;
-    // reopen-reversals are positive SALE rows and subtract their cost back out
-    const cogs = roundMoney(
-      movements.reduce((s, m) => s + -Number(m.quantity) * Number(m.unitCost ?? 0), 0),
+    const cogsLines = invoices.flatMap((inv) =>
+      (inv.items ?? []).map((item: any) => ({
+        productId: (item.productId ?? null) as string | null,
+        qty: Number(item.qty),
+        issueDate: inv.issueDate,
+        isTobacco: item.product?.isTobacco ?? false,
+      })),
     );
+    const productIds = soldProductIds(cogsLines);
+    const [costIndex, costFacts] = await Promise.all([
+      fetchCostIndex(this.prisma.forTenant(), productIds, toDate),
+      fetchProductCostFacts(this.prisma.forTenant(), productIds),
+    ]);
+    const cogs = roundMoney(estimateCogs(cogsLines, costIndex, costFacts, { excludeTobacco }));
     const grossProfit = roundMoney(revenue - cogs);
     return {
       revenue,

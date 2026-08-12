@@ -1,6 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
 
 // Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
 jest.mock("./invoice.service", () => ({
@@ -496,6 +497,107 @@ describe("BookkeepingService", () => {
         SETTLED_OUT.paidAt,
         LEGACY.paidAt,
       ]);
+    });
+  });
+
+  // ─── getProfitAndLoss ───────────────────────────────────────────────────────
+
+  describe("getProfitAndLoss", () => {
+    const D = (n: number | string) => new Prisma.Decimal(n);
+
+    it("estimates COGS from the same PAID/paidAt invoice set as revenue", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 500 } });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-06-05"),
+          paidAt: new Date("2026-06-20"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(5),
+              subtotal: D(100),
+              product: { name: "Flour", isTobacco: false },
+            },
+          ],
+        },
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+      ]);
+      prisma.expense.findMany.mockResolvedValue([{ amount: 100, category: { name: "Rent" } }]);
+
+      const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
+
+      expect(result.revenue).toBe(500);
+      expect(result.cogs).toBe(10); // 5 × 2.00
+      expect(result.grossProfit).toBe(490);
+      expect(result.operatingExpenses).toBe(100);
+      expect(result.netProfit).toBe(390);
+      expect(result.netMarginPct).toBe(78);
+      expect(result.expensesByCategory).toEqual({ Rent: 100 });
+
+      // The COGS fetch pins the SAME basis as revenue: PAID, windowed on paidAt.
+      const cogsFetch = prisma.invoice.findMany.mock.calls[0][0];
+      expect(cogsFetch.where.status).toBe("PAID");
+      expect(cogsFetch.where.paidAt).toEqual({
+        gte: new Date("2026-06-01"),
+        lte: expect.any(Date),
+      });
+      expect(cogsFetch.where.issueDate).toBeUndefined();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+    });
+
+    it("costs each line at the invoice's ISSUE date, even when paid later", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 100 } });
+      // Issued in May (before the report window), paid in June (inside it).
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-05-15"),
+          paidAt: new Date("2026-06-20"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(4),
+              subtotal: D(100),
+              product: { name: "Flour", isTobacco: false },
+            },
+          ],
+        },
+      ]);
+      // Average cost was 2.00 in May, 3.00 from June 1 — the sale costs at 2.00.
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { productId: "p1", createdAt: new Date("2026-05-01"), avgCostAfter: D(2) },
+        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(3) },
+      ]);
+
+      const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
+
+      expect(result.cogs).toBe(8); // 4 × 2.00 at issue time, NOT 12 at pay time
+    });
+
+    it("rounds COGS to cents (money discipline)", async () => {
+      prisma.invoice.aggregate.mockResolvedValue({ _sum: { total: 10 } });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          issueDate: new Date("2026-06-05"),
+          paidAt: new Date("2026-06-06"),
+          items: [
+            {
+              productId: "p1",
+              qty: D(3),
+              subtotal: D(10),
+              product: { name: "Flour", isTobacco: false },
+            },
+          ],
+        },
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([
+        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(0.335) },
+      ]);
+
+      const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
+
+      expect(result.cogs).toBe(1.01); // 3 × 0.335 = 1.005 → cents
     });
   });
 });

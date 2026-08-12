@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from "@nes
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "../common/pricing";
+import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
@@ -36,7 +37,9 @@ export class InventoryService {
    * context is retained by the detached continuations, and any error is logged
    * (fireForProducts already swallows per-alert push failures internally).
    */
-  private fireStockAlerts(productIds: string[]): void {
+  // Public: vendor-bill receive is the main restock path and must fire the
+  // same alerts as a manual purchase (it never did — a G7 gap).
+  fireStockAlerts(productIds: string[]): void {
     if (productIds.length === 0) return;
     void this.stockAlerts.fireForProducts(productIds).catch((err) => {
       this.logger.warn(`Stock-alert fire failed (non-fatal): ${(err as Error).message}`);
@@ -46,72 +49,29 @@ export class InventoryService {
   // ─── Stock overview ──────────────────────────────────────────────────────────
 
   /**
-   * Sum the open (`remainingQty > 0`) lots per product → { qty, value }. Used to
-   * value FIFO/LIFO stock at the actual remaining-lot cost rather than the moving
-   * average (which sales never update, so it drifts after non-uniform restocks).
-   */
-  private async openLotSums(
-    productIds: string[],
-  ): Promise<Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>> {
-    const map = new Map<string, { qty: Prisma.Decimal; value: Prisma.Decimal }>();
-    if (productIds.length === 0) return map;
-    const lots = await this.prisma.forTenant().stockLot.findMany({
-      where: { productId: { in: productIds }, remainingQty: { gt: 0 } },
-      select: { productId: true, remainingQty: true, unitCost: true },
-    });
-    for (const lot of lots) {
-      const cur = map.get(lot.productId) ?? {
-        qty: new Prisma.Decimal(0),
-        value: new Prisma.Decimal(0),
-      };
-      const qty = new Prisma.Decimal(lot.remainingQty);
-      cur.qty = cur.qty.add(qty);
-      cur.value = cur.value.add(qty.mul(lot.unitCost));
-      map.set(lot.productId, cur);
-    }
-    return map;
-  }
-
-  /**
    * The single effective-cost + carrying-value rule shared by getStockOverview
    * and getValuation so the two money surfaces never disagree:
-   *   • FIFO / LIFO → value the remaining open lots (Σ remainingQty × unitCost),
-   *     plus any stock beyond the lots at the average cost; no lots → averageCost.
-   *   • STANDARD    → standardCost ?? averageCost.
-   *   • AVCO / LAST_COST → averageCost.
-   * `unitCost` is the display cost (for FIFO/LIFO it's value ÷ stock).
+   *   • STANDARD → standardCost ?? averageCost.
+   *   • everything else → averageCost.
+   *
+   * Valuation is weighted-average for every method, because every WRITE path is:
+   * `nextAverageCost` maintains `Product.averageCost` on each receipt regardless
+   * of `costingMethod`. This used to value FIFO/LIFO products from open stock
+   * lots instead, which was only sound while lots were drawn down on sale — and
+   * `recordSale`, the sole draw-down, has had no caller since c5f579c2. Lots
+   * therefore only ever grew while `currentStock` fell, so the lot branch
+   * reported the cost of every unit ever received, including everything already
+   * sold (measured at $12,463 over 54 products before this changed). Reading the
+   * average keeps the read consistent with the write and cannot drift that way.
    */
-  private effectiveValue(
-    p: {
-      costingMethod: CostingMethod;
-      currentStock: Prisma.Decimal | number;
-      averageCost: Prisma.Decimal | null;
-      standardCost: Prisma.Decimal | null;
-    },
-    lot?: { qty: Prisma.Decimal; value: Prisma.Decimal },
-  ): { unitCost: number | null; value: number | null } {
+  private effectiveValue(p: {
+    costingMethod: CostingMethod;
+    currentStock: Prisma.Decimal | number;
+    averageCost: Prisma.Decimal | null;
+    standardCost: Prisma.Decimal | null;
+  }): { unitCost: number | null; value: number | null } {
     const stock = Number(p.currentStock);
     const avg = p.averageCost != null ? Number(p.averageCost) : null;
-    const isLotBased =
-      p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO;
-
-    if (isLotBased) {
-      const lotQty = lot ? Number(lot.qty) : 0;
-      if (lotQty > 0) {
-        const lotValue = Number(lot!.value);
-        // Value any stock beyond the open lots at the average cost (rare drift /
-        // negative-lot data); undervalue rather than crash if the cost is unknown.
-        const uncovered = stock - lotQty;
-        const value = lotValue + (uncovered > 0 && avg != null ? uncovered * avg : 0);
-        const unitCost = stock !== 0 ? value / stock : lotValue / lotQty;
-        return { unitCost: +unitCost.toFixed(4), value: +value.toFixed(4) };
-      }
-      // No open lots — fall back to the moving average.
-      return avg != null
-        ? { unitCost: avg, value: +(stock * avg).toFixed(4) }
-        : { unitCost: null, value: null };
-    }
-
     const eff =
       p.costingMethod === CostingMethod.STANDARD
         ? p.standardCost != null
@@ -144,17 +104,9 @@ export class InventoryService {
       },
     });
 
-    const lotSums = await this.openLotSums(
-      products
-        .filter(
-          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
-        )
-        .map((p) => p.id),
-    );
-
     return products.map((p) => {
       const stock = Number(p.currentStock);
-      const { unitCost, value } = this.effectiveValue(p, lotSums.get(p.id));
+      const { unitCost, value } = this.effectiveValue(p);
       return {
         ...p,
         currentStock: stock,
@@ -761,20 +713,29 @@ export class InventoryService {
   }
 
   // ── Forecasting ──
+  /**
+   * 30-day demand per product, from invoiced sales windowed on
+   * Invoice.issueDate. `StockMovement type:"SALE"` is not viable: its only
+   * writer (the route-delivery recordSale call) was removed in c5f579c2, so
+   * movement rows read as zero demand for every tenant. Line `qty` is the
+   * same denomination order-create decrements `currentStock` by, so
+   * `daysRemaining = currentStock / avgDaily` stays unit-consistent. See
+   * common/invoiced-sales.ts for the through-Invoice rule.
+   */
   async getForecasting() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const products = await this.prisma.forTenant().product.findMany({ where: { isActive: true } });
-    const movements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { type: "SALE", createdAt: { gte: thirtyDaysAgo } },
-      select: { productId: true, quantity: true },
+    const lines = await fetchInvoicedSaleLines(this.prisma.forTenant(), {
+      from: thirtyDaysAgo,
+      to: new Date(),
+      dateBasis: "issueDate",
     });
 
     const usageMap = new Map<string, number>();
-    for (const m of movements) {
-      // SALE rows are negative; compensating reversals (reopened stops) are
-      // positive SALE rows — signed sum nets them out of usage.
-      usageMap.set(m.productId, (usageMap.get(m.productId) ?? 0) + -Number(m.quantity));
+    for (const line of lines) {
+      if (!line.productId) continue;
+      usageMap.set(line.productId, (usageMap.get(line.productId) ?? 0) + line.qty);
     }
 
     return products.map((p) => {
@@ -789,7 +750,7 @@ export class InventoryService {
         unit: p.unit,
         currentStock,
         avgDailySales: Math.round(avgDailyUsage * 100) / 100,
-        totalUsed30Days: totalUsed30,
+        totalUsed30Days: roundQty(totalUsed30),
         daysRemaining,
         reorderPoint: p.reorderPoint,
         reorderQty: p.reorderQty,
@@ -821,20 +782,11 @@ export class InventoryService {
       },
     });
 
-    const lotSums = await this.openLotSums(
-      products
-        .filter(
-          (p) => p.costingMethod === CostingMethod.FIFO || p.costingMethod === CostingMethod.LIFO,
-        )
-        .map((p) => p.id),
-    );
-
     let totalValue = 0;
     const missingCostProducts: { id: string; name: string }[] = [];
     for (const p of products) {
-      // Same lot-aware effective-cost rule as getStockOverview so the two money
-      // surfaces reconcile (FIFO/LIFO valued from open lots, not the moving avg).
-      const { value } = this.effectiveValue(p, lotSums.get(p.id));
+      // Same effective-cost rule as getStockOverview so the two money surfaces reconcile.
+      const { value } = this.effectiveValue(p);
       if (value == null) {
         missingCostProducts.push({ id: p.id, name: p.name });
         continue;
@@ -988,7 +940,11 @@ export class InventoryService {
   }
 
   /** Repair a single product's snapshots/average inside an existing transaction. */
-  private async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
+  // Public: the backdated-movement repair primitive. Every stock writer that
+  // supports an effective date in the past (manual purchase, adjustment, and
+  // now vendor-bill receive stamping at billDate) must replay the product so
+  // later snapshots stay true.
+  async recomputeProductInTx(tx: Prisma.TransactionClient, productId: string) {
     const product = await tx.product.findUnique({
       where: { id: productId },
       select: { id: true, name: true, currentStock: true, averageCost: true, costingMethod: true },

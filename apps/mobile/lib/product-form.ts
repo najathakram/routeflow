@@ -211,7 +211,8 @@ export function buildProductPayload(
     priceTier4: parseOptionalNumber(form.priceTier4),
     priceTier5: parseOptionalNumber(form.priceTier5),
     standardCost: parseOptionalNumber(form.standardCost),
-    currentStock: parseOptionalNumber(form.currentStock),
+    // currentStock deliberately NOT sent: it isn't on the create/update DTOs
+    // (forbidNonWhitelisted → guaranteed 400) — stock moves via adjustments.
     reorderPoint: parseOptionalNumber(form.reorderPoint),
     reorderQty: parseOptionalNumber(form.reorderQty),
     isActive: form.isActive,

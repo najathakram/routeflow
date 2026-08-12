@@ -1,4 +1,4 @@
-import { IsArray, IsOptional, IsString, ValidateNested } from "class-validator";
+import { IsArray, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
 import { Type } from "class-transformer";
 import { VendorBillItemDto } from "./create-vendor-bill.dto";
 
@@ -14,6 +14,8 @@ export class UpdateVendorBillDto {
   @IsOptional() @IsString() notes?: string;
   /** The supplier's own invoice number; stored normalized and used for dedup. */
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
+  /** Sales tax as printed. Omit to keep the stored tax; totalOwed refolds it. */
+  @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
 
   @IsOptional()
   @IsArray()

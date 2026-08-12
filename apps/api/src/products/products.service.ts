@@ -63,8 +63,8 @@ export class ProductsService {
    * The costing method a NEW product should use (pos-cost-roles-spec §1): an
    * explicit choice on the DTO wins; otherwise fall back to the tenant's
    * configured `costing.method`. Returns `undefined` when the tenant has NOT set
-   * one, so the Prisma schema default (FIFO) applies and existing behavior is
-   * unchanged — existing products are never re-costed.
+   * one, so the Prisma schema default (AVCO) applies — existing products are
+   * never re-costed.
    */
   private async resolveCostingMethod(explicit?: CostingMethod): Promise<CostingMethod | undefined> {
     if (explicit) return explicit;
