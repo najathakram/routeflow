@@ -13,6 +13,14 @@ export interface VendorBillItem {
   qty: number;
   unitCost: number;
   total?: number;
+  /** Supplier's item code as printed on the line. */
+  sku?: string | null;
+  /** Units per box/case — when set (>1) `unitCost` is the CASE cost. */
+  packSize?: number | null;
+  lineTotal?: number | null;
+  /** Cumulative quantity received so far (bill denomination). Null on bills
+   *  received before per-line tracking — those were fully received. */
+  qtyReceived?: number | string | null;
 }
 
 export interface VendorBillPayment {
@@ -262,12 +270,27 @@ export function useUpdateVendorBill() {
   });
 }
 
+/** One line of a partial receive: how much arrived, in the line's own
+ *  denomination (cases when packSize > 1). Omit `items` to receive everything
+ *  still outstanding. */
+export interface ReceiveVendorBillLine {
+  itemId: string;
+  qty: number;
+}
+
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, { id: string; acknowledgeUnlinked?: boolean }>({
-    mutationFn: ({ id, acknowledgeUnlinked }) =>
+  return useMutation<
+    VendorBill,
+    Error,
+    { id: string; acknowledgeUnlinked?: boolean; items?: ReceiveVendorBillLine[] }
+  >({
+    mutationFn: ({ id, acknowledgeUnlinked, items }) =>
       apiClient
-        .post(`/vendor-bills/${id}/receive`, acknowledgeUnlinked ? { acknowledgeUnlinked } : {})
+        .post(`/vendor-bills/${id}/receive`, {
+          ...(acknowledgeUnlinked ? { acknowledgeUnlinked } : {}),
+          ...(items ? { items } : {}),
+        })
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });

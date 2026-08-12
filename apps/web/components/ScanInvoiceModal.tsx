@@ -1064,10 +1064,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     (inv.invoiceNumber ? `#${inv.invoiceNumber}` : (inv.pagePreviews[0]?.name ?? "Invoice"));
 
   // Expand split rows: one VendorBillItem per non-zero variant entry.
-  // Split entries inherit the row's unitCost (same SKU family on the invoice).
-  // They deliberately carry NO sku/packSize/lineTotal: the printed code and
-  // amount describe the whole line, and copying them onto each part would
-  // claim one item code maps to several products.
+  // Split entries inherit the row's unitCost AND packSize — the split divides
+  // the case count across flavors, so each part stays in the line's case
+  // denomination (dropping packSize would receive cases as pieces). They
+  // deliberately carry NO sku/lineTotal: the printed code and amount describe
+  // the whole line, and copying them onto each part would claim one item code
+  // maps to several products.
   const buildBillItems = (inv: InvoiceGroup): CreateVendorBillItem[] =>
     validItemsOf(inv).flatMap((item): CreateVendorBillItem[] => {
       if (item.splits && item.splits.length > 0) {
@@ -1078,6 +1080,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             description: s.name ?? item.description,
             qty: parseFloat(s.qty) || 0,
             unitCost: parseFloat(item.unitCost) || 0,
+            packSize: item.packSize ?? undefined,
           }));
       }
       return [
@@ -2158,6 +2161,31 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                   AI: {item.extractedQty}
                                                 </div>
                                               )}
+                                              {/* Case size: qty × pcs lands as pieces + per-piece
+                                                  cost at receive. Clear it for per-unit lines. */}
+                                              <div
+                                                className="mt-1 flex items-center justify-end gap-1 text-[10px] text-navy/60"
+                                                title="Units per case — when set, the cost is the CASE cost and receiving converts to pieces"
+                                              >
+                                                <span>×</span>
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  step="1"
+                                                  inputMode="numeric"
+                                                  value={item.packSize ?? ""}
+                                                  placeholder="—"
+                                                  onChange={(e) => {
+                                                    const n = parseInt(e.target.value, 10);
+                                                    updateItem(i, {
+                                                      packSize:
+                                                        Number.isFinite(n) && n > 0 ? n : null,
+                                                    });
+                                                  }}
+                                                  className="w-10 rounded border border-surface-border px-1 py-0.5 text-right text-[10px] tabular-nums text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                                />
+                                                <span>pcs</span>
+                                              </div>
                                               {canSplit && (
                                                 <button
                                                   type="button"
@@ -2210,6 +2238,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                             <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-brand-500">
                                               <Sparkles className="h-2.5 w-2.5" />
                                               AI: ${item.extractedUnitCost}
+                                            </div>
+                                          )}
+                                          {(item.packSize ?? 0) > 1 && (
+                                            <div className="mt-1 text-right text-[10px] text-navy/60">
+                                              per case of {item.packSize}
                                             </div>
                                           )}
                                         </td>
@@ -2447,12 +2480,20 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             reviewItems[createFromRow].extractedName || reviewItems[createFromRow].description
           }
           initialSku={reviewItems[createFromRow].sku ?? undefined}
+          // Boxed contract asymmetry: pricePerUnit is the BOX price, but
+          // standardCost is per PIECE (costPerSellingUnit multiplies back) —
+          // so a case-priced line divides the cost prefill, not the price.
           initialPrice={
             parseFloat(reviewItems[createFromRow].unitCost) > 0
               ? roundMoney(parseFloat(reviewItems[createFromRow].unitCost) * 1.3)
               : undefined
           }
-          initialCost={parseFloat(reviewItems[createFromRow].unitCost) || undefined}
+          initialCost={
+            parseFloat(reviewItems[createFromRow].unitCost) > 0
+              ? parseFloat(reviewItems[createFromRow].unitCost) /
+                Math.max(1, reviewItems[createFromRow].packSize ?? 1)
+              : undefined
+          }
           initialUnitsPerBox={reviewItems[createFromRow].packSize ?? undefined}
           onCreated={(product) => {
             const i = createFromRow;

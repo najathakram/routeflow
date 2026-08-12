@@ -26,6 +26,7 @@ import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
+import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -141,6 +142,25 @@ export class VendorBillsService {
       return { qty: rawQty.mul(pack), unitCost: costDecimal(rawCost.div(pack)) };
     }
     return { qty: rawQty, unitCost: rawCost };
+  }
+
+  /**
+   * How much of a line has actually been received, in BILL denomination.
+   * Null `qtyReceived` is ambiguous: on a bill received before per-line
+   * tracking existed (receivedDate set, EVERY line null) it means fully
+   * received; on a bill with tracking (any line non-null) it means that line
+   * was never received. Receive, revert and void all read through this one
+   * helper so top-ups and reversals stay consistent with what was applied.
+   */
+  private lineReceivedQty(
+    bill: { receivedDate: Date | null; items: { qtyReceived: Prisma.Decimal | null }[] },
+    item: { qty: Prisma.Decimal; qtyReceived: Prisma.Decimal | null },
+  ): Prisma.Decimal {
+    if (item.qtyReceived != null) return new Prisma.Decimal(item.qtyReceived);
+    const tracked = bill.items.some((i) => i.qtyReceived != null);
+    return bill.receivedDate != null && !tracked
+      ? new Prisma.Decimal(item.qty)
+      : new Prisma.Decimal(0);
   }
 
   private async nextBillNumber() {
@@ -511,11 +531,17 @@ export class VendorBillsService {
             ? {
                 items: {
                   createMany: {
+                    // Carry the scan-captured fields through the recreate —
+                    // an edit used to silently drop sku/packSize/lineTotal,
+                    // losing the case-size the receive conversion depends on.
                     data: dto.items.map((item: any) => ({
                       productId: item.productId || null,
                       description: item.description || item.name || "",
                       qty: new Prisma.Decimal(item.qty || 1),
                       unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                      sku: item.sku || null,
+                      packSize: item.packSize != null && item.packSize > 0 ? item.packSize : null,
+                      lineTotal: item.lineTotal != null ? new Prisma.Decimal(item.lineTotal) : null,
                     })),
                   },
                 },
@@ -533,7 +559,7 @@ export class VendorBillsService {
     });
   }
 
-  async receive(id: string, dto?: { acknowledgeUnlinked?: boolean }, performedById?: string) {
+  async receive(id: string, dto?: ReceiveVendorBillDto, performedById?: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
@@ -543,19 +569,36 @@ export class VendorBillsService {
     });
     if (!bill) throw new NotFoundException("Bill not found");
     // RF-084: idempotency guard — prevent double-receive doubling stock.
-    // Guarded on receivedDate, NOT status: recordPayment overwrites status to
-    // PAID/PARTIAL, so a status-only check let a paid bill be received a
-    // second time (stock incremented twice, average cost blended twice).
-    if (bill.status === "RECEIVED" || bill.receivedDate != null) {
+    // Guarded on receivedDate + per-line qtyReceived, NOT status: recordPayment
+    // overwrites status to PAID/PARTIAL, so a status-only check let a paid bill
+    // be received a second time (stock incremented twice, average cost blended
+    // twice). A received bill may be received AGAIN only while per-line
+    // tracking shows quantity still outstanding (partial-receipt top-up).
+    const linked = bill.items.filter((i) => i.productId && i.product);
+    const remainingOf = (item: (typeof bill.items)[number]) => {
+      const remaining = new Prisma.Decimal(item.qty).sub(this.lineReceivedQty(bill, item));
+      return remaining.gt(0) ? remaining : new Prisma.Decimal(0);
+    };
+    if (bill.receivedDate != null) {
+      if (!linked.some((i) => remainingOf(i).gt(0))) {
+        throw new ConflictException("Bill already received");
+      }
+    } else if (bill.status === "RECEIVED") {
+      // Legacy rows: status defaulted to RECEIVED without a receivedDate.
       throw new ConflictException("Bill already received");
     }
 
     // Cost-integrity guard: unmapped lines don't update inventory or costs.
     // Warn-and-confirm rather than hard block — bills legitimately carry
     // non-inventory lines (freight, deposits). Clients catch code
-    // UNLINKED_ITEMS, show the skipped lines, and retry acknowledged.
+    // UNLINKED_ITEMS, show the skipped lines, and retry acknowledged. First
+    // receive event only — a top-up was already acknowledged once.
     const unlinkedItems = bill.items.filter((i) => !i.productId);
-    if (!dto?.acknowledgeUnlinked && (bill.items.length === 0 || unlinkedItems.length > 0)) {
+    if (
+      bill.receivedDate == null &&
+      !dto?.acknowledgeUnlinked &&
+      (bill.items.length === 0 || unlinkedItems.length > 0)
+    ) {
       throw new ConflictException({
         code: "UNLINKED_ITEMS",
         message:
@@ -571,29 +614,62 @@ export class VendorBillsService {
       });
     }
 
-    // Update bill status
-    const updated = await this.prisma.tenantTransaction(async (tx) => {
-      const updatedBill = await tx.vendorBill.update({
-        where: { id },
-        data: { status: "RECEIVED", receivedDate: new Date() },
-        include: {
-          supplier: { select: { id: true, name: true } },
-          items: {
-            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
-          },
-        },
+    // The receive plan: explicit per-line quantities (partial receive), or the
+    // full remaining quantity on every linked line when none were given.
+    let plan: { item: (typeof bill.items)[number]; receiveQty: Prisma.Decimal }[];
+    if (dto?.items) {
+      if (dto.items.length === 0) throw new BadRequestException("No quantities to receive.");
+      const seen = new Set<string>();
+      plan = dto.items.map((req) => {
+        const item = bill.items.find((i) => i.id === req.itemId);
+        if (!item) throw new BadRequestException("A requested line is not on this bill.");
+        if (seen.has(item.id)) {
+          throw new BadRequestException(`"${item.description}" appears twice in the request.`);
+        }
+        seen.add(item.id);
+        if (!item.productId || !item.product) {
+          throw new BadRequestException(
+            `"${item.description}" is not linked to a product — link it before receiving it.`,
+          );
+        }
+        const receiveQty = new Prisma.Decimal(String(req.qty));
+        const remaining = remainingOf(item);
+        if (receiveQty.gt(remaining)) {
+          throw new BadRequestException(
+            `"${item.description}": receiving ${receiveQty.toString()} exceeds the ${remaining.toString()} still outstanding.`,
+          );
+        }
+        return { item, receiveQty };
       });
+    } else {
+      plan = linked
+        .map((item) => ({ item, receiveQty: remainingOf(item) }))
+        .filter((p) => p.receiveQty.gt(0));
+    }
 
-      // Sync inventory for each product-linked item. The whole block works in
+    // Fully received once every linked line's cumulative receipt covers its
+    // qty. Status stays a lossy display blend (recordPayment overwrites it);
+    // receipt truth lives in receivedDate + per-line qtyReceived.
+    const fullyReceived = linked.every((item) => {
+      const adding = plan.find((p) => p.item.id === item.id)?.receiveQty ?? new Prisma.Decimal(0);
+      return this.lineReceivedQty(bill, item).add(adding).gte(new Prisma.Decimal(item.qty));
+    });
+
+    const updated = await this.prisma.tenantTransaction(async (tx) => {
+      // Sync inventory for each line in the plan. The whole block works in
       // INVENTORY denomination: lineInventoryDelta converts a case-priced line
       // (packSize > 1) to pieces + per-piece cost so Product.averageCost keeps
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
-      for (const item of bill.items) {
+      for (const { item, receiveQty } of plan) {
         if (!item.productId || !item.product) continue;
 
-        const { qty, unitCost } = this.lineInventoryDelta(item);
+        const { qty, unitCost } = this.lineInventoryDelta({
+          qty: receiveQty,
+          unitCost: item.unitCost,
+          packSize: item.packSize,
+        });
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
@@ -660,8 +736,30 @@ export class VendorBillsService {
         });
         if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
 
+        // Per-line receipt progress, in bill denomination (top-ups accumulate).
+        await tx.vendorBillItem.update({
+          where: { id: item.id },
+          data: { qtyReceived: this.lineReceivedQty(bill, item).add(receiveQty) },
+        });
+
         restockedIds.push(item.productId);
       }
+
+      // Bill update LAST so the response's items carry the fresh qtyReceived.
+      // receivedDate keeps the FIRST receipt's date across top-ups.
+      const updatedBill = await tx.vendorBill.update({
+        where: { id },
+        data: {
+          status: fullyReceived ? "RECEIVED" : "PARTIAL",
+          receivedDate: bill.receivedDate ?? new Date(),
+        },
+        include: {
+          supplier: { select: { id: true, name: true } },
+          items: {
+            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          },
+        },
+      });
 
       return { updatedBill, restockedIds };
     });
@@ -701,11 +799,19 @@ export class VendorBillsService {
     return this.prisma.tenantTransaction(async (tx) => {
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
-      // pieces + per-piece cost), or the reversal stops matching the receipt.
+      // pieces + per-piece cost), and only the quantity ACTUALLY received
+      // (partial receipts reverse partially), or the reversal stops matching
+      // the receipt.
       for (const item of bill.items) {
         if (!item.productId) continue;
 
-        const { qty, unitCost } = this.lineInventoryDelta(item);
+        const receivedQty = this.lineReceivedQty(bill, item);
+        if (receivedQty.lte(0)) continue;
+        const { qty, unitCost } = this.lineInventoryDelta({
+          qty: receivedQty,
+          unitCost: item.unitCost,
+          packSize: item.packSize,
+        });
 
         // Delete the stock movement created when this bill was received
         await tx.stockMovement.deleteMany({
@@ -741,6 +847,12 @@ export class VendorBillsService {
 
       // Reverse the lots this bill created (one per received line)
       await this.reverseBillLots(tx, bill.billNumber);
+
+      // Clear per-line receipt progress — the bill is back to never-received.
+      await tx.vendorBillItem.updateMany({
+        where: { vendorBillId: id },
+        data: { qtyReceived: null },
+      });
 
       // Revert bill status to DRAFT
       return tx.vendorBill.update({
@@ -800,8 +912,15 @@ export class VendorBillsService {
       return this.prisma.tenantTransaction(async (tx) => {
         for (const item of bill.items) {
           if (!item.productId || !item.product) continue;
-          // Same inventory denomination receive() applied — see lineInventoryDelta.
-          const { qty, unitCost } = this.lineInventoryDelta(item);
+          // Same inventory denomination receive() applied — see
+          // lineInventoryDelta — and only what was actually received.
+          const receivedQty = this.lineReceivedQty(bill, item);
+          if (receivedQty.lte(0)) continue;
+          const { qty, unitCost } = this.lineInventoryDelta({
+            qty: receivedQty,
+            unitCost: item.unitCost,
+            packSize: item.packSize,
+          });
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },

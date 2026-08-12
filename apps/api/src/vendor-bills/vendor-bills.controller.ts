@@ -23,6 +23,7 @@ import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
+import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -148,7 +149,7 @@ export class VendorBillsController {
 
   @Post(":id/receive") receive(
     @Param("id") id: string,
-    @Body() dto: { acknowledgeUnlinked?: boolean } | undefined,
+    @Body() dto: ReceiveVendorBillDto | undefined,
     @CurrentUser() user: { id: string },
   ) {
     return this.vendorBillsService.receive(id, dto, user.id);

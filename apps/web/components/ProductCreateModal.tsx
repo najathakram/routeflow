@@ -539,8 +539,10 @@ export function ProductCreateModal({
                 {priceError && <p className="mt-1 text-xs text-danger">{priceError}</p>}
                 {initialCost != null && initialCost > 0 && (
                   <p className="mt-1 text-[11px] text-navy/70">
-                    Suggested from invoice cost ${initialCost.toFixed(2)} + 30%. For FIFO/AVCO
-                    products the actual cost is recorded when the bill is received.
+                    {validUnitsPerBoxPrefill(initialUnitsPerBox)
+                      ? `Suggested from the invoice case cost + 30%; cost saved per unit ($${initialCost.toFixed(2)}). `
+                      : `Suggested from invoice cost $${initialCost.toFixed(2)} + 30%. `}
+                    For FIFO/AVCO products the actual cost is recorded when the bill is received.
                   </p>
                 )}
               </div>

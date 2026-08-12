@@ -30,9 +30,11 @@ import {
   getUnlinkedItemsError,
   type UnlinkedItemsError,
   type VendorBill,
+  type VendorBillItem,
   type VendorBillStatus,
   type VendorBillPayment,
   type CreateVendorBillItem,
+  type ReceiveVendorBillLine,
 } from "@/lib/api/vendor-bills";
 import { useSuppliers } from "@/lib/api/inventory";
 import { SupplierSelect } from "@/components/SupplierSelect";
@@ -274,6 +276,139 @@ function UnlinkedItemsModal({
   );
 }
 
+// ─── Receive Modal (per-line quantities — partial receiving) ──────────────────
+
+/**
+ * How much of a line is still outstanding. Bills received before per-line
+ * tracking (receivedDate set, every qtyReceived null) were fully received.
+ */
+function lineRemaining(bill: VendorBill, item: VendorBillItem): number {
+  const tracked = (bill.items ?? []).some((i) => i.qtyReceived != null);
+  const received =
+    item.qtyReceived != null
+      ? Number(item.qtyReceived)
+      : bill.receivedDate && !tracked
+        ? Number(item.qty)
+        : 0;
+  return Math.max(0, Number(item.qty) - received);
+}
+
+function ReceiveBillModal({
+  bill,
+  isOpen,
+  onClose,
+  onConfirm,
+  isPending,
+}: {
+  bill: VendorBill;
+  isOpen: boolean;
+  onClose: () => void;
+  /** undefined = no linked lines to quantify (expense-only bill). */
+  onConfirm: (items: ReceiveVendorBillLine[] | undefined) => void;
+  isPending: boolean;
+}) {
+  const linked = (bill.items ?? []).filter((i) => i.productId);
+  const unlinkedCount = (bill.items ?? []).length - linked.length;
+  const [qtys, setQtys] = React.useState<Record<string, string>>({});
+
+  // Re-prime the inputs to "everything outstanding" each time the modal opens.
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setQtys(Object.fromEntries(linked.map((i) => [i.id, String(lineRemaining(bill, i))])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, bill]);
+
+  const parsed = linked.map((item) => {
+    const remaining = lineRemaining(bill, item);
+    const raw = qtys[item.id] ?? "";
+    const qty = raw.trim() === "" ? 0 : Number(raw);
+    const invalid = !Number.isFinite(qty) || qty < 0 || qty > remaining;
+    return { item, remaining, qty, invalid };
+  });
+  const anyInvalid = parsed.some((p) => p.invalid);
+  const totalEntered = parsed.reduce((s, p) => s + (p.invalid ? 0 : p.qty), 0);
+  const isTopUp = bill.receivedDate != null;
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title={isTopUp ? "Receive remaining stock" : "Receive stock"}
+      description="Adjust quantities if only part of the delivery arrived — the rest stays outstanding to receive later."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() =>
+              onConfirm(
+                linked.length === 0
+                  ? undefined
+                  : parsed.filter((p) => p.qty > 0).map((p) => ({ itemId: p.item.id, qty: p.qty })),
+              )
+            }
+            loading={isPending}
+            disabled={anyInvalid || (linked.length > 0 && totalEntered <= 0)}
+            data-testid="receive-confirm"
+          >
+            {isTopUp ? "Receive" : "Mark Received"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {linked.length === 0 ? (
+          <p className="text-sm text-navy/70">
+            No lines on this bill are linked to a product — receiving it records the bill but
+            changes no stock or costs.
+          </p>
+        ) : (
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {parsed.map(({ item, remaining, invalid }) => {
+              const received = Number(item.qty) - remaining;
+              const casePacked = (item.packSize ?? 0) > 1;
+              return (
+                <li key={item.id} className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-navy">
+                      {item.product?.name ?? item.description}
+                    </p>
+                    <p className="text-xs text-navy/60">
+                      {received > 0 && `${received} of ${item.qty} already received · `}
+                      {casePacked && `case of ${item.packSize} pcs · `}
+                      {remaining} outstanding
+                    </p>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    max={remaining}
+                    step="0.001"
+                    value={qtys[item.id] ?? ""}
+                    onChange={(e) => setQtys((q) => ({ ...q, [item.id]: e.target.value }))}
+                    className={cn(
+                      "h-9 w-24 shrink-0 rounded border bg-white px-2 text-sm text-right text-navy focus:outline-none focus:ring-1 focus:ring-brand-500",
+                      invalid ? "border-red-400" : "border-surface-border",
+                    )}
+                    aria-label={`Quantity to receive for ${item.product?.name ?? item.description}`}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {unlinkedCount > 0 && (
+          <p className="rounded-md bg-amber-50 p-2.5 text-xs text-amber-800">
+            {unlinkedCount} unlinked {unlinkedCount === 1 ? "line" : "lines"} (freight, deposits, …)
+            won&apos;t update stock or costs.
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Revert to Draft Confirm Modal ────────────────────────────────────────────
 
 function RevertToDraftModal({
@@ -327,6 +462,12 @@ interface EditLineItemRow {
   description: string;
   qty: string;
   unitCost: string;
+  /** Units per box/case — when set (>1), unitCost is the CASE cost and the
+   *  receive converts to pieces + per-piece cost. */
+  packSize: string;
+  /** Scan-captured fields carried through the edit so saving doesn't drop them. */
+  sku?: string | null;
+  lineTotal?: number | null;
 }
 
 const emptyRow = (): EditLineItemRow => ({
@@ -334,6 +475,7 @@ const emptyRow = (): EditLineItemRow => ({
   description: "",
   qty: "1",
   unitCost: "",
+  packSize: "",
 });
 
 function EditLineItems({
@@ -359,7 +501,7 @@ function EditLineItems({
   return (
     <div className="space-y-2">
       {items.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_80px_100px_32px] gap-2 items-start">
+        <div key={i} className="grid grid-cols-[1fr_72px_72px_100px_32px] gap-2 items-start">
           <div>
             <SearchableProductPicker
               async
@@ -411,7 +553,22 @@ function EditLineItems({
             />
           </div>
           <div>
-            <label className="mb-0.5 block text-[10px] text-navy/70">Unit Cost ($)</label>
+            <label className="mb-0.5 block text-[10px] text-navy/70">Pcs/case</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={row.packSize}
+              onChange={(e) => update(i, { packSize: e.target.value })}
+              placeholder="—"
+              title="Units per case. Leave blank when the line is priced per unit."
+              className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-right text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[10px] text-navy/70">
+              {parseInt(row.packSize, 10) > 1 ? "Case Cost ($)" : "Unit Cost ($)"}
+            </label>
             <input
               type="number"
               min="0"
@@ -445,12 +602,23 @@ function EditLineItems({
           isOpen
           onClose={() => setCreateFromRow(null)}
           initialName={items[createFromRow].description}
+          // Case-priced lines seed the product with PER-PIECE numbers — the
+          // product contract is per piece (costPerSellingUnit multiplies back).
           initialPrice={
             parseFloat(items[createFromRow].unitCost) > 0
-              ? roundMoney(parseFloat(items[createFromRow].unitCost) * 1.3)
+              ? roundMoney(
+                  (parseFloat(items[createFromRow].unitCost) /
+                    Math.max(1, parseInt(items[createFromRow].packSize, 10) || 1)) *
+                    1.3,
+                )
               : undefined
           }
-          initialCost={parseFloat(items[createFromRow].unitCost) || undefined}
+          initialCost={
+            parseFloat(items[createFromRow].unitCost) > 0
+              ? parseFloat(items[createFromRow].unitCost) /
+                Math.max(1, parseInt(items[createFromRow].packSize, 10) || 1)
+              : undefined
+          }
           onCreated={(product) => {
             const i = createFromRow;
             const rawDescription = items[i].description;
@@ -488,7 +656,13 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
+  const [isReceiveOpen, setIsReceiveOpen] = React.useState(false);
   const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
+  // The per-line quantities chosen in the receive modal — kept so the
+  // UNLINKED_ITEMS confirm retry re-sends the same partial plan.
+  const [pendingReceiveItems, setPendingReceiveItems] = React.useState<
+    ReceiveVendorBillLine[] | undefined
+  >(undefined);
 
   // Edit mode state
   const [isEditing, setIsEditing] = React.useState(false);
@@ -515,6 +689,9 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         description: item.description,
         qty: String(item.qty),
         unitCost: String(item.unitCost),
+        packSize: item.packSize != null && item.packSize > 1 ? String(item.packSize) : "",
+        sku: item.sku ?? null,
+        lineTotal: item.lineTotal != null ? Number(item.lineTotal) : null,
       })),
     );
     setIsEditing(true);
@@ -555,21 +732,37 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const billItems = bill.items ?? [];
   const unlinkedCount = billItems.filter((i) => !i.productId).length;
 
+  // Receive affordance: DRAFT bills, paid-first bills that were never received
+  // (recordPayment overwrites status — receipt truth is receivedDate), and
+  // partially received bills with quantity still outstanding. Legacy received
+  // bills (no per-line tracking) count as fully received.
+  const outstandingQty = billItems
+    .filter((i) => i.productId)
+    .reduce((sum, i) => sum + lineRemaining(bill, i), 0);
+  const canReceive =
+    status !== "VOID" && (bill.receivedDate == null ? status !== "RECEIVED" : outstandingQty > 0);
+  const receiveLabel = bill.receivedDate ? "Receive remaining" : "Mark Received";
+
   // ── Action handlers ──────────────────────────────────────────────────────────
 
-  const handleReceive = (acknowledgeUnlinked = false) => {
+  const handleReceive = (acknowledgeUnlinked = false, items?: ReceiveVendorBillLine[]) => {
     receiveBill.mutate(
-      { id: bill.id, acknowledgeUnlinked },
+      { id: bill.id, acknowledgeUnlinked, items },
       {
-        onSuccess: () => {
+        onSuccess: (updated) => {
           setUnlinkedConfirm(null);
+          setIsReceiveOpen(false);
+          setPendingReceiveItems(undefined);
+          const partial = updated?.status === "PARTIAL";
           toast({
-            title: "Bill marked as received",
-            description: `Bill ${bill.billNumber} is now in Received status.`,
+            title: partial ? "Partial delivery received" : "Bill marked as received",
+            description: partial
+              ? `Stock updated for what arrived — the rest of bill ${bill.billNumber} stays outstanding.`
+              : `Bill ${bill.billNumber} is now in Received status.`,
             variant: "success",
           });
         },
-        onError: (err) => {
+        onError: (err: any) => {
           // Unmapped lines → show the confirm dialog listing what gets skipped
           const unlinked = getUnlinkedItemsError(err);
           if (unlinked) {
@@ -578,7 +771,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           }
           toast({
             title: "Failed to mark received",
-            description: "Please try again.",
+            description: err?.response?.data?.message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -626,12 +819,20 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const handleSaveEdit = () => {
     const items: CreateVendorBillItem[] = editItems
       .filter((row) => row.description.trim() && parseFloat(row.qty) > 0)
-      .map((row) => ({
-        productId: row.productId || undefined,
-        description: row.description.trim(),
-        qty: parseFloat(row.qty),
-        unitCost: parseFloat(row.unitCost) || 0,
-      }));
+      .map((row) => {
+        const pack = parseInt(row.packSize, 10);
+        return {
+          productId: row.productId || undefined,
+          description: row.description.trim(),
+          qty: parseFloat(row.qty),
+          unitCost: parseFloat(row.unitCost) || 0,
+          // Preserve the scan-captured fields — the server recreates lines on
+          // every edit, so anything not resent is lost.
+          ...(pack > 1 ? { packSize: pack } : {}),
+          ...(row.sku ? { sku: row.sku } : {}),
+          ...(row.lineTotal != null ? { lineTotal: row.lineTotal } : {}),
+        };
+      });
 
     updateBill.mutate(
       {
@@ -743,7 +944,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <Button
                 size="sm"
                 leftIcon={<PackageCheck className="h-4 w-4" />}
-                onClick={() => handleReceive()}
+                onClick={() => setIsReceiveOpen(true)}
                 loading={receiveBill.isPending}
               >
                 Mark Received
@@ -783,6 +984,16 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
 
           {(status === "RECEIVED" || status === "PARTIAL") && (
             <>
+              {canReceive && (
+                <Button
+                  size="sm"
+                  leftIcon={<PackageCheck className="h-4 w-4" />}
+                  onClick={() => setIsReceiveOpen(true)}
+                  loading={receiveBill.isPending}
+                >
+                  {receiveLabel}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"
@@ -802,9 +1013,19 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             </>
           )}
 
-          {status === "PAID" && (
-            <span className="text-sm italic text-navy/70">This bill is fully paid.</span>
-          )}
+          {status === "PAID" &&
+            (canReceive ? (
+              <Button
+                size="sm"
+                leftIcon={<PackageCheck className="h-4 w-4" />}
+                onClick={() => setIsReceiveOpen(true)}
+                loading={receiveBill.isPending}
+              >
+                {receiveLabel}
+              </Button>
+            ) : (
+              <span className="text-sm italic text-navy/70">This bill is fully paid.</span>
+            ))}
 
           {status === "VOID" && (
             <span className="text-sm italic text-navy/70">This bill is void.</span>
@@ -1007,9 +1228,25 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                                 </span>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
+                            <td className="px-4 py-3 text-right text-navy/70">
+                              {item.qty}
+                              {(item.packSize ?? 0) > 1 && (
+                                <span className="block text-[11px] text-navy/50">
+                                  × {item.packSize} pcs
+                                </span>
+                              )}
+                              {item.qtyReceived != null &&
+                                Number(item.qtyReceived) < Number(item.qty) && (
+                                  <span className="block text-[11px] font-medium text-amber-700">
+                                    {Number(item.qtyReceived)} received
+                                  </span>
+                                )}
+                            </td>
                             <td className="px-4 py-3 text-right text-navy/70">
                               <span className="money">{fmt(Number(item.unitCost))}</span>
+                              {(item.packSize ?? 0) > 1 && (
+                                <span className="block text-[11px] text-navy/50">per case</span>
+                              )}
                             </td>
                             <td className="px-6 py-3 text-right text-navy">
                               <span className="money">
@@ -1188,10 +1425,21 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         isPending={revertToDraft.isPending}
       />
 
+      <ReceiveBillModal
+        bill={bill}
+        isOpen={isReceiveOpen}
+        onClose={() => setIsReceiveOpen(false)}
+        onConfirm={(items) => {
+          setPendingReceiveItems(items);
+          handleReceive(false, items);
+        }}
+        isPending={receiveBill.isPending}
+      />
+
       <UnlinkedItemsModal
         payload={unlinkedConfirm}
         onClose={() => setUnlinkedConfirm(null)}
-        onConfirm={() => handleReceive(true)}
+        onConfirm={() => handleReceive(true, pendingReceiveItems)}
         isPending={receiveBill.isPending}
       />
     </div>

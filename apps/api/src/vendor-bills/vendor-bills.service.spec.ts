@@ -299,6 +299,80 @@ describe("VendorBillsService", () => {
       expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1");
       expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
     });
+
+    it("G3: partial receive applies only the requested quantity and marks PARTIAL", async () => {
+      // 2 of 5 cases (pack 6) arrive: 12 pieces @ $2/piece; the line records 2.
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(
+        bill({
+          items: [linkedItem({ qty: D(5), unitCost: D(12), packSize: 6, qtyReceived: null })],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(0), averageCost: null });
+
+      await service.receive("bill-1", { items: [{ itemId: "item-1", qty: 2 }] }, "user-1");
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.quantity.toString()).toBe("12");
+      expect(movementArgs.unitCost.toString()).toBe("2");
+      expect(prisma.vendorBillItem.update).toHaveBeenCalledWith({
+        where: { id: "item-1" },
+        data: { qtyReceived: D(0).add(D("2")) },
+      });
+      const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(billArgs.status).toBe("PARTIAL");
+      expect(billArgs.receivedDate).toBeInstanceOf(Date);
+    });
+
+    it("G3: a top-up receives the remainder, completes the bill, and keeps the first receipt date", async () => {
+      const firstReceipt = new Date("2026-06-02");
+      prisma.vendorBill.findUnique.mockResolvedValueOnce(
+        bill({
+          status: "PARTIAL",
+          receivedDate: firstReceipt,
+          items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
+
+      await service.receive("bill-1", undefined, "user-1");
+
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.quantity.toString()).toBe("6");
+      expect(prisma.vendorBillItem.update).toHaveBeenCalledWith({
+        where: { id: "item-1" },
+        data: { qtyReceived: D(4).add(D("6")) },
+      });
+      const billArgs = prisma.vendorBill.update.mock.calls[0][0].data;
+      expect(billArgs.status).toBe("RECEIVED");
+      expect(billArgs.receivedDate).toBe(firstReceipt);
+    });
+
+    it("G3: rejects receiving more than the outstanding quantity", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({
+          status: "PARTIAL",
+          receivedDate: new Date("2026-06-02"),
+          items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
+        }),
+      );
+
+      await expect(
+        service.receive("bill-1", { items: [{ itemId: "item-1", qty: 7 }] }),
+      ).rejects.toThrow(/exceeds the 6/);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("G3: a fully-topped-up bill rejects another receive", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({
+          status: "RECEIVED",
+          receivedDate: new Date("2026-06-02"),
+          items: [linkedItem({ qty: D(10), qtyReceived: D(10) })],
+        }),
+      );
+
+      await expect(service.receive("bill-1")).rejects.toThrow("Bill already received");
+    });
   });
 
   // ─── revertToDraft ──────────────────────────────────────────────────────────
@@ -380,6 +454,28 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.currentStock).toEqual({ decrement: D(2).mul(6) });
+    });
+
+    it("G3: reverting a partially received bill reverses only what arrived", async () => {
+      // 4 of 10 received — the revert must decrement 4, not 10, and clear the tracking.
+      prisma.vendorBill.findUnique.mockResolvedValue(
+        bill({
+          status: "PARTIAL",
+          receivedDate: new Date("2026-06-02"),
+          items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
+        }),
+      );
+      prisma.product.findUnique.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
+      prisma.stockLot.findMany.mockResolvedValue([]);
+
+      await service.revertToDraft("bill-1");
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.currentStock).toEqual({ decrement: D("4") });
+      expect(prisma.vendorBillItem.updateMany).toHaveBeenCalledWith({
+        where: { vendorBillId: "bill-1" },
+        data: { qtyReceived: null },
+      });
     });
   });
 

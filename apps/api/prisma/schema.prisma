@@ -2355,6 +2355,10 @@ model VendorBillItem {
   sku          String?
   packSize     Int?
   lineTotal    Decimal? @db.Decimal(12, 2)
+  // Cumulative quantity actually received on this line, in BILL denomination
+  // (cases when packSize > 1). Null = receipt predates per-line tracking; a
+  // bill whose receivedDate is set while EVERY line is null was fully received.
+  qtyReceived  Decimal? @db.Decimal(10, 3)
   createdAt    DateTime @default(now())
   tenantId     String?
 
