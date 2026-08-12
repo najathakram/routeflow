@@ -3,7 +3,15 @@
  * method/status → pill+icon mapping and the void gating (void allowed unless
  * already VOID — matching the server contract so no shown action is rejected).
  */
-import { paymentActionFlags, paymentMethodPill, paymentStatusPill } from "../lib/payments-logic";
+import {
+  allocationTotals,
+  checkNextStates,
+  oldestInvoicesFirst,
+  paymentActionFlags,
+  paymentMethodPill,
+  paymentStatusPill,
+  waterfallAllocations,
+} from "../lib/payments-logic";
 import type { PaymentMethod } from "../lib/api/invoices";
 import type { PaymentStatus } from "../lib/api/payments";
 
@@ -51,4 +59,108 @@ describe("paymentActionFlags", () => {
   it.each(["ADVANCE", "CASH"] as PaymentMethod[])("%s method → voidable", (method) =>
     expect(paymentActionFlags("PAID", method)).toEqual({ canVoid: true }),
   );
+});
+
+describe("checkNextStates (Wave 3 — server CHECK_TRANSITIONS mirror)", () => {
+  it("null stored status means RECORDED (server default): deposit or bounce", () => {
+    expect(checkNextStates({ method: "CHECK", status: "PAID", checkStatus: null })).toEqual([
+      "DEPOSITED",
+      "BOUNCED",
+    ]);
+    expect(checkNextStates({ method: "CHECK", status: "PAID" })).toEqual(["DEPOSITED", "BOUNCED"]);
+  });
+
+  it("DEPOSITED → clear or bounce; CLEARED can still bounce; BOUNCED is terminal", () => {
+    expect(checkNextStates({ method: "CHECK", checkStatus: "DEPOSITED" })).toEqual([
+      "CLEARED",
+      "BOUNCED",
+    ]);
+    expect(checkNextStates({ method: "CHECK", checkStatus: "CLEARED" })).toEqual(["BOUNCED"]);
+    expect(checkNextStates({ method: "CHECK", checkStatus: "BOUNCED" })).toEqual([]);
+  });
+
+  it("non-checks and voided rows offer nothing (server 400s both)", () => {
+    expect(checkNextStates({ method: "CASH" })).toEqual([]);
+    expect(checkNextStates({ method: "CHECK", status: "VOID", checkStatus: "RECORDED" })).toEqual(
+      [],
+    );
+  });
+});
+
+describe("waterfallAllocations (Wave 3 — client owns ALL the safety the server lacks)", () => {
+  const inv = (id: string, balanceDue: number) => ({ id, balanceDue });
+
+  it("greedy fill in array order, capped at each balance", () => {
+    const r = waterfallAllocations(100, [inv("a", 40), inv("b", 35), inv("c", 50)]);
+    expect(r.allocations).toEqual([
+      { invoiceId: "a", amount: 40 },
+      { invoiceId: "b", amount: 35 },
+      { invoiceId: "c", amount: 25 },
+    ]);
+    expect(r.allocated).toBe(100);
+    expect(r.excess).toBe(0);
+  });
+
+  it("excess (received − allocated) is what becomes an advance", () => {
+    const r = waterfallAllocations(100, [inv("a", 60.5)]);
+    expect(r.allocations).toEqual([{ invoiceId: "a", amount: 60.5 }]);
+    expect(r.excess).toBe(39.5);
+  });
+
+  it("cents-rounds everything — the server applies allocations verbatim", () => {
+    // 0.1 + 0.2 style float dirt must never reach the wire.
+    const r = waterfallAllocations(0.3, [inv("a", 0.1), inv("b", 0.2), inv("c", 10)]);
+    expect(r.allocations).toEqual([
+      { invoiceId: "a", amount: 0.1 },
+      { invoiceId: "b", amount: 0.2 },
+    ]);
+    expect(r.allocated).toBe(0.3);
+    expect(r.excess).toBe(0);
+  });
+
+  it("skips zero/negative balances and never over-allocates", () => {
+    const r = waterfallAllocations(50, [inv("a", 0), inv("b", -5), inv("c", 20)]);
+    expect(r.allocations).toEqual([{ invoiceId: "c", amount: 20 }]);
+    expect(r.excess).toBe(30);
+  });
+
+  it("zero/negative received allocates nothing", () => {
+    expect(waterfallAllocations(0, [inv("a", 10)]).allocations).toEqual([]);
+    expect(waterfallAllocations(-5, [inv("a", 10)]).allocations).toEqual([]);
+  });
+});
+
+describe("allocationTotals (hand-edited rows)", () => {
+  it("flags over-allocation — the server would silently accept it", () => {
+    const r = allocationTotals(50, [{ amount: 30 }, { amount: 25 }]);
+    expect(r.allocated).toBe(55);
+    expect(r.overAllocated).toBe(true);
+    expect(r.excess).toBe(0);
+  });
+
+  it("blank rows count as zero; exact fill is not over-allocated", () => {
+    const r = allocationTotals(50, [{ amount: 30 }, { amount: null }, { amount: 20 }]);
+    expect(r).toEqual({ allocated: 50, excess: 0, overAllocated: false });
+  });
+
+  it("under-allocation reports the advance-bound excess", () => {
+    expect(allocationTotals(100, [{ amount: 60.25 }]).excess).toBe(39.75);
+  });
+});
+
+describe("oldestInvoicesFirst", () => {
+  it("sorts by issueDate, falling back to createdAt, ascending", () => {
+    const rows = [
+      { id: "new", issueDate: "2026-08-01", createdAt: "2026-08-01" },
+      { id: "old", issueDate: "2026-06-15", createdAt: "2026-06-15" },
+      { id: "noIssue", issueDate: null, createdAt: "2026-07-01" },
+    ];
+    expect(oldestInvoicesFirst(rows).map((r: any) => r.id)).toEqual(["old", "noIssue", "new"]);
+  });
+
+  it("does not mutate the input", () => {
+    const rows = [{ issueDate: "2026-08-01" }, { issueDate: "2026-06-01" }];
+    oldestInvoicesFirst(rows);
+    expect(rows[0].issueDate).toBe("2026-08-01");
+  });
 });

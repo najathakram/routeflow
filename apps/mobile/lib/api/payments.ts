@@ -21,6 +21,15 @@ export interface AllPayment {
   /** When the money actually landed in the bank. May be a future date. */
   settledAt?: string | null;
   createdAt: string;
+  // P5-12 check lifecycle — the server has always returned these scalars
+  // (listAllPayments uses `include` with no `select`); they were simply
+  // untyped until the Wave 3 operator controls needed them.
+  checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
+  depositedAt?: string | null;
+  clearedAt?: string | null;
+  bouncedAt?: string | null;
+  /** NSF fee billed onto the invoice when the check bounced (display only). */
+  nsfFeeAmount?: number | null;
   // Payment image (receipt / slip / check photo). Grouped standalone rows
   // share one object keyed by paymentGroupId — these three fields are
   // identical across a group (server-anchored on upload).
@@ -187,5 +196,95 @@ export function useDeletePaymentImage() {
   });
 }
 
-// Deferred (redundant with invoices/[id]/record-payment.tsx): standalone record
-// (POST /invoices/payments/record), CSV export (GET /invoices/payments/export).
+// ─── Standalone payment with multi-invoice allocation (Wave 3) ───────────────
+
+export interface StandalonePaymentAllocation {
+  invoiceId: string;
+  /** Must be > 0 (server @Min(0.01)); cents-rounded CLIENT-side — the server
+   *  applies allocations verbatim with no rounding. */
+  amount: number;
+}
+
+export interface StandalonePaymentDto {
+  customerId: string;
+  /** Cash actually received. Anything not covered by `allocations` (> 0.001)
+   *  becomes an AdvancePayment for the customer, server-side. */
+  totalAmount: number;
+  /** Hand-enterable methods only — Advance/Credit-Note draws have their own
+   *  dedicated apply actions. */
+  method: EditablePaymentMethod;
+  paidAt?: string;
+  /** Bank landing date, applied to every allocation row. */
+  settledAt?: string | null;
+  bankCharges?: number;
+  reference?: string;
+  notes?: string;
+  /** DRAFT records the rows without touching invoice statuses. */
+  status?: "DRAFT" | "PAID";
+  allocations: StandalonePaymentAllocation[];
+}
+
+/**
+ * One check covering several invoices — `POST /invoices/payments/record`.
+ * Returns every created row (shared paymentGroupId) + the unallocated excess
+ * that became an advance. ⚠️ The server has NO over-allocation guard and NO
+ * per-invoice cap: the screen must enforce `Σ allocations ≤ totalAmount` and
+ * `amount ≤ balanceDue` (lib/payments-logic.ts allocationTotals/waterfall)
+ * before calling this.
+ */
+export function useRecordPaymentStandalone() {
+  const qc = useQueryClient();
+  return useMutation<
+    { payments: AllPayment[]; paymentGroupId: string; excess: number },
+    Error,
+    StandalonePaymentDto
+  >({
+    mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      // Excess creates an AdvancePayment → the customer statement's advance
+      // balance and the payments-list Advance KPI both move.
+      qc.invalidateQueries({ queryKey: ["admin", "customers"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
+  });
+}
+
+// ─── Check lifecycle (Wave 3) ────────────────────────────────────────────────
+
+export interface SetCheckStatusDto {
+  invoiceId: string;
+  paymentId: string;
+  status: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
+  /** NSF fee billed onto the invoice when status = BOUNCED (omit/0 = no fee). */
+  nsfFeeAmount?: number;
+  /** True bank landing date — meaningful with CLEARED; sets clearedAt AND
+   *  settledAt. Web's DTO omits this; the server supports it and cash-basis
+   *  reporting windows on it, so mobile sends it. */
+  settledAt?: string;
+}
+
+/**
+ * Advance a check through its lifecycle — `PATCH
+ * /invoices/:id/payments/:paymentId/check-status`. Transitions are gated
+ * client-side by lib/payments-logic.ts CHECK_TRANSITIONS (server mirror).
+ * BOUNCED voids the payment, re-opens the invoice balance, and (with a fee)
+ * appends a non-taxable NSF line + bumps the stored invoice total.
+ */
+export function useSetCheckStatus() {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean; checkStatus: string }, Error, SetCheckStatusDto>({
+    mutationFn: ({ invoiceId, paymentId, ...body }) =>
+      apiClient
+        .patch(`/invoices/${invoiceId}/payments/${paymentId}/check-status`, body)
+        .then((r) => r.data),
+    onSuccess: (_, { paymentId }) => {
+      invalidatePayments(qc, paymentId);
+      // A bounce re-opens the invoice (status + total can change).
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+    },
+  });
+}
+
+// Deferred: CSV export (GET /invoices/payments/export) — a desktop chore.

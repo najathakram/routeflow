@@ -79,6 +79,91 @@ export function useCustomerStatement(id: string) {
   });
 }
 
+// ─── Advance payments (Wave 3 — mobile is the FIRST client for apply) ────────
+
+export interface AdvancePayment {
+  id: string;
+  customerId: string;
+  /** Original deposit — immutable. Used = amount − balance. */
+  amount: number | string;
+  /** Remaining wallet balance; decremented on apply, restored on void/delete. */
+  balance: number | string;
+  method: string;
+  reference?: string | null;
+  notes?: string | null;
+  receivedAt?: string;
+  createdAt: string;
+}
+
+/** GET /customers/:id/advance-payments — raw array, newest received first. */
+export function useCustomerAdvancePayments(customerId: string) {
+  return useQuery<AdvancePayment[]>({
+    queryKey: ["customers", customerId, "advance-payments"],
+    queryFn: () => apiClient.get(`/customers/${customerId}/advance-payments`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export interface CreateAdvancePaymentDto {
+  customerId: string;
+  /** Cents-rounded CLIENT-side — the server stores it verbatim (no roundMoney,
+   *  and no class-validator on these routes at all — validate before sending). */
+  amount: number;
+  /** Hand-enterable methods only (web offers CASH/CHECK/ACH/OTHER). */
+  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  reference?: string;
+  notes?: string;
+}
+
+/** POST /customers/:id/advance-payments — take a deposit into the wallet. */
+export function useCreateAdvancePayment() {
+  const qc = useQueryClient();
+  return useMutation<AdvancePayment, Error, CreateAdvancePaymentDto>({
+    mutationFn: ({ customerId, ...body }) =>
+      apiClient.post(`/customers/${customerId}/advance-payments`, body).then((r) => r.data),
+    onSuccess: (_, { customerId }) => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
+      qc.invalidateQueries({ queryKey: ["admin", "customers"] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
+    },
+  });
+}
+
+/**
+ * POST /customers/:id/advance-payments/:apId/apply — draw the wallet down onto
+ * an invoice (payment row method ADVANCE, reference AP-<id-8>). Omitting
+ * `amount` applies min(wallet balance, invoice balance). Server guards
+ * (verbatim): "Advance payment has no remaining balance", "Cannot apply
+ * advance payment to invoice with status <S>", "Invoice has no outstanding
+ * balance". ⚠️ Its status recompute is inline and does NOT preserve DRAFT —
+ * gate the UI to SENT/VIEWED/PARTIAL/OVERDUE so a draft is never silently
+ * flipped. Returns the UPDATED INVOICE.
+ */
+export function useApplyAdvancePayment() {
+  const qc = useQueryClient();
+  return useMutation<
+    { id: string },
+    Error,
+    { customerId: string; advanceId: string; invoiceId: string; amount?: number }
+  >({
+    mutationFn: ({ customerId, advanceId, invoiceId, amount }) =>
+      apiClient
+        .post(`/customers/${customerId}/advance-payments/${advanceId}/apply`, {
+          invoiceId,
+          ...(amount != null ? { amount } : {}),
+        })
+        .then((r) => r.data),
+    onSuccess: (_, { customerId, invoiceId }) => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", invoiceId] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices", invoiceId] });
+      qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
+    },
+  });
+}
+
 export interface CustomerPrice {
   id: string;
   customerId: string;
