@@ -361,7 +361,7 @@ export function useUpdateCustomerAddress() {
   });
 }
 
-// ─── Documents (view/share/delete — upload is out of scope) ─────────────────
+// ─── Documents ────────────────────────────────────────────────────────────────
 
 export interface CustomerDocument {
   id: string;
@@ -374,11 +374,50 @@ export interface CustomerDocument {
   url: string;
 }
 
+/** Same vocabulary as web's Documents tab. `docType` is a free string server-side. */
+export const CUSTOMER_DOC_TYPES = [
+  "Tax Exempt Certificate",
+  "Resale Certificate",
+  "W-9",
+  "Signed Agreement",
+  "Other",
+] as const;
+
 export function useCustomerDocuments(customerId: string) {
   return useQuery<CustomerDocument[]>({
     queryKey: ["customers", customerId, "documents"],
     queryFn: () => apiClient.get(`/customers/${customerId}/documents`).then((r) => r.data),
     enabled: !!customerId,
+  });
+}
+
+/**
+ * Upload photographed documents — multipart field name `files` (exactly; the
+ * server's FilesInterceptor matches it) plus the text field `docType`. Each RN
+ * FormData part MUST declare an allow-listed `type` (JPEG/PNG/WEBP/PDF) or the
+ * server's fileFilter 400s; the server re-compresses images anyway
+ * (`compressDocument` → JPEG ≤1600px). 60s timeout for that compression.
+ * NOT offline-queued (the api-client skips FormData mutations) — best-effort.
+ */
+export function useUploadCustomerDocuments(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<
+    { uploaded: CustomerDocument[] },
+    Error,
+    { docType: string; files: { uri: string; name: string; type: string }[] }
+  >({
+    mutationFn: ({ docType, files }) => {
+      const form = new FormData();
+      form.append("docType", docType);
+      for (const f of files) form.append("files", f as unknown as Blob);
+      return apiClient
+        .post(`/customers/${customerId}/documents`, form, {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 60_000,
+        })
+        .then((r) => r.data);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
   });
 }
 
@@ -388,5 +427,106 @@ export function useDeleteCustomerDocument(customerId: string) {
     mutationFn: (docId) =>
       apiClient.delete(`/customers/${customerId}/documents/${docId}`).then(() => undefined),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customers", customerId, "documents"] }),
+  });
+}
+
+// ─── Contact persons ─────────────────────────────────────────────────────────
+
+export interface ContactPerson {
+  id: string;
+  salutation?: string | null;
+  firstName: string;
+  lastName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+}
+
+export interface ContactPersonInput {
+  salutation?: string;
+  firstName: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  mobile?: string;
+  /** Server enforces the single-primary invariant in a transaction. */
+  isPrimary?: boolean;
+}
+
+const contactsKey = (customerId: string) => ["customers", customerId, "contacts"] as const;
+
+/** Primary first, then oldest-first (server ordering). */
+export function useContactPersons(customerId: string) {
+  return useQuery<ContactPerson[]>({
+    queryKey: contactsKey(customerId),
+    queryFn: () => apiClient.get(`/customers/${customerId}/contacts`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useAddContactPerson(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<ContactPerson, Error, ContactPersonInput>({
+    mutationFn: (dto) =>
+      apiClient.post(`/customers/${customerId}/contacts`, dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),
+  });
+}
+
+export function useUpdateContactPerson(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<ContactPerson, Error, { contactId: string } & Partial<ContactPersonInput>>({
+    mutationFn: ({ contactId, ...dto }) =>
+      apiClient.patch(`/customers/${customerId}/contacts/${contactId}`, dto).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),
+  });
+}
+
+export function useDeleteContactPerson(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (contactId) =>
+      apiClient.delete(`/customers/${customerId}/contacts/${contactId}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: contactsKey(customerId) }),
+  });
+}
+
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+/** NOTE: the server does NOT include the author relation — there is no name to
+ *  render (web falls back to "User" too). Distinct from `Customer.notes`. */
+export interface CustomerComment {
+  id: string;
+  content: string;
+  createdAt: string;
+}
+
+const commentsKey = (customerId: string) => ["customers", customerId, "comments"] as const;
+
+export function useCustomerComments(customerId: string) {
+  return useQuery<CustomerComment[]>({
+    queryKey: commentsKey(customerId),
+    queryFn: () => apiClient.get(`/customers/${customerId}/comments`).then((r) => r.data),
+    enabled: !!customerId,
+  });
+}
+
+export function useAddCustomerComment(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<CustomerComment, Error, string>({
+    mutationFn: (content) =>
+      apiClient.post(`/customers/${customerId}/comments`, { content }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commentsKey(customerId) }),
+  });
+}
+
+export function useDeleteCustomerComment(customerId: string) {
+  const qc = useQueryClient();
+  return useMutation<{ success: boolean }, Error, string>({
+    mutationFn: (commentId) =>
+      apiClient.delete(`/customers/${customerId}/comments/${commentId}`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commentsKey(customerId) }),
   });
 }
