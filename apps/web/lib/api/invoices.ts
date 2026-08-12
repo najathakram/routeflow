@@ -152,7 +152,7 @@ export function useInvoices(
     /** When true, return ONLY invoices that have a tracking number (shipments list). */
     shipped?: boolean;
   },
-  options?: { refetchInterval?: number },
+  options?: { refetchInterval?: number; enabled?: boolean },
 ) {
   return useQuery<PaginatedResponse<Invoice>>({
     queryKey: ["invoices", params],

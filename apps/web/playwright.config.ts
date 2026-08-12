@@ -132,6 +132,19 @@ export default defineConfig({
       },
     },
 
+    // ── Create-order Escape scoping (WP-1) ────────────────────────────────────
+    // Uses operator auth state; exercises the order-builder Escape/draft flow.
+    // The spec shipped without this project entry, so it NEVER ran.
+    {
+      name: "create-order-escape",
+      testMatch: /08-create-order-escape\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Regulated compliance smoke ─────────────────────────────────────────────
     // Report-panel UX on /compliance/[categoryId] with every regulated endpoint
     // mocked — no mutations reach any tenant. Self-skips on web builds that

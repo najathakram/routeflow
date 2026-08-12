@@ -1493,6 +1493,10 @@ function DocumentsTab({ customerId }: { customerId: string }) {
 const STATUS_CYCLE = ["ACTIVE", "INACTIVE", "SUSPENDED"] as const;
 type CustomerStatus = (typeof STATUS_CYCLE)[number];
 
+/** "Outstanding" spans four statuses, but ListInvoicesDto validates `status` as a
+ *  single enum value (a comma-list 400s) — so it's filtered client-side. */
+const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+
 export default function CustomerDetailPage({ params }: { params: { id: string } }) {
   const { setTitle } = usePageTitle();
   const router = useRouter();
@@ -1519,17 +1523,15 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   );
   const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
     customerId: params.id,
-    status:
-      invoiceFilter === "outstanding"
-        ? "SENT,VIEWED,PARTIAL,OVERDUE"
-        : invoiceFilter === "paid"
-          ? "PAID"
-          : invoiceFilter === "void"
-            ? "VOID"
-            : undefined,
+    status: invoiceFilter === "paid" ? "PAID" : invoiceFilter === "void" ? "VOID" : undefined,
     limit: 50,
   });
-  const customerInvoices = invoicesData?.data ?? [];
+  const customerInvoices = React.useMemo(() => {
+    const rows = invoicesData?.data ?? [];
+    return invoiceFilter === "outstanding"
+      ? rows.filter((inv) => OUTSTANDING_STATUSES.includes(inv.status))
+      : rows;
+  }, [invoicesData, invoiceFilter]);
 
   // New hooks
   const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(params.id);

@@ -49,9 +49,8 @@ const BANK_DATE_HELP =
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Statuses a payment can land on. Filtered CLIENT-side: ListInvoicesDto
- *  validates `status` as a single enum value, so the comma-list web's payments
- *  modal sends actually 400s (verified live) — its "candidate" query silently
- *  returns nothing and web falls back the same way. */
+ *  validates `status` as a single enum value, so a comma-list 400s (verified
+ *  live) — web's payments modal filters client-side the same way. */
 const OPEN_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 export default function RecordStandalonePaymentScreen() {
