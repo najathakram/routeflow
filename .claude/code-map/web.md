@@ -330,8 +330,38 @@ total}`) — types live in `lib/api/vendor-bills.ts` as `PriorScanSummary`/`Scan
   replayed with no second AI call, so the form fills in exactly as a fresh scan would. `createOne`
   stopped discarding what the OCR read: `scanId` (links bill↔scan and marks it POSTED), `subtotal`,
   and per-line `sku`/`packSize`/`lineTotal`, all as PRINTED — an operator edit to qty/unitCost does
-  not rewrite them. **Split rows deliberately send none of the three**: the printed code and amount
-  describe the whole line, not each variant.
+  not rewrite them. **Split rows send NO sku/lineTotal** (the printed code and amount describe the
+  whole line, not each variant) **but DO inherit `packSize`** (2026-08-12): a split divides the CASE
+  count across flavors, so each part stays case-denominated — dropping it received cases as pieces.
+- **Skip pre-existing invoices in `ScanInvoiceModal.tsx` (2026-08-12):** `InvoiceStatus` gained
+  `"skipped"` — one status value updates every consumer (`targets`/`creatable`/`leftBehind`/
+  `firstUnposted`/`hasWork`). `alreadyInSystem(inv)` is the ONE predicate for "pre-existing"
+  (number/fuzzy `blockingDuplicateOf` OR a POSTED `priorScan` with a bill; expense-mode and
+  `allowDuplicate` exempt) consumed by banners, navigator, skip affordances and the create-all
+  partition. `skipInvoice`/`unskipInvoice` flip status (never array removal — object URLs + nav
+  indices stay stable); editing supplier/invoice-number un-skips like it resets `allowDuplicate`.
+  DuplicateBanner gained "Skip this invoice" (`data-testid="duplicate-skip"`), skipped panel
+  (`duplicate-skipped`) offers "Undo skip", navigator shows "N already recorded · Skip them"
+  (`skip-all-duplicates`). `handleCreateAll` counts `dropped` (explicit skips — DONE decisions)
+  separately from `autoSkipped` (still-blocked dups left scanned); clean close =
+  `failed===0 && autoSkipped===0 && leftBehind===0` — **a batch containing skipped duplicates
+  now finishes**; toast reports "N skipped as already recorded". All-dups batch → confirm →
+  skip-all + close. Qty cell gained a per-line pack-size input ("× N pcs", clearable) and the cost
+  cell a "per case of N" hint; quick-create from a case line passes PER-PIECE `initialCost`
+  (box-price `initialPrice` unchanged — the boxed contract asymmetry; `ProductCreateModal`'s cost
+  hint is pack-aware). e2e: OP-17f (one dup skipped, other posts, modal closes).
+- **Partial receiving on `vendor-bills/[id]/page.tsx` (2026-08-12):** `ReceiveBillModal` — per-line
+  qty inputs primed to outstanding (`lineRemaining(bill,item)` mirrors the server's legacy rule:
+  receivedDate set + all `qtyReceived` null = fully received), invalid/over-remaining blocks
+  confirm, unlinked count noted; confirm posts `items: [{itemId, qty}]` (`useReceiveVendorBill`
+  gained `items`; `ReceiveVendorBillLine` in `lib/api/vendor-bills.ts`, `VendorBillItem` gained
+  `sku/packSize/lineTotal/qtyReceived`). `pendingReceiveItems` re-sends the same plan through the
+  UNLINKED_ITEMS confirm retry. Receive affordance: DRAFT, paid-first-never-received (status is a
+  payment blend — receipt truth is receivedDate), and PARTIAL/PAID with outstanding ("Receive
+  remaining"). Items table shows "× N pcs" / "per case" / "n received" hints; the line editor
+  gained a Pcs/case column (cost label flips Unit↔Case Cost) and PRESERVES sku/lineTotal through
+  `handleSaveEdit` (server recreates lines on edit — anything not resent is lost); quick-create
+  from a case line seeds per-piece price AND cost (no pack prefill on `InlineCreateProductModal`).
 - **Date fields (2026-08-07):** `CreateOrderModal.tsx` has an optional "Order date" (`max=today`)
   beside Requested Delivery Date; `invoices/new/page.tsx` relabels its issue-date field "Sale date" in
   SALE mode and sends `orderDate` ONLY when it differs from today (so the default path stays
