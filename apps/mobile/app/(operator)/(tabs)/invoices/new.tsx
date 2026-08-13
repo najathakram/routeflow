@@ -36,6 +36,7 @@ import {
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { normalizeScanCode } from "../../../../lib/barcode-normalize";
+import { findExactScanMatch, looksLikeScanCode } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
@@ -559,6 +560,45 @@ function InvoiceComposer({
     return { feedback: { kind: "error", text } };
   };
 
+  // Wedge-scanner path — mirrors NewOrderScreen exactly (see its comment for
+  // the full reasoning): Enter-as-scan for terminator scanners, settled
+  // exact-match auto-add for the rest. Both gated on looksLikeScanCode so a
+  // typed NAME search never auto-adds.
+  const searchScanBusy = useRef(false);
+  const handleSearchSubmit = async () => {
+    const code = searchTerm.trim();
+    if (!code || !looksLikeScanCode(code) || searchScanBusy.current) return;
+    searchScanBusy.current = true;
+    try {
+      const outcome = await handleBarcodeScanned(code);
+      if (!outcome?.feedback) return;
+      if (outcome.feedback.kind === "added") {
+        showInline(outcome.feedback.text);
+      } else if (outcome.feedback.action) {
+        setSearch("");
+        outcome.feedback.action.onPress();
+      } else {
+        showInline(outcome.feedback.text);
+      }
+    } finally {
+      searchScanBusy.current = false;
+    }
+  };
+
+  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  useEffect(() => {
+    const code = searchTerm.trim();
+    if (!looksLikeScanCode(code) || isSearching) return;
+    const { match } = findExactScanMatch(code, products);
+    if (!match) return;
+    const now = Date.now();
+    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
+    lastAutoAdd.current = { code, at: now };
+    const outcome = acceptScannedProduct(match);
+    if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, products, isSearching]);
+
   // Create-on-miss: overlays the invoice builder (never navigates away) so the
   // in-progress invoice is preserved; the new product lands in the cart.
   const handleInlineCreated = (product: CreatedProduct) => {
@@ -952,6 +992,7 @@ function InvoiceComposer({
         placeholder="Search items…"
         value={search}
         onChangeText={setSearch}
+        onSubmitEditing={() => void handleSearchSubmit()}
         trailing={
           <View style={styles.searchTrailing}>
             {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}

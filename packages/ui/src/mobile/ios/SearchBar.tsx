@@ -9,6 +9,13 @@ export interface SearchBarProps {
   placeholder?: string;
   /** Optional right-aligned accessory (e.g. barcode/filter icon). */
   trailing?: React.ReactNode;
+  /**
+   * Enter/submit handler — hardware (wedge) barcode scanners type the code
+   * then send Enter, so scan-aware consumers treat submit as "scan complete".
+   * When set, the field KEEPS FOCUS on submit (blurOnSubmit false) so the
+   * next wedge scan lands in the same box without a tap.
+   */
+  onSubmitEditing?: () => void;
 }
 
 export function SearchBar({
@@ -16,6 +23,7 @@ export function SearchBar({
   onChangeText,
   placeholder = "Search",
   trailing,
+  onSubmitEditing,
 }: SearchBarProps) {
   return (
     <View style={styles.wrap}>
@@ -27,6 +35,9 @@ export function SearchBar({
         placeholderTextColor={ios.gray[1]}
         style={styles.input}
         clearButtonMode="while-editing"
+        onSubmitEditing={onSubmitEditing}
+        blurOnSubmit={onSubmitEditing ? false : undefined}
+        returnKeyType={onSubmitEditing ? "search" : undefined}
       />
       {/* clearButtonMode is iOS-NATIVE only — a no-op on Android and
           react-native-web (the primary operator surface), which previously had
