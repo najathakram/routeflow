@@ -32,6 +32,7 @@ import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { normalizeScanCode } from "../lib/barcode-normalize";
+import { findExactScanMatch, looksLikeScanCode } from "../lib/wedge-scan";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -804,6 +805,61 @@ function ProductPickView({
     return { feedback: { kind: "error", text } };
   };
 
+  /**
+   * Wedge-scanner path (owner-reported by a live wholesaler): a hardware
+   * scanner types the code into the SEARCH box, which used to dead-end in a
+   * suggestion needing a tap + manual clear before the next scan. Two hooks
+   * make a wedge scan behave exactly like a camera scan:
+   *
+   * 1. Enter/submit (scanners that send a terminator) → the full
+   *    handleBarcodeScanned ladder. Gated on looksLikeScanCode so pressing
+   *    Enter after typing a product NAME never adds anything.
+   * 2. Settled exact match (scanners with NO terminator — the screenshot
+   *    case): once the server-filtered rows land and exactly one product's
+   *    barcode/sku/unitSku equals the typed code, auto-add it.
+   *
+   * Both end in acceptScannedProduct, which clears the field and keeps the
+   * list still — the next scan goes straight in, zero taps.
+   */
+  const searchScanBusy = useRef(false);
+  const handleSearchSubmit = async () => {
+    const code = searchTerm.trim();
+    if (!code || !looksLikeScanCode(code) || searchScanBusy.current) return;
+    searchScanBusy.current = true;
+    try {
+      const outcome = await handleBarcodeScanned(code);
+      if (!outcome?.feedback) return;
+      if (outcome.feedback.kind === "added") {
+        showInline(outcome.feedback.text);
+      } else if (outcome.feedback.action) {
+        // Miss → create sheet; ambiguous → picker. From the search field the
+        // sheet IS the next step — opening it directly beats a toast + tap.
+        setSearch("");
+        outcome.feedback.action.onPress();
+      } else {
+        showInline(outcome.feedback.text);
+      }
+    } finally {
+      searchScanBusy.current = false;
+    }
+  };
+
+  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  useEffect(() => {
+    const code = searchTerm.trim();
+    if (!looksLikeScanCode(code) || isSearching) return;
+    const { match } = findExactScanMatch(code, products);
+    if (!match) return;
+    const now = Date.now();
+    // Re-fire guard: the rows can re-settle for the same term (refetch); an
+    // INTENTIONAL re-scan of the same code (~1s+ of aim-and-trigger) passes.
+    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
+    lastAutoAdd.current = { code, at: now };
+    const outcome = acceptScannedProduct(match);
+    if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, products, isSearching]);
+
   // Non-null while the inline create sheet is open; holds the scanned/typed code
   // to prefill. On success the new product is dropped straight into the cart.
   const handleInlineCreated = (product: CreatedProduct) => {
@@ -1286,6 +1342,7 @@ function ProductPickView({
         placeholder="Search items…"
         value={search}
         onChangeText={setSearch}
+        onSubmitEditing={() => void handleSearchSubmit()}
         trailing={
           <View style={styles.searchTrailing}>
             {/* keepPreviousData holds the previous rows while the next page
