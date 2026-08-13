@@ -592,8 +592,24 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         // data-loss bug came from omitting replaceAll:false, not from an
         // empty items array). Omitted entirely when untouched, so the
         // server's existing intent survives per the API contract.
+        //
+        // MONEY: previously-linked credits must ROUND-TRIP their stored
+        // per-credit amount (web's creditSelectionsFromOrder does the same).
+        // Sending {creditNoteId} alone re-synced the intent as "up to
+        // remaining" — a $50 partial silently escalated to the full credit
+        // the moment anyone touched this section. Newly-selected credits
+        // send no amount (up to remaining) by design.
         ...(creditsTouched
-          ? { appliedCreditNotes: selectedCreditIds.map((cnId) => ({ creditNoteId: cnId })) }
+          ? {
+              appliedCreditNotes: selectedCreditIds.map((cnId) => {
+                const stored = ((order as any)?.orderCreditNotes ?? []).find(
+                  (oc: any) => oc.creditNoteId === cnId,
+                );
+                return stored?.amount != null
+                  ? { creditNoteId: cnId, amount: toNumber(stored.amount) }
+                  : { creditNoteId: cnId };
+              }),
+            }
           : {}),
       },
       {

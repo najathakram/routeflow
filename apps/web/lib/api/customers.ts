@@ -158,14 +158,25 @@ export function useUpdateCustomerAddress() {
 
 // ─── Statement ────────────────────────────────────────────────────────────────
 
+/**
+ * What the server ACTUALLY sends (getStatementForOperator): UPPERCASE types
+ * and `runningBalance`. The old lowercase `type` + `balance` contract never
+ * matched a single row — every row badge-rendered as "Payment" with a $NaN
+ * balance and the summary tiles computed $0.00.
+ *
+ * `runningBalance` is NOT a cumulative total: per row it's the invoice's
+ * remaining owed (negative), a credit note's unused remainder, or an
+ * advance's wallet balance. Payments are folded into invoices, never rows.
+ */
 export interface StatementTransaction {
+  id: string;
   date: string;
-  type: "invoice" | "payment" | "credit_note" | "advance";
+  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
   description: string;
   amount: number;
-  balance: number;
-  invoiceId?: string;
-  invoiceNumber?: string;
+  runningBalance: number;
+  status?: string;
+  expiresAt?: string | null;
 }
 
 export interface CustomerStatement {
@@ -173,6 +184,7 @@ export interface CustomerStatement {
   overdueAmount: number;
   availableCredit: number;
   advanceBalance: number;
+  pendingOrdersAmount?: number;
   transactions: StatementTransaction[];
 }
 

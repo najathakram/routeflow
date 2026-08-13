@@ -29,6 +29,7 @@ import {
   type CustomerPriceHistory,
 } from "../lib/api/orders";
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
+import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { normalizeScanCode } from "../lib/barcode-normalize";
@@ -505,7 +506,12 @@ function ProductPickView({
   const [justCreatedCredits, setJustCreatedCredits] = useState<CreditNote[]>([]);
   const creditRows = useMemo(() => {
     const rows = new Map<string, CreditNote>();
-    for (const cn of openCredits?.data ?? []) rows.set(cn.id, cn);
+    // ISSUED alone isn't "open": an expired or fully-consumed note stays
+    // ISSUED and would just 400 the whole order create at submit.
+    const now = new Date();
+    for (const cn of openCredits?.data ?? []) {
+      if (isCreditOpenForApply(cn, now)) rows.set(cn.id, cn);
+    }
     for (const cn of justCreatedCredits) if (!rows.has(cn.id)) rows.set(cn.id, cn);
     return Array.from(rows.values());
   }, [openCredits, justCreatedCredits]);

@@ -3124,20 +3124,30 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                       valueClass: "text-navy",
                     },
                     {
+                      // Server types are UPPERCASE; the old lowercase filters
+                      // never matched and these tiles computed $0.00 forever.
                       label: "Invoiced Amount",
                       value: fmt(
                         statement?.transactions
-                          .filter((tx) => tx.type === "invoice")
+                          .filter((tx) => tx.type === "INVOICE")
                           .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
                       ),
                       valueClass: "text-navy",
                     },
                     {
+                      // Payments are folded into invoices (never rows):
+                      // received = invoiced − still-owed on the listed rows.
                       label: "Amount Received",
                       value: fmt(
-                        statement?.transactions
-                          .filter((tx) => tx.type === "payment" || tx.type === "advance")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
+                        Math.max(
+                          0,
+                          (statement?.transactions
+                            .filter((tx) => tx.type === "INVOICE")
+                            .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0) -
+                            (statement?.transactions
+                              .filter((tx) => tx.type === "INVOICE")
+                              .reduce((s, tx) => s + Math.abs(tx.runningBalance), 0) ?? 0),
+                        ),
                       ),
                       valueClass: "text-success",
                     },
@@ -3181,20 +3191,32 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
                             Amount
                           </th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Payments
-                          </th>
                           <th className="px-8 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-white/80">
-                            Balance
+                            Remaining
                           </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-surface-border">
                         {statement.transactions.map((tx, i) => {
-                          const isInvoice = tx.type === "invoice";
-                          const isPayment = tx.type === "payment" || tx.type === "advance";
+                          // Server rows: INVOICE / CREDIT_NOTE / ADVANCE_PAYMENT
+                          // (payments fold into invoices). `runningBalance` is
+                          // per-row remaining: owed / unused / in wallet.
+                          const isInvoice = tx.type === "INVOICE";
+                          const meta = isInvoice
+                            ? { label: "Invoice", cls: "bg-blue-100 text-blue-700" }
+                            : tx.type === "CREDIT_NOTE"
+                              ? { label: "Credit note", cls: "bg-green-100 text-green-700" }
+                              : { label: "Advance", cls: "bg-purple-100 text-purple-700" };
+                          const remainingLabel = isInvoice
+                            ? "owed"
+                            : tx.type === "CREDIT_NOTE"
+                              ? "unused"
+                              : "in wallet";
                           return (
-                            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
+                            <tr
+                              key={tx.id ?? i}
+                              className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}
+                            >
                               <td className="px-8 py-2.5 text-xs text-navy/70">
                                 {new Date(tx.date).toLocaleDateString("en-US", {
                                   month: "short",
@@ -3206,47 +3228,30 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                 <span
                                   className={cn(
                                     "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold",
-                                    isInvoice
-                                      ? "bg-blue-100 text-blue-700"
-                                      : "bg-green-100 text-green-700",
+                                    meta.cls,
                                   )}
                                 >
-                                  {isInvoice ? "Invoice" : "Payment"}
+                                  {meta.label}
                                 </span>
                               </td>
                               <td className="px-4 py-2.5 text-sm text-navy">
-                                {tx.invoiceNumber ? (
-                                  <Link
-                                    href={`/invoices/${tx.invoiceId}`}
-                                    className="font-mono text-xs font-semibold text-brand-500 hover:underline"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {tx.invoiceNumber}
-                                  </Link>
-                                ) : (
-                                  <span className="text-xs text-navy/70">{tx.description}</span>
-                                )}
+                                <span className="text-xs text-navy/70">{tx.description}</span>
                               </td>
                               <td className="px-4 py-2.5 text-right text-sm">
-                                {isInvoice ? (
-                                  <span className="font-medium text-navy">
-                                    {fmt(Math.abs(tx.amount))}
-                                  </span>
-                                ) : (
-                                  <span className="text-navy/30">{"\u2014"}</span>
-                                )}
+                                <span
+                                  className={cn(
+                                    "font-medium",
+                                    isInvoice ? "text-navy" : "text-success",
+                                  )}
+                                >
+                                  {fmt(Math.abs(tx.amount))}
+                                </span>
                               </td>
-                              <td className="px-4 py-2.5 text-right text-sm">
-                                {isPayment ? (
-                                  <span className="font-medium text-success">
-                                    {fmt(Math.abs(tx.amount))}
-                                  </span>
-                                ) : (
-                                  <span className="text-navy/30">{"\u2014"}</span>
-                                )}
-                              </td>
-                              <td className="px-8 py-2.5 text-right font-semibold text-navy">
-                                {fmt(tx.balance)}
+                              <td className="px-8 py-2.5 text-right text-sm">
+                                <span className="font-semibold text-navy">
+                                  {fmt(Math.abs(tx.runningBalance))}
+                                </span>
+                                <span className="ml-1 text-xs text-navy/50">{remainingLabel}</span>
                               </td>
                             </tr>
                           );
@@ -3257,7 +3262,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           <td colSpan={3} className="px-8 py-3 text-sm font-bold text-navy">
                             Balance Due
                           </td>
-                          <td colSpan={2} />
+                          <td />
                           <td
                             className={cn(
                               "px-8 py-3 text-right text-sm font-bold",
