@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -35,7 +35,9 @@ import {
   priceForMarginFloor,
   roundMoney,
 } from "../../../../../lib/pricing";
-import { setLineUnits } from "../../../../../lib/sale-line";
+import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
+import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
 import {
   buildOrderItemDiff,
@@ -439,6 +441,71 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
     else setQty(id, (cur.qty ?? 0) + 1);
   };
 
+  /**
+   * Add a picked/scanned product to the draft. `kind === "piece"` is a
+   * PIECE-barcode (unitSku) hit: one LOOSE piece instead of a box, rolling
+   * into a box at unitsPerBox — the same semantics as the sale builders.
+   * Shared by tap-pick (closes the picker) and add-and-stay (scans/wedge).
+   */
+  const addPickedToDraft = (
+    p: {
+      id: string;
+      name: string;
+      pricePerUnit: number | string;
+      priceTier2?: number | string | null;
+      priceTier3?: number | string | null;
+      priceTier4?: number | string | null;
+      priceTier5?: number | string | null;
+      unit?: string;
+      unitsPerBox?: number | null;
+    },
+    kind: "case" | "piece" = "case",
+  ) => {
+    const catalogPrice = tierPriceFor(p);
+    const listPrice = toNumber(p.pricePerUnit);
+    const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
+    const upbRaw = p.unitsPerBox;
+    const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
+    setDraft((d) => {
+      const existing = d[p.id];
+      const upb = Number(existing?.unitsPerBox ?? unitsPerBox ?? 0);
+      const boxed = upb > 1;
+      if (existing) {
+        if (boxed) {
+          const line =
+            kind === "piece"
+              ? incrementLinePiece(existing, true, upb)
+              : incrementLine(existing, true, upb);
+          return { ...d, [p.id]: { ...line, boxSplit: true } };
+        }
+        return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
+      }
+      // Fresh add: conditionally pre-fill the remembered price — only a
+      // genuine discount (below tier) or upsell (above list), never over
+      // a SPECIAL tier price. Else start at the tier price.
+      const hist = priceHistory?.[p.id];
+      const startPrice =
+        !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
+          ? hist.lastPrice
+          : catalogPrice;
+      const base = {
+        productId: p.id,
+        unitsPerBox,
+        unitPrice: startPrice,
+        catalogPrice,
+        name: p.name,
+        unit: p.unit,
+      };
+      if (boxed) {
+        // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
+        return kind === "piece"
+          ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
+          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0 } };
+      }
+      return { ...d, [p.id]: { ...base, qty: 1 } };
+    });
+  };
+
   const decQty = (id: string) => {
     const cur = draft[id];
     if (!cur) return;
@@ -655,14 +722,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       {showPicker ? (
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
-          onPick={(p) => {
-            // The customer's tier price is the base for a newly added product.
-            const catalogPrice = tierPriceFor(p);
-            const listPrice = toNumber(p.pricePerUnit);
-            const isSpecial = (cpMap.get(p.id) ?? customerTier ?? 1) !== 1;
-            const upbRaw = p.unitsPerBox;
-            const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
+          // Add-and-stay (scans + wedge input): the picker stays open so N
+          // items scan with zero taps — closes web's long-standing edit-screen
+          // divergence. Not offered in substitute mode (one pick by contract).
+          onPickAndStay={substituteFor ? undefined : (p, kind) => addPickedToDraft(p, kind)}
+          onPick={(p, kind) => {
             if (substituteFor) {
+              const catalogPrice = tierPriceFor(p);
+              const upbRaw = p.unitsPerBox;
+              const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
@@ -686,63 +754,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
               });
               setSubstituteFor(null);
             } else {
-              setDraft((d) => {
-                const existing = d[p.id];
-                if (existing) {
-                  // Re-add increments by 1 of the canonical unit (box if boxed,
-                  // otherwise piece).
-                  const upb = Number(existing.unitsPerBox ?? 0);
-                  if (upb > 1) {
-                    const boxes = (existing.boxes ?? 0) + 1;
-                    const pieces = existing.pieces ?? 0;
-                    return {
-                      ...d,
-                      [p.id]: { ...existing, boxes, pieces, qty: boxes * upb + pieces },
-                    };
-                  }
-                  return { ...d, [p.id]: { ...existing, qty: (existing.qty ?? 0) + 1 } };
-                }
-                // Fresh add: conditionally pre-fill the remembered price — only a
-                // genuine discount (below tier) or upsell (above list), never over
-                // a SPECIAL tier price. Else start at the tier price.
-                const hist = priceHistory?.[p.id];
-                const startPrice =
-                  !isSpecial &&
-                  hist != null &&
-                  (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-                    ? hist.lastPrice
-                    : catalogPrice;
-                // 1 box for boxed, 1 piece for non-boxed.
-                if (Number(unitsPerBox ?? 0) > 1) {
-                  const upb = Number(unitsPerBox ?? 0);
-                  return {
-                    ...d,
-                    [p.id]: {
-                      productId: p.id,
-                      qty: upb,
-                      boxes: 1,
-                      pieces: 0,
-                      unitsPerBox,
-                      unitPrice: startPrice,
-                      catalogPrice,
-                      name: p.name,
-                      unit: p.unit,
-                    },
-                  };
-                }
-                return {
-                  ...d,
-                  [p.id]: {
-                    productId: p.id,
-                    qty: 1,
-                    unitsPerBox,
-                    unitPrice: startPrice,
-                    catalogPrice,
-                    name: p.name,
-                    unit: p.unit,
-                  },
-                };
-              });
+              addPickedToDraft(p, kind);
             }
             setShowPicker(false);
           }}
@@ -1609,23 +1621,34 @@ function CreateCreditNoteModal({
 
 // ─── Product picker ──────────────────────────────────────────────────────────
 
+interface PickedProduct {
+  id: string;
+  name: string;
+  pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+  unit?: string;
+  unitsPerBox?: number | null;
+}
+
 function ProductPicker({
   title = "Add product",
   onPick,
+  onPickAndStay,
   onClose,
 }: {
   title?: string;
-  onPick: (p: {
-    id: string;
-    name: string;
-    pricePerUnit: number | string;
-    priceTier2?: number | string | null;
-    priceTier3?: number | string | null;
-    priceTier4?: number | string | null;
-    priceTier5?: number | string | null;
-    unit?: string;
-    unitsPerBox?: number | null;
-  }) => void;
+  /** Single pick — the caller closes the picker (tap rows, substitutions). */
+  onPick: (p: PickedProduct, kind?: "case" | "piece") => void;
+  /**
+   * Add WITHOUT closing — scans and wedge input use this so N items go in
+   * with zero taps (closes the long-standing divergence from web's edit
+   * screen, which re-focuses its scan input after every add). Absent in
+   * substitute mode, where the contract is exactly one pick.
+   */
+  onPickAndStay?: (p: PickedProduct, kind: "case" | "piece") => void;
   onClose: () => void;
 }) {
   const [scanOpen, setScanOpen] = useState(false);
@@ -1634,6 +1657,7 @@ function ProductPicker({
   const {
     search,
     setSearch,
+    searchTerm,
     products: pagedProducts,
     isLoading,
     isSearching,
@@ -1642,32 +1666,17 @@ function ProductPicker({
     fetchNextPage,
     isFetchingNextPage,
   } = useProductSearch<{ id: string }>();
-  const products = pagedProducts as unknown as Array<{
-    id: string;
-    name: string;
-    sku?: string;
-    unit?: string;
-    unitsPerBox?: number | null;
-    pricePerUnit: number | string;
-    priceTier2?: number | string | null;
-    priceTier3?: number | string | null;
-    priceTier4?: number | string | null;
-    priceTier5?: number | string | null;
-  }>;
+  const products = pagedProducts as unknown as Array<
+    PickedProduct & { sku?: string; barcode?: string | null; unitSku?: string | null }
+  >;
 
   /**
-   * Single-shot scan: this picker's contract is "return one product" (`onPick`
-   * closes it), so a continuous scanner would fight it.
-   *
-   * KNOWN DIVERGENCE from web: `orders/[id]/page.tsx` re-focuses its scan input
-   * after every add, so the desktop edit screen scans N items with zero taps
-   * while this one costs a camera re-open per item. Closing that gap needs an
-   * add-and-stay callback here (the picker would keep the scanner mounted
-   * instead of returning), which is a bigger change than it looks — tracked
-   * separately rather than bolted onto the scan-alignment batch.
+   * Scan handler. With `onPickAndStay` the scanner runs CONTINUOUS (items add
+   * while the camera stays up — the in-overlay banner is the confirmation);
+   * substitute mode stays single-shot ("return one product"). A PIECE-code
+   * (unitSku) hit adds one loose piece — see scanUnitKind.
    */
-  const onScanned = async (code: string) => {
-    setScanOpen(false);
+  const onScanned = async (code: string): Promise<ScanOutcome> => {
     const trimmed = code.trim();
     if (!trimmed) return;
     try {
@@ -1675,22 +1684,74 @@ function ProductPicker({
       if (result.ambiguous) {
         // Several substring hits and no exact code match — seed the search box
         // and let the operator pick from the list already on screen.
+        setScanOpen(false);
         setSearch(trimmed);
         showToast(`${result.matches?.length ?? 0} products match "${trimmed}"`);
-        return;
+        return { close: true };
       }
       if (!result.notFound && result.product?.id) {
-        onPick(result.product);
-        return;
+        const kind = scanUnitKind(trimmed, result.product);
+        if (onPickAndStay) {
+          onPickAndStay(result.product, kind);
+          const loose =
+            kind === "piece" && Number(result.product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+          return { feedback: { kind: "added", text: `Added ${loose}${result.product.name}` } };
+        }
+        setScanOpen(false);
+        onPick(result.product, kind);
+        return { close: true };
       }
     } catch {
-      showToast("Couldn't look up barcode. Check your connection.");
-      return;
+      return {
+        feedback: { kind: "error", text: "Couldn't look up barcode. Check your connection." },
+      };
     }
-    // Leave the code in the box so it can be edited rather than re-scanned.
+    // Stay in scan mode on a miss (continuous); single-shot seeds the box.
+    if (onPickAndStay) return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
+    setScanOpen(false);
     setSearch(trimmed);
     showToast(`No product for "${trimmed}"`);
+    return { close: true };
   };
+
+  // Wedge-scanner path on the picker's search box — mirrors the builders (see
+  // NewOrderScreen): Enter-as-scan + settled exact-match auto-add, digit codes
+  // only, single exact match only.
+  const searchScanBusy = useRef(false);
+  const handleSearchSubmit = async () => {
+    const code = searchTerm.trim();
+    if (!code || !looksLikeScanCode(code) || !onPickAndStay || searchScanBusy.current) return;
+    searchScanBusy.current = true;
+    try {
+      const outcome = await onScanned(code);
+      if (outcome?.feedback?.kind === "added") {
+        setSearch("");
+        showToast(outcome.feedback.text);
+      } else if (outcome?.feedback) {
+        showToast(outcome.feedback.text);
+      }
+    } finally {
+      searchScanBusy.current = false;
+    }
+  };
+
+  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  useEffect(() => {
+    if (!onPickAndStay) return;
+    const code = searchTerm.trim();
+    if (!looksLikeScanCode(code) || isSearching) return;
+    const { match } = findExactScanMatch(code, products);
+    if (!match) return;
+    const now = Date.now();
+    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
+    lastAutoAdd.current = { code, at: now };
+    const kind = scanUnitKind(code, match);
+    onPickAndStay(match, kind);
+    setSearch("");
+    const loose = kind === "piece" && Number(match.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+    showToast(`Added ${loose}${match.name}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTerm, products, isSearching]);
 
   return (
     <>
@@ -1699,6 +1760,7 @@ function ProductPicker({
         placeholder="Scan or search products…"
         value={search}
         onChangeText={setSearch}
+        onSubmitEditing={onPickAndStay ? () => void handleSearchSubmit() : undefined}
         trailing={
           <Pressable
             onPress={() => setScanOpen(true)}
@@ -1760,7 +1822,11 @@ function ProductPicker({
 
       {/* Inline full-screen swap, not a Modal — absoluteFill covers the screen. */}
       {scanOpen ? (
-        <BarcodeScanner onScanned={(c) => void onScanned(c)} onClose={() => setScanOpen(false)} />
+        <BarcodeScanner
+          onScanned={onScanned}
+          onClose={() => setScanOpen(false)}
+          continuous={!!onPickAndStay}
+        />
       ) : null}
     </>
   );

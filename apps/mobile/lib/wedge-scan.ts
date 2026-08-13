@@ -35,6 +35,27 @@ export interface ExactScanMatch<T> {
   multiple: boolean;
 }
 
+/**
+ * Which SELLING UNIT a scanned code refers to on a resolved product. The
+ * owner's catalogues assign a CASE code (`barcode`/`sku`) and a PIECE code
+ * (`unitSku`) — scanning the piece code must add one loose piece, not a pack.
+ * When the code hits both (same code on both fields) or neither (server
+ * resolved through a path the client can't classify), CASE is the safe
+ * default — it matches the historical behavior.
+ */
+export function scanUnitKind(
+  term: string,
+  product: Pick<ScanMatchable, "barcode" | "sku" | "unitSku">,
+): "case" | "piece" {
+  const trimmed = term.trim();
+  if (!trimmed) return "case";
+  const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
+  const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
+  const pieceHit = hit(product.unitSku);
+  const caseHit = hit(product.barcode) || hit(product.sku);
+  return pieceHit && !caseHit ? "piece" : "case";
+}
+
 export function findExactScanMatch<T extends ScanMatchable>(
   term: string,
   products: readonly T[],

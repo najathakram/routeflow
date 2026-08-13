@@ -29,6 +29,7 @@ import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
   incrementLine,
+  incrementLinePiece,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -36,7 +37,7 @@ import {
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { normalizeScanCode } from "../../../../lib/barcode-normalize";
-import { findExactScanMatch, looksLikeScanCode } from "../../../../lib/wedge-scan";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
@@ -354,14 +355,21 @@ function InvoiceComposer({
     [products, scannedById],
   );
 
-  const addOne = (id: string, snapshot?: Product) => {
+  const addOne = (id: string, snapshot?: Product, kind: "case" | "piece" = "case") => {
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
     setItems((m) => {
       const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice.
-      return { ...m, [id]: incrementLine(prev, isBoxed, upb) };
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice. A PIECE-code
+      // scan (unitSku) adds one loose piece, rolling into a box at upb.
+      return {
+        ...m,
+        [id]:
+          kind === "piece"
+            ? incrementLinePiece(prev, isBoxed, upb)
+            : incrementLine(prev, isBoxed, upb),
+      };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones — see
     // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
@@ -493,15 +501,22 @@ function InvoiceComposer({
    * confirmation, so no banner and no search reset (which would swap the list
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
-  const acceptScannedProduct = (product: Product): ScanOutcome => {
-    addOne(product.id, product);
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
     setSearch("");
+    const label =
+      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+        ? `Added 1 loose · ${displayName(product)}`
+        : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     setPendingScroll((s) => requestScroll(s, product.id));
-    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+    return { feedback: { kind: "added", text: label } };
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -521,7 +536,7 @@ function InvoiceComposer({
         hit(p.unitSku) ||
         (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
-    if (local) return acceptScannedProduct(local);
+    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (result.ambiguous) {
@@ -537,7 +552,7 @@ function InvoiceComposer({
         };
       }
       if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product);
+        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
@@ -594,7 +609,7 @@ function InvoiceComposer({
     const now = Date.now();
     if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
     lastAutoAdd.current = { code, at: now };
-    const outcome = acceptScannedProduct(match);
+    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);

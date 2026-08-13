@@ -3,7 +3,7 @@
  * digit codes with exactly one exact match — a name search must never
  * auto-add, and a shared code must fall back to the human.
  */
-import { findExactScanMatch, looksLikeScanCode } from "../lib/wedge-scan";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 
 describe("looksLikeScanCode", () => {
   it.each([
@@ -52,5 +52,32 @@ describe("findExactScanMatch", () => {
     const r = findExactScanMatch("6971824065183", dup);
     expect(r.match).toBeNull();
     expect(r.multiple).toBe(true);
+  });
+});
+
+describe("scanUnitKind (case code vs piece code)", () => {
+  const product = { barcode: "6971824065183", sku: "FOG-CASE", unitSku: "6971824065190" };
+
+  it("case barcode → case", () => {
+    expect(scanUnitKind("6971824065183", product)).toBe("case");
+  });
+  it("case sku → case", () => {
+    expect(scanUnitKind("FOG-CASE", product)).toBe("case");
+  });
+  it("PIECE code (unitSku) → piece", () => {
+    expect(scanUnitKind("6971824065190", product)).toBe("piece");
+  });
+  it("piece code through leading-zero candidates → piece", () => {
+    // iOS decodes a UPC-A as 13-digit zero-padded EAN; the stored unit code is
+    // the 12-digit form — the candidate set must bridge them.
+    expect(scanUnitKind("0042100005264", { ...product, unitSku: "042100005264" })).toBe("piece");
+  });
+  it("same code on BOTH fields → case (safe default)", () => {
+    expect(scanUnitKind("SHARED", { barcode: "SHARED", sku: null, unitSku: "SHARED" })).toBe(
+      "case",
+    );
+  });
+  it("no field hit (server-resolved beyond the client's view) → case", () => {
+    expect(scanUnitKind("999", product)).toBe("case");
   });
 });

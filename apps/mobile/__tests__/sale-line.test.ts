@@ -1,6 +1,7 @@
 import {
   decrementLine,
   incrementLine,
+  incrementLinePiece,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -200,5 +201,29 @@ describe("setLineUnits", () => {
   it("returns null for a non-case-packed product (unitsPerBox 1)", () => {
     const prev = { qty: 1 };
     expect(setLineUnits(prev, 5, 1)).toBeNull();
+  });
+});
+
+describe("incrementLinePiece (piece-barcode scan)", () => {
+  it("adds one loose piece to a boxed line, preserving fields", () => {
+    const line = incrementLinePiece(
+      { qty: 6, boxes: 1, pieces: 0, unitPrice: 9, note: "n" },
+      true,
+      6,
+    );
+    expect(line).toEqual({ qty: 7, boxes: 1, pieces: 1, unitPrice: 9, note: "n" });
+  });
+  it("rolls loose pieces into a box at unitsPerBox", () => {
+    const line = incrementLinePiece({ qty: 11, boxes: 1, pieces: 5 }, true, 6);
+    expect(line).toEqual({ qty: 12, boxes: 2, pieces: 0 });
+  });
+  it("starts a fresh boxed line at 0 boxes + 1 loose", () => {
+    expect(incrementLinePiece({ qty: 0 }, true, 6)).toEqual({ qty: 1, boxes: 0, pieces: 1 });
+  });
+  it("non-boxed: a piece IS the unit", () => {
+    expect(incrementLinePiece({ qty: 2, unitPrice: 3 } as any, false, 0)).toEqual({
+      qty: 3,
+      unitPrice: 3,
+    });
   });
 });

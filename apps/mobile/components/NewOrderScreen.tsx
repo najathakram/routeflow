@@ -32,7 +32,7 @@ import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { normalizeScanCode } from "../lib/barcode-normalize";
-import { findExactScanMatch, looksLikeScanCode } from "../lib/wedge-scan";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -75,6 +75,7 @@ import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
   decrementLine,
   incrementLine,
+  incrementLinePiece,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -535,8 +536,10 @@ function ProductPickView({
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
    * `id`. If the product isn't yet known to the screen, the caller passes
    * the resolved Product so we can stash it for the totals/cart UI.
+   * `kind === "piece"` (a PIECE-barcode scan — the product's unitSku) adds
+   * one LOOSE piece instead of a box, rolling over at unitsPerBox.
    */
-  const addOne = (id: string, productSnapshot?: Product) => {
+  const addOne = (id: string, productSnapshot?: Product, kind: "case" | "piece" = "case") => {
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
@@ -559,7 +562,10 @@ function ProductPickView({
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
       // unitPrice override + note (previously wiped on every increment).
-      const line = incrementLine(prev, isBoxed, upb);
+      const line =
+        kind === "piece"
+          ? incrementLinePiece(prev, isBoxed, upb)
+          : incrementLine(prev, isBoxed, upb);
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
@@ -720,16 +726,23 @@ function ProductPickView({
    * resolves codes the text search never matches — so a SUCCESSFUL scan could
    * leave an empty list.
    */
-  const acceptScannedProduct = (product: Product): ScanOutcome => {
-    addOne(product.id, product);
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     setSearch("");
+    const label =
+      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+        ? `Added 1 loose · ${displayName(product)}`
+        : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     // Only reachable from a non-sheet caller. Web's equivalent scrolls the new
     // line into view with `block: "nearest"` — a no-op when it is already
     // visible — so mirror that rather than always animating.
     setPendingScroll((s) => requestScroll(s, product.id));
-    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+    return { feedback: { kind: "added", text: label } };
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -751,7 +764,7 @@ function ProductPickView({
         hit(p.unitSku) ||
         (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
-    if (local) return acceptScannedProduct(local);
+    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
     try {
@@ -776,7 +789,9 @@ function ProductPickView({
         };
       }
       if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product);
+        // Classify against the RESOLVED product's own codes — the barcode
+        // endpoint resolves either code but doesn't say which one matched.
+        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
       }
     } catch (err: any) {
       // Network / 5xx — surface so the operator can retry instead of silently
@@ -855,7 +870,7 @@ function ProductPickView({
     // INTENTIONAL re-scan of the same code (~1s+ of aim-and-trigger) passes.
     if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
     lastAutoAdd.current = { code, at: now };
-    const outcome = acceptScannedProduct(match);
+    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
