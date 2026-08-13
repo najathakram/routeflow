@@ -83,6 +83,7 @@ function catalogRow(
   line: TrayLine,
   product: TrayProduct,
   unitPrice: number,
+  overridable: boolean,
 ): TrayRow | null {
   const qty = effectiveQty(line, product.unitsPerBox);
   if (qty <= 0) return null;
@@ -98,7 +99,7 @@ function catalogRow(
     qty,
     qtySummary: formatTrayQty(split.boxes, split.pieces, qty),
     subtotal: computeLineSubtotal({
-      unitPrice: line.unitPrice != null ? line.unitPrice : unitPrice,
+      unitPrice: overridable && line.unitPrice != null ? line.unitPrice : unitPrice,
       qty,
       boxes: line.boxes ?? null,
       pieces: line.pieces ?? null,
@@ -117,6 +118,12 @@ export interface TrayRowsInput {
   lookup: (id: string) => TrayProduct | undefined;
   /** The customer's effective per-selling-unit price for a product. */
   priceFor: (product: TrayProduct) => number;
+  /**
+   * Whether a line-level unitPrice override counts for this product. SPECIAL
+   * (tier≠1) lines return false so the tray charges the tier price, matching
+   * the footer/submit which also ignore overrides there. Default: always true.
+   */
+  overridable?: (product: TrayProduct) => boolean;
 }
 
 /**
@@ -130,6 +137,7 @@ export function trayRowsFrom({
   scanOrder,
   lookup,
   priceFor,
+  overridable,
 }: TrayRowsInput): TrayRow[] {
   const rank = new Map<string, number>();
   scanOrder.forEach((id, i) => {
@@ -145,7 +153,7 @@ export function trayRowsFrom({
   for (const [id, line] of Object.entries(items)) {
     const product = lookup(id);
     if (!product) continue;
-    push(catalogRow(id, line, product, priceFor(product)));
+    push(catalogRow(id, line, product, priceFor(product), overridable?.(product) ?? true));
   }
   for (const u of unlisted) {
     if (u.qty <= 0) continue;

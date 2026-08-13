@@ -41,7 +41,8 @@ import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../..
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty } from "../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice } from "../../../../lib/pricing";
+import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
   invoiceLineDto,
@@ -105,6 +106,10 @@ type Product = {
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
   category?: string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
@@ -139,9 +144,18 @@ function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** The effective per-unit price for a line: the override, else the catalog price. */
-function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
-  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
+/**
+ * The effective per-unit price for a line: the override, else the CUSTOMER's
+ * catalog price (tier/customer-price resolved by the caller — this screen
+ * previously always fell back to the LIST price, overbilling every tiered
+ * customer on mobile-built invoices; the server takes unitPrice verbatim).
+ */
+function effectiveUnitPrice(
+  line: LineState | undefined,
+  p: Product,
+  catalogPrice?: number,
+): number {
+  return line?.unitPrice != null ? line.unitPrice : (catalogPrice ?? toNumber(p.pricePerUnit));
 }
 
 const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
@@ -358,6 +372,17 @@ function InvoiceComposer({
   const { data: settings } = useBusinessSettings();
   const { data: pickedCustomer } = useAdminCustomer(customerId);
   const isTaxExempt = !!pickedCustomer?.isTaxExempt;
+  // Customer pricing (parity with NewOrderScreen/web): per-product tier
+  // overrides first, then the customer's own tier ladder. Without this the
+  // invoice builder billed LIST to everyone.
+  const { data: customerPrices } = useCustomerPrices(customerId ?? "");
+  const customerTier = Number((pickedCustomer as any)?.pricingTier ?? 1) || 1;
+  const cpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
+    return m;
+  }, [customerPrices]);
+  const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -703,7 +728,7 @@ function InvoiceComposer({
       if (qty <= 0) continue;
       totalItems += qty;
       lines.push({
-        unitPrice: effectiveUnitPrice(line, p),
+        unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -731,7 +756,18 @@ function InvoiceComposer({
       }),
       totalItems,
     };
-  }, [items, productById, unlisted, invDiscount, shippingFee, isTaxExempt, taxRateFraction]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    items,
+    productById,
+    unlisted,
+    invDiscount,
+    shippingFee,
+    isTaxExempt,
+    taxRateFraction,
+    cpMap,
+    customerTier,
+  ]);
   const total = totals.total;
 
   // Newest-first "invoice so far" for the scan tray. Same inputs as the total
@@ -743,9 +779,13 @@ function InvoiceComposer({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        priceFor: (p) => toNumber(productById.get(p.id)?.pricePerUnit),
+        priceFor: (p) => {
+          const full = productById.get(p.id);
+          return full ? tierPriceFor(full) : 0;
+        },
       }),
-    [items, unlisted, scanOrder, productById],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, unlisted, scanOrder, productById, cpMap, customerTier],
   );
 
   /**
@@ -857,14 +897,14 @@ function InvoiceComposer({
       if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = toNumber(p.pricePerUnit);
+      const price = tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={effectiveUnitPrice(line, p)}
+            unitPrice={effectiveUnitPrice(line, p, tierPriceFor(p))}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -880,7 +920,7 @@ function InvoiceComposer({
           unit={p.unit}
           unitsPerBox={p.unitsPerBox}
           price={price}
-          listPrice={price}
+          listPrice={toNumber(p.pricePerUnit)}
           qty={qty}
           onAdd={onRowAdd}
           onChangeQty={onRowChangeQty}
@@ -891,8 +931,11 @@ function InvoiceComposer({
         </ProductRow>
       );
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       items,
+      cpMap,
+      customerTier,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,
@@ -954,7 +997,7 @@ function InvoiceComposer({
             description: displayName(p),
             productId,
             qty,
-            unitPrice: effectiveUnitPrice(line, p),
+            unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
             boxes: line.boxes ?? null,
             pieces: line.pieces ?? null,
             unitsPerBox: p.unitsPerBox ?? null,
@@ -1194,6 +1237,7 @@ function InvoiceComposer({
         totals={totals}
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
+        tierPriceFor={tierPriceFor}
         saving={createMut.isPending}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
@@ -1306,6 +1350,7 @@ function ReviewSheet({
   totals,
   totalItems,
   taxRateFraction,
+  tierPriceFor,
   saving,
   onClose,
   onIncrement,
@@ -1335,6 +1380,8 @@ function ReviewSheet({
   totalItems: number;
   /** 0 hides every taxable toggle (no tenant rate, or tax-exempt customer). */
   taxRateFraction: number;
+  /** The customer's effective (tier / customer-price) catalog price per product. */
+  tierPriceFor: (p: Product) => number;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1401,6 +1448,7 @@ function ReviewSheet({
                     product={product}
                     line={line}
                     taxRateFraction={taxRateFraction}
+                    catalogPrice={tierPriceFor(product)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
@@ -1499,6 +1547,7 @@ function ReviewRow({
   product,
   line,
   taxRateFraction,
+  catalogPrice: catalogPriceProp,
   onIncrement,
   onDecrement,
   onChangeQty,
@@ -1514,6 +1563,8 @@ function ReviewRow({
   product: Product;
   line: LineState;
   taxRateFraction: number;
+  /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
+  catalogPrice?: number;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
@@ -1528,8 +1579,8 @@ function ReviewRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
-  const catalogPrice = toNumber(product.pricePerUnit);
-  const effUnit = effectiveUnitPrice(line, product);
+  const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
+  const effUnit = effectiveUnitPrice(line, product, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the

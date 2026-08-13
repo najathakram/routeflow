@@ -29,7 +29,12 @@ import {
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
-import { useCustomers, useCustomerPrices, type Customer } from "@/lib/api/customers";
+import {
+  useCustomers,
+  useCustomerPrices,
+  type Customer,
+  type CustomerPrice,
+} from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
@@ -37,7 +42,12 @@ import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { fmt } from "@/lib/formatting";
-import { computeLineSubtotal, normalizeBoxesPieces, perUnitPrice } from "@/lib/pricing";
+import {
+  computeLineSubtotal,
+  getTierPrice,
+  normalizeBoxesPieces,
+  perUnitPrice,
+} from "@/lib/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -712,12 +722,16 @@ export default function NewInvoicePage() {
   }, [settings]);
 
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
+  // Per-product PRICE resolved from the CustomerPrice TIER override through
+  // the product's tier ladder. The old code read a nonexistent `specialPrice`
+  // column — `parseFloat("undefined")` — so EVERY product with a CustomerPrice
+  // row landed on the invoice with unitPrice NaN.
   const priceMap = React.useMemo(() => {
     const map: Record<string, number> = {};
-    if (customerPricesData) {
-      for (const cp of customerPricesData) {
-        map[cp.productId] = parseFloat(String(cp.specialPrice));
-      }
+    for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
+      if (!cp.product) continue;
+      const price = getTierPrice(cp.product, cp.pricingTier);
+      if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
   }, [customerPricesData]);
@@ -793,9 +807,16 @@ export default function NewInvoicePage() {
    */
   function addProductFromCatalog(product: any) {
     const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
-    const specialPrice: number | undefined = priceMap[product.id];
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
-    const effectivePrice = specialPrice ?? listPrice;
+    // Per-product tier override first, then the customer's own tier ladder —
+    // a Tier-3 customer previously billed at LIST on every catalog add here.
+    const customerTier = customer?.pricingTier ?? 1;
+    const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+    const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
+    const effectivePrice =
+      specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
+        ? specialPrice
+        : listPrice;
 
     const lineItem: LineItemState = {
       key: Math.random().toString(36).slice(2),
@@ -809,8 +830,8 @@ export default function NewInvoicePage() {
       unitPrice: effectivePrice,
       discount: 0,
       taxable: false,
-      regularPrice: specialPrice !== undefined ? listPrice : undefined,
-      isSpecialPrice: specialPrice !== undefined,
+      regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
+      isSpecialPrice: effectivePrice !== listPrice,
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,

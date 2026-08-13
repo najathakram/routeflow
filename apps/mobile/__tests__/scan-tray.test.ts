@@ -139,6 +139,20 @@ describe("trayRowsFrom", () => {
     expect(out[0].subtotal).toBe(computeLineSubtotal({ unitPrice: 1.99, qty: 3 }));
   });
 
+  it("ignores the override on non-overridable (SPECIAL tier) lines", () => {
+    const out = trayRowsFrom({
+      items: { single: { qty: 3, unitPrice: 1.99 }, other: { qty: 2, unitPrice: 1.0 } },
+      scanOrder: ["single", "other"],
+      lookup,
+      priceFor,
+      overridable: (p) => p.id !== "single",
+    });
+    // single is SPECIAL: charges the tier price, not the stale override.
+    expect(out[0].subtotal).toBe(computeLineSubtotal({ unitPrice: 2.5, qty: 3 }));
+    // other stays overridable.
+    expect(out[1].subtotal).toBe(computeLineSubtotal({ unitPrice: 1.0, qty: 2 }));
+  });
+
   it("sums to the same total the footer computes over the same lines", () => {
     const items: Record<string, TrayLine> = {
       case6: { qty: 7, boxes: 1, pieces: 1 },

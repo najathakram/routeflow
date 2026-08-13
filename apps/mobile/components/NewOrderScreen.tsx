@@ -472,6 +472,11 @@ function ProductPickView({
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
+  /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
+  const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
+  /** What this line actually charges: overrides count only on non-SPECIAL lines (web parity). */
+  const lineUnitFor = (line: LineState | undefined, p: Product) =>
+    isSpecialFor(p) ? tierPriceFor(p) : effectiveUnitPrice(line, tierPriceFor(p));
   const [scanOpen, setScanOpen] = useState(false);
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the order payload never reads them.
@@ -979,7 +984,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
+        unitPrice: lineUnitFor(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -1011,7 +1016,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       splitLines.push({
         trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
+        unitPrice: lineUnitFor(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -1038,6 +1043,10 @@ function ProductPickView({
         priceFor: (p) => {
           const full = productById.get(p.id);
           return full ? tierPriceFor(full) : 0;
+        },
+        overridable: (p) => {
+          const full = productById.get(p.id);
+          return full ? !isSpecialFor(full) : true;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1160,7 +1169,7 @@ function ProductPickView({
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={effectiveUnitPrice(line, price)}
+            unitPrice={lineUnitFor(line, p)}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1221,8 +1230,12 @@ function ProductPickView({
         // or upsell (above). A line sitting at the tier price sends nothing so
         // the server applies the SPECIAL/tier price authoritatively.
         const catalog = p ? tierPriceFor(p) : 0;
+        // SPECIAL lines drop any lingering override (e.g. from an old draft) —
+        // web can't produce one there, and the server owns the tier price.
         const override =
-          line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
+          p != null && !isSpecialFor(p) && line.unitPrice != null && line.unitPrice !== catalog
+            ? { unitPrice: line.unitPrice }
+            : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
         const base = { productId, qty, ...override, ...note };
         // Include boxes/pieces when set so the server uses the BOX-price math
@@ -1641,6 +1654,7 @@ function ProductPickView({
         productById={productById}
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
+        isSpecialFor={isSpecialFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
@@ -1942,6 +1956,7 @@ function CartModal({
   productById,
   priceHistory,
   tierPriceFor,
+  isSpecialFor,
   marginFloorFor,
   unlisted,
   total,
@@ -1979,6 +1994,8 @@ function CartModal({
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
   tierPriceFor: (p: Product) => number;
+  /** SPECIAL (tier≠1) lines lock the price input — it's the customer's permanent price. */
+  isSpecialFor: (p: Product) => boolean;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -2063,6 +2080,7 @@ function CartModal({
                     product={product}
                     line={line}
                     catalogPrice={tierPriceFor(product)}
+                    isSpecial={isSpecialFor(product)}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
@@ -2176,6 +2194,7 @@ function CartRow({
   product,
   line,
   catalogPrice,
+  isSpecial,
   marginFloor,
   historyPrice,
   onChangeBoxes,
@@ -2198,6 +2217,8 @@ function CartRow({
   /** The customer's effective tier price for this product (the base to compare
    *  an override against and to fall back to when no override is set). */
   catalogPrice: number;
+  /** SPECIAL (tier≠1) price: the input is locked and overrides are ignored. */
+  isSpecial: boolean;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -2221,8 +2242,8 @@ function CartRow({
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
   const sellBy = line.sellBy ?? "case";
-  const effUnit = effectiveUnitPrice(line, catalogPrice);
-  const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  const effUnit = isSpecial ? catalogPrice : effectiveUnitPrice(line, catalogPrice);
+  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: effUnit,
@@ -2277,34 +2298,46 @@ function CartRow({
 
       {/* Editable price — the "discounted price". Defaults to the catalog price;
           typing a lower value records a one-time override sent as the line's
-          unitPrice. */}
+          unitPrice. SPECIAL (tier≠1) lines lock it (web parity: the input is
+          hidden there — a tier price is the customer's permanent price). */}
       <View style={styles.cartPriceRow}>
         <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
-          <MoneyTextInput
-            style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
-            value={line.unitPrice ?? null}
-            onChangeValue={onChangePrice}
-            placeholder={catalogPrice.toFixed(2)}
-            returnKeyType="done"
-          />
-          {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
-            <Text
-              style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
-              numberOfLines={1}
-            >
-              Upsell
-            </Text>
-          ) : isOverridden ? (
-            <Text style={styles.cartPriceWas} numberOfLines={1}>
-              Current: ${catalogPrice.toFixed(2)}
-            </Text>
-          ) : historyPrice != null && historyPrice !== catalogPrice ? (
-            <Text style={styles.cartPriceWas} numberOfLines={1}>
-              Last: ${historyPrice.toFixed(2)}
-            </Text>
-          ) : null}
+          {isSpecial ? (
+            <>
+              <Text style={styles.cartPriceFixed}>{catalogPrice.toFixed(2)}</Text>
+              <Text style={styles.cartPriceLockNote} numberOfLines={1}>
+                Customer price
+              </Text>
+            </>
+          ) : (
+            <>
+              <MoneyTextInput
+                style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
+                value={line.unitPrice ?? null}
+                onChangeValue={onChangePrice}
+                placeholder={catalogPrice.toFixed(2)}
+                returnKeyType="done"
+              />
+              {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
+                <Text
+                  style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
+                  numberOfLines={1}
+                >
+                  Upsell
+                </Text>
+              ) : isOverridden ? (
+                <Text style={styles.cartPriceWas} numberOfLines={1}>
+                  Current: ${catalogPrice.toFixed(2)}
+                </Text>
+              ) : historyPrice != null && historyPrice !== catalogPrice ? (
+                <Text style={styles.cartPriceWas} numberOfLines={1}>
+                  Last: ${historyPrice.toFixed(2)}
+                </Text>
+              ) : null}
+            </>
+          )}
         </View>
       </View>
 
@@ -3147,6 +3180,19 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  // SPECIAL-line locked price: same weight as the input's text, no field chrome.
+  cartPriceFixed: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  cartPriceLockNote: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    flexShrink: 1,
+  },
   marginHint: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
