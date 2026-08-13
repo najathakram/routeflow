@@ -67,7 +67,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../../../../lib/pending-scroll";
-import { withCartRows } from "../../../../lib/visible-cart";
+import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
@@ -144,7 +144,34 @@ function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
   return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
 }
 
-const productKey = (p: Product) => p.id;
+const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
+
+/** Separator label between the on-this-invoice section and the catalogue. */
+function CatalogSectionLabel({ label }: { label: string }) {
+  return (
+    <View style={sectionStyles.wrap}>
+      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
+      <View style={sectionStyles.rule} />
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  text: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+  },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
+});
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
@@ -311,7 +338,7 @@ function InvoiceComposer({
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
-  const listRef = useRef<FlatList<Product>>(null);
+  const listRef = useRef<FlatList<CatalogRow<Product>>>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
   const { toast, show: showInline, dismiss: dismissInline } = useInlineToast();
   const [terms, setTerms] = useState(DEFAULT_TERMS);
@@ -643,12 +670,12 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  const filtered = useMemo(() => {
-    // Search AND category are server-side; the only client-side shaping left is
-    // pinning cart lines the current page doesn't contain. The catalogue never
-    // re-orders itself around scanning — see NewOrderScreen.
+  const filtered = useMemo<CatalogRow<Product>[]>(() => {
+    // Search AND category are server-side. Browsing view: on-invoice lines
+    // float to a labeled top section (owner ask — see partitionCatalog for the
+    // no-shuffle ordering rule); search results stay flat.
     if (searchTerm) return products;
-    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
   }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
@@ -657,7 +684,7 @@ function InvoiceComposer({
     if (!pendingScroll.targetId) return;
     const { state, scrollIndex } = stepPendingScroll(
       pendingScroll,
-      filtered.map((p) => p.id),
+      filtered.map((p) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id)),
     );
     if (scrollIndex == null) return;
     setPendingScroll(state);
@@ -826,7 +853,8 @@ function InvoiceComposer({
    * the full per-line editor (price override, loose units).
    */
   const renderProduct = useCallback(
-    ({ item: p }: { item: Product }) => {
+    ({ item: p }: { item: CatalogRow<Product> }) => {
+      if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       const price = toNumber(p.pricePerUnit);

@@ -91,7 +91,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../lib/pending-scroll";
-import { withCartRows } from "../lib/visible-cart";
+import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
 
@@ -210,11 +210,38 @@ function effectiveUnitPrice(line: LineState | undefined, basePrice: number): num
   return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
-const productKey = (p: Product) => p.id;
+const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
 }
+
+/** Separator label between the on-this-order section and the catalogue. */
+function CatalogSectionLabel({ label }: { label: string }) {
+  return (
+    <View style={sectionStyles.wrap}>
+      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
+      <View style={sectionStyles.rule} />
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  text: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+  },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
+});
 
 export function NewOrderScreen({
   customerId: initialCustomerId,
@@ -491,7 +518,7 @@ function ProductPickView({
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
-  const listRef = useRef<FlatList<Product>>(null);
+  const listRef = useRef<FlatList<CatalogRow<Product>>>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
@@ -905,18 +932,16 @@ function ProductPickView({
     [tenantCategories],
   );
 
-  const filtered = useMemo(() => {
-    // Search AND category are applied server-side; the only client-side shaping
-    // left is pinning cart lines the current page doesn't contain.
-    //
-    // The catalogue deliberately does NOT re-order itself around scanning. Web
-    // increments a repeat scan IN PLACE and never re-sorts, so scanning A, B, A
-    // leaves the list exactly where it was. `scanOrder` still drives the scan
-    // TRAY's newest-first ordering — the phone's stand-in for web's
-    // always-visible line table — but it must never reach the catalogue, or
-    // rows move under the operator's finger between scans.
+  const filtered = useMemo<CatalogRow<Product>[]>(() => {
+    // Search AND category are applied server-side. Browsing view (owner ask):
+    // lines already on the order float to a labeled top section, the rest of
+    // the catalogue under its own label — ordering inside the section is
+    // catalogue-relative so rows never shuffle among themselves (see
+    // partitionCatalog). During a SEARCH the results stay flat: you're
+    // looking something up, not reviewing the order. `scanOrder` still only
+    // drives the scan TRAY's newest-first ordering, never this list.
     if (searchTerm) return products;
-    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
   }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
@@ -925,7 +950,9 @@ function ProductPickView({
     if (!pendingScroll.targetId) return;
     const { state, scrollIndex } = stepPendingScroll(
       pendingScroll,
-      filtered.map((p) => p.id),
+      // Header rows occupy indices too — map them to their (non-product) keys
+      // so a product's scroll index still lands on the product.
+      filtered.map((p) => productKey(p)),
     );
     if (scrollIndex == null) return;
     setPendingScroll(state);
@@ -1116,7 +1143,8 @@ function ProductPickView({
    * full per-line editor (price override, sell-by, loose units, note, cost).
    */
   const renderProduct = useCallback(
-    ({ item: p }: { item: Product }) => {
+    ({ item: p }: { item: CatalogRow<Product> }) => {
+      if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       const price = tierPriceFor(p);
