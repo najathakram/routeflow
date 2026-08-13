@@ -21,8 +21,10 @@ import {
   useReopenOrder,
   useToggleOrderUrgent,
   useUpdateOrderShipment,
+  fetchCancelImpact,
   type OrderStatus,
 } from "../../../../lib/api/orders";
+import { describeCancelImpact } from "../../../../lib/cancel-impact";
 import {
   useCreateInvoiceFromOrder,
   useInvoicePdf,
@@ -339,6 +341,32 @@ export default function OrderDetailScreen() {
         },
       );
     };
+
+    // Cancelling voids live invoices and hands applied credits back, so the
+    // operator is told exactly what moves — and which payment blocks it —
+    // before committing, rather than discovering it afterwards.
+    if (action.toStatus === "CANCELLED") {
+      fetchCancelImpact(order.id)
+        .then((impact) => {
+          const copy = describeCancelImpact(impact);
+          if (copy.blockedReason) {
+            confirm("Can't cancel yet", copy.blockedReason, () => {}, { confirmText: "OK" });
+            return;
+          }
+          const body = [`Order ${order.orderNumber ?? ""} will be cancelled.`, ...copy.lines]
+            .filter(Boolean)
+            .join("\n\n");
+          confirm(copy.title, body, doChange, { confirmText: "Cancel order", destructive: true });
+        })
+        .catch(() => {
+          // Preview unavailable (offline mid-round): fall back to the plain
+          // prompt rather than blocking the cancel — the server re-checks anyway.
+          confirm("Cancel this order?", action.confirmMessage ?? "", doChange, {
+            confirmText: "Confirm",
+          });
+        });
+      return;
+    }
 
     if (action.confirmMessage) {
       confirm("Confirm action", action.confirmMessage, doChange, { confirmText: "Confirm" });
