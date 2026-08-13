@@ -628,14 +628,21 @@ export class CreditNotesService {
     if (cn) {
       const newUsed = Math.max(0, roundMoney(Number(cn.amountUsed) - restore));
       const fullyApplied = newUsed >= Number(cn.amount) - 0.001;
+      // REVIVE (owner decision 2026-08-13): dollars coming back must land somewhere
+      // SPENDABLE. A note that expired while its money was parked on an invoice —
+      // or was somehow voided — would otherwise take the balance back and stay
+      // closed, hiding the value from every "open credit" reader. Clearing a past
+      // expiry (and an unexpected VOID) restores it to the wallet the operator can
+      // actually see. A FUTURE expiry is left alone: it's still valid.
+      const expired = cn.expiresAt != null && new Date(cn.expiresAt) <= new Date();
       await tx.creditNote.update({
         where: { id: cn.id },
         data: {
           amountUsed: newUsed,
-          // VOID stays VOID (defensive; callers pre-filter). Otherwise the wallet
-          // state follows consumption: fully consumed = APPLIED, else ISSUED.
-          status: cn.status === "VOID" ? "VOID" : fullyApplied ? "APPLIED" : "ISSUED",
+          // Wallet state follows consumption: fully consumed = APPLIED, else ISSUED.
+          status: fullyApplied && cn.status !== "VOID" ? "APPLIED" : "ISSUED",
           appliedToInvoiceId: fullyApplied ? cn.appliedToInvoiceId : null,
+          ...(expired ? { expiresAt: null } : {}),
           ...(newUsed <= 0.001 ? { appliedAt: null, autoApplied: false } : {}),
         },
       });
@@ -722,6 +729,114 @@ export class CreditNotesService {
       orderBy: { createdAt: "desc" },
     });
     for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, p);
+  }
+
+  /**
+   * Give an order's ENTIRE applied credit back to the wallet, and forget the
+   * intents that put it there. Used when an order stops being a thing the
+   * customer owes for at all — cancel, delete, or a void of its invoices.
+   *
+   * Two deliberate differences from the shrink path in settleOrderCreditsInTx:
+   *
+   *  - **VOID invoices are included.** settle skips them, so a credit that was
+   *    applied to an invoice which later got voided is invisible to every other
+   *    code path — the dollars sit on a dead invoice and the note stays consumed
+   *    forever. Sweeping them here is what makes already-stranded money
+   *    recoverable, and re-running is safe because each restore DELETES the
+   *    payment row it consumed.
+   *  - **Intents are cleared, not just the money.** Leaving OrderCreditNote rows
+   *    behind would let a later settle re-apply the very dollars we just returned.
+   *
+   * Returns the per-note totals so callers can tell the operator what moved.
+   */
+  async releaseOrderCreditsInTx(
+    tx: any,
+    orderId: string,
+  ): Promise<Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>> {
+    const released = await this.releaseCreditsInTx(tx, { orderId });
+    // Forget the intents too — otherwise a later settle re-applies what we just
+    // handed back. Order-scoped only: an invoice-scoped release (a single void)
+    // leaves the order's intents alone on purpose, since the order lives on.
+    await tx.orderCreditNote.deleteMany({ where: { orderId } });
+    return released;
+  }
+
+  /**
+   * Invoice-scoped release: hand back only the credits sitting on ONE invoice.
+   * Used when voiding a single invoice whose order otherwise continues.
+   */
+  async releaseInvoiceCreditsInTx(
+    tx: any,
+    invoiceId: string,
+  ): Promise<Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>> {
+    return this.releaseCreditsInTx(tx, { id: invoiceId });
+  }
+
+  private async releaseCreditsInTx(
+    tx: any,
+    invoiceWhere: Record<string, unknown>,
+  ): Promise<Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>> {
+    const payments = await tx.invoicePayment.findMany({
+      where: {
+        method: PaymentMethod.CREDIT_NOTE,
+        status: { not: "VOID" },
+        invoice: invoiceWhere,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
+    for (const p of payments) {
+      const restored = await this.restoreCreditFromPaymentInTx(tx, p);
+      if (!(restored > 0.001) || !p.creditNoteId) continue;
+      const prev = byNote.get(p.creditNoteId);
+      const number =
+        prev?.creditNoteNumber ??
+        (
+          await tx.creditNote.findUnique({
+            where: { id: p.creditNoteId },
+            select: { creditNoteNumber: true },
+          })
+        )?.creditNoteNumber ??
+        "";
+      byNote.set(p.creditNoteId, {
+        creditNoteNumber: number,
+        amount: roundMoney((prev?.amount ?? 0) + restored),
+      });
+    }
+
+    return [...byNote].map(([creditNoteId, v]) => ({ creditNoteId, ...v }));
+  }
+
+  /**
+   * READ-ONLY twin of releaseOrderCreditsInTx: what the release WOULD hand back,
+   * per note. Backs the cancel confirmation so the operator is told "$50.00 goes
+   * back to CN-0007" before they commit, never after.
+   */
+  async previewOrderCreditRelease(
+    orderId: string,
+    tx?: any,
+  ): Promise<Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>> {
+    const db = tx ?? this.prisma.forTenant();
+    const payments = await db.invoicePayment.findMany({
+      where: {
+        method: PaymentMethod.CREDIT_NOTE,
+        status: { not: "VOID" },
+        invoice: { orderId },
+      },
+      include: { creditNote: { select: { creditNoteNumber: true } } },
+    });
+
+    const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
+    for (const p of payments) {
+      if (!p.creditNoteId) continue;
+      const prev = byNote.get(p.creditNoteId);
+      byNote.set(p.creditNoteId, {
+        creditNoteNumber: prev?.creditNoteNumber ?? p.creditNote?.creditNoteNumber ?? "",
+        amount: roundMoney((prev?.amount ?? 0) + Number(p.amount)),
+      });
+    }
+    return [...byNote].map(([creditNoteId, v]) => ({ creditNoteId, ...v }));
   }
 
   /**
