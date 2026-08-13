@@ -20,7 +20,12 @@ import {
   useOpenInvoicesForCustomer,
   useVoidCreditNote,
 } from "../../../lib/api/credit-notes";
-import { creditNoteActionFlags, creditNotePillFor } from "../../../lib/credit-notes-logic";
+import {
+  creditNoteActionFlags,
+  creditNotePillFor,
+  isCreditOpenForApply,
+  openCreditBalance,
+} from "../../../lib/credit-notes-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -60,6 +65,12 @@ export default function CreditNoteDetailScreen() {
   const s = creditNotePillFor(cn.status);
   const flags = creditNoteActionFlags(cn.status);
   const issued = cn.issueDate ?? cn.createdAt;
+  const remaining = openCreditBalance(cn);
+  const used = Math.max(0, Number(cn.amount) - remaining);
+  const expired = !!cn.expiresAt && new Date(cn.expiresAt) <= new Date();
+  // Apply is gated on the FULL open predicate, not status alone — an expired
+  // or fully-consumed ISSUED note would just 400 on apply.
+  const canApply = flags.canApply && isCreditOpenForApply(cn, new Date());
 
   const handleIssue = () => {
     if (!id) return;
@@ -128,6 +139,29 @@ export default function CreditNoteDetailScreen() {
               Issued {new Date(issued).toLocaleDateString()}
               {cn.invoiceId ? " · Applies to invoice" : " · Applies to next invoice (auto)"}
             </Text>
+            {/* The face amount alone reads as "untouched" after a partial
+                apply — state what's applied and what's LEFT (mirrors web's
+                sidebar Amount/Applied/Remaining). */}
+            <View style={styles.balanceRow}>
+              <View style={styles.balanceCell}>
+                <Text style={styles.balanceLabel}>Applied</Text>
+                <Text style={styles.balanceValue}>{fmtCurrency(used)}</Text>
+              </View>
+              <View style={styles.balanceCell}>
+                <Text style={styles.balanceLabel}>Remaining</Text>
+                <Text style={[styles.balanceValue, remaining > 0 && styles.balanceRemaining]}>
+                  {fmtCurrency(remaining)}
+                </Text>
+              </View>
+              {cn.expiresAt ? (
+                <View style={styles.balanceCell}>
+                  <Text style={styles.balanceLabel}>{expired ? "Expired" : "Expires"}</Text>
+                  <Text style={[styles.balanceValue, expired && styles.balanceExpired]}>
+                    {new Date(cn.expiresAt).toLocaleDateString()}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
 
           {/* Actions */}
@@ -140,7 +174,7 @@ export default function CreditNoteDetailScreen() {
                   onPress={handleIssue}
                 />
               ) : null}
-              {flags.canApply ? (
+              {canApply ? (
                 <ActionTile
                   icon="checkmark-circle-outline"
                   label={applyMut.isPending ? "Applying…" : "Apply to invoice"}
@@ -218,7 +252,12 @@ function ApplyInvoicePicker({
             {open.map((inv) => (
               <Pressable key={inv.id} style={styles.invRow} onPress={() => onPick(inv.id)}>
                 <Text style={styles.invNum}>{inv.invoiceNumber}</Text>
-                <Text style={styles.invTotal}>{fmtCurrency(inv.total)}</Text>
+                {/* The BALANCE is what the credit lands against — the face
+                    total misreads on partially-paid invoices (web's modal
+                    lists balanceDue too). */}
+                <Text style={styles.invTotal}>
+                  {fmtCurrency((inv as any).balanceDue ?? inv.total)} due
+                </Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -267,6 +306,31 @@ const styles = StyleSheet.create({
     letterSpacing: -0.8,
   },
   dates: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  balanceRow: {
+    flexDirection: "row",
+    gap: 18,
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  balanceCell: { minWidth: 72 },
+  balanceLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  balanceValue: {
+    marginTop: 2,
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  balanceRemaining: { color: ios.brand },
+  balanceExpired: { color: ios.system.redInk },
   readonly: {
     fontSize: 13,
     fontFamily: "Inter_400Regular",

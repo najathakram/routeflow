@@ -13,7 +13,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useCreditNotes, type CreditNote } from "../../../lib/api/credit-notes";
-import { creditNotePillFor } from "../../../lib/credit-notes-logic";
+import { creditNotePillFor, openCreditBalance } from "../../../lib/credit-notes-logic";
 
 // Mirrors the web credit-notes status chips.
 const FILTERS = [
@@ -115,6 +115,11 @@ function Row({ note, onPress }: { note: CreditNote; onPress: () => void }) {
       </View>
       <View style={styles.rowFoot}>
         <Text style={styles.total}>{fmtCurrency(note.amount)}</Text>
+        {/* A partially-applied note stays ISSUED — the face amount alone reads
+            as "untouched". Surface what's actually left. */}
+        {Number(note.amountUsed ?? 0) > 0 && openCreditBalance(note) > 0 ? (
+          <Text style={styles.remaining}>{fmtCurrency(openCreditBalance(note))} left</Text>
+        ) : null}
         {issued ? (
           <Text style={styles.totalText}>Issued {new Date(issued).toLocaleDateString()}</Text>
         ) : null}
@@ -139,4 +144,10 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   totalText: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
+  remaining: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    fontVariant: ["tabular-nums"],
+  },
 });

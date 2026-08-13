@@ -28,6 +28,27 @@ export function incrementLine<T extends SaleLineQty>(
 }
 
 /**
+ * Add ONE LOOSE PIECE to a line (a PIECE-barcode scan — the product's
+ * `unitSku` — as opposed to the case code, which adds a box). Loose pieces
+ * ROLL OVER into boxes at unitsPerBox (scanning the 6th piece of a 6-pack
+ * forms 1 case + 0 loose), matching the server's normalizeBoxesPieces and the
+ * qty band's loose clamp. Non-boxed products: a piece IS the unit — plain +1.
+ * Preserves every other field, like incrementLine.
+ */
+export function incrementLinePiece<T extends SaleLineQty>(
+  prev: T,
+  isBoxed: boolean,
+  unitsPerBox: number,
+): T & { qty: number; boxes?: number | null; pieces?: number | null } {
+  if (!isBoxed) return { ...prev, qty: (prev.qty ?? 0) + 1 };
+  const upb = Math.max(2, Math.trunc(unitsPerBox));
+  const rawPieces = (prev.pieces ?? 0) + 1;
+  const boxes = (prev.boxes ?? 0) + Math.floor(rawPieces / upb);
+  const pieces = rawPieces % upb;
+  return { ...prev, qty: boxes * upb + pieces, boxes, pieces };
+}
+
+/**
  * Decrement a line by one unit (one piece, or one BOX for a boxed product),
  * preserving every other field (unitPrice / note / noteOpen). Returns null when
  * the line should be removed (reaches empty).

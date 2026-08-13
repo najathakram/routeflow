@@ -29,6 +29,7 @@ import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
   incrementLine,
+  incrementLinePiece,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -36,11 +37,12 @@ import {
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
 import { normalizeScanCode } from "../../../../lib/barcode-normalize";
-import { findExactScanMatch, looksLikeScanCode } from "../../../../lib/wedge-scan";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty } from "../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice } from "../../../../lib/pricing";
+import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
   invoiceLineDto,
@@ -66,7 +68,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../../../../lib/pending-scroll";
-import { withCartRows } from "../../../../lib/visible-cart";
+import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
@@ -104,6 +106,10 @@ type Product = {
   barcode?: string | null;
   unit?: string;
   pricePerUnit: number | string;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
   category?: string | null;
   unitsPerBox?: number | null;
   parentProductId?: string | null;
@@ -138,12 +144,48 @@ function newLocalId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-/** The effective per-unit price for a line: the override, else the catalog price. */
-function effectiveUnitPrice(line: LineState | undefined, p: Product): number {
-  return line?.unitPrice != null ? line.unitPrice : toNumber(p.pricePerUnit);
+/**
+ * The effective per-unit price for a line: the override, else the CUSTOMER's
+ * catalog price (tier/customer-price resolved by the caller — this screen
+ * previously always fell back to the LIST price, overbilling every tiered
+ * customer on mobile-built invoices; the server takes unitPrice verbatim).
+ */
+function effectiveUnitPrice(
+  line: LineState | undefined,
+  p: Product,
+  catalogPrice?: number,
+): number {
+  return line?.unitPrice != null ? line.unitPrice : (catalogPrice ?? toNumber(p.pricePerUnit));
 }
 
-const productKey = (p: Product) => p.id;
+const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
+
+/** Separator label between the on-this-invoice section and the catalogue. */
+function CatalogSectionLabel({ label }: { label: string }) {
+  return (
+    <View style={sectionStyles.wrap}>
+      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
+      <View style={sectionStyles.rule} />
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  text: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+  },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
+});
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
@@ -310,7 +352,7 @@ function InvoiceComposer({
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
-  const listRef = useRef<FlatList<Product>>(null);
+  const listRef = useRef<FlatList<CatalogRow<Product>>>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
   const { toast, show: showInline, dismiss: dismissInline } = useInlineToast();
   const [terms, setTerms] = useState(DEFAULT_TERMS);
@@ -330,6 +372,17 @@ function InvoiceComposer({
   const { data: settings } = useBusinessSettings();
   const { data: pickedCustomer } = useAdminCustomer(customerId);
   const isTaxExempt = !!pickedCustomer?.isTaxExempt;
+  // Customer pricing (parity with NewOrderScreen/web): per-product tier
+  // overrides first, then the customer's own tier ladder. Without this the
+  // invoice builder billed LIST to everyone.
+  const { data: customerPrices } = useCustomerPrices(customerId ?? "");
+  const customerTier = Number((pickedCustomer as any)?.pricingTier ?? 1) || 1;
+  const cpMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
+    return m;
+  }, [customerPrices]);
+  const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
@@ -354,14 +407,21 @@ function InvoiceComposer({
     [products, scannedById],
   );
 
-  const addOne = (id: string, snapshot?: Product) => {
+  const addOne = (id: string, snapshot?: Product, kind: "case" | "piece" = "case") => {
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
     setItems((m) => {
       const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice.
-      return { ...m, [id]: incrementLine(prev, isBoxed, upb) };
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice. A PIECE-code
+      // scan (unitSku) adds one loose piece, rolling into a box at upb.
+      return {
+        ...m,
+        [id]:
+          kind === "piece"
+            ? incrementLinePiece(prev, isBoxed, upb)
+            : incrementLine(prev, isBoxed, upb),
+      };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones — see
     // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
@@ -493,15 +553,22 @@ function InvoiceComposer({
    * confirmation, so no banner and no search reset (which would swap the list
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
-  const acceptScannedProduct = (product: Product): ScanOutcome => {
-    addOne(product.id, product);
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
     setSearch("");
+    const label =
+      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+        ? `Added 1 loose · ${displayName(product)}`
+        : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     setPendingScroll((s) => requestScroll(s, product.id));
-    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+    return { feedback: { kind: "added", text: label } };
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -521,7 +588,7 @@ function InvoiceComposer({
         hit(p.unitSku) ||
         (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
-    if (local) return acceptScannedProduct(local);
+    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
     try {
       const result = await resolveProductByCode<Product>(trimmed);
       if (result.ambiguous) {
@@ -537,7 +604,7 @@ function InvoiceComposer({
         };
       }
       if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product);
+        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
       }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
@@ -594,7 +661,7 @@ function InvoiceComposer({
     const now = Date.now();
     if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
     lastAutoAdd.current = { code, at: now };
-    const outcome = acceptScannedProduct(match);
+    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -628,12 +695,12 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  const filtered = useMemo(() => {
-    // Search AND category are server-side; the only client-side shaping left is
-    // pinning cart lines the current page doesn't contain. The catalogue never
-    // re-orders itself around scanning — see NewOrderScreen.
+  const filtered = useMemo<CatalogRow<Product>[]>(() => {
+    // Search AND category are server-side. Browsing view: on-invoice lines
+    // float to a labeled top section (owner ask — see partitionCatalog for the
+    // no-shuffle ordering rule); search results stay flat.
     if (searchTerm) return products;
-    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
   }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
@@ -642,7 +709,7 @@ function InvoiceComposer({
     if (!pendingScroll.targetId) return;
     const { state, scrollIndex } = stepPendingScroll(
       pendingScroll,
-      filtered.map((p) => p.id),
+      filtered.map((p) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id)),
     );
     if (scrollIndex == null) return;
     setPendingScroll(state);
@@ -661,7 +728,7 @@ function InvoiceComposer({
       if (qty <= 0) continue;
       totalItems += qty;
       lines.push({
-        unitPrice: effectiveUnitPrice(line, p),
+        unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -689,7 +756,18 @@ function InvoiceComposer({
       }),
       totalItems,
     };
-  }, [items, productById, unlisted, invDiscount, shippingFee, isTaxExempt, taxRateFraction]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    items,
+    productById,
+    unlisted,
+    invDiscount,
+    shippingFee,
+    isTaxExempt,
+    taxRateFraction,
+    cpMap,
+    customerTier,
+  ]);
   const total = totals.total;
 
   // Newest-first "invoice so far" for the scan tray. Same inputs as the total
@@ -701,9 +779,13 @@ function InvoiceComposer({
         unlisted,
         scanOrder,
         lookup: (id) => productById.get(id),
-        priceFor: (p) => toNumber(productById.get(p.id)?.pricePerUnit),
+        priceFor: (p) => {
+          const full = productById.get(p.id);
+          return full ? tierPriceFor(full) : 0;
+        },
       }),
-    [items, unlisted, scanOrder, productById],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, unlisted, scanOrder, productById, cpMap, customerTier],
   );
 
   /**
@@ -811,17 +893,18 @@ function InvoiceComposer({
    * the full per-line editor (price override, loose units).
    */
   const renderProduct = useCallback(
-    ({ item: p }: { item: Product }) => {
+    ({ item: p }: { item: CatalogRow<Product> }) => {
+      if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
-      const price = toNumber(p.pricePerUnit);
+      const price = tierPriceFor(p);
       const band =
         line && qty > 0 && Number(p.unitsPerBox ?? 0) > 1 ? (
           <BoxedQtyBand
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={effectiveUnitPrice(line, p)}
+            unitPrice={effectiveUnitPrice(line, p, tierPriceFor(p))}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -837,7 +920,7 @@ function InvoiceComposer({
           unit={p.unit}
           unitsPerBox={p.unitsPerBox}
           price={price}
-          listPrice={price}
+          listPrice={toNumber(p.pricePerUnit)}
           qty={qty}
           onAdd={onRowAdd}
           onChangeQty={onRowChangeQty}
@@ -848,8 +931,11 @@ function InvoiceComposer({
         </ProductRow>
       );
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       items,
+      cpMap,
+      customerTier,
       onRowAdd,
       onRowChangeQty,
       onRowIncrement,
@@ -911,7 +997,7 @@ function InvoiceComposer({
             description: displayName(p),
             productId,
             qty,
-            unitPrice: effectiveUnitPrice(line, p),
+            unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
             boxes: line.boxes ?? null,
             pieces: line.pieces ?? null,
             unitsPerBox: p.unitsPerBox ?? null,
@@ -1151,6 +1237,7 @@ function InvoiceComposer({
         totals={totals}
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
+        tierPriceFor={tierPriceFor}
         saving={createMut.isPending}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
@@ -1263,6 +1350,7 @@ function ReviewSheet({
   totals,
   totalItems,
   taxRateFraction,
+  tierPriceFor,
   saving,
   onClose,
   onIncrement,
@@ -1292,6 +1380,8 @@ function ReviewSheet({
   totalItems: number;
   /** 0 hides every taxable toggle (no tenant rate, or tax-exempt customer). */
   taxRateFraction: number;
+  /** The customer's effective (tier / customer-price) catalog price per product. */
+  tierPriceFor: (p: Product) => number;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1358,6 +1448,7 @@ function ReviewSheet({
                     product={product}
                     line={line}
                     taxRateFraction={taxRateFraction}
+                    catalogPrice={tierPriceFor(product)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
@@ -1456,6 +1547,7 @@ function ReviewRow({
   product,
   line,
   taxRateFraction,
+  catalogPrice: catalogPriceProp,
   onIncrement,
   onDecrement,
   onChangeQty,
@@ -1471,6 +1563,8 @@ function ReviewRow({
   product: Product;
   line: LineState;
   taxRateFraction: number;
+  /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
+  catalogPrice?: number;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
@@ -1485,8 +1579,8 @@ function ReviewRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
-  const catalogPrice = toNumber(product.pricePerUnit);
-  const effUnit = effectiveUnitPrice(line, product);
+  const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
+  const effUnit = effectiveUnitPrice(line, product, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the

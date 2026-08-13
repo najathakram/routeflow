@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { Plus, Eye, Calendar, X, Loader2, Search, ShieldCheck } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useCreditNotes, useCreateCreditNote, type CreditNote } from "@/lib/api/credit-notes";
+import {
+  useCreditNotes,
+  useCreateCreditNote,
+  openCreditBalance,
+  type CreditNote,
+} from "@/lib/api/credit-notes";
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
@@ -835,6 +840,13 @@ export default function CreditNotesPage() {
                     </td>
                     <td className="px-4 py-3 text-right money text-navy">
                       {fmt(Number(cn.amount))}
+                      {/* A partially-applied note stays ISSUED — the face
+                          amount alone reads as "untouched". */}
+                      {Number(cn.amountUsed ?? 0) > 0 && openCreditBalance(cn) > 0 ? (
+                        <span className="block text-xs font-semibold text-brand-600">
+                          {fmt(openCreditBalance(cn))} left
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
                       {cn.invoiceId ? (

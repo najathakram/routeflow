@@ -29,10 +29,11 @@ import {
   type CustomerPriceHistory,
 } from "../lib/api/orders";
 import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api/credit-notes";
+import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { normalizeScanCode } from "../lib/barcode-normalize";
-import { findExactScanMatch, looksLikeScanCode } from "../lib/wedge-scan";
+import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -75,6 +76,7 @@ import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
   decrementLine,
   incrementLine,
+  incrementLinePiece,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -90,7 +92,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../lib/pending-scroll";
-import { withCartRows } from "../lib/visible-cart";
+import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
 
@@ -209,11 +211,38 @@ function effectiveUnitPrice(line: LineState | undefined, basePrice: number): num
   return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
 
-const productKey = (p: Product) => p.id;
+const productKey = (p: CatalogRow<Product>) => (isCatalogHeader(p) ? `hdr-${p.__header}` : p.id);
 
 function RowSpacer() {
   return <View style={styles.rowSpacer} />;
 }
+
+/** Separator label between the on-this-order section and the catalogue. */
+function CatalogSectionLabel({ label }: { label: string }) {
+  return (
+    <View style={sectionStyles.wrap}>
+      <Text style={sectionStyles.text}>{label.toUpperCase()}</Text>
+      <View style={sectionStyles.rule} />
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingTop: 6,
+    paddingBottom: 2,
+  },
+  text: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label2,
+    letterSpacing: 0.6,
+  },
+  rule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: ios.separator },
+});
 
 export function NewOrderScreen({
   customerId: initialCustomerId,
@@ -443,6 +472,11 @@ function ProductPickView({
   const effectiveTierFor = (id: string) => cpMap.get(id) ?? customerTier ?? 1;
   /** The customer's effective per-selling-unit (box) price for a product. */
   const tierPriceFor = (p: Product) => getTierPrice(p, effectiveTierFor(p.id));
+  /** SPECIAL (tier≠1) lines are the customer's permanent price — never overridable. */
+  const isSpecialFor = (p: Product) => effectiveTierFor(p.id) !== 1;
+  /** What this line actually charges: overrides count only on non-SPECIAL lines (web parity). */
+  const lineUnitFor = (line: LineState | undefined, p: Product) =>
+    isSpecialFor(p) ? tierPriceFor(p) : effectiveUnitPrice(line, tierPriceFor(p));
   const [scanOpen, setScanOpen] = useState(false);
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the order payload never reads them.
@@ -477,7 +511,12 @@ function ProductPickView({
   const [justCreatedCredits, setJustCreatedCredits] = useState<CreditNote[]>([]);
   const creditRows = useMemo(() => {
     const rows = new Map<string, CreditNote>();
-    for (const cn of openCredits?.data ?? []) rows.set(cn.id, cn);
+    // ISSUED alone isn't "open": an expired or fully-consumed note stays
+    // ISSUED and would just 400 the whole order create at submit.
+    const now = new Date();
+    for (const cn of openCredits?.data ?? []) {
+      if (isCreditOpenForApply(cn, now)) rows.set(cn.id, cn);
+    }
     for (const cn of justCreatedCredits) if (!rows.has(cn.id)) rows.set(cn.id, cn);
     return Array.from(rows.values());
   }, [openCredits, justCreatedCredits]);
@@ -490,7 +529,7 @@ function ProductPickView({
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
-  const listRef = useRef<FlatList<Product>>(null);
+  const listRef = useRef<FlatList<CatalogRow<Product>>>(null);
   const [pendingScroll, setPendingScroll] = useState<PendingScrollState>(NO_PENDING_SCROLL);
   // Scanned/typed code with no product match → prefills the inline create sheet.
   const [createCode, setCreateCode] = useState<string | null>(null);
@@ -535,8 +574,10 @@ function ProductPickView({
    * Add 1 box (boxed product) or 1 piece (non-boxed) to the cart line for
    * `id`. If the product isn't yet known to the screen, the caller passes
    * the resolved Product so we can stash it for the totals/cart UI.
+   * `kind === "piece"` (a PIECE-barcode scan — the product's unitSku) adds
+   * one LOOSE piece instead of a box, rolling over at unitsPerBox.
    */
-  const addOne = (id: string, productSnapshot?: Product) => {
+  const addOne = (id: string, productSnapshot?: Product, kind: "case" | "piece" = "case") => {
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
@@ -559,7 +600,10 @@ function ProductPickView({
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
       // unitPrice override + note (previously wiped on every increment).
-      const line = incrementLine(prev, isBoxed, upb);
+      const line =
+        kind === "piece"
+          ? incrementLinePiece(prev, isBoxed, upb)
+          : incrementLine(prev, isBoxed, upb);
       if (isNew && prefill != null) line.unitPrice = prefill;
       return { ...m, [id]: line };
     });
@@ -720,16 +764,23 @@ function ProductPickView({
    * resolves codes the text search never matches — so a SUCCESSFUL scan could
    * leave an empty list.
    */
-  const acceptScannedProduct = (product: Product): ScanOutcome => {
-    addOne(product.id, product);
+  const acceptScannedProduct = (
+    product: Product,
+    unitKind: "case" | "piece" = "case",
+  ): ScanOutcome => {
+    addOne(product.id, product, unitKind);
     bumpScanned(product.id);
     setSearch("");
+    const label =
+      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+        ? `Added 1 loose · ${displayName(product)}`
+        : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
     // Only reachable from a non-sheet caller. Web's equivalent scrolls the new
     // line into view with `block: "nearest"` — a no-op when it is already
     // visible — so mirror that rather than always animating.
     setPendingScroll((s) => requestScroll(s, product.id));
-    return { feedback: { kind: "added", text: `Added ${displayName(product)}` } };
+    return { feedback: { kind: "added", text: label } };
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
@@ -751,7 +802,7 @@ function ProductPickView({
         hit(p.unitSku) ||
         (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
     );
-    if (local) return acceptScannedProduct(local);
+    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
 
     // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
     try {
@@ -776,7 +827,9 @@ function ProductPickView({
         };
       }
       if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product);
+        // Classify against the RESOLVED product's own codes — the barcode
+        // endpoint resolves either code but doesn't say which one matched.
+        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
       }
     } catch (err: any) {
       // Network / 5xx — surface so the operator can retry instead of silently
@@ -855,7 +908,7 @@ function ProductPickView({
     // INTENTIONAL re-scan of the same code (~1s+ of aim-and-trigger) passes.
     if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
     lastAutoAdd.current = { code, at: now };
-    const outcome = acceptScannedProduct(match);
+    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -890,18 +943,16 @@ function ProductPickView({
     [tenantCategories],
   );
 
-  const filtered = useMemo(() => {
-    // Search AND category are applied server-side; the only client-side shaping
-    // left is pinning cart lines the current page doesn't contain.
-    //
-    // The catalogue deliberately does NOT re-order itself around scanning. Web
-    // increments a repeat scan IN PLACE and never re-sorts, so scanning A, B, A
-    // leaves the list exactly where it was. `scanOrder` still drives the scan
-    // TRAY's newest-first ordering — the phone's stand-in for web's
-    // always-visible line table — but it must never reach the catalogue, or
-    // rows move under the operator's finger between scans.
+  const filtered = useMemo<CatalogRow<Product>[]>(() => {
+    // Search AND category are applied server-side. Browsing view (owner ask):
+    // lines already on the order float to a labeled top section, the rest of
+    // the catalogue under its own label — ordering inside the section is
+    // catalogue-relative so rows never shuffle among themselves (see
+    // partitionCatalog). During a SEARCH the results stay flat: you're
+    // looking something up, not reviewing the order. `scanOrder` still only
+    // drives the scan TRAY's newest-first ordering, never this list.
     if (searchTerm) return products;
-    return withCartRows(products, Object.keys(items), (id) => productById.get(id));
+    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
   }, [products, searchTerm, items, productById]);
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
@@ -910,7 +961,9 @@ function ProductPickView({
     if (!pendingScroll.targetId) return;
     const { state, scrollIndex } = stepPendingScroll(
       pendingScroll,
-      filtered.map((p) => p.id),
+      // Header rows occupy indices too — map them to their (non-product) keys
+      // so a product's scroll index still lands on the product.
+      filtered.map((p) => productKey(p)),
     );
     if (scrollIndex == null) return;
     setPendingScroll(state);
@@ -931,7 +984,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       totalItems += qty;
       total += computeLineSubtotal({
-        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
+        unitPrice: lineUnitFor(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -963,7 +1016,7 @@ function ProductPickView({
       if (qty <= 0) continue;
       splitLines.push({
         trackedCategoryId: p.trackedCategoryId ?? null,
-        unitPrice: effectiveUnitPrice(line, tierPriceFor(p)),
+        unitPrice: lineUnitFor(line, p),
         qty,
         boxes: line.boxes ?? null,
         pieces: line.pieces ?? null,
@@ -990,6 +1043,10 @@ function ProductPickView({
         priceFor: (p) => {
           const full = productById.get(p.id);
           return full ? tierPriceFor(full) : 0;
+        },
+        overridable: (p) => {
+          const full = productById.get(p.id);
+          return full ? !isSpecialFor(full) : true;
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1101,7 +1158,8 @@ function ProductPickView({
    * full per-line editor (price override, sell-by, loose units, note, cost).
    */
   const renderProduct = useCallback(
-    ({ item: p }: { item: Product }) => {
+    ({ item: p }: { item: CatalogRow<Product> }) => {
+      if (isCatalogHeader(p)) return <CatalogSectionLabel label={p.label} />;
       const line = items[p.id];
       const qty = line ? effectiveQty(line, p.unitsPerBox) : 0;
       const price = tierPriceFor(p);
@@ -1111,7 +1169,7 @@ function ProductPickView({
             line={line}
             unitsPerBox={Number(p.unitsPerBox)}
             unit={p.unit}
-            unitPrice={effectiveUnitPrice(line, price)}
+            unitPrice={lineUnitFor(line, p)}
             productName={displayName(p)}
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
@@ -1172,8 +1230,12 @@ function ProductPickView({
         // or upsell (above). A line sitting at the tier price sends nothing so
         // the server applies the SPECIAL/tier price authoritatively.
         const catalog = p ? tierPriceFor(p) : 0;
+        // SPECIAL lines drop any lingering override (e.g. from an old draft) —
+        // web can't produce one there, and the server owns the tier price.
         const override =
-          line.unitPrice != null && line.unitPrice !== catalog ? { unitPrice: line.unitPrice } : {};
+          p != null && !isSpecialFor(p) && line.unitPrice != null && line.unitPrice !== catalog
+            ? { unitPrice: line.unitPrice }
+            : {};
         const note = line.note?.trim() ? { notes: line.note.trim() } : {};
         const base = { productId, qty, ...override, ...note };
         // Include boxes/pieces when set so the server uses the BOX-price math
@@ -1592,6 +1654,7 @@ function ProductPickView({
         productById={productById}
         priceHistory={priceHistory}
         tierPriceFor={tierPriceFor}
+        isSpecialFor={isSpecialFor}
         marginFloorFor={(p) => floorForCategory(marginConfig, p.category)}
         unlisted={unlisted}
         total={total}
@@ -1893,6 +1956,7 @@ function CartModal({
   productById,
   priceHistory,
   tierPriceFor,
+  isSpecialFor,
   marginFloorFor,
   unlisted,
   total,
@@ -1930,6 +1994,8 @@ function CartModal({
   productById: Map<string, Product>;
   priceHistory?: CustomerPriceHistory;
   tierPriceFor: (p: Product) => number;
+  /** SPECIAL (tier≠1) lines lock the price input — it's the customer's permanent price. */
+  isSpecialFor: (p: Product) => boolean;
   /** The customer's effective margin floor (fraction) for a product's category. */
   marginFloorFor: (p: Product) => number;
   unlisted: UnlistedLine[];
@@ -2014,6 +2080,7 @@ function CartModal({
                     product={product}
                     line={line}
                     catalogPrice={tierPriceFor(product)}
+                    isSpecial={isSpecialFor(product)}
                     marginFloor={marginFloorFor(product)}
                     historyPrice={priceHistory?.[id]?.lastPrice}
                     onChangeBoxes={(n) => onChangeBoxes(id, n)}
@@ -2127,6 +2194,7 @@ function CartRow({
   product,
   line,
   catalogPrice,
+  isSpecial,
   marginFloor,
   historyPrice,
   onChangeBoxes,
@@ -2149,6 +2217,8 @@ function CartRow({
   /** The customer's effective tier price for this product (the base to compare
    *  an override against and to fall back to when no override is set). */
   catalogPrice: number;
+  /** SPECIAL (tier≠1) price: the input is locked and overrides are ignored. */
+  isSpecial: boolean;
   /** Category margin floor (fraction) for the live cost/margin hint. */
   marginFloor: number;
   historyPrice?: number;
@@ -2172,8 +2242,8 @@ function CartRow({
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
   const sellBy = line.sellBy ?? "case";
-  const effUnit = effectiveUnitPrice(line, catalogPrice);
-  const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  const effUnit = isSpecial ? catalogPrice : effectiveUnitPrice(line, catalogPrice);
+  const isOverridden = !isSpecial && line.unitPrice != null && line.unitPrice !== catalogPrice;
   const qty = effectiveQty(line, product.unitsPerBox);
   const lineTotal = computeLineSubtotal({
     unitPrice: effUnit,
@@ -2228,34 +2298,46 @@ function CartRow({
 
       {/* Editable price — the "discounted price". Defaults to the catalog price;
           typing a lower value records a one-time override sent as the line's
-          unitPrice. */}
+          unitPrice. SPECIAL (tier≠1) lines lock it (web parity: the input is
+          hidden there — a tier price is the customer's permanent price). */}
       <View style={styles.cartPriceRow}>
         <Text style={styles.cartPriceLabel}>Price{isBoxed ? " / case" : ""}</Text>
         <View style={styles.cartPriceInputWrap}>
           <Text style={styles.cartPriceCurrency}>$</Text>
-          <MoneyTextInput
-            style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
-            value={line.unitPrice ?? null}
-            onChangeValue={onChangePrice}
-            placeholder={catalogPrice.toFixed(2)}
-            returnKeyType="done"
-          />
-          {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
-            <Text
-              style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
-              numberOfLines={1}
-            >
-              Upsell
-            </Text>
-          ) : isOverridden ? (
-            <Text style={styles.cartPriceWas} numberOfLines={1}>
-              Current: ${catalogPrice.toFixed(2)}
-            </Text>
-          ) : historyPrice != null && historyPrice !== catalogPrice ? (
-            <Text style={styles.cartPriceWas} numberOfLines={1}>
-              Last: ${historyPrice.toFixed(2)}
-            </Text>
-          ) : null}
+          {isSpecial ? (
+            <>
+              <Text style={styles.cartPriceFixed}>{catalogPrice.toFixed(2)}</Text>
+              <Text style={styles.cartPriceLockNote} numberOfLines={1}>
+                Customer price
+              </Text>
+            </>
+          ) : (
+            <>
+              <MoneyTextInput
+                style={[styles.cartPriceInput, isOverridden && styles.cartPriceInputActive]}
+                value={line.unitPrice ?? null}
+                onChangeValue={onChangePrice}
+                placeholder={catalogPrice.toFixed(2)}
+                returnKeyType="done"
+              />
+              {isOverridden && line.unitPrice != null && line.unitPrice > catalogPrice ? (
+                <Text
+                  style={{ color: ios.system.greenInk, fontSize: 11, fontWeight: "600" }}
+                  numberOfLines={1}
+                >
+                  Upsell
+                </Text>
+              ) : isOverridden ? (
+                <Text style={styles.cartPriceWas} numberOfLines={1}>
+                  Current: ${catalogPrice.toFixed(2)}
+                </Text>
+              ) : historyPrice != null && historyPrice !== catalogPrice ? (
+                <Text style={styles.cartPriceWas} numberOfLines={1}>
+                  Last: ${historyPrice.toFixed(2)}
+                </Text>
+              ) : null}
+            </>
+          )}
         </View>
       </View>
 
@@ -3098,6 +3180,19 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   cartPriceInputActive: { borderColor: ios.brand, color: ios.brand },
+  // SPECIAL-line locked price: same weight as the input's text, no field chrome.
+  cartPriceFixed: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  cartPriceLockNote: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    flexShrink: 1,
+  },
   marginHint: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
