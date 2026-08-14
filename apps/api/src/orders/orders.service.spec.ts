@@ -110,6 +110,8 @@ describe("OrdersService", () => {
     validateSelectionsForCustomer: jest.Mock;
     syncOrderCreditSelections: jest.Mock;
     settleOrderCreditsInTx: jest.Mock;
+    releaseOrderCreditsInTx: jest.Mock;
+    previewOrderCreditRelease: jest.Mock;
   };
   let mockQueue: { add: jest.Mock };
   let mockGateway: {
@@ -156,6 +158,8 @@ describe("OrdersService", () => {
             resyncOrderInvoicesForEdit: jest.fn().mockResolvedValue([{ id: "inv-1" }]),
             revertLinkedInvoicesForOrderEdit: jest.fn().mockResolvedValue([]),
             voidInvoice: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
+            voidInvoiceInTx: jest.fn().mockResolvedValue({ id: "inv-1", status: "VOID" }),
+            releaseWalletPaymentsInTx: jest.fn().mockResolvedValue({ credits: [], advances: 0 }),
           },
         },
         {
@@ -206,6 +210,8 @@ describe("OrdersService", () => {
             validateSelectionsForCustomer: jest.fn().mockResolvedValue(undefined),
             syncOrderCreditSelections: jest.fn().mockResolvedValue(undefined),
             settleOrderCreditsInTx: jest.fn().mockResolvedValue({ applied: 0, unapplied: 0 }),
+            releaseOrderCreditsInTx: jest.fn().mockResolvedValue([]),
+            previewOrderCreditRelease: jest.fn().mockResolvedValue([]),
           },
         },
       ],
@@ -1453,15 +1459,75 @@ describe("OrdersService", () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it("cancelling an order voids its pending mirror draft", async () => {
+    it("cancelling voids EVERY live invoice on the order, not just the draft", async () => {
       prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
       prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+      // cancelImpact's read, then the in-tx read of invoices to void.
+      prisma.invoice.findMany
+        .mockResolvedValueOnce([
+          { id: "d1", invoiceNumber: "INV-1", status: "DRAFT", total: 40, payments: [] },
+          { id: "s1", invoiceNumber: "INV-2", status: "SENT", total: 60, payments: [] },
+        ])
+        .mockResolvedValueOnce([{ id: "d1" }, { id: "s1" }]);
       const invoices = (service as any).invoicesService;
-      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
 
       await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
 
-      expect(invoices.voidInvoice).toHaveBeenCalledWith("d1");
+      // A SENT invoice used to survive the cancel and stay collectible.
+      expect(invoices.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "d1", "ord-1");
+      expect(invoices.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "s1", "ord-1");
+      expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        "ord-1",
+      );
+    });
+
+    it("cancelling hands applied credits back before the invoices die", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.order.update.mockResolvedValue({ ...MOCK_ORDER, status: "CANCELLED" });
+      prisma.invoice.findMany
+        .mockResolvedValueOnce([
+          {
+            id: "inv-c",
+            invoiceNumber: "INV-9",
+            status: "PAID",
+            total: 50,
+            // Wallet money only — must NOT block the cancel.
+            payments: [{ method: "CREDIT_NOTE", amount: 50, status: "PAID" }],
+          },
+        ])
+        .mockResolvedValueOnce([{ id: "inv-c" }]);
+      creditNotesService.previewOrderCreditRelease.mockResolvedValueOnce([
+        { creditNoteId: "cn-1", creditNoteNumber: "CN-1", amount: 50 },
+      ]);
+      const invoices = (service as any).invoicesService;
+
+      await service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload);
+
+      expect(creditNotesService.releaseOrderCreditsInTx).toHaveBeenCalled();
+      expect(invoices.releaseWalletPaymentsInTx).toHaveBeenCalledWith(expect.anything(), "inv-c");
+      expect(invoices.voidInvoiceInTx).toHaveBeenCalledWith(expect.anything(), "inv-c", "ord-1");
+    });
+
+    it("refuses to cancel when real cash was taken, leaving the order untouched", async () => {
+      prisma.order.findUnique.mockResolvedValue(MOCK_ORDER);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-cash",
+          invoiceNumber: "INV-7",
+          status: "PARTIAL",
+          total: 80,
+          payments: [{ method: "CASH", amount: 80, status: "PAID" }],
+        },
+      ]);
+
+      await expect(
+        service.changeStatus("ord-1", { status: "CANCELLED" as any }, operatorPayload),
+      ).rejects.toThrow(/refunded before it can be cancelled/i);
+
+      // The guard runs BEFORE the write — a rejected cancel must not half-apply.
+      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();
     });
 
     it("marking DELIVERED reconciles the pending mirror (no duplicate invoice)", async () => {

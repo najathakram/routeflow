@@ -1514,10 +1514,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           variant: "info",
         });
       },
-      onError: () => {
+      onError: (err: any) => {
+        // The server explains exactly what's in the way (e.g. "$80.00 in
+        // cash/check/card payments — reverse or refund those first"). Swallowing
+        // it behind "Please try again" left the operator with no way forward.
         toast({
-          title: "Failed to void invoice",
-          description: "Please try again.",
+          title: "Couldn't void this invoice",
+          description:
+            err?.response?.data?.message ?? "Please try again, or check this invoice's payments.",
           variant: "error",
         });
       },

@@ -191,6 +191,15 @@ export class OrdersController {
     return this.ordersService.getOrderTracking(id, user);
   }
 
+  /** What cancelling would do to this order's invoices and applied credits —
+   *  read-only, so the confirmation can state it before the operator commits. */
+  @Get(":id/cancel-impact")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  cancelImpact(@Param("id") id: string) {
+    return this.ordersService.cancelImpact(id);
+  }
+
   @Get(":id")
   findOne(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.ordersService.findOne(id, user);

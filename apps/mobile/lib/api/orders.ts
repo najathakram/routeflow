@@ -210,6 +210,38 @@ export function useOrder(id: string) {
   });
 }
 
+/** What cancelling this order would do to its invoices and applied credits.
+ *  Mirrors web's `useCancelImpact` — same endpoint, same shape. */
+export interface CancelImpact {
+  orderId: string;
+  orderNumber: string;
+  alreadyCancelled: boolean;
+  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
+  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
+  advanceToRestore: number;
+  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
+  canCancel: boolean;
+}
+
+/**
+ * Imperative twin of {@link useCancelImpact}. The order screen's confirm is a
+ * one-shot call, not a render, so it fetches the preview on demand rather than
+ * paying for a query on every order view.
+ */
+export async function fetchCancelImpact(id: string): Promise<CancelImpact> {
+  const r = await apiClient.get(`/orders/${id}/cancel-impact`);
+  return r.data;
+}
+
+export function useCancelImpact(id: string, enabled = true) {
+  return useQuery<CancelImpact>({
+    queryKey: ["orders", id, "cancel-impact"],
+    queryFn: () => apiClient.get(`/orders/${id}/cancel-impact`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 /**

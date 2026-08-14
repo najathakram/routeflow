@@ -2771,13 +2771,85 @@ export class InvoicesService {
     return { success: true, sentTo: recipientEmail };
   }
 
+  /**
+   * Money on an invoice comes in two flavours and they unwind differently:
+   *
+   *  - **Wallet money** (CREDIT_NOTE, ADVANCE) came from a balance this system
+   *    owns, so voiding can simply put it back — and MUST, or the customer's
+   *    credit is silently consumed by an invoice that no longer exists.
+   *  - **External money** (cash, check, card) left the customer's hands. Software
+   *    cannot un-take it, so it still blocks the void until a human refunds or
+   *    reverses it.
+   *
+   * Returns the external total so callers can decide whether to block.
+   */
+  private externalPaidOn(payments: Array<{ method?: unknown; amount: unknown; status?: string }>) {
+    return roundMoney(
+      payments
+        .filter(
+          (p) =>
+            p.status !== "VOID" &&
+            (p.method as any) !== "CREDIT_NOTE" &&
+            (p.method as any) !== "ADVANCE",
+        )
+        .reduce((s, p) => s + Number(p.amount), 0),
+    );
+  }
+
+  /**
+   * Hand an invoice's wallet-funded payments back to the balances they came from:
+   * credit notes via the credit-note restore primitive, advances by re-crediting
+   * `AdvancePayment.balance` (mirroring voidPayment's inverse). Returns what moved
+   * so the caller can report it.
+   */
+  async releaseWalletPaymentsInTx(tx: any, invoiceId: string) {
+    const credits = await this.creditNotes.releaseInvoiceCreditsInTx(tx, invoiceId);
+
+    const advancePays = await tx.invoicePayment.findMany({
+      where: {
+        invoiceId,
+        method: "ADVANCE" as any,
+        status: { not: "VOID" },
+        advancePaymentId: { not: null },
+      },
+    });
+    let advances = 0;
+    for (const p of advancePays) {
+      const amt = roundMoney(Number(p.amount));
+      await tx.advancePayment.update({
+        where: { id: p.advancePaymentId },
+        data: { balance: { increment: amt } },
+      });
+      await tx.invoicePayment.delete({ where: { id: p.id } });
+      advances = roundMoney(advances + amt);
+    }
+    return { credits, advances };
+  }
+
+  /** The void itself, inside a caller's tx: flip to VOID, release the billed qty
+   *  back to the order, and reverse the regulated ledger rows. No guards — the
+   *  caller owns those (see voidInvoice) — and no credit handling, so callers that
+   *  want the money back must call releaseWalletPaymentsInTx first. */
+  async voidInvoiceInTx(tx: any, id: string, orderId: string | null) {
+    const voided = await tx.invoice.update({
+      where: { id },
+      data: { status: InvoiceStatus.VOID },
+    });
+    await this.adjustInvoicedQtyForInvoice(tx, id, orderId, -1);
+    await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
+    return voided;
+  }
+
   async voidInvoice(id: string) {
-    const inv = await this.findOneOrThrow(id);
-    if (inv.status === InvoiceStatus.PAID)
-      throw new BadRequestException("Cannot void a fully paid invoice");
-    if (inv.status === InvoiceStatus.PARTIAL)
+    const inv = await this.prisma.forTenant().invoice.findUnique({
+      where: { id },
+      include: { payments: true },
+    });
+    if (!inv) throw new NotFoundException("Invoice not found");
+    const external = this.externalPaidOn(inv.payments ?? []);
+    if (external > 0.001)
       throw new BadRequestException(
-        "Cannot void an invoice with partial payments. Reverse or refund payments first.",
+        `Cannot void an invoice with ${formatMoney(external)} in cash/check/card payments. Reverse or refund those payments first.`,
       );
 
     // Wrap in a transaction so the void + invoicedQty decrements are atomic.
@@ -2787,15 +2859,10 @@ export class InvoicesService {
     // scenario. The auto-create-on-DELIVERED captured all remaining qty; voiding
     // releases it so a fresh split can run.
     return this.prisma.tenantTransaction(async (tx) => {
-      const voided = await tx.invoice.update({
-        where: { id },
-        data: { status: InvoiceStatus.VOID },
-      });
-
-      await this.adjustInvoicedQtyForInvoice(tx, id, inv.orderId, -1);
-      // W5: reverse this invoice's regulated ledger rows so filings net to zero.
-      await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
-      return voided;
+      // Wallet money first: a credit applied to this invoice goes back to its note
+      // (spendable again) instead of being stranded on a dead invoice.
+      await this.releaseWalletPaymentsInTx(tx, id);
+      return this.voidInvoiceInTx(tx, id, inv.orderId);
     });
   }
 

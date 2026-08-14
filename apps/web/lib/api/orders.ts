@@ -186,6 +186,32 @@ export function useOrder(id: string) {
   });
 }
 
+/** What cancelling this order would do to its invoices and applied credits. */
+export interface CancelImpact {
+  orderId: string;
+  orderNumber: string;
+  alreadyCancelled: boolean;
+  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
+  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
+  advanceToRestore: number;
+  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
+  canCancel: boolean;
+}
+
+/**
+ * Read-only preview behind the cancel confirmation. Fetched only while the
+ * dialog is open (`enabled`) — the list has no use for it, and it is one query
+ * per order otherwise.
+ */
+export function useCancelImpact(id: string, enabled = true) {
+  return useQuery<CancelImpact>({
+    queryKey: ["orders", id, "cancel-impact"],
+    queryFn: () => apiClient.get(`/orders/${id}/cancel-impact`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
 /**
  * A line item on order creation. EITHER a catalog line (`productId` set,
  * `unitPrice`/`boxes`/`pieces` optional) OR an unlisted ad-hoc line

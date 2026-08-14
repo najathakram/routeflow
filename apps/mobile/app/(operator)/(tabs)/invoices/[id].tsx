@@ -30,7 +30,11 @@ import {
   useUpdateInvoiceShipment,
   useVoidInvoice,
 } from "../../../../lib/api/invoices";
-import { useApplyCreditNote, useCreditNotes } from "../../../../lib/api/credit-notes";
+import {
+  useApplyCreditNote,
+  useCreditNotes,
+  useUnapplyCreditNote,
+} from "../../../../lib/api/credit-notes";
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
@@ -111,6 +115,7 @@ export default function InvoiceDetailScreen() {
   const siblingInvoices = siblingInvoicesOf(siblingCandidates?.data ?? [], invoice);
   const sendMut = useSendInvoice();
   const voidMut = useVoidInvoice();
+  const unapplyCredit = useUnapplyCreditNote();
   const deleteMut = useDeleteInvoice();
   const pdfMut = useInvoicePdf();
   const updateMut = useUpdateInvoice();
@@ -206,6 +211,28 @@ export default function InvoiceDetailScreen() {
         },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
+    );
+  };
+
+  /** Give an applied credit back to its note. Mirrors web's "Remove credit". */
+  const handleUnapplyCredit = (creditNoteId: string, amount: unknown) => {
+    if (!id) return;
+    confirm(
+      "Remove this credit?",
+      `$${Number(amount).toFixed(2)} will be un-applied from ${invoice.invoiceNumber} and restored to the credit note's balance.`,
+      () =>
+        unapplyCredit.mutate(
+          { id: creditNoteId, invoiceId: id },
+          {
+            onSuccess: () => {
+              showToast("Credit returned to its note");
+              refetch();
+            },
+            onError: (e: any) =>
+              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+          },
+        ),
+      { confirmText: "Remove", destructive: true },
     );
   };
 
@@ -674,11 +701,28 @@ export default function InvoiceDetailScreen() {
                       </Text>
                       {p.reference ? <Text style={styles.payMeta}>Ref: {p.reference}</Text> : null}
                       {p.notes ? <Text style={styles.payMeta}>{p.notes}</Text> : null}
-                      {/* Credit-note reason via relation (read-time, never copied). */}
-                      {p.method === "CREDIT_NOTE" && p.creditNote?.reason ? (
+                      {/* Credit-note reason via relation (read-time, never copied).
+                          Gated on the RELATION, not on `reason` — a credit with no
+                          reason used to render nothing at all, hiding its number. */}
+                      {p.method === "CREDIT_NOTE" && p.creditNote ? (
                         <Text style={styles.payMeta}>
-                          Credit {p.creditNote.creditNoteNumber} — {p.creditNote.reason}
+                          Credit {p.creditNote.creditNoteNumber}
+                          {p.creditNote.reason ? ` — ${p.creditNote.reason}` : ""}
                         </Text>
+                      ) : null}
+                      {/* Reversing an applied credit was web-only: a phone operator
+                          could apply one and then had no way to take it back. */}
+                      {p.method === "CREDIT_NOTE" && p.creditNote && !isVoid ? (
+                        <Pressable
+                          style={styles.viewReceiptRow}
+                          onPress={() => handleUnapplyCredit(p.creditNote!.id, p.amount)}
+                          hitSlop={4}
+                        >
+                          <Ionicons name="arrow-undo-outline" size={13} color={ios.brand} />
+                          <Text style={styles.viewReceiptText}>
+                            {unapplyCredit.isPending ? "Removing…" : "Remove credit"}
+                          </Text>
+                        </Pressable>
                       ) : null}
                       {pay.imageKey ? (
                         <Pressable

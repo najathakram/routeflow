@@ -37,10 +37,12 @@ import {
   useUpdateOrderShipment,
   useCustomerPriceHistory,
   useResolveChangeRequest,
+  useCancelImpact,
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
+import { describeCancelImpact } from "@/lib/cancel-impact";
 import {
   describeChangeRequest,
   describeResolution,
@@ -1285,6 +1287,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   // Cancel confirmation
   const [showCancelConfirm, setShowCancelConfirm] = React.useState(false);
+  // Fetched only while the dialog is open, so the page costs nothing extra.
+  const cancelImpact = useCancelImpact(order?.id ?? "", showCancelConfirm);
+  const cancelCopy = describeCancelImpact(cancelImpact.data);
 
   // Delete confirmation
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
@@ -1634,12 +1639,28 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const handleCancel = () => setShowCancelConfirm(true);
 
   const confirmCancel = () => {
+    // Refused cancels (cash already taken) have no confirm action — the dialog
+    // just explains and closes.
+    if (!cancelCopy.confirmLabel) {
+      setShowCancelConfirm(false);
+      return;
+    }
     updateStatus.mutate(
       { id: order.id, status: "CANCELLED" },
       {
         onSuccess: () => {
           setLocalStatus("CANCELLED");
           setShowCancelConfirm(false);
+        },
+        onError: (err: any) => {
+          // Previously silent: a server refusal produced no toast at all.
+          toast({
+            title: "Couldn't cancel this order",
+            description:
+              err?.response?.data?.message ??
+              "Please try again, or refresh and check its invoices.",
+            variant: "error",
+          });
         },
       },
     );
@@ -2906,11 +2927,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         open={showCancelConfirm}
         onClose={() => setShowCancelConfirm(false)}
         onConfirm={confirmCancel}
-        title="Cancel this order?"
-        description={`Order ${order.orderNumber} will be marked as cancelled. This cannot be undone.`}
-        confirmLabel="Yes, cancel order"
+        title={cancelCopy.title}
+        description={
+          cancelImpact.isLoading
+            ? "Checking this order's invoices and credits…"
+            : (cancelCopy.blockedReason ??
+              [`Order ${order.orderNumber} will be marked as cancelled.`, ...cancelCopy.lines].join(
+                " ",
+              ))
+        }
+        confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
-        loading={updateStatus.isPending}
+        loading={updateStatus.isPending || cancelImpact.isLoading}
       />
 
       {/* Demote reason modal */}

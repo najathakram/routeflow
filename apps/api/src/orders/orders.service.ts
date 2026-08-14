@@ -1772,6 +1772,10 @@ export class OrdersService implements OnApplicationBootstrap {
       });
     }
 
+    // Refuse the cancel BEFORE writing the status — a rejection must leave the
+    // order exactly as it was, not cancelled-but-not-unwound.
+    if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
+
     const updated = await this.prisma.forTenant().order.update({
       where: { id },
       data: {
@@ -1828,9 +1832,29 @@ export class OrdersService implements OnApplicationBootstrap {
         this.logger.warn(`Credit settle after delivery failed for order ${id}: ${err}`);
       }
     } else if (dto.status === OrderStatus.CANCELLED) {
-      // Cancelling an order voids its pending mirror draft (releases invoicedQty).
-      const draft = await this.invoicesService.findOpenOrderDraft(id);
-      if (draft) await this.invoicesService.voidInvoice(draft.id);
+      // Cancelling means the customer owes nothing for this order, so EVERY live
+      // invoice on it is voided — not just the pending mirror draft, which is all
+      // this used to do. A SENT invoice left behind stayed collectible against a
+      // cancelled order, and any credit applied to it stayed consumed forever
+      // (settle skips VOID invoices, so nothing could ever give it back).
+      //
+      // Wallet money is returned first, inside the same transaction as the voids,
+      // so a crash can't leave the credit spent and the invoice dead. External
+      // payments already blocked this in assertCancellableOrThrow above.
+      await this.prisma.tenantTransaction(
+        async (tx) => {
+          const invoices = await tx.invoice.findMany({
+            where: { orderId: id, status: { not: "VOID" } },
+            select: { id: true },
+          });
+          await this.creditNotes.releaseOrderCreditsInTx(tx, id);
+          for (const inv of invoices) {
+            await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
+            await this.invoicesService.voidInvoiceInTx(tx, inv.id, id);
+          }
+        },
+        { isolationLevel: "Serializable" },
+      );
     }
 
     // Fire-and-forget push notifications for key status transitions
@@ -1903,6 +1927,82 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     return updated;
+  }
+
+  /**
+   * What cancelling this order will actually do to its money. Read-only — it backs
+   * both the confirmation the operator sees ("INV-12 will be voided, $50.00 goes
+   * back to CN-7") and the guard that refuses the cancel, so the warning and the
+   * rule can never disagree.
+   */
+  async cancelImpact(id: string) {
+    const order = await this.prisma.forTenant().order.findUnique({
+      where: { id },
+      select: { id: true, status: true, orderNumber: true },
+    });
+    if (!order) throw new NotFoundException("Order not found");
+
+    const invoices = await this.prisma.forTenant().invoice.findMany({
+      where: { orderId: id, status: { not: "VOID" } },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        status: true,
+        total: true,
+        payments: { select: { method: true, amount: true, status: true } },
+      },
+    });
+
+    // External money can't be un-taken by software; it blocks the cancel until a
+    // human refunds it. Wallet money (credit notes, advances) is simply returned.
+    const blockers: Array<{ invoiceNumber: string; amount: number }> = [];
+    for (const inv of invoices) {
+      const external = roundMoney(
+        (inv.payments ?? [])
+          .filter(
+            (p: any) => p.status !== "VOID" && p.method !== "CREDIT_NOTE" && p.method !== "ADVANCE",
+          )
+          .reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      if (external > 0.001)
+        blockers.push({ invoiceNumber: inv.invoiceNumber ?? "", amount: external });
+    }
+
+    const credits = await this.creditNotes.previewOrderCreditRelease(id);
+    const advances = roundMoney(
+      invoices
+        .flatMap((i) => i.payments ?? [])
+        .filter((p: any) => p.status !== "VOID" && p.method === "ADVANCE")
+        .reduce((s: number, p: any) => s + Number(p.amount), 0),
+    );
+
+    return {
+      orderId: order.id,
+      orderNumber: order.orderNumber ?? "",
+      alreadyCancelled: order.status === OrderStatus.CANCELLED,
+      invoicesToVoid: invoices.map((i) => ({
+        id: i.id,
+        invoiceNumber: i.invoiceNumber ?? "",
+        status: i.status,
+        total: roundMoney(Number(i.total)),
+      })),
+      creditsToRestore: credits,
+      advanceToRestore: advances,
+      blockingPayments: blockers,
+      canCancel: blockers.length === 0,
+    };
+  }
+
+  /** Throws when an order can't be cancelled because real money was taken for it. */
+  private async assertCancellableOrThrow(id: string) {
+    const impact = await this.cancelImpact(id);
+    if (impact.canCancel) return;
+    const detail = impact.blockingPayments
+      .map((b) => `${formatMoney(b.amount)} on ${b.invoiceNumber || "an invoice"}`)
+      .join(", ");
+    throw new BadRequestException(
+      `This order has payments that must be refunded before it can be cancelled: ${detail}. Reverse or refund them, then cancel.`,
+    );
   }
 
   async reopenOrder(id: string) {
@@ -3521,7 +3621,18 @@ export class OrdersService implements OnApplicationBootstrap {
       );
     }
 
+    // Deleting used to hard-delete every InvoicePayment below, including applied
+    // credit notes — the credit stayed consumed with nothing left pointing at it,
+    // so the customer's money vanished with no audit trail. Give wallet money back
+    // first; external payments block the delete for the same reason they block a
+    // cancel (software can't un-take cash).
+    await this.assertCancellableOrThrow(id);
+
     await this.prisma.tenantTransaction(async (tx) => {
+      await this.creditNotes.releaseOrderCreditsInTx(tx, id);
+      for (const inv of order.invoices) {
+        await this.invoicesService.releaseWalletPaymentsInTx(tx, inv.id);
+      }
       // Delete all invoices associated with this order
       for (const inv of order.invoices) {
         await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
