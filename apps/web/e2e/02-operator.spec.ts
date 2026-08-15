@@ -389,16 +389,32 @@ test.describe("Operator — Tenant Dashboard", () => {
 
     // Per-line quick-create opens pre-filled from the extracted line:
     // name verbatim, sell price suggested at cost 20 × 1.3 = 26.00.
+    // The review table declares min-width 720px, but with the invoice preview pane
+    // open the right side is ~580px, so the row overflows horizontally and the
+    // "No match" badge ends up over the per-line control — Playwright's click
+    // lands on the badge. Collapse the preview first, as an operator would.
+    const hidePreview = page.getByRole("button", { name: /hide invoice/i });
+    if (await hidePreview.isVisible().catch(() => false)) await hidePreview.click();
+
+    // The per-line quick-create is an icon-only button; its accessible name comes
+    // from title="Add as new product" (ScanInvoiceModal.tsx). It used to carry the
+    // label "Create product from this line", which now matches nothing.
     await page
-      .getByRole("button", { name: /create product from this line/i })
+      .getByRole("button", { name: /add as new product/i })
       .first()
       .click();
     const createModal = page.getByRole("heading", { name: "New Product" }).locator("xpath=../..");
     await expect(
       createModal.getByText("Name *", { exact: true }).locator("xpath=..").locator("input"),
     ).toHaveValue("ACME COLA 24PK");
+    // The quick-create modal labels this "Price per unit *" (ProductCreateModal.tsx);
+    // the "$" sits in a sibling span, so the input is still a descendant of the
+    // label's parent. The old "Price ($)" text matched nothing.
     await expect(
-      createModal.getByText("Price ($)", { exact: true }).locator("xpath=..").locator("input"),
+      createModal
+        .getByText("Price per unit *", { exact: true })
+        .locator("xpath=..")
+        .locator("input"),
     ).toHaveValue("26.00");
     await expect(page.getByText(/suggested from invoice cost/i)).toBeVisible();
     // Close without creating (don't pollute the seeded catalog).
@@ -883,7 +899,10 @@ test.describe("Operator — Tenant Dashboard", () => {
   // ── Settings ──────────────────────────────────────────────────────────────
 
   test("OP-19 settings — business profile tab loads with form", async ({ page }) => {
-    await page.goto("/settings");
+    // /settings is a hub of section cards now; the business-profile form lives
+    // behind the "Business profile" card at ?tab=profile (SECTIONS in
+    // settings/page.tsx). Landing on /settings alone shows no form fields.
+    await page.goto("/settings?tab=profile");
     await expect(page).not.toHaveURL(/error/);
     // Business name input should be pre-populated
     const businessField = page

@@ -10,8 +10,12 @@
  * .spec.ts, buyer/buyer-password-reset.spec.ts); these tests pin the UI states.
  */
 
+import path from "path";
 import { test, expect } from "@playwright/test";
 import { loginAsOperator, logout } from "./helpers/auth";
+
+/** Operator storage state written by the setup project (cookies + localStorage). */
+const OPERATOR_STATE = path.join(__dirname, "setup/.auth/operator.json");
 
 test.describe("Auth & password flows", () => {
   // NOTE: unlike other suites, no setTenantCookie(context) here. That helper
@@ -90,54 +94,72 @@ test.describe("Auth & password flows", () => {
     await page.getByRole("link", { name: "Customers" }).first().click();
   }
 
-  test("AP-05 re-auth sheet offers password, Google, and forgot-password", async ({ page }) => {
-    await loginAsOperator(page);
-    await expireSessionInPlace(page);
+  // ── Session expiry & settings password card ─────────────────────────────────
+  // These three need an authenticated session but do NOT exercise the login form
+  // itself. They previously called loginAsOperator(), spending three of the API's
+  // ten-attempts-per-five-minutes /auth/login budget (RF-160, auth.controller.ts).
+  // In CI every spec shares one runner IP, so by the time these ran the window was
+  // already exhausted: sign-in answered "Too many requests. Please try again in 5
+  // minutes.", the app never navigated, and waitForURL timed out at 30 s on all
+  // three retries. Reusing the operator storage state costs zero logins.
+  //
+  // storageState restores cookies + localStorage only — NOT the extraHTTPHeaders
+  // that setTenantCookie() injects, so the "slug, slug" collision described above
+  // does not apply here.
+  test.describe("session expiry & settings password card", () => {
+    test.use({ storageState: OPERATOR_STATE });
 
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible({ timeout: 20_000 });
-    await expect(dialog.getByRole("button", { name: "Unlock and continue" })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Continue with Google" })).toBeVisible();
-    await expect(dialog.getByRole("link", { name: "Forgot password?" })).toBeVisible();
-    // Do NOT click Google — it would navigate the suite off the app.
-  });
+    test("AP-05 re-auth sheet offers password, Google, and forgot-password", async ({ page }) => {
+      await page.goto("/dashboard");
+      await expireSessionInPlace(page);
 
-  test("AP-06 re-auth sheet unlock with the correct password resumes the session", async ({
-    page,
-  }) => {
-    await loginAsOperator(page);
-    await expireSessionInPlace(page);
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible({ timeout: 20_000 });
+      await expect(dialog.getByRole("button", { name: "Unlock and continue" })).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Continue with Google" })).toBeVisible();
+      await expect(dialog.getByRole("link", { name: "Forgot password?" })).toBeVisible();
+      // Do NOT click Google — it would navigate the suite off the app.
+    });
 
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible({ timeout: 20_000 });
-    await dialog.locator("#reauth-pw").fill("Admin@123");
-    await dialog.getByRole("button", { name: "Unlock and continue" }).click();
-    await expect(dialog).not.toBeVisible({ timeout: 20_000 });
-    // Session restored in place — still inside the dashboard, no /login bounce.
-    await expect(page).not.toHaveURL(/\/login/);
-  });
+    test("AP-06 re-auth sheet unlock with the correct password resumes the session", async ({
+      page,
+    }) => {
+      await page.goto("/dashboard");
+      await expireSessionInPlace(page);
 
-  // ── Settings password card ──────────────────────────────────────────────────
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible({ timeout: 20_000 });
+      await dialog.locator("#reauth-pw").fill("Admin@123");
+      await dialog.getByRole("button", { name: "Unlock and continue" }).click();
+      await expect(dialog).not.toBeVisible({ timeout: 20_000 });
+      // Session restored in place — still inside the dashboard, no /login bounce.
+      await expect(page).not.toHaveURL(/\/login/);
+    });
 
-  test("AP-07 settings shows the Password card in change mode for a password account", async ({
-    page,
-  }) => {
-    await loginAsOperator(page);
-    await page.goto("/settings");
-    // Generous wait: in `next dev` the settings page compiles on first hit.
-    const accountTab = page.getByRole("tab", { name: /My Account/i });
-    await expect(accountTab).toBeVisible({ timeout: 45_000 });
-    await accountTab.click();
-    await expect(page.getByText("Change your account password", { exact: false })).toBeVisible();
-    await page.getByRole("button", { name: "Change password" }).click();
-    // Change mode = current-password field present (set mode hides it).
-    await expect(page.getByLabel("Current password")).toBeVisible();
-    await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
-    // Client-side mismatch validation — no server mutation.
-    await page.getByLabel("New password", { exact: true }).fill("FreshPass1!");
-    await page.getByLabel("Confirm new password").fill("Different1!");
-    await page.getByRole("button", { name: "Change password" }).last().click();
-    await expect(page.getByText("Passwords do not match")).toBeVisible();
+    // ── Settings password card ────────────────────────────────────────────────
+
+    test("AP-07 settings shows the Password card in change mode for a password account", async ({
+      page,
+    }) => {
+      // /settings is now a hub of section cards, not a tab strip — the account
+      // section lives at ?tab=account (SECTIONS in settings/page.tsx). The old
+      // getByRole("tab", …) matched nothing: no role="tab" survives the refactor.
+      // Generous wait: in `next dev` the settings page compiles on first hit.
+      await page.goto("/settings?tab=account");
+      await expect(page.getByRole("heading", { name: /my account/i })).toBeVisible({
+        timeout: 45_000,
+      });
+      await expect(page.getByText("Change your account password", { exact: false })).toBeVisible();
+      await page.getByRole("button", { name: "Change password" }).click();
+      // Change mode = current-password field present (set mode hides it).
+      await expect(page.getByLabel("Current password")).toBeVisible();
+      await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+      // Client-side mismatch validation — no server mutation.
+      await page.getByLabel("New password", { exact: true }).fill("FreshPass1!");
+      await page.getByLabel("Confirm new password").fill("Different1!");
+      await page.getByRole("button", { name: "Change password" }).last().click();
+      await expect(page.getByText("Passwords do not match")).toBeVisible();
+    });
   });
 
   // ── Buyer parity ────────────────────────────────────────────────────────────
