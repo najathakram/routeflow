@@ -23,8 +23,8 @@ import {
 import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { cascadeTierPrices, type TierField } from "@/lib/pricing";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -658,12 +658,20 @@ export default function ProductsPage() {
   }, [setTitle]);
 
   // Auto-open the create modal from a deep link (e.g. /products?action=new,
-  // the target of the /products/create redirect stub).
+  // the target of the /products/create redirect stub). The param is consumed —
+  // stripped as soon as it's honored — because this effect re-runs on every
+  // searchParams change, and search now writes to the URL: leaving `action` in
+  // place would re-open the modal on the next keystroke after the user closed it.
   React.useEffect(() => {
-    if (searchParams.get("action") === "new") setShowCreate(true);
-  }, [searchParams]);
+    if (searchParams.get("action") !== "new") return;
+    setShowCreate(true);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("action");
+    const qs = params.toString();
+    router.replace(qs ? `/products?${qs}` : "/products", { scroll: false });
+  }, [searchParams, router]);
 
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [stockFilter, setStockFilter] = React.useState("");
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
@@ -912,9 +920,10 @@ export default function ProductsPage() {
     setEditPriceValue("");
   };
 
-  const debouncedSearch = useDebounce(search, 300);
-
-  // USB barcode detection on the main search input — rapid keystrokes + Enter = scan
+  // USB barcode detection on the main search input — rapid keystrokes + Enter = scan.
+  // Scan timing is unaffected by search living in the URL: only the debounced value
+  // is written, so a burst of scanner keystrokes still triggers no navigation until
+  // the burst ends.
   React.useEffect(() => {
     const input = searchInputRef.current;
     if (!input) return;

@@ -49,8 +49,8 @@ import {
 } from "@/lib/api/customers";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { fmt, isInternalEmail } from "@/lib/formatting";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
@@ -241,7 +241,7 @@ export default function CustomersPage() {
   }, [setTitle]);
 
   // ── Local state ──────────────────────────────────────────────────────────
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   // status + regulated are URL-synced so filtered views are shareable (house pattern — see
   // products/inventory/invoices pages). Both live in the same hook instance so neither
   // clobbers the other's query param on change.
@@ -269,9 +269,6 @@ export default function CustomersPage() {
   const [sortBy, setSortBy] = React.useState("");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
   const { toast } = useToast();
-
-  // Debounce search to avoid firing API on every keystroke
-  const debouncedSearch = useDebounce(search, 300);
 
   // Reset page when filters change
   React.useEffect(() => {

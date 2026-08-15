@@ -22,7 +22,7 @@ import {
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useSuppliers,
   useCreateSupplier,
@@ -669,8 +669,7 @@ export default function SuppliersPage() {
     setTitle("Suppliers");
   }, [setTitle]);
 
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("all");
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("list");
   const [showModal, setShowModal] = React.useState(false);

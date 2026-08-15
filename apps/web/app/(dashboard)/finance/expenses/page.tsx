@@ -34,6 +34,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useVendorBills,
   useCreateVendorBill,
@@ -813,7 +814,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 function InventoryPurchasesTab() {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [needsMappingOnly, setNeedsMappingOnly] = React.useState(false);

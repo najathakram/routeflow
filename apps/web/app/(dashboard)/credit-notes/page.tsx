@@ -15,6 +15,7 @@ import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
 import { roundMoney } from "@/lib/pricing";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 
 // P5-13: canonical open-credit predicate — not VOID, has a positive remaining
 // balance (amount - amountUsed), and is not expired. Mirrors the API's
@@ -532,7 +533,7 @@ export default function CreditNotesPage() {
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);

@@ -22,6 +22,7 @@ import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@ro
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
@@ -111,8 +112,9 @@ export default function OrdersPage() {
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
 
-  // Customer search stays local (too transient for URL)
-  const [customerSearch, setCustomerSearch] = React.useState("");
+  // Customer search is URL-backed like the chips above, so drilling into an order
+  // and pressing Back returns to the search that found it.
+  const [customerSearch, setCustomerSearch] = useUrlSearch();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   // Draft resume state (pos-cost-roles-spec §2): which parked draft to hydrate and
   // an optional barcode to add on open.
@@ -127,17 +129,23 @@ export default function OrdersPage() {
     const action = searchParams.get("action");
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
+    if (!resume && action !== "new") return;
     if (resume) {
       setResumeDraftId(resume);
-      setInitialScanCode(scan);
-      setIsCreateOpen(true);
-      router.replace("/orders");
-    } else if (action === "new") {
+    } else {
       setResumeDraftId(null);
-      setInitialScanCode(scan);
-      setIsCreateOpen(true);
-      router.replace("/orders");
     }
+    setInitialScanCode(scan);
+    setIsCreateOpen(true);
+    // Strip ONLY the intent params. This used to replace with a bare "/orders",
+    // which also discarded the status/date chips and the search — so opening the
+    // builder from the draft dock silently cleared the operator's filters.
+    const params = new URLSearchParams(window.location.search);
+    params.delete("action");
+    params.delete("resumeDraft");
+    params.delete("scan");
+    const qs = params.toString();
+    router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   const [selectMode, setSelectMode] = React.useState(false);

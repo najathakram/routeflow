@@ -14,6 +14,7 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useEstimates,
   useCreateEstimate,
@@ -676,7 +677,7 @@ export default function EstimatesPage() {
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = React.useState(1);

@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { downloadCsv, csvDate } from "@/lib/export";
 import {
   useInvoices,
@@ -344,8 +344,7 @@ export default function InvoicesPage() {
   const statusFilter = (urlFilters.status as string) ?? "";
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("issueDate");

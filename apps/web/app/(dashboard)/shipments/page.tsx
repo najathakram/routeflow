@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Eye, Loader2, Truck, ExternalLink } from "lucide-react";
 import { Button, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { fmtDate } from "@/lib/formatting";
 import { carrierLabel, getTrackingUrl } from "@/lib/shipping";
@@ -49,8 +49,7 @@ export default function ShipmentsPage() {
     setTitle("Shipments");
   }, [setTitle]);
 
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = React.useState(1);
   const [limit, setLimit] = React.useState(20);
 

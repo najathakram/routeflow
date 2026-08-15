@@ -7,6 +7,7 @@ import { Eye, Pencil, Trash2, CheckSquare, X } from "lucide-react";
 import { PageHeader, Table, Badge, Button, cn, EmptyState } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { AddDriverModal } from "./_components/AddDriverModal";
 import { EditDriverModal } from "./_components/EditDriverModal";
 import {
@@ -45,7 +46,7 @@ export default function DriversPage() {
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Driver | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<Driver | null>(null);
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlSearch();
   const [statusFilter, setStatusFilter] = React.useState("");
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());

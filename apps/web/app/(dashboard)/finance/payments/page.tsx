@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { Paperclip } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useInvoicePayments,
   useVoidPayment,
@@ -436,7 +437,7 @@ export default function FinancePaymentsPage() {
   const { toast } = useToast();
 
   // Filters + sort state
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch] = useUrlSearch();
   const [method, setMethod] = React.useState("");
   const [status, setStatus] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
