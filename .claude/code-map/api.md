@@ -83,6 +83,24 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   invariant `Order.shippingFee == Σ shippingFee of the order's non-VOID invoices`
   (back-synced by `recomputeOrderFromInvoices`; from-order invoice creation seeds the whole
   fee onto the largest-subtotal sibling, never prorated).
+- **`prisma/seed.ts`** (2026-08-15, multi-tenant aware) — local dev seed for the approved `test`
+  tenant only: upserts tenant + 7 users (`Test@1234`), drivers, customers(+addresses), 15
+  products, routes/stops, 10 orders; every row carries `tenantId`. Two guards run before any
+  write: `assertTestTenant(TENANT_SLUG)` (scripts/lib/test-tenants.cjs, slug allow-list) and
+  `assertSafeTarget()` (DATABASE_URL host must be localhost/127.0.0.1/::1/postgres and
+  NODE_ENV≠production, else throws unless `SEED_ALLOW_REMOTE=1` — reaching a remote DB is
+  always a deliberate act).
+- **`prisma/migrations/`** (2026-08-15, baselined) — two migrations only. `0_init` is
+  generated to equal PRODUCTION exactly, replacing 75 partial migrations that could not build
+  a database from scratch (40 of 106 models were never created; deploy died at
+  `add_vendor_bill_items`). `20260815000000_add_product_tenant_name_index` then adds the one
+  index production was missing. Existing environments must run
+  `prisma migrate resolve --applied 0_init` ONCE before any further `migrate deploy`, or
+  deploys block with P3009. `AiUsageEvent` + `IdempotencyKey` are modelled in schema.prisma
+  purely so Prisma stops treating the app's runtime-created tables as drift and DROPping them.
+- **`prisma/rls.sql`** — Postgres row-level-security policies (defense-in-depth under the
+  `forTenant` client-side scoping); 2026-08-15 repaired dollar-quoting + the verification
+  query at the end.
 
 ## Feature modules (`src/<module>/`)
 
@@ -242,6 +260,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 
 - **Partial-receipt schema (2026-08-12):** `VendorBillItem.qtyReceived Decimal? @db.Decimal(10,3)` (migration `20260812000000_vendor_bill_item_qty_received`, additive) — cumulative receipt per line in BILL denomination (cases when `packSize>1`). Null is AMBIGUOUS by design: on a bill whose `receivedDate` is set while EVERY line is null (legacy pre-tracking receive) it means fully received; on a tracked bill it means never received — `lineReceivedQty()` is the only reader.
 - **`scripts/repair-costing.mjs`** — READ-ONLY prod costing diagnostic (deliberately NO `--execute`): §1 duplicate RECEIVED bills grouped by normalized supplier invoice number (KEEP first / EXTRA rest + per-product phantom stock/value), §2 case-cost suspect lines (`packSize>1` recorded, or boxed product with line cost ≥ per-piece sell), §3 sequenced repair proposal (void extras → fix movement denominations → recompute). Env: `REPORT_TENANT_SLUG`, `REPORT_RECEIVED_BEFORE` (bound §2 to pre-fix receives). Same `railway run --service postgres` URL-from-parts pattern as the other prod scripts; degrades when `packSize` column absent.
+
+- **`scripts/prod-readonly-audit.mjs`** (2026-08-15) — READ-ONLY production audit (no write
+  path at all); run via `railway run --service postgres node apps/api/scripts/prod-readonly-audit.mjs`.
 
 ### `tobacco/` (tobacco_dealer addon)
 
