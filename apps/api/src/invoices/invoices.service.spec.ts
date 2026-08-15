@@ -1041,7 +1041,7 @@ describe("InvoicesService", () => {
       prisma.invoice.update.mockClear();
       prisma.invoice.findUnique.mockResolvedValue({
         ...draftInvoice(),
-        customer: { id: "c1", businessName: "Acme", email: "flash_mart@imported.local" },
+        customer: { id: "c1", businessName: "Acme", email: "acme_store@imported.local" },
       } as any);
 
       await expect(service.sendEmail("i1")).rejects.toThrow(/No email address on file/);
@@ -1056,7 +1056,7 @@ describe("InvoicesService", () => {
         customer: { id: "c1", businessName: "Acme", email: "no-email+x@placeholder.local" },
       } as any);
 
-      await expect(service.sendEmail("i1", "flash_mart@imported.local")).rejects.toThrow(
+      await expect(service.sendEmail("i1", "acme_store@imported.local")).rejects.toThrow(
         /No email address on file/,
       );
       expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
@@ -1065,7 +1065,7 @@ describe("InvoicesService", () => {
     it("a real override wins over a sentinel on-file email", async () => {
       prisma.invoice.findUnique.mockResolvedValue({
         ...draftInvoice(),
-        customer: { id: "c1", businessName: "Acme", email: "flash_mart@imported.local" },
+        customer: { id: "c1", businessName: "Acme", email: "acme_store@imported.local" },
       } as any);
       mockEmailService.isEmailConfigured.mockResolvedValueOnce(true);
       mockEmailService.sendInvoice.mockResolvedValueOnce({ delivered: true, transport: "resend" });
