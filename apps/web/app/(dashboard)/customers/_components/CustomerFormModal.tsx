@@ -145,13 +145,11 @@ function buildDefaultValues(
     lastName: initialData.lastName ?? "",
     phone: initialData.phone ?? "",
     mobile: initialData.mobile ?? "",
-    // Don't surface the internal sentinel minted for emailless/CSV-imported customers.
-    email:
-      initialData.email ??
-      (initialData.user?.email && !isInternalEmail(initialData.user.email)
-        ? initialData.user.email
-        : "") ??
-      "",
+    // Don't surface the internal sentinel minted for emailless/CSV-imported customers —
+    // from EITHER source: CSV import writes `<name>@imported.local` onto Customer.email
+    // itself, not just the linked User. (Saving with the field left blank then scrubs
+    // the stored sentinel — the update payload sends "" which the API clears to null.)
+    email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
     creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
@@ -282,7 +280,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       updateCustomer.mutate(
         {
           id: initialData.id,
-          email: data.email || undefined,
+          // Always send email — "" clears the stored address server-side (emptyToNull).
+          // `|| undefined` here made an emptied field a silent no-op, so a bad or
+          // sentinel email could never be removed.
+          email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
           phone: data.phone || undefined,

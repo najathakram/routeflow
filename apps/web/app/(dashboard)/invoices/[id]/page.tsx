@@ -63,7 +63,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
-import { fmt, fmtDate, todayIso } from "@/lib/formatting";
+import { fmt, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
@@ -991,10 +991,10 @@ function MarkBouncedModal({
   );
 }
 
-// ─── No-email guard modal ─────────────────────────────────────────────────────
+// ─── Send-blocked recovery modal (no email on file / email send failed) ───────
 
 function NoEmailModal({
-  isOpen,
+  reason,
   onClose,
   customerName,
   onMarkSent,
@@ -1002,7 +1002,7 @@ function NoEmailModal({
   onPrint,
   isPending,
 }: {
-  isOpen: boolean;
+  reason: null | { kind: "no-email" } | { kind: "send-failed"; message: string };
   onClose: () => void;
   customerName: string;
   onMarkSent: () => void;
@@ -1010,12 +1010,17 @@ function NoEmailModal({
   onPrint: () => void;
   isPending: boolean;
 }) {
+  const sendFailed = reason?.kind === "send-failed";
   return (
     <Modal
-      open={isOpen}
+      open={reason !== null}
       onClose={onClose}
-      title="No email on file"
-      description={`${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`}
+      title={sendFailed ? "Email failed — invoice not sent" : "No email on file"}
+      description={
+        sendFailed
+          ? `${reason.message} You can download or print the invoice to deliver it another way, and mark it as sent to update its status.`
+          : `${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`
+      }
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -1044,8 +1049,9 @@ function NoEmailModal({
       }
     >
       <p className="text-sm text-navy/70">
-        Add an email address to this customer&apos;s profile to send invoices by email in the
-        future.
+        {sendFailed
+          ? "Marking as sent only updates the invoice status — no email goes out."
+          : "Add an email address to this customer's profile to send invoices by email in the future."}
       </p>
     </Modal>
   );
@@ -1291,7 +1297,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
   const [isRevertToDraftOpen, setIsRevertToDraftOpen] = React.useState(false);
   const [isUnvoidOpen, setIsUnvoidOpen] = React.useState(false);
-  const [isNoEmailOpen, setIsNoEmailOpen] = React.useState(false);
+  // Why the email path is blocked: no usable address on file, or the server refused
+  // the send (EMAIL_SEND_FAILED). Either way the operator gets the same recovery
+  // modal — Mark as Sent / Download / Print — instead of a dead-end toast that
+  // leaves the invoice stuck in DRAFT (and payments locked).
+  const [sendBlocked, setSendBlocked] = React.useState<
+    null | { kind: "no-email" } | { kind: "send-failed"; message: string }
+  >(null);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
   const [bouncingPayment, setBouncingPayment] = React.useState<InvoicePayment | null>(null);
@@ -1399,9 +1411,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   // ── Action handlers ─────────────────────────────────────────────────────────
 
   const handleSend = () => {
-    const customerEmail = invoice.customer?.email;
+    // An import sentinel (`…@imported.local` / `…@placeholder.local`) is not a real
+    // inbox — treat it as "no email on file" so the operator gets the Mark-as-Sent
+    // path instead of a send that can only fail.
+    const rawEmail = invoice.customer?.email;
+    const customerEmail = rawEmail && !isInternalEmail(rawEmail) ? rawEmail : undefined;
     if (!customerEmail) {
-      setIsNoEmailOpen(true);
+      setSendBlocked({ kind: "no-email" });
       return;
     }
     sendInvoiceEmail.mutate(
@@ -1427,6 +1443,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             router.push("/settings?tab=email");
             return;
           }
+          if (code === "EMAIL_SEND_FAILED") {
+            // The invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
+            // mail transport can't leave the invoice stuck and payments locked.
+            setSendBlocked({ kind: "send-failed", message: description });
+            return;
+          }
           toast({ title: "Failed to send email", description, variant: "error" });
         },
       },
@@ -1436,7 +1458,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleMarkAsSent = () => {
     sendInvoice.mutate(invoice.id, {
       onSuccess: () => {
-        setIsNoEmailOpen(false);
+        setSendBlocked(null);
         toast({
           title: "Invoice marked as sent",
           description: "Status updated — no email was sent.",
@@ -1476,7 +1498,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   };
 
   const handleReminder = () => {
-    const customerEmail = invoice.customer?.email;
+    // Import sentinels count as "no email" — they aren't real inboxes.
+    const rawReminderEmail = invoice.customer?.email;
+    const customerEmail =
+      rawReminderEmail && !isInternalEmail(rawReminderEmail) ? rawReminderEmail : undefined;
     if (!customerEmail) {
       toast({
         title: "No email on file",
@@ -2740,17 +2765,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       </Modal>
 
       <NoEmailModal
-        isOpen={isNoEmailOpen}
-        onClose={() => setIsNoEmailOpen(false)}
+        reason={sendBlocked}
+        onClose={() => setSendBlocked(null)}
         customerName={invoice.customer?.businessName ?? "This customer"}
         onMarkSent={handleMarkAsSent}
         onDownload={() => {
           handleDownloadPdf();
-          setIsNoEmailOpen(false);
+          setSendBlocked(null);
         }}
         onPrint={() => {
           handlePrint();
-          setIsNoEmailOpen(false);
+          setSendBlocked(null);
         }}
         isPending={sendInvoice.isPending}
       />

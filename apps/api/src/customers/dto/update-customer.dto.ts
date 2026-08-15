@@ -1,6 +1,8 @@
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { emptyToNull } from "../../common/dto-transforms";
 
 export class UpdateCustomerDto {
   // RF-110: strip HTML to prevent stored XSS via businessName
@@ -11,7 +13,10 @@ export class UpdateCustomerDto {
   @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
   @IsOptional() @IsString() deliveryWindowStart?: string;
   @IsOptional() @IsString() deliveryWindowEnd?: string;
-  @IsOptional() @IsString() email?: string;
+  // "" clears the stored email (→ null) so an import sentinel or stale address can
+  // actually be removed; previously an empty string was either dropped client-side
+  // or stored verbatim, making the email impossible to clear from the UI.
+  @IsOptional() @Transform(emptyToNull) @IsString() email?: string | null;
   @IsOptional() @IsString() mobile?: string;
   @IsOptional() @IsString() customerType?: string;
   @IsOptional() @IsString() displayName?: string;

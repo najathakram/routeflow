@@ -25,6 +25,7 @@ import {
   type OrderStatus,
 } from "../../../../lib/api/orders";
 import { describeCancelImpact } from "../../../../lib/cancel-impact";
+import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   useCreateInvoiceFromOrder,
   useInvoicePdf,
@@ -379,7 +380,8 @@ export default function OrderDetailScreen() {
   // no status change (mirrors web); Email is a real server send; Share PDF pushes
   // the file bytes through the OS share sheet.
   const sendPhone = preferredPhone(order.customer?.mobile, order.customer?.phone);
-  const sendEmail = order.customer?.email;
+  // Import sentinels aren't real inboxes — hide the Email channel (mirrors web).
+  const sendEmail = isInternalEmail(order.customer?.email) ? undefined : order.customer?.email;
   const buildMessage = () =>
     sendSheet
       ? invoiceReadyMessage(
