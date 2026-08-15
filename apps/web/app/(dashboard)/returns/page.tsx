@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useReturns,
   useCreateReturn,
@@ -386,8 +386,7 @@ export default function ReturnsPage() {
 
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [page, setPage] = React.useState(1);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;

@@ -175,5 +175,20 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Search survives Back ───────────────────────────────────────────────────
+    // Back-navigation restoration of a list search — the one behavior no other spec
+    // covers (nothing else in the suite calls goBack). Read-only: it types in search
+    // boxes and navigates, and mutates nothing. Self-skips on builds predating the
+    // URL-backed search.
+    {
+      name: "search-back-nav",
+      testMatch: /12-search-back-nav\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

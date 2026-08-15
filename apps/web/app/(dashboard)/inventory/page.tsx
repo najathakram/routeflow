@@ -24,6 +24,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import {
   useStockOverview,
   useSuppliers,
@@ -2252,7 +2253,9 @@ export default function InventoryPage() {
   // opens with no pre-selection.
   const [adjustPreselectId, setAdjustPreselectId] = React.useState<string | undefined>();
   const [showScanModal, setShowScanModal] = React.useState(false);
-  const [stockSearch, setStockSearch] = React.useState("");
+  // Filtering is client-side, so the raw value drives the table; only the URL
+  // mirror is debounced.
+  const [stockSearch, setStockSearch] = useUrlSearch();
   // Typeahead state for the Stock-tab search box
   const [stockSuggestOpen, setStockSuggestOpen] = React.useState(false);
   const [stockSuggestHighlight, setStockSuggestHighlight] = React.useState(0);
