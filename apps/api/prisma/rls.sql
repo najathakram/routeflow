@@ -13,9 +13,10 @@
 -- =============================================================================
 
 -- Helper: enable RLS + create policy on a given table
--- All tables use "tenant_id" column (Prisma maps camelCase → snake_case).
+-- All tables use the "tenantId" column — Prisma does NOT snake_case column names
+-- unless a field carries @map, and none of these do.
 
-DO $$
+DO $rls$
 DECLARE
   t TEXT;
   tables TEXT[] := ARRAY[
@@ -44,14 +45,16 @@ BEGIN
 
       -- Policy: allow rows where tenant_id matches the session variable,
       -- OR the session variable is empty (SUPER_ADMIN / migration context).
-      EXECUTE format($$
-        -- Prisma uses camelCase column names (no snake_case mapping unless @map is used)
+      -- NOTE: the inner dollar-quote tag MUST differ from the outer DO block's.
+      -- A bare $$ here closes the DO body early and leaks CREATE POLICY into the
+      -- top level as bare SQL ("syntax error at or near CREATE").
+      EXECUTE format($pol$
         CREATE POLICY tenant_isolation ON "%s"
           USING (
             "tenantId"::text = current_setting('app.current_tenant_id', true)
             OR coalesce(current_setting('app.current_tenant_id', true), '') = ''
           )
-      $$, t);
+      $pol$, t);
 
       RAISE NOTICE 'RLS enabled on %', t;
     EXCEPTION
@@ -62,11 +65,16 @@ BEGIN
     END;
   END LOOP;
 END
-$$;
+$rls$;
 
--- Verify
-SELECT tablename, rowsecurity, forcerowsecurity
-FROM pg_tables
-WHERE schemaname = 'public'
-  AND rowsecurity = true
-ORDER BY tablename;
+-- Verify. pg_tables exposes only `rowsecurity`; whether FORCE is on lives in
+-- pg_class.relforcerowsecurity, so read both from pg_class directly.
+SELECT c.relname            AS tablename,
+       c.relrowsecurity     AS rowsecurity,
+       c.relforcerowsecurity AS forcerowsecurity
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind = 'r'
+  AND c.relrowsecurity
+ORDER BY c.relname;
