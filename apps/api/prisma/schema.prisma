@@ -765,6 +765,9 @@ model Customer {
   @@index([businessName])
   @@index([customerType])
   @@index([tenantId])
+  // Present in production but absent from this model, so Prisma treated it as
+  // drift and a generated migration would have DROPped it.
+  @@index([deletedAt])
 }
 
 model CustomerDocument {
@@ -1365,7 +1368,13 @@ model OrderItem {
 
   order              Order               @relation(fields: [orderId], references: [id])
   tenant             Tenant?             @relation(fields: [tenantId], references: [id])
-  product            Product?            @relation(fields: [productId], references: [id])
+  // Restrict, stated explicitly: production has always enforced RESTRICT here, while
+  // an un-annotated optional relation means SetNull to Prisma — so the schema quietly
+  // disagreed with the database. Nothing relies on SetNull: remove() soft-deletes,
+  // bulkDelete() clears dependants first, and clearAll() delegates to bulkDelete, so
+  // no path reaches this FK. Keeping RESTRICT preserves the backstop that stops a
+  // stray hard-delete silently orphaning order history.
+  product            Product?            @relation(fields: [productId], references: [id], onDelete: Restrict)
   trackedCategory    TrackedCategory?    @relation(fields: [trackedCategoryId], references: [id], onDelete: SetNull)
   trackedSubcategory TrackedSubcategory? @relation(fields: [trackedSubcategoryId], references: [id], onDelete: SetNull)
   deliveryMutations  DeliveryMutation[]
@@ -3565,4 +3574,40 @@ model ImportQueueItem {
   @@index([tenantId, batchId])
   @@index([batchId, status])
   @@index([duplicateOfInvoiceId])
+}
+
+// ─── Runtime-provisioned tables ───────────────────────────────────────────────
+// Both tables are created at boot by the application itself, via raw
+// `CREATE TABLE IF NOT EXISTS` (PlatformConfigService and RoutesService), a pattern
+// chosen so those features could ship without a Prisma migration. The cost is that
+// Prisma had no idea they existed and treated them as drift — meaning any generated
+// migration would have emitted `DROP TABLE` for both, destroying the AI metering log
+// and every in-flight idempotency key.
+//
+// Declaring them here is what stops that. The shapes below mirror the raw DDL
+// exactly, including the database-side defaults, so `migrate diff` sees no change.
+
+/// AI usage / metering log — written by PlatformConfigService.recordAiUsage.
+model AiUsageEvent {
+  id           String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  tenantId     String?
+  feature      String
+  model        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  success      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// Replay guard for order submission — written by RoutesService's idempotency
+/// helpers, which read and write it with raw SQL and degrade silently if absent.
+model IdempotencyKey {
+  id        String   @id @default(dbgenerated("gen_random_uuid()"))
+  keyHash   String   @unique
+  response  String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([createdAt])
 }
