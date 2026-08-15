@@ -82,3 +82,65 @@ describe("ProductsService — F8-003 import error disclosure", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("secret_internal_col"));
   });
 });
+
+/**
+ * clearAll() used to run `TRUNCATE TABLE "Product" CASCADE`. TRUNCATE accepts no
+ * WHERE clause and is not subject to row-level security, so one tenant's OPERATOR
+ * calling DELETE /products/clear-all wiped every tenant's catalog, orders, invoices
+ * and inventory — and the tenant-scoped count in the response hid the damage.
+ */
+describe("ProductsService.clearAll — cross-tenant wipe regression", () => {
+  let service: ProductsService;
+  let prisma: any;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    prisma.$executeRaw = jest.fn();
+    prisma.$transaction = jest.fn().mockResolvedValue([]);
+    const mod = await Test.createTestingModule({
+      providers: [
+        ProductsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: StorageService, useValue: {} },
+        { provide: AddonService, useValue: {} },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      ],
+    }).compile();
+    service = mod.get(ProductsService);
+  });
+
+  it("never issues a raw TRUNCATE", async () => {
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
+
+    await service.clearAll();
+
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    const raw = JSON.stringify(prisma.$executeRaw.mock.calls);
+    expect(raw).not.toMatch(/TRUNCATE/i);
+  });
+
+  it("selects the products to remove through the tenant-scoped client", async () => {
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "p1" }]);
+
+    await service.clearAll();
+
+    // forTenant() is what injects the tenantId filter — reading the ids through it
+    // is what bounds the blast radius to the caller's own tenant.
+    expect(prisma.forTenant).toHaveBeenCalled();
+    expect(prisma.forTenant().product.findMany).toHaveBeenCalledWith({ select: { id: true } });
+  });
+
+  it("reports only the caller's own product count", async () => {
+    prisma.forTenant().product.findMany.mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
+
+    await expect(service.clearAll()).resolves.toEqual({ deleted: 2 });
+    expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it("is a no-op when the tenant has no products", async () => {
+    prisma.forTenant().product.findMany.mockResolvedValue([]);
+
+    await expect(service.clearAll()).resolves.toEqual({ deleted: 0 });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});

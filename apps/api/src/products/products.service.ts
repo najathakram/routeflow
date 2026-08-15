@@ -838,11 +838,23 @@ export class ProductsService {
   }
 
   async clearAll(): Promise<{ deleted: number }> {
-    // Count before clearing so we can report back
-    const count = await this.prisma.forTenant().product.count();
-    // CASCADE removes all rows in dependent tables (OrderItem, InvoiceItem, etc.)
-    await this.prisma.$executeRaw`TRUNCATE TABLE "Product" CASCADE`;
-    return { deleted: count };
+    // Tenant-scoped by construction.
+    //
+    // This previously ran `TRUNCATE TABLE "Product" CASCADE`. TRUNCATE takes no
+    // WHERE clause and is NOT subject to row-level security, so any single tenant's
+    // OPERATOR calling DELETE /products/clear-all destroyed the catalog, orders,
+    // invoices and inventory of EVERY tenant on the platform — while the returned
+    // count, read through forTenant(), reported only the caller's own products and
+    // so hid the true blast radius.
+    //
+    // bulkDelete() reaches every dependent table through forTenant(), so it can only
+    // ever touch the caller's own rows, and it clears the five RESTRICT dependents
+    // (OrderTemplateItem, PurchaseOrderItem, ReturnItem, StockLot, StockMovement)
+    // before the products themselves. The remaining FKs are CASCADE or SET NULL.
+    const ids = (await this.prisma.forTenant().product.findMany({ select: { id: true } })).map(
+      (p) => p.id,
+    );
+    return this.bulkDelete(ids);
   }
 
   async bulkDelete(ids: string[]): Promise<{ deleted: number }> {
