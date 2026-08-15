@@ -1033,6 +1033,54 @@ describe("InvoicesService", () => {
       expect(res).toMatchObject({ success: true, sentTo: "buyer@example.com" });
       expect(prisma.invoice.update).toHaveBeenCalled();
     });
+
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // they must behave exactly like "no email on file", never like a real recipient.
+    it("refuses a sentinel on-file email as if no email exists (no send, no SENT flip)", async () => {
+      mockEmailService.sendInvoice.mockClear();
+      prisma.invoice.update.mockClear();
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draftInvoice(),
+        customer: { id: "c1", businessName: "Acme", email: "acme_store@imported.local" },
+      } as any);
+
+      await expect(service.sendEmail("i1")).rejects.toThrow(/No email address on file/);
+      expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a sentinel override too (older clients echo the on-file address)", async () => {
+      mockEmailService.sendInvoice.mockClear();
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draftInvoice(),
+        customer: { id: "c1", businessName: "Acme", email: "no-email+x@placeholder.local" },
+      } as any);
+
+      await expect(service.sendEmail("i1", "acme_store@imported.local")).rejects.toThrow(
+        /No email address on file/,
+      );
+      expect(mockEmailService.sendInvoice).not.toHaveBeenCalled();
+    });
+
+    it("a real override wins over a sentinel on-file email", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        ...draftInvoice(),
+        customer: { id: "c1", businessName: "Acme", email: "acme_store@imported.local" },
+      } as any);
+      mockEmailService.isEmailConfigured.mockResolvedValueOnce(true);
+      mockEmailService.sendInvoice.mockResolvedValueOnce({ delivered: true, transport: "resend" });
+      prisma.invoice.update.mockResolvedValue({
+        id: "i1",
+        invoiceNumber: "INV-1",
+        customerId: "c1",
+        status: InvoiceStatus.SENT,
+        total: 100,
+        dueDate: null,
+      });
+
+      const res = await service.sendEmail("i1", "owner@realstore.com");
+      expect(res).toMatchObject({ success: true, sentTo: "owner@realstore.com" });
+    });
   });
 
   // ─── Backward sync: recomputeOrderFromInvoices ─────────────────────────────

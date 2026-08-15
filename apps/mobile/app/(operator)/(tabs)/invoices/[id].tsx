@@ -38,6 +38,7 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { isInternalEmail } from "../../../../lib/internal-email";
 import {
   canWriteOff,
   invoiceActionFlags,
@@ -170,7 +171,11 @@ export default function InvoiceDetailScreen() {
 
   const handleSend = () => {
     if (!id) return;
-    const customerEmail = invoice.customer?.email;
+    // Import sentinels (`…@imported.local` / `…@placeholder.local`) aren't real
+    // inboxes — route to the same no-email sheet (Mark as Sent / Share PDF) instead
+    // of a send that can only fail. Mirrors web invoice-detail handleSend.
+    const rawEmail = invoice.customer?.email;
+    const customerEmail = rawEmail && !isInternalEmail(rawEmail) ? rawEmail : undefined;
     if (!customerEmail) {
       chooseAction(
         "No email on file",
@@ -209,7 +214,39 @@ export default function InvoiceDetailScreen() {
           showToast(`${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`);
           refetch();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          const code = e?.response?.data?.code;
+          const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED") {
+            // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
+            // mail transport can't leave it stuck. Mirrors the web recovery modal.
+            chooseAction(
+              "Email failed — invoice not sent",
+              `${msg} You can mark it as sent and share the PDF another way.`,
+              [
+                {
+                  label: "Mark as Sent",
+                  style: "default",
+                  onPress: () =>
+                    sendMut.mutate(
+                      { id },
+                      {
+                        onSuccess: () => {
+                          showToast("Invoice marked as sent");
+                          refetch();
+                        },
+                        onError: (err: any) =>
+                          showToast(err?.response?.data?.message ?? err?.message ?? "Try again."),
+                      },
+                    ),
+                },
+                { label: "Cancel", style: "cancel" },
+              ],
+            );
+            return;
+          }
+          showToast(msg);
+        },
       },
     );
   };
@@ -335,9 +372,12 @@ export default function InvoiceDetailScreen() {
 
   const handleReminder = () => {
     if (!id) return;
-    const email = invoice.customer?.email;
+    const rawReminderEmail = invoice.customer?.email;
+    const email =
+      rawReminderEmail && !isInternalEmail(rawReminderEmail) ? rawReminderEmail : undefined;
     if (!email) {
       // Same pre-check as web: don't burn the round-trip on a guaranteed 400.
+      // Import sentinels count as "no email" — they aren't real inboxes.
       showToast("No email on file — add one to this customer first.");
       return;
     }

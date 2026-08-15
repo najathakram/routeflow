@@ -19,6 +19,7 @@ import {
 } from "../common/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import { clampLimit } from "../common/pagination";
+import { isInternalEmail } from "../common/internal-email";
 import { CheckStatus, InvoiceStatus, NotificationEvent, UserRole } from "@prisma/client";
 import {
   CreateInvoiceDto,
@@ -2550,7 +2551,13 @@ export class InvoicesService {
       throw new BadRequestException("Cannot send a voided invoice");
     await this.assertOrderInvoiceUnlocked(inv);
 
-    const recipientEmail = overrideEmail || inv.customer?.email;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from BOTH the override (older clients echo the on-file address into
+    // the request body) and the customer record, so a sentinel behaves exactly like
+    // "no email on file" instead of a doomed send.
+    const requestedEmail = isInternalEmail(overrideEmail) ? null : overrideEmail;
+    const onFileEmail = isInternalEmail(inv.customer?.email) ? null : inv.customer?.email;
+    const recipientEmail = requestedEmail || onFileEmail;
     if (!recipientEmail)
       throw new BadRequestException(
         "No email address on file for this customer. Provide an email address.",
@@ -2709,7 +2716,13 @@ export class InvoicesService {
     if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.PAID)
       throw new BadRequestException("Cannot send reminder for a VOID or PAID invoice");
 
-    const recipientEmail = overrideEmail || inv.customer?.email;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from BOTH the override (older clients echo the on-file address into
+    // the request body) and the customer record, so a sentinel behaves exactly like
+    // "no email on file" instead of a doomed send.
+    const requestedEmail = isInternalEmail(overrideEmail) ? null : overrideEmail;
+    const onFileEmail = isInternalEmail(inv.customer?.email) ? null : inv.customer?.email;
+    const recipientEmail = requestedEmail || onFileEmail;
     if (!recipientEmail)
       throw new BadRequestException(
         "No email address on file for this customer. Provide an email address.",

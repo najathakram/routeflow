@@ -43,6 +43,7 @@ import {
   type CustomerPriceHistory,
 } from "@/lib/api/orders";
 import { describeCancelImpact } from "@/lib/cancel-impact";
+import { isInternalEmail } from "@/lib/formatting";
 import {
   describeChangeRequest,
   describeResolution,
@@ -1688,7 +1689,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   customerName: order.customer?.businessName ?? "Customer",
                   customerPhone: order.customer?.phone,
                   customerMobile: order.customer?.mobile,
-                  customerEmail: order.customer?.email,
+                  // Import sentinels aren't real inboxes — hide the Email option
+                  // rather than offer a send that can only fail.
+                  customerEmail: isInternalEmail(order.customer?.email)
+                    ? undefined
+                    : order.customer?.email,
                 });
               },
               onError: (err: unknown) => {

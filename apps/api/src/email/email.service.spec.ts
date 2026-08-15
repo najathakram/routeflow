@@ -1,5 +1,8 @@
 import { EmailService } from "./email.service";
 
+jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
+import * as nodemailer from "nodemailer";
+
 /**
  * R5 — the email layer must be HONEST: `send()` returns `{delivered:false}` (never a
  * silent mock "success") when nothing is configured or a send fails, and it reads the
@@ -60,6 +63,31 @@ describe("EmailService — honest send (R5)", () => {
       ],
     });
     expect(await svc.isEmailConfigured()).toBe(true);
+  });
+
+  it("tenant-SMTP send transport is created with fail-fast timeouts (invoice-send hang fix)", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    expect(res).toMatchObject({ delivered: true, transport: "smtp" });
+    // Without these, nodemailer waits 2 minutes on an unreachable SMTP host and
+    // every invoice send/email request hangs before the Resend fallback.
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 15_000,
+        dnsTimeout: 10_000,
+      }),
+    );
   });
 
   it("ignores a PARTIAL SystemConfig email.* config (no password) and reports unconfigured", async () => {

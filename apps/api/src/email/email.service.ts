@@ -659,6 +659,14 @@ export class EmailService {
           port: emailCfg.port,
           secure: emailCfg.secure,
           auth: { user: emailCfg.user, pass: emailCfg.pass },
+          // Fail fast — invoice send/download UX awaits this round-trip. Without
+          // these, nodemailer's 2-minute default connect timeout makes an
+          // unreachable tenant SMTP (e.g. an IPv6 AAAA pick on a no-IPv6-egress
+          // host) hang the request before the Resend fallback kicks in.
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 15_000,
+          dnsTimeout: 10_000,
         });
         const info = await transport.sendMail({
           from,

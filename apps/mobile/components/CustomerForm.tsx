@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "./FormSheet";
+import { isInternalEmail } from "../lib/internal-email";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -40,7 +41,11 @@ export function customerFormFromValues(c: Record<string, any>): CustomerFormValu
   return {
     businessName: c.businessName ?? "",
     contactName: c.contactName ?? "",
-    email: c.email ?? "",
+    // Don't surface the import sentinel (`…@imported.local` / `…@placeholder.local`)
+    // — it isn't a real inbox. Saving with the field left blank then scrubs it
+    // (edit mode sends "", which the API clears to null). Mirrors web
+    // CustomerFormModal.
+    email: c.email && !isInternalEmail(c.email) ? c.email : "",
     phone: c.phone ?? "",
     creditLimit: c.creditLimit != null ? String(c.creditLimit) : "",
     pricingTier: c.pricingTier ?? 1,
@@ -75,13 +80,21 @@ function parseOptionalNumber(v: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function buildPayload(form: CustomerFormValues): CustomerPayload | { error: string } {
+function buildPayload(
+  form: CustomerFormValues,
+  mode: "create" | "edit",
+): CustomerPayload | { error: string } {
   const businessName = form.businessName.trim();
   if (!businessName) return { error: "Business name is required." };
   return {
     businessName,
     contactName: form.contactName.trim() || undefined,
-    email: form.email.trim() || undefined,
+    // Edit sends "" so a blanked field CLEARS the stored email server-side
+    // (UpdateCustomerDto emptyToNull) — `|| undefined` made clearing a silent
+    // no-op, so a sentinel could never be removed. Create keeps `undefined`:
+    // CreateCustomerDto's @IsEmail rejects "" and the service mints its own
+    // placeholder for an absent email.
+    email: mode === "edit" ? form.email.trim() : form.email.trim() || undefined,
     phone: form.phone.trim() || undefined,
     creditLimit: parseOptionalNumber(form.creditLimit),
     pricingTier: form.pricingTier,
@@ -99,10 +112,19 @@ interface Props {
   submitLabel: string;
   initial: CustomerFormValues;
   submitting?: boolean;
+  /** "edit" lets a blanked email field clear the stored address; default "create". */
+  mode?: "create" | "edit";
   onSubmit: (payload: CustomerPayload) => void | Promise<void>;
 }
 
-export function CustomerForm({ title, submitLabel, initial, submitting, onSubmit }: Props) {
+export function CustomerForm({
+  title,
+  submitLabel,
+  initial,
+  submitting,
+  mode = "create",
+  onSubmit,
+}: Props) {
   const [form, setForm] = React.useState<CustomerFormValues>(initial);
   const [error, setError] = React.useState<string | null>(null);
   const set = <K extends keyof CustomerFormValues>(k: K, v: CustomerFormValues[K]) =>
@@ -116,7 +138,7 @@ export function CustomerForm({ title, submitLabel, initial, submitting, onSubmit
   }, [form, initial]);
 
   const submit = () => {
-    const res = buildPayload(form);
+    const res = buildPayload(form, mode);
     if ("error" in res) {
       setError(res.error);
       return;
