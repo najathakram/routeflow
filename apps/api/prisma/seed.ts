@@ -22,7 +22,48 @@ today.setHours(0, 0, 0, 0);
  */
 const TENANT_SLUG = "test";
 
+/**
+ * assertTestTenant() vets the SLUG; nothing vetted the DATABASE. Before the
+ * multi-tenant fix this script died on its first query, so a stray prod
+ * DATABASE_URL was harmless. Now that it runs, the same slip would write a
+ * "test" tenant — 7 users, 15 products, 10 orders — straight into a live
+ * database. CLAUDE.md already promises seeds are "BLOCKED by production
+ * guard"; this is that guard.
+ *
+ * Local Postgres runs unattended. Anything else (Railway, a staging proxy)
+ * needs SEED_ALLOW_REMOTE=1, so reaching a remote database is always a
+ * deliberate act rather than a leftover env var.
+ */
+function assertSafeTarget(): void {
+  const url = process.env.DATABASE_URL ?? "";
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error("DATABASE_URL is missing or unparseable — refusing to seed.");
+  }
+  const isLocal = ["localhost", "127.0.0.1", "::1", "postgres"].includes(host);
+  const override = process.env.SEED_ALLOW_REMOTE === "1";
+
+  console.log(`seed target: ${host} (tenant "${TENANT_SLUG}")`);
+
+  if (process.env.NODE_ENV === "production" && !override) {
+    throw new Error(
+      `Refusing to seed with NODE_ENV=production (host ${host}). ` +
+        `Set SEED_ALLOW_REMOTE=1 only if you truly mean to seed this database.`,
+    );
+  }
+  if (!isLocal && !override) {
+    throw new Error(
+      `Refusing to seed the non-local database at ${host}. ` +
+        `Set SEED_ALLOW_REMOTE=1 only if you truly mean to seed it.`,
+    );
+  }
+}
+
 async function main() {
+  assertSafeTarget();
+
   // ─── Hash passwords ───────────────────────────────────────────────────────────
   const [adminHash, devHash] = await Promise.all([
     bcrypt.hash("Admin@123", SALT_ROUNDS),
