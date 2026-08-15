@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
+import { assertTestTenant } from "../../../scripts/lib/test-tenants.cjs";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -12,18 +13,83 @@ const PASSWORD = "Test@1234";
 const today = new Date();
 today.setHours(0, 0, 0, 0);
 
+/**
+ * Every row below is tenant-scoped: the API reads `tenantId` off the JWT and
+ * filters each query by it, so a row written without one is invisible to the
+ * app even though the insert succeeds. `test` is an approved test-tenant slug
+ * (see CLAUDE.md "Test tenants & real-client data") — assertTestTenant() below
+ * is what stops this script ever pointing at a live client.
+ */
+const TENANT_SLUG = "test";
+
+/**
+ * assertTestTenant() vets the SLUG; nothing vetted the DATABASE. Before the
+ * multi-tenant fix this script died on its first query, so a stray prod
+ * DATABASE_URL was harmless. Now that it runs, the same slip would write a
+ * "test" tenant — 7 users, 15 products, 10 orders — straight into a live
+ * database. CLAUDE.md already promises seeds are "BLOCKED by production
+ * guard"; this is that guard.
+ *
+ * Local Postgres runs unattended. Anything else (Railway, a staging proxy)
+ * needs SEED_ALLOW_REMOTE=1, so reaching a remote database is always a
+ * deliberate act rather than a leftover env var.
+ */
+function assertSafeTarget(): void {
+  const url = process.env.DATABASE_URL ?? "";
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error("DATABASE_URL is missing or unparseable — refusing to seed.");
+  }
+  const isLocal = ["localhost", "127.0.0.1", "::1", "postgres"].includes(host);
+  const override = process.env.SEED_ALLOW_REMOTE === "1";
+
+  console.log(`seed target: ${host} (tenant "${TENANT_SLUG}")`);
+
+  if (process.env.NODE_ENV === "production" && !override) {
+    throw new Error(
+      `Refusing to seed with NODE_ENV=production (host ${host}). ` +
+        `Set SEED_ALLOW_REMOTE=1 only if you truly mean to seed this database.`,
+    );
+  }
+  if (!isLocal && !override) {
+    throw new Error(
+      `Refusing to seed the non-local database at ${host}. ` +
+        `Set SEED_ALLOW_REMOTE=1 only if you truly mean to seed it.`,
+    );
+  }
+}
+
 async function main() {
+  assertSafeTarget();
+
   // ─── Hash passwords ───────────────────────────────────────────────────────────
   const [adminHash, devHash] = await Promise.all([
     bcrypt.hash("Admin@123", SALT_ROUNDS),
     bcrypt.hash(PASSWORD, SALT_ROUNDS),
   ]);
 
+  // ─── Tenant ───────────────────────────────────────────────────────────────────
+  assertTestTenant(TENANT_SLUG);
+  const tenant = await prisma.tenant.upsert({
+    where: { slug: TENANT_SLUG },
+    update: {},
+    create: {
+      slug: TENANT_SLUG,
+      name: "RouteFlow Test Co.",
+      status: "ACTIVE",
+      plan: "PROFESSIONAL",
+    },
+  });
+  const tenantId = tenant.id;
+
   // ─── Operator ─────────────────────────────────────────────────────────────────
   const adminUser = await prisma.user.upsert({
-    where: { username: "admin" },
+    where: { tenantId_username: { tenantId, username: "admin" } },
     update: { password: adminHash },
     create: {
+      tenantId,
       email: "maria.garza@routeflow.dev",
       username: "admin",
       password: adminHash,
@@ -36,9 +102,10 @@ async function main() {
   // ─── Drivers ──────────────────────────────────────────────────────────────────
   const [carlosUser, jamesUser] = await Promise.all([
     prisma.user.upsert({
-      where: { username: "carlos.r" },
+      where: { tenantId_username: { tenantId, username: "carlos.r" } },
       update: { password: devHash },
       create: {
+        tenantId,
         email: "carlos.reyes@routeflow.dev",
         username: "carlos.r",
         password: devHash,
@@ -48,9 +115,10 @@ async function main() {
       },
     }),
     prisma.user.upsert({
-      where: { username: "james.t" },
+      where: { tenantId_username: { tenantId, username: "james.t" } },
       update: { password: devHash },
       create: {
+        tenantId,
         email: "james.tran@routeflow.dev",
         username: "james.t",
         password: devHash,
@@ -66,6 +134,7 @@ async function main() {
       where: { userId: carlosUser.id },
       update: { contactName: "Carlos Reyes" },
       create: {
+        tenantId,
         userId: carlosUser.id,
         status: "ACTIVE",
         contactName: "Carlos Reyes",
@@ -79,6 +148,7 @@ async function main() {
       where: { userId: jamesUser.id },
       update: { contactName: "James Tran" },
       create: {
+        tenantId,
         userId: jamesUser.id,
         status: "ACTIVE",
         contactName: "James Tran",
@@ -187,9 +257,10 @@ async function main() {
   const customerUsers = await Promise.all(
     customerDefs.map((c) =>
       prisma.user.upsert({
-        where: { username: c.username },
+        where: { tenantId_username: { tenantId, username: c.username } },
         update: { password: devHash },
         create: {
+          tenantId,
           email: c.email,
           username: c.username,
           password: devHash,
@@ -207,6 +278,7 @@ async function main() {
         where: { userId: customerUsers[i].id },
         update: {},
         create: {
+          tenantId,
           userId: customerUsers[i].id,
           businessName: def.businessName,
           contactName: def.contactName,
@@ -222,6 +294,7 @@ async function main() {
         where: { id: def.address.id },
         update: {},
         create: {
+          tenantId,
           id: def.address.id,
           customerId: customers[i].id,
           label: def.address.label,
@@ -400,6 +473,7 @@ async function main() {
         where: { id: p.id },
         update: {},
         create: {
+          tenantId,
           id: p.id,
           name: p.name,
           sku: p.sku,
@@ -434,11 +508,12 @@ async function main() {
   await Promise.all(
     stockSeeds.map(async ({ productId, qty, unitCost }) => {
       const existing = await prisma.stockMovement.findFirst({
-        where: { productId, type: "PURCHASE" },
+        where: { tenantId, productId, type: "PURCHASE" },
       });
       if (!existing) {
         await prisma.stockMovement.create({
           data: {
+            tenantId,
             productId,
             type: "PURCHASE",
             quantity: qty,
@@ -461,6 +536,7 @@ async function main() {
       where: { id: "seed-route-1" },
       update: {},
       create: {
+        tenantId,
         id: "seed-route-1",
         name: "North Houston Loop",
         driverId: carlos.id,
@@ -471,6 +547,7 @@ async function main() {
       where: { id: "seed-route-2" },
       update: {},
       create: {
+        tenantId,
         id: "seed-route-2",
         name: "Southwest Loop",
         driverId: james.id,
@@ -485,6 +562,7 @@ async function main() {
       where: { id: "seed-rs-1-1" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rs-1-1",
         routeId: route1.id,
         customerId: customers[0].id,
@@ -496,6 +574,7 @@ async function main() {
       where: { id: "seed-rs-1-2" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rs-1-2",
         routeId: route1.id,
         customerId: customers[1].id,
@@ -507,6 +586,7 @@ async function main() {
       where: { id: "seed-rs-1-3" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rs-1-3",
         routeId: route1.id,
         customerId: customers[2].id,
@@ -522,6 +602,7 @@ async function main() {
       where: { id: "seed-rs-2-1" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rs-2-1",
         routeId: route2.id,
         customerId: customers[3].id,
@@ -533,6 +614,7 @@ async function main() {
       where: { id: "seed-rs-2-2" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rs-2-2",
         routeId: route2.id,
         customerId: customers[4].id,
@@ -554,7 +636,7 @@ async function main() {
       prisma.routeCustomer.upsert({
         where: { id: link.id },
         update: {},
-        create: link,
+        create: { ...link, tenantId },
       }),
     ),
   );
@@ -571,6 +653,7 @@ async function main() {
     where: { id: "seed-run-1" },
     update: {},
     create: {
+      tenantId,
       id: "seed-run-1",
       routeId: route1.id,
       driverId: carlos.id,
@@ -585,6 +668,7 @@ async function main() {
       where: { id: "seed-rrs-1-1" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rrs-1-1",
         routeRunId: activeRun.id,
         routeStopId: r1Stops[0].id,
@@ -597,6 +681,7 @@ async function main() {
       where: { id: "seed-rrs-1-2" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rrs-1-2",
         routeRunId: activeRun.id,
         routeStopId: r1Stops[1].id,
@@ -608,6 +693,7 @@ async function main() {
       where: { id: "seed-rrs-1-3" },
       update: {},
       create: {
+        tenantId,
         id: "seed-rrs-1-3",
         routeRunId: activeRun.id,
         routeStopId: r1Stops[2].id,
@@ -637,6 +723,7 @@ async function main() {
       where: { id },
       update: { orderNumber },
       create: {
+        tenantId,
         id,
         orderNumber,
         customerId,
@@ -657,6 +744,7 @@ async function main() {
           where: { id: `${id}-item-${idx + 1}` },
           update: {},
           create: {
+            tenantId,
             id: `${id}-item-${idx + 1}`,
             orderId: order.id,
             productId: item.productId,
@@ -739,6 +827,7 @@ async function main() {
     if (existing) continue;
     await prisma.transaction.create({
       data: {
+        tenantId,
         orderId: order.id,
         customerId: order.customerId,
         totalOwed: order.total,
@@ -757,6 +846,7 @@ async function main() {
     const partialAmount = +(Number(txn06.totalOwed) / 2).toFixed(2);
     await prisma.payment.create({
       data: {
+        tenantId,
         transactionId: txn06.id,
         amount: partialAmount,
         method: "ACH",
@@ -770,7 +860,8 @@ async function main() {
   }
 
   console.log(
-    `Seeded 7 users, ${productDefs.length} products, 10 orders, transactions for delivered orders`,
+    `Seeded tenant "${TENANT_SLUG}" (${tenantId}): 7 users, ${productDefs.length} products, ` +
+      `10 orders, transactions for delivered orders`,
   );
 }
 
