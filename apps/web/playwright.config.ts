@@ -111,11 +111,14 @@ export default defineConfig({
     },
 
     // ── Auth & password flows ──────────────────────────────────────────────────
-    // No storageState — these tests exercise login, session expiry, and
-    // password reset states, so each manages its own auth.
+    // No project-level storageState — most of these tests exercise login,
+    // forgot-password and reset states, so they manage their own auth. The
+    // session-expiry / settings-password block inside the spec opts into the
+    // operator state via test.use(), so it needs "setup" to have run first.
     {
       name: "auth-password",
       testMatch: /07-auth-password\.spec\.ts/,
+      dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"] },
     },
 
