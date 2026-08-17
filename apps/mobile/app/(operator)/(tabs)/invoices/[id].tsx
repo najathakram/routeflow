@@ -40,6 +40,7 @@ import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
+  canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
   isPaymentEditable,
@@ -151,7 +152,6 @@ export default function InvoiceDetailScreen() {
   const balance = invoice.balanceDue ?? invoice.total;
   const isPaid = invoice.status === "PAID";
   const isVoid = invoice.status === "VOID";
-  const canSend = invoice.status === "DRAFT";
   const canRecord = !isPaid && !isVoid;
   // Wave 2 action gating — pure mirrors of the server guards (invoices-logic).
   const flags = invoiceActionFlags({
@@ -159,11 +159,14 @@ export default function InvoiceDetailScreen() {
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
   });
+  // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
+  // to know about it or it offers a guaranteed 400.
   const pendingMirror = isPendingOrderMirror({
     orderId: invoice.orderId,
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
+  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -554,6 +557,18 @@ export default function InvoiceDetailScreen() {
             </View>
           </View>
 
+          {/* Says why Send and Edit are absent, rather than leaving the operator
+              hunting for buttons the server would have rejected anyway. */}
+          {pendingMirror ? (
+            <View style={styles.mirrorHint}>
+              <Ionicons name="information-circle-outline" size={16} color={ios.label2} />
+              <Text style={styles.mirrorHintText}>
+                This invoice mirrors its order — it unlocks for editing and sending once the order
+                is delivered.
+              </Text>
+            </View>
+          ) : null}
+
           {/* Action grid */}
           <View style={styles.actionsGrid}>
             {canRecord ? (
@@ -575,6 +590,15 @@ export default function InvoiceDetailScreen() {
                 icon="pencil-outline"
                 label="Edit invoice"
                 onPress={() => router.push(`/(operator)/invoices/${id}/edit`)}
+              />
+            ) : null}
+            {/* A pending mirror is driven by its order, so send/edit both live
+                there. Offer the way through instead of two missing tiles. */}
+            {pendingMirror && invoice.orderId ? (
+              <ActionTile
+                icon="cube-outline"
+                label="Open order"
+                onPress={() => router.push(`/(operator)/orders/${invoice.orderId}` as any)}
               />
             ) : null}
             <ActionTile
@@ -1205,6 +1229,23 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
     color: ios.label2,
     letterSpacing: 0.8,
+  },
+  mirrorHint: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  mirrorHintText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    lineHeight: 18,
   },
   tile: {
     flexBasis: "47%",
