@@ -23,6 +23,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
@@ -153,7 +154,7 @@ export default function OrdersPage() {
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
@@ -235,10 +236,10 @@ export default function OrdersPage() {
     }
   };
 
-  // Reset page when filters change (page state stays local)
-  React.useEffect(() => {
-    setPage(1);
-  }, [statusFilter, urgentOnly, dateFrom, dateTo]);
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from an order.
+  useResetPageOnChange(setPage, [statusFilter, urgentOnly, dateFrom, dateTo]);
 
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
@@ -275,6 +276,7 @@ export default function OrdersPage() {
 
   const orders = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const filtered = React.useMemo(() => {
     const q = customerSearch.toLowerCase();

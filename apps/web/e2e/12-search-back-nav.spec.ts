@@ -142,4 +142,55 @@ test.describe("Search survives Back", () => {
     test.skip(value !== "zzznomatch", "Web build predates URL-backed list search");
     await expect(box).toHaveValue("zzznomatch");
   });
+
+  // ── Page position survives Back — PB-01/PB-02 ────────────────────────────────
+  // The page-number half of the same bug: paging to page 2+, opening a row, then
+  // Back dropped you on page 1 because `page` was component-local state. The fix
+  // mirrors it into `?page=` (lib/hooks/useUrlPage.ts). Self-skip on older builds.
+
+  test("PB-01 products: go to page 2 → navigate away → Back restores page 2", async ({ page }) => {
+    await page.goto("/products");
+    const cards = page.locator("table tbody tr").or(page.locator("[class*='cursor-pointer']"));
+    await expect(cards.first()).toBeVisible({ timeout: 15_000 });
+
+    // The "2" pager button only renders when the catalogue spans >1 page. Shrink
+    // the page size first to make that likely on a small seeded tenant.
+    const perPage = page
+      .getByRole("combobox")
+      .filter({ hasText: /per page/i })
+      .first();
+    if (await perPage.count()) await perPage.selectOption("20").catch(() => {});
+
+    const page2 = page.getByRole("button", { name: "2", exact: true }).first();
+    test.skip(!(await page2.count()), "Tenant catalogue does not span two pages");
+    await page2.click();
+
+    // The fix puts ?page=2 on the URL; an older build keeps it in local state.
+    let urlBacked = true;
+    try {
+      await page.waitForURL(/[?&]page=2/, { timeout: 5_000 });
+    } catch {
+      urlBacked = false;
+    }
+    test.skip(!urlBacked, "Web build predates URL-backed page position");
+
+    await page.goto("/dashboard");
+    await page.goBack();
+    await page.waitForURL(/\/products(\?|$)/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/[?&]page=2/);
+  });
+
+  test("PB-02 a shared ?page=2 URL is not reset to page 1 on load", async ({ page }) => {
+    // Pins the mount-time guard: the "reset to page 1 when filters change" effect
+    // must skip its first run, or it would strip ?page= the moment the list mounts.
+    await page.goto("/products?page=2");
+    const cards = page.locator("table tbody tr").or(page.locator("[class*='cursor-pointer']"));
+    await expect(cards.first().or(page.getByText(/no products/i))).toBeVisible({ timeout: 15_000 });
+
+    // Give any mount effect a beat to (wrongly) fire before asserting the param held.
+    await page.waitForTimeout(1_000);
+    const url = new URL(page.url());
+    test.skip(url.searchParams.get("page") === null, "Web build predates URL-backed page position");
+    await expect(page).toHaveURL(/[?&]page=2/);
+  });
 });

@@ -33,6 +33,23 @@ import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
 
+/**
+ * `?action=new` for a list route, preserving that list's own query state when
+ * the palette is opened while already standing on it.
+ *
+ * The target page consumes `action` and replaces the URL with whatever remains,
+ * so pushing a bare `/orders?action=new` from /orders?page=2 threw away the
+ * operator's page and search on the way in.
+ */
+function createHref(base: string): string {
+  const params =
+    typeof window !== "undefined" && window.location.pathname === base
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  params.set("action", "new");
+  return `${base}?${params.toString()}`;
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CommandItem {
@@ -191,7 +208,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         group: "Actions",
         label: "New Order",
         icon: Plus,
-        action: () => router.push("/orders?action=new"),
+        action: () => router.push(createHref("/orders")),
         keywords: "create add order",
       },
       {
@@ -215,7 +232,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         group: "Actions",
         label: "New Customer",
         icon: Plus,
-        action: () => router.push("/customers?action=new"),
+        action: () => router.push(createHref("/customers")),
         keywords: "create add customer",
       },
       {
@@ -223,7 +240,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         group: "Actions",
         label: "New Product",
         icon: Plus,
-        action: () => router.push("/products?action=new"),
+        action: () => router.push(createHref("/products")),
         keywords: "create add product",
       },
     ],

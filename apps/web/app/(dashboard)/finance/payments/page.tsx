@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Paperclip } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useInvoicePayments,
   useVoidPayment,
@@ -445,7 +446,7 @@ export default function FinancePaymentsPage() {
   const [customerId, setCustomerId] = React.useState("");
   const [sortBy, setSortBy] = React.useState("paidAt");
   const [sortDir, setSortDir] = React.useState("desc");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [showModal, setShowModal] = React.useState(false);
   const [voidConfirm, setVoidConfirm] = React.useState<{
     invoiceId: string;
@@ -472,6 +473,7 @@ export default function FinancePaymentsPage() {
 
   const payments = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
   const summary = data?.summary;
   const customers = customersData?.data ?? [];
 
@@ -503,10 +505,14 @@ export default function FinancePaymentsPage() {
     }
   };
 
-  // Reset page when filters change
-  React.useEffect(() => {
-    setPage(1);
-  }, [search, method, status, dateFrom, dateTo, customerId]);
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from a payment.
+  // `search` is deliberately NOT in this list: it is the raw per-keystroke value
+  // here (this page never destructures useUrlSearch's debounced third element),
+  // and useUrlSearch's own write already drops the page param — including it
+  // would fire a history write on every keystroke to no effect.
+  useResetPageOnChange(setPage, [method, status, dateFrom, dateTo, customerId]);
 
   // Keyboard shortcut: / to focus search
   React.useEffect(() => {

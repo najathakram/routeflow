@@ -6,6 +6,7 @@ import { Eye, Loader2, Truck, ExternalLink } from "lucide-react";
 import { Button, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { fmtDate } from "@/lib/formatting";
 import { carrierLabel, getTrackingUrl } from "@/lib/shipping";
@@ -50,7 +51,7 @@ export default function ShipmentsPage() {
   }, [setTitle]);
 
   const [search, setSearch, debouncedSearch] = useUrlSearch();
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
 
   // `shipped: true` returns only invoices that carry a tracking number; the
@@ -65,6 +66,7 @@ export default function ShipmentsPage() {
   const shipments = data?.data ?? [];
   const meta = data?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
 
   return (
     <div className="space-y-4 p-6">

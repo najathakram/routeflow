@@ -25,6 +25,7 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
 import { cascadeTierPrices, type TierField } from "@/lib/pricing";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -686,7 +687,7 @@ export default function ProductsPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
   const updateProduct = useUpdateProduct();
   const bulkDelete = useBulkDeleteProducts();
@@ -951,10 +952,16 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset to page 1 whenever filters change
-  React.useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+  // Reset to page 1 whenever a filter CHANGES — but not on mount, or the reset
+  // would clobber the ?page= restored when the operator presses Back (page now
+  // lives in the URL via useUrlPage).
+  useResetPageOnChange(setPage, [
+    debouncedSearch,
+    categoryFilter,
+    stockFilter,
+    sectionFilter,
+    pageSize,
+  ]);
 
   const {
     data: result,
@@ -976,6 +983,7 @@ export default function ProductsPage() {
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
   const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
