@@ -43,6 +43,8 @@ import { formatQtySplit } from "../../../../lib/pricing";
 import { sharePdf } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
+import { ReasonSheet } from "../../../../components/ReasonSheet";
+import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -233,6 +235,9 @@ export default function OrderDetailScreen() {
     invoiceNumber: string;
     totalFmt: string;
   } | null>(null);
+  // The demotion awaiting a reason. The server rejects a blank one, so the sheet
+  // holds the action until the operator supplies it.
+  const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
 
   if (isLoading) {
     return (
@@ -314,7 +319,12 @@ export default function OrderDetailScreen() {
     });
   };
 
-  const handleStatusChange = (action: StatusAction) => {
+  /**
+   * Perform the status change. Split out of `handleStatusChange` so the demote
+   * flow can re-enter it once the ReasonSheet has supplied the reason the server
+   * insists on.
+   */
+  const runStatusChange = (action: StatusAction) => {
     const onDone = (msg: string) => ({
       onSuccess: () => {
         showToast(msg);
@@ -322,26 +332,31 @@ export default function OrderDetailScreen() {
       },
       onError: (e: unknown) => toastError(e),
     });
-    const doChange = () => {
-      if (action.reopenCancelled) {
-        reopenMut.mutate(order.id, onDone("Order reopened"));
-        return;
-      }
-      changeMut.mutate(
-        { id: order.id, status: action.toStatus, reason: action.reason },
-        {
-          onSuccess: () => {
-            showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
-            refetch();
-            // Post-delivery: offer to send the invoice (any path into DELIVERED).
-            if (action.toStatus === "DELIVERED") openSendForOrder();
-            // R4: on confirm, auto-open the (draft) invoice for convenience.
-            else if (action.toStatus === "CONFIRMED") openInvoiceForOrder();
-          },
-          onError: (e: unknown) => toastError(e),
+    if (action.reopenCancelled) {
+      reopenMut.mutate(order.id, onDone("Order reopened"));
+      return;
+    }
+    changeMut.mutate(
+      { id: order.id, status: action.toStatus, reason: action.reason },
+      {
+        onSuccess: () => {
+          // Only close the sheet once the server accepted it; on failure it stays
+          // open with the text intact so the reason isn't retyped.
+          setReasonFor(null);
+          showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
+          refetch();
+          // Post-delivery: offer to send the invoice (any path into DELIVERED).
+          if (action.toStatus === "DELIVERED") openSendForOrder();
+          // R4: on confirm, auto-open the (draft) invoice for convenience.
+          else if (action.toStatus === "CONFIRMED") openInvoiceForOrder();
         },
-      );
-    };
+        onError: (e: unknown) => toastError(e),
+      },
+    );
+  };
+
+  const handleStatusChange = (action: StatusAction) => {
+    const doChange = () => runStatusChange(action);
 
     // Cancelling voids live invoices and hands applied credits back, so the
     // operator is told exactly what moves — and which payment blocks it —
@@ -366,6 +381,14 @@ export default function OrderDetailScreen() {
             confirmText: "Confirm",
           });
         });
+      return;
+    }
+
+    // A demotion without a reason is a guaranteed 400 ("A reason is required
+    // when demoting an order"). The sheet collects it and doubles as the
+    // confirmation, so the plain yes/no prompt is skipped here.
+    if (demotionRequiresReason(order.status, action.toStatus)) {
+      setReasonFor(action);
       return;
     }
 
@@ -875,14 +898,21 @@ export default function OrderDetailScreen() {
                   <Text style={styles.actionBtnText}>View customer</Text>
                 </Pressable>
               ) : null}
-              <Pressable
-                style={[styles.actionBtn, styles.dangerAction]}
-                onPress={handleDelete}
-                disabled={deleteMut.isPending}
-              >
-                <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-                <Text style={[styles.actionBtnText, { color: ios.system.red }]}>Delete order</Text>
-              </Pressable>
+              {/* The server allows deleting only DRAFT/PENDING/CANCELLED, so the
+                  tile is hidden elsewhere rather than earning a guaranteed 400
+                  after a destructive-looking confirm. Cancel is the live-order path. */}
+              {canDeleteOrder(order.status) ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.dangerAction]}
+                  onPress={handleDelete}
+                  disabled={deleteMut.isPending}
+                >
+                  <Ionicons name="trash-outline" size={18} color={ios.system.red} />
+                  <Text style={[styles.actionBtnText, { color: ios.system.red }]}>
+                    Delete order
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         </View>
@@ -911,6 +941,16 @@ export default function OrderDetailScreen() {
         onSms={handleSms}
         onEmail={handleEmailInvoice}
         onSharePdf={handleSharePdf}
+      />
+
+      <ReasonSheet
+        visible={reasonFor !== null}
+        title={reasonFor?.label ?? "Reason"}
+        message={reasonFor?.confirmMessage}
+        submitLabel="Confirm"
+        submitting={changeMut.isPending}
+        onCancel={() => setReasonFor(null)}
+        onSubmit={(reason) => reasonFor && runStatusChange({ ...reasonFor, reason })}
       />
     </SafeAreaView>
   );

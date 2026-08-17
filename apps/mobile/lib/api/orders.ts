@@ -404,8 +404,12 @@ export function useChangeOrderStatus() {
 /**
  * Reopen a CANCELLED order back to PENDING (`POST /orders/:id/reopen`,
  * OPERATOR-only). The server 400s if a PAID/PARTIAL/WRITTEN_OFF invoice exists
- * on the order — surface that message. (A DELIVERED order is instead "reopened"
- * by demoting its status to CONFIRMED via useChangeOrderStatus + a reason.)
+ * on the order — surface that message.
+ *
+ * A DELIVERED order canNOT be reopened at all: the server's transition table has
+ * `DELIVERED: []` (see `lib/order-status-flow.ts`), so demoting it to CONFIRMED
+ * always 400s with "Cannot transition from DELIVERED to CONFIRMED". Correcting
+ * an already-delivered order means editing its items, not moving it backwards.
  */
 export function useReopenOrder() {
   const qc = useQueryClient();

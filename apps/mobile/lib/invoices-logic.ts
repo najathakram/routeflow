@@ -82,3 +82,13 @@ export function isPendingOrderMirror(inv: {
   if (inv.deliveryBatchId != null) return false;
   return inv.orderStatus !== "DELIVERED" && inv.orderStatus !== "PARTIALLY_DELIVERED";
 }
+
+/**
+ * Whether Send can be offered right now. DRAFT alone is not enough: a pending
+ * order mirror is locked server-side (`assertOrderInvoiceUnlocked`), so sending
+ * one is a guaranteed 400 — the order has to be delivered first, and then the
+ * invoice follows. The Edit tile already gated on this; Send did not.
+ */
+export function canSendInvoiceNow(status: string, pendingMirror: boolean): boolean {
+  return status === "DRAFT" && !pendingMirror;
+}
