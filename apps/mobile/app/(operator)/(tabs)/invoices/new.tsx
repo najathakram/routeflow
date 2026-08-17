@@ -36,7 +36,7 @@ import {
   setLineUnits,
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
-import { normalizeScanCode } from "../../../../lib/barcode-normalize";
+import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
@@ -68,7 +68,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../../../../lib/pending-scroll";
-import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../../../../lib/visible-cart";
+import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
@@ -572,60 +572,16 @@ function InvoiceComposer({
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
-  // create-product hand-off (and Done) closes it.
-  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-    // Local fast path over the rows already in memory, using the same candidate
-    // set the server matches on (UPC-E/EAN-13/leading-zero variants) and
-    // including unitSku, which the previous version omitted.
-    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
-    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
-    const local = products.find(
-      (p) =>
-        hit(p.barcode) ||
-        hit(p.sku) ||
-        hit(p.unitSku) ||
-        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
-    try {
-      const result = await resolveProductByCode<Product>(trimmed);
-      if (result.ambiguous) {
-        // Several substring hits, no exact code match — don't guess row #1.
-        // The picker stacks over the PAUSED camera so choosing is one tap and
-        // scanning resumes; see NewOrderScreen for the full reasoning.
-        return {
-          feedback: {
-            kind: "error",
-            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
-            action: { label: "Choose", onPress: () => setPickCode(trimmed) },
-          },
-        };
-      }
-      if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
-      }
-    } catch (err: any) {
-      const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      return { feedback: { kind: "error", text: msg } };
-    }
-    // Nothing matched. STAY IN SCAN MODE — the pill carries the hand-off. A
-    // confirm dialog here is invisible on react-native-web (it renders behind
-    // the opaque scan sheet), which is why this used to close the scanner and
-    // strand the operator on the first mis-read.
-    const text = `No product for "${trimmed}"`;
-    if (canCreateProducts) {
-      return {
-        feedback: {
-          kind: "error",
-          text,
-          action: { label: "Create", onPress: () => setCreateCode(trimmed) },
-        },
-      };
-    }
-    return { feedback: { kind: "error", text } };
-  };
+  // create-product hand-off (and Done) closes it. Shared ladder — see
+  // lib/scan-ladder for why an ambiguous hit opens a picker instead of taking
+  // matches[0], and why a miss must never close the scanner.
+  const handleBarcodeScanned = makeScanHandler<Product>({
+    products,
+    accept: acceptScannedProduct,
+    resolve: (c) => resolveProductByCode<Product>(c),
+    onAmbiguous: setPickCode,
+    onCreate: canCreateProducts ? setCreateCode : undefined,
+  });
 
   // Wedge-scanner path — mirrors NewOrderScreen exactly (see its comment for
   // the full reasoning): Enter-as-scan for terminator scanners, settled
@@ -633,20 +589,15 @@ function InvoiceComposer({
   // typed NAME search never auto-adds.
   const searchScanBusy = useRef(false);
   const handleSearchSubmit = async () => {
-    const code = searchTerm.trim();
-    if (!code || !looksLikeScanCode(code) || searchScanBusy.current) return;
+    if (searchScanBusy.current) return;
     searchScanBusy.current = true;
     try {
-      const outcome = await handleBarcodeScanned(code);
-      if (!outcome?.feedback) return;
-      if (outcome.feedback.kind === "added") {
-        showInline(outcome.feedback.text);
-      } else if (outcome.feedback.action) {
-        setSearch("");
-        outcome.feedback.action.onPress();
-      } else {
-        showInline(outcome.feedback.text);
-      }
+      await runWedgeSubmit({
+        term: searchTerm,
+        scan: handleBarcodeScanned,
+        clearSearch: () => setSearch(""),
+        showInline,
+      });
     } finally {
       searchScanBusy.current = false;
     }
@@ -695,13 +646,23 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  const filtered = useMemo<CatalogRow<Product>[]>(() => {
-    // Search AND category are server-side. Browsing view: on-invoice lines
-    // float to a labeled top section (owner ask — see partitionCatalog for the
-    // no-shuffle ordering rule); search results stay flat.
-    if (searchTerm) return products;
-    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
-  }, [products, searchTerm, items, productById]);
+  // Quiet by default — mirrors NewOrderScreen (see visibleCatalogRows): the
+  // list shows what is ON the invoice, with the full catalogue one tap away,
+  // because accepting a scan clears the search box and used to snap the list
+  // back to hundreds of rows.
+  const [browsing, setBrowsing] = useState(false);
+  const visible = useMemo(
+    () =>
+      visibleCatalogRows<Product>({
+        base: products,
+        cartIds: Object.keys(items),
+        lookup: (id) => productById.get(id),
+        browsing,
+        searchTerm,
+      }),
+    [products, searchTerm, items, productById, browsing],
+  );
+  const filtered: CatalogRow<Product>[] = visible.rows;
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -1094,8 +1055,28 @@ function InvoiceComposer({
         }
       />
 
-      {searchTerm === "" && categoryChips.length > 1 ? (
-        <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+      {visible.showCategoryChips ? (
+        <View style={styles.browseBar}>
+          {categoryChips.length > 1 ? (
+            <View style={{ flex: 1 }}>
+              <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+            </View>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          <Pressable
+            onPress={() => {
+              setBrowsing(false);
+              setCategory("All");
+            }}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Close the catalogue"
+            style={styles.browseClose}
+          >
+            <Ionicons name="close" size={18} color={ios.label2} />
+          </Pressable>
+        </View>
       ) : null}
 
       <FlatList
@@ -1122,7 +1103,11 @@ function InvoiceComposer({
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={RowSpacer}
         ListEmptyComponent={
-          unlistedPlacement === "empty-state" ? (
+          visible.emptyHint ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>{visible.emptyHint}</Text>
+            </View>
+          ) : unlistedPlacement === "empty-state" ? (
             <View style={styles.center}>
               <Text style={styles.emptyText}>
                 No products{searchTerm ? " match your search" : " yet"}.
@@ -1146,6 +1131,17 @@ function InvoiceComposer({
         }
         ListFooterComponent={
           <>
+            {visible.showBrowseButton ? (
+              <Pressable
+                style={styles.listUnlistedBtn}
+                onPress={() => setBrowsing(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Browse the full catalogue"
+              >
+                <Ionicons name="grid-outline" size={16} color={ios.brand} />
+                <Text style={styles.listUnlistedText}>Browse catalogue</Text>
+              </Pressable>
+            ) : null}
             {unlistedPlacement === "list-footer" ? (
               <Pressable
                 style={styles.listUnlistedBtn}
@@ -2105,6 +2101,8 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
+  browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
+  browseClose: { padding: 6 },
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },

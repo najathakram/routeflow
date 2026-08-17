@@ -32,8 +32,8 @@ import { useCreditNotes, useCreateCreditNote, type CreditNote } from "../lib/api
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { normalizeScanCode } from "../lib/barcode-normalize";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../lib/wedge-scan";
+import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
 // Compose "<Parent> - <Variant>" so scanned variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../lib/product-display";
 import {
@@ -92,7 +92,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../lib/pending-scroll";
-import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../lib/visible-cart";
+import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
 
@@ -784,79 +784,17 @@ function ProductPickView({
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
-  // create-product hand-off (and Done) closes it.
-  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-
-    // 1) Local fast-path over the rows already in memory. Matches the same
-    //    candidate set the server uses (UPC-E/EAN-13/leading-zero variants), so
-    //    a code the server would resolve doesn't cost a round trip here — and
-    //    checks unitSku, which the old version omitted entirely.
-    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
-    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
-    const local = products.find(
-      (p) =>
-        hit(p.barcode) ||
-        hit(p.sku) ||
-        hit(p.unitSku) ||
-        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
-
-    // 2) Server fallback: barcode → exact SKU → name/SKU substring → notFound.
-    try {
-      const result = await resolveProductByCode<Product>(trimmed);
-      if (result.ambiguous) {
-        // Several substring hits and no exact code match. Web's create-order
-        // flow silently takes matches[0] here; we deliberately don't, because
-        // this tenant has numeric product NAMES, so a 12-digit scan
-        // substring-matches broadly and the guess would put the wrong item on
-        // the order. Web's order-EDIT screen agrees — it opens a picker.
-        //
-        // The picker stacks over the PAUSED camera (same trick as the
-        // create-on-miss sheet) so choosing costs one tap and scanning resumes
-        // immediately, rather than tearing the camera down and making the
-        // operator re-open it.
-        return {
-          feedback: {
-            kind: "error",
-            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
-            action: { label: "Choose", onPress: () => setPickCode(trimmed) },
-          },
-        };
-      }
-      if (!result.notFound && result.product?.id) {
-        // Classify against the RESOLVED product's own codes — the barcode
-        // endpoint resolves either code but doesn't say which one matched.
-        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
-      }
-    } catch (err: any) {
-      // Network / 5xx — surface so the operator can retry instead of silently
-      // showing "no product found" (which implies the item doesn't exist).
-      const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      return { feedback: { kind: "error", text: msg } };
-    }
-
-    // 3) Nothing matched. STAY IN SCAN MODE — the pill carries the hand-off.
-    //    This used to raise a confirm dialog and return {close:true}, because on
-    //    react-native-web the root ConfirmModal's portal div is appended before
-    //    this screen's ScanOrderSheet div and neither sets z-index, so the
-    //    dialog rendered behind the opaque scan sheet. Closing the sheet was the
-    //    only way to see it — which meant the FIRST mis-read killed the scanner
-    //    and nothing ever re-opened it (the owner's "scanning prompt disappears").
-    const text = `No product for "${trimmed}"`;
-    if (canCreateProducts) {
-      return {
-        feedback: {
-          kind: "error",
-          text,
-          action: { label: "Create", onPress: () => setCreateCode(trimmed) },
-        },
-      };
-    }
-    return { feedback: { kind: "error", text } };
-  };
+  // create-product hand-off (and Done) closes it. The ladder itself lives in
+  // lib/scan-ladder so the invoice builder and the order EDITOR run the same
+  // one — see that file for why an ambiguous hit opens a picker rather than
+  // silently taking matches[0], and why a miss must never close the scanner.
+  const handleBarcodeScanned = makeScanHandler<Product>({
+    products,
+    accept: acceptScannedProduct,
+    resolve: (c) => resolveProductByCode<Product>(c),
+    onAmbiguous: setPickCode,
+    onCreate: canCreateProducts ? setCreateCode : undefined,
+  });
 
   /**
    * Wedge-scanner path (owner-reported by a live wholesaler): a hardware
@@ -876,22 +814,15 @@ function ProductPickView({
    */
   const searchScanBusy = useRef(false);
   const handleSearchSubmit = async () => {
-    const code = searchTerm.trim();
-    if (!code || !looksLikeScanCode(code) || searchScanBusy.current) return;
+    if (searchScanBusy.current) return;
     searchScanBusy.current = true;
     try {
-      const outcome = await handleBarcodeScanned(code);
-      if (!outcome?.feedback) return;
-      if (outcome.feedback.kind === "added") {
-        showInline(outcome.feedback.text);
-      } else if (outcome.feedback.action) {
-        // Miss → create sheet; ambiguous → picker. From the search field the
-        // sheet IS the next step — opening it directly beats a toast + tap.
-        setSearch("");
-        outcome.feedback.action.onPress();
-      } else {
-        showInline(outcome.feedback.text);
-      }
+      await runWedgeSubmit({
+        term: searchTerm,
+        scan: handleBarcodeScanned,
+        clearSearch: () => setSearch(""),
+        showInline,
+      });
     } finally {
       searchScanBusy.current = false;
     }
@@ -943,17 +874,23 @@ function ProductPickView({
     [tenantCategories],
   );
 
-  const filtered = useMemo<CatalogRow<Product>[]>(() => {
-    // Search AND category are applied server-side. Browsing view (owner ask):
-    // lines already on the order float to a labeled top section, the rest of
-    // the catalogue under its own label — ordering inside the section is
-    // catalogue-relative so rows never shuffle among themselves (see
-    // partitionCatalog). During a SEARCH the results stay flat: you're
-    // looking something up, not reviewing the order. `scanOrder` still only
-    // drives the scan TRAY's newest-first ordering, never this list.
-    if (searchTerm) return products;
-    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
-  }, [products, searchTerm, items, productById]);
+  // Quiet by default (owner ask 2026-08-17): the builder shows what is ON the
+  // order, and the full catalogue is one deliberate tap away. Accepting a scan
+  // clears the search box, so without this the list snapped back to hundreds of
+  // rows after every item — see visibleCatalogRows. Search still wins over both.
+  const [browsing, setBrowsing] = useState(false);
+  const visible = useMemo(
+    () =>
+      visibleCatalogRows<Product>({
+        base: products,
+        cartIds: Object.keys(items),
+        lookup: (id) => productById.get(id),
+        browsing,
+        searchTerm,
+      }),
+    [products, searchTerm, items, productById, browsing],
+  );
+  const filtered: CatalogRow<Product>[] = visible.rows;
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -1422,8 +1359,30 @@ function ProductPickView({
         }
       />
 
-      {searchTerm === "" && categoryChips.length > 1 ? (
-        <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+      {visible.showCategoryChips ? (
+        <View style={styles.browseBar}>
+          {categoryChips.length > 1 ? (
+            <View style={{ flex: 1 }}>
+              <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+            </View>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          {/* Leaving browse also drops the category, so the quiet list is the
+              order itself and not a filtered slice of the catalogue. */}
+          <Pressable
+            onPress={() => {
+              setBrowsing(false);
+              setCategory("All");
+            }}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Close the catalogue"
+            style={styles.browseClose}
+          >
+            <Ionicons name="close" size={18} color={ios.label2} />
+          </Pressable>
+        </View>
       ) : null}
 
       <FlatList
@@ -1453,7 +1412,13 @@ function ProductPickView({
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={RowSpacer}
         ListEmptyComponent={
-          unlistedPlacement === "empty-state" ? (
+          // Quiet + nothing on the order yet: say how to start rather than
+          // showing a bare "no products" over an intentionally hidden list.
+          visible.emptyHint ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>{visible.emptyHint}</Text>
+            </View>
+          ) : unlistedPlacement === "empty-state" ? (
             <View style={styles.center}>
               <Text style={styles.emptyText}>
                 No products{searchTerm ? " match your search" : " yet"}.
@@ -1477,6 +1442,18 @@ function ProductPickView({
         }
         ListFooterComponent={
           <>
+            {/* The one way into the full catalogue while quiet. */}
+            {visible.showBrowseButton ? (
+              <Pressable
+                style={styles.listUnlistedBtn}
+                onPress={() => setBrowsing(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Browse the full catalogue"
+              >
+                <Ionicons name="grid-outline" size={16} color={ios.brand} />
+                <Text style={styles.listUnlistedText}>Browse catalogue</Text>
+              </Pressable>
+            ) : null}
             {unlistedPlacement === "list-footer" ? (
               <Pressable
                 style={styles.listUnlistedBtn}
@@ -2931,6 +2908,8 @@ const styles = StyleSheet.create({
     opacity: 0.65,
     marginLeft: 6,
   },
+  browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
+  browseClose: { padding: 6 },
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   rowSpacer: { height: 10 },
