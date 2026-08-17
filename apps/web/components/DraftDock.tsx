@@ -31,9 +31,28 @@ export function DraftDock() {
 // builder can create today; invoice drafts are handled once that builder is wired.
 function resumeHref(draft: SaleDraft, scanCode?: string): string {
   const base = draft.kind === "INVOICE" ? "/invoices/new" : "/orders";
-  const params = new URLSearchParams({ resumeDraft: draft.id });
+  // Merge the intent onto the CURRENT query when resuming from the same route
+  // the dock is floating over. Building it from scratch dropped the operator's
+  // list state — `?page=` and `?search=` — because the target page's deep-link
+  // effect strips only the intent params and replaces with whatever is left.
+  const params =
+    typeof window !== "undefined" && window.location.pathname === base
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  params.set("resumeDraft", draft.id);
   if (scanCode) params.set("scan", scanCode);
   return `${base}?${params.toString()}`;
+}
+
+/** `?action=new` on /orders, keeping the list's own query state (see resumeHref). */
+function newOrderHref(scanCode: string): string {
+  const params =
+    typeof window !== "undefined" && window.location.pathname === "/orders"
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  params.set("action", "new");
+  params.set("scan", scanCode);
+  return `/orders?${params.toString()}`;
 }
 
 function DraftDockInner() {
@@ -224,7 +243,7 @@ function DraftDockInner() {
                 type="button"
                 onClick={() => {
                   setScanPrompt(null);
-                  router.push(`/orders?action=new&scan=${encodeURIComponent(scanPrompt)}`);
+                  router.push(newOrderHref(scanPrompt));
                 }}
                 className="text-sm font-medium text-navy/70 hover:text-navy"
               >

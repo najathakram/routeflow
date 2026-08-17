@@ -35,6 +35,7 @@ import {
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useVendorBills,
   useCreateVendorBill,
@@ -818,7 +819,7 @@ function InventoryPurchasesTab() {
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [needsMappingOnly, setNeedsMappingOnly] = React.useState(false);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [sortCol, setSortCol] = React.useState("billDate");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
@@ -889,6 +890,7 @@ function InventoryPurchasesTab() {
 
   const bills = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
   const needsMappingCount = meta?.needsMappingCount ?? 0;
 
   const { data: allData } = useVendorBills({ limit: 999 });
@@ -1471,7 +1473,7 @@ function PurchaseOrdersTab() {
 
 function OtherExpensesTab() {
   const { toast } = useToast();
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [categoryId, setCategoryId] = React.useState("");
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
@@ -1499,6 +1501,7 @@ function OtherExpensesTab() {
 
   const expenses = (data?.data ?? []) as Expense[];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
   const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
 
   const toggleSelect = (id: string) =>

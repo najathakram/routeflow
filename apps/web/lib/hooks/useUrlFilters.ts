@@ -17,7 +17,12 @@ type FilterState = Record<string, FilterValue>;
  */
 export function useUrlFilters<T extends FilterState>(
   defaults: T,
-): [T, (key: keyof T, value: FilterValue) => void, () => void] {
+): [
+  T,
+  (key: keyof T, value: FilterValue) => void,
+  () => void,
+  (next: Partial<Record<keyof T, FilterValue>>) => void,
+] {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -56,6 +61,34 @@ export function useUrlFilters<T extends FilterState>(
     [router, pathname, searchParams],
   );
 
+  /**
+   * Set several filters in ONE write.
+   *
+   * Calling `setFilter` twice in a row does NOT apply both: each call builds its
+   * query from the URL as it was before the handler ran (`router.replace`
+   * commits asynchronously, so the first write is not visible to the second),
+   * and the last replace wins — silently discarding the earlier keys. Any
+   * handler changing more than one filter must use this.
+   */
+  const setFilters = React.useCallback(
+    (next: Partial<Record<keyof T, FilterValue>>) => {
+      const params = new URLSearchParams(searchParams.toString());
+      for (const key in next) {
+        const value = next[key];
+        if (value === undefined || value === "" || value === false) {
+          params.delete(key as string);
+        } else if (typeof value === "boolean") {
+          params.set(key as string, "1");
+        } else {
+          params.set(key as string, value as string);
+        }
+      }
+      params.delete("page");
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+
   const clearAll = React.useCallback(() => {
     // Remove all known filter keys, keep unrelated params (e.g. action)
     const params = new URLSearchParams(searchParams.toString());
@@ -66,5 +99,5 @@ export function useUrlFilters<T extends FilterState>(
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }, [router, pathname, searchParams, defaults]);
 
-  return [state, setFilter, clearAll];
+  return [state, setFilter, clearAll, setFilters];
 }

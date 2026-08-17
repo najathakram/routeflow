@@ -51,6 +51,7 @@ import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { fmt, isInternalEmail } from "@/lib/formatting";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
@@ -264,16 +265,22 @@ export default function CustomersPage() {
     id: string;
     name: string;
   } | null>(null);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
   const { toast } = useToast();
 
-  // Reset page when filters change
-  React.useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, statusFilter, typeFilter, tagFilter, regulatedFilter]);
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from a customer.
+  useResetPageOnChange(setPage, [
+    debouncedSearch,
+    statusFilter,
+    typeFilter,
+    tagFilter,
+    regulatedFilter,
+  ]);
 
   // ── API data ─────────────────────────────────────────────────────────────
   // Built as a separate variable (not an inline literal) so the extra `regulated` param —
@@ -293,6 +300,7 @@ export default function CustomersPage() {
   const { data: result, isLoading, isError, refetch } = useCustomers(customersQueryParams);
   const customers: Customer[] = result?.data ?? [];
   const meta = result?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const { data: assignments } = useCustomerRouteAssignments();
   const { data: tags } = useCustomerTags();

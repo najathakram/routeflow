@@ -15,6 +15,7 @@ import {
 import { PageHeader, Button, cn, Modal, useToast, EmptyState, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useReturns,
   useCreateReturn,
@@ -387,7 +388,7 @@ export default function ReturnsPage() {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [reasonFilter, setReasonFilter] = React.useState("");
   const [search, setSearch, debouncedSearch] = useUrlSearch();
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;
 
@@ -418,6 +419,7 @@ export default function ReturnsPage() {
   const returns: Return[] = Array.isArray(data) ? (data as Return[]) : (data?.data ?? []);
   const meta = Array.isArray(data) ? undefined : data?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const hasActiveFilters = !!(statusFilter || reasonFilter || search);
 

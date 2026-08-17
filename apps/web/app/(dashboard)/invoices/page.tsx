@@ -18,6 +18,7 @@ import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web"
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import {
   useInvoices,
@@ -340,12 +341,16 @@ export default function InvoicesPage() {
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
 
-  const [urlFilters, setFilter] = useUrlFilters({ status: "", dateFrom: "", dateTo: "" });
+  const [urlFilters, setFilter, , setFilters] = useUrlFilters({
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+  });
   const statusFilter = (urlFilters.status as string) ?? "";
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
   const [search, setSearch, debouncedSearch] = useUrlSearch();
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("issueDate");
   const [sortOrder, setSortOrder] = React.useState<"asc" | "desc">("desc");
@@ -382,6 +387,7 @@ export default function InvoicesPage() {
   const invoices = data?.data ?? [];
   const meta = data?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const [isExporting, setIsExporting] = React.useState(false);
 
@@ -432,9 +438,14 @@ export default function InvoicesPage() {
     }
   };
 
+  // No setPage(1) here (nor beside any other setFilter/setSearch call on this
+  // page): both useUrlFilters.setFilter and useUrlSearch already delete the
+  // `page` param on every write. A second write from setPage would rebuild the
+  // query from window.location.search BEFORE the router applied the filter
+  // write, replacing the URL with the pre-filter one — silently reverting the
+  // status/date the operator just picked.
   function handleFilterChange(status: string) {
     setFilter("status", status);
-    setPage(1);
   }
 
   return (
@@ -514,10 +525,7 @@ export default function InvoicesPage() {
           type="search"
           placeholder="Search by invoice # or customer…"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="flex items-center gap-1.5">
@@ -525,10 +533,7 @@ export default function InvoicesPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => {
-              setFilter("dateFrom", e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
@@ -538,20 +543,13 @@ export default function InvoicesPage() {
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => {
-              setFilter("dateTo", e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setFilter("dateTo", e.target.value)}
             className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => {
-                setFilter("dateFrom", "");
-                setFilter("dateTo", "");
-                setPage(1);
-              }}
+              onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
               className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
@@ -632,10 +630,7 @@ export default function InvoicesPage() {
                           size="sm"
                           onClick={() => {
                             setSearch("");
-                            setFilter("status", "");
-                            setFilter("dateFrom", "");
-                            setFilter("dateTo", "");
-                            setPage(1);
+                            setFilters({ status: "", dateFrom: "", dateTo: "" });
                           }}
                         >
                           Clear filters

@@ -15,6 +15,7 @@ import {
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useEstimates,
   useCreateEstimate,
@@ -680,7 +681,7 @@ export default function EstimatesPage() {
   const [search, setSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;
 
@@ -695,6 +696,7 @@ export default function EstimatesPage() {
 
   const estimates = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const { data: allData } = useEstimates({ limit: 999 });
   const all = allData?.data ?? [];

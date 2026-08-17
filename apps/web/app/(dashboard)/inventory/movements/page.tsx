@@ -8,6 +8,7 @@ import { Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useStockMovements } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ export default function MovementsPage() {
     from: "",
     to: "",
   });
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
 
   const { data: productsData } = useProducts();
   const products = productsData?.data ?? [];
@@ -70,6 +71,7 @@ export default function MovementsPage() {
 
   const movements = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters((f) => ({ ...f, [key]: value }));

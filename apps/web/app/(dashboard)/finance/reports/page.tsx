@@ -53,6 +53,7 @@ import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 import { fmt, fmtDate } from "@/lib/formatting";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -1927,7 +1928,7 @@ const TX_STATUS_COLORS: Record<string, string> = {
 
 function LedgerReport() {
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [paymentModal, setPaymentModal] = React.useState<Transaction | null>(null);
   const [payAmount, setPayAmount] = React.useState("");
   const [payMethod, setPayMethod] = React.useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
@@ -1942,6 +1943,7 @@ function LedgerReport() {
 
   const transactions = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const openPayment = (tx: Transaction) => {
     setPaymentModal(tx);
