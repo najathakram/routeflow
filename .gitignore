@@ -82,3 +82,9 @@ SECURITY_AUDIT.md
 
 # ─── QA / audit manifests (ephemeral, contain production IDs) ───────────────
 apps/api/scripts/*-manifest-*.json
+
+# ─── Personal working files (live-tenant repair reports — never commit) ──────
+.personal/
+
+# ─── Audit reports (list unfixed security findings; repo goes public for CI) ─
+docs/audit/
