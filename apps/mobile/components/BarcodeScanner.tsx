@@ -17,11 +17,22 @@ interface Props {
   onClose: () => void;
   /** Keep the camera open after a scan so the operator can scan the next item. */
   continuous?: boolean;
+  /**
+   * Ignore incoming codes while a sheet (picker / create) is stacked over the
+   * scanner. The camera stays MOUNTED — tearing it down and re-opening it is
+   * what made a hand-off cost the operator an extra trip back to scan mode.
+   */
+  paused?: boolean;
 }
 
 /** Full-screen scanning overlay: permission UI, viewfinder chrome and feedback
  *  pill around a {@link ScanCamera}. */
-export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props) {
+export function BarcodeScanner({ onScanned, onClose, continuous = false, paused = false }: Props) {
+  // Swallow codes while paused rather than unmounting the camera.
+  const guardedScan = React.useCallback(
+    (code: string) => (paused ? undefined : onScanned(code)),
+    [paused, onScanned],
+  );
   const { granted, request } = useScanCameraPermission();
   const [feedback, setFeedback] = React.useState<ScanFeedback | null>(null);
   const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,7 +79,7 @@ export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props
     <View style={StyleSheet.absoluteFill}>
       <ScanCamera
         style={StyleSheet.absoluteFill}
-        onScanned={onScanned}
+        onScanned={guardedScan}
         onOutcome={handleOutcome}
         continuous={continuous}
       />

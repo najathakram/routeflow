@@ -3,7 +3,12 @@
  * scanned product outside the current category/page would otherwise live
  * only in the totals + cart sheet ("the item disappeared").
  */
-import { isCatalogHeader, partitionCatalog, withCartRows } from "../lib/visible-cart";
+import {
+  isCatalogHeader,
+  partitionCatalog,
+  visibleCatalogRows,
+  withCartRows,
+} from "../lib/visible-cart";
 
 type P = { id: string; name: string };
 const catalog: P[] = [
@@ -82,5 +87,68 @@ describe("partitionCatalog (on-this-order top section)", () => {
   it("isCatalogHeader discriminates header rows", () => {
     expect(isCatalogHeader({ __header: "on-order", label: "x" })).toBe(true);
     expect(isCatalogHeader(P("a"))).toBe(false);
+  });
+});
+
+// ── Quiet catalogue (PR-2) ───────────────────────────────────────────────────
+// The owner's report: scanning an item dumped the operator back on the FULL
+// product list, because accepting a scan clears the search box.
+
+describe("visibleCatalogRows", () => {
+  const catalog = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  const lookup = (id: string) => catalog.find((p) => p.id === id);
+  const call = (over: Partial<Parameters<typeof visibleCatalogRows>[0]> = {}) =>
+    visibleCatalogRows({
+      base: catalog,
+      cartIds: [],
+      lookup,
+      browsing: false,
+      searchTerm: "",
+      ...over,
+    });
+
+  it("searching shows flat results and hides browse affordances", () => {
+    const v = call({ searchTerm: "coke" });
+    expect(v.rows).toEqual(catalog);
+    expect(v.showBrowseButton).toBe(false);
+    expect(v.showCategoryChips).toBe(false);
+    expect(v.emptyHint).toBeUndefined();
+  });
+
+  it("quiet with a cart shows ONLY the order — not the whole catalogue", () => {
+    const v = call({ cartIds: ["b"] });
+    const ids = v.rows.filter((r) => !isCatalogHeader(r)).map((r) => (r as { id: string }).id);
+    expect(ids).toEqual(["b"]);
+    expect(v.rows.some((r) => isCatalogHeader(r) && r.__header === "catalogue")).toBe(false);
+    expect(v.showBrowseButton).toBe(true);
+    expect(v.emptyHint).toBeUndefined();
+  });
+
+  it("quiet with an empty cart renders nothing but a hint and the way in", () => {
+    const v = call();
+    expect(v.rows).toEqual([]);
+    expect(v.showBrowseButton).toBe(true);
+    expect(v.emptyHint).toMatch(/scan, search, or browse/i);
+  });
+
+  it("browsing restores the sectioned catalogue and the category chips", () => {
+    const v = call({ cartIds: ["b"], browsing: true });
+    expect(v.rows).toEqual(partitionCatalog(catalog, ["b"], lookup));
+    expect(v.showCategoryChips).toBe(true);
+    expect(v.showBrowseButton).toBe(false);
+  });
+
+  it("keeps a row in the same position whether or not browse is open", () => {
+    const quiet = call({ cartIds: ["b"] });
+    const browsing = call({ cartIds: ["b"], browsing: true });
+    const firstOf = (rows: ReturnType<typeof call>["rows"]) =>
+      rows.filter((r) => !isCatalogHeader(r)).map((r) => (r as { id: string }).id)[0];
+    expect(firstOf(quiet.rows)).toBe(firstOf(browsing.rows));
+  });
+
+  it("search wins over browse — a filtered list is never re-sectioned", () => {
+    const v = call({ cartIds: ["b"], browsing: true, searchTerm: "co" });
+    expect(v.rows).toEqual(catalog);
+    expect(v.showCategoryChips).toBe(false);
   });
 });

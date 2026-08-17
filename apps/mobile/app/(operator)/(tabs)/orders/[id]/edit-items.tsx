@@ -49,6 +49,9 @@ import { sanitizeIntInput } from "../../../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../../../lib/row-layout";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeScanner } from "../../../../../components/BarcodeScanner";
+import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
+import { InlineCreateProductSheet } from "../../../../../components/InlineCreateProductSheet";
+import { makeScanHandler, runWedgeSubmit } from "../../../../../lib/scan-ladder";
 // Shared with NewOrderScreen — edit-items' old local copy had a borderless
 // fill3 track; the canonical version uses bgElev + hairline (QtyStepper pill).
 import { SellByToggle } from "../../../../../components/SellByToggle";
@@ -738,6 +741,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
       {showPicker ? (
         <ProductPicker
           title={substituteFor ? "Substitute with…" : "Add product"}
+          canCreateProducts={!isDriver}
           // Add-and-stay (scans + wedge input): the picker stays open so N
           // items scan with zero taps — closes web's long-standing edit-screen
           // divergence. Not offered in substitute mode (one pick by contract).
@@ -1654,6 +1658,7 @@ function ProductPicker({
   onPick,
   onPickAndStay,
   onClose,
+  canCreateProducts = false,
 }: {
   title?: string;
   /** Single pick — the caller closes the picker (tap rows, substitutions). */
@@ -1666,8 +1671,15 @@ function ProductPicker({
    */
   onPickAndStay?: (p: PickedProduct, kind: "case" | "piece") => void;
   onClose: () => void;
+  /** Staff may create a product from a miss; drivers get a plain "not found". */
+  canCreateProducts?: boolean;
 }) {
   const [scanOpen, setScanOpen] = useState(false);
+  // Codes handed off to a sheet stacked OVER the paused camera, so choosing or
+  // creating costs one tap and scanning resumes — instead of the old dead end
+  // that closed the scanner and dumped a toast.
+  const [pickCode, setPickCode] = useState<string | null>(null);
+  const [createCode, setCreateCode] = useState<string | null>(null);
   // Debounced + paged, replacing the `limit: 0` fetch-all. See
   // lib/use-product-search.ts.
   const {
@@ -1689,63 +1701,46 @@ function ProductPicker({
   /**
    * Scan handler. With `onPickAndStay` the scanner runs CONTINUOUS (items add
    * while the camera stays up — the in-overlay banner is the confirmation);
-   * substitute mode stays single-shot ("return one product"). A PIECE-code
-   * (unitSku) hit adds one loose piece — see scanUnitKind.
+   * substitute mode stays single-shot ("return one product").
+   *
+   * Runs the SHARED ladder (lib/scan-ladder), which is what brings this editor
+   * up to the builders: a local fast-path over the rows already loaded, a
+   * picker on an ambiguous hit, and create-on-miss. Previously an ambiguous
+   * code closed the scanner and seeded the search box, and a miss offered
+   * nothing at all.
    */
-  const onScanned = async (code: string): Promise<ScanOutcome> => {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-    try {
-      const result = await resolveProductByCode<any>(trimmed);
-      if (result.ambiguous) {
-        // Several substring hits and no exact code match — seed the search box
-        // and let the operator pick from the list already on screen.
-        setScanOpen(false);
-        setSearch(trimmed);
-        showToast(`${result.matches?.length ?? 0} products match "${trimmed}"`);
-        return { close: true };
+  const onScanned = makeScanHandler<PickedProduct & { unitsPerBox?: number | null }>({
+    products: () => products,
+    accept: (product, kind) => {
+      if (onPickAndStay) {
+        onPickAndStay(product, kind);
+        const loose = kind === "piece" && Number(product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
+        return { feedback: { kind: "added", text: `Added ${loose}${product.name}` } };
       }
-      if (!result.notFound && result.product?.id) {
-        const kind = scanUnitKind(trimmed, result.product);
-        if (onPickAndStay) {
-          onPickAndStay(result.product, kind);
-          const loose =
-            kind === "piece" && Number(result.product.unitsPerBox ?? 0) > 1 ? "1 loose · " : "";
-          return { feedback: { kind: "added", text: `Added ${loose}${result.product.name}` } };
-        }
-        setScanOpen(false);
-        onPick(result.product, kind);
-        return { close: true };
-      }
-    } catch {
-      return {
-        feedback: { kind: "error", text: "Couldn't look up barcode. Check your connection." },
-      };
-    }
-    // Stay in scan mode on a miss (continuous); single-shot seeds the box.
-    if (onPickAndStay) return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
-    setScanOpen(false);
-    setSearch(trimmed);
-    showToast(`No product for "${trimmed}"`);
-    return { close: true };
-  };
+      // Substitute mode: exactly one pick, so the scanner closes behind it.
+      setScanOpen(false);
+      onPick(product, kind);
+      return { close: true };
+    },
+    resolve: (c) => resolveProductByCode<PickedProduct & { unitsPerBox?: number | null }>(c),
+    onAmbiguous: setPickCode,
+    onCreate: canCreateProducts ? setCreateCode : undefined,
+  });
 
   // Wedge-scanner path on the picker's search box — mirrors the builders (see
   // NewOrderScreen): Enter-as-scan + settled exact-match auto-add, digit codes
   // only, single exact match only.
   const searchScanBusy = useRef(false);
   const handleSearchSubmit = async () => {
-    const code = searchTerm.trim();
-    if (!code || !looksLikeScanCode(code) || !onPickAndStay || searchScanBusy.current) return;
+    if (!onPickAndStay || searchScanBusy.current) return;
     searchScanBusy.current = true;
     try {
-      const outcome = await onScanned(code);
-      if (outcome?.feedback?.kind === "added") {
-        setSearch("");
-        showToast(outcome.feedback.text);
-      } else if (outcome?.feedback) {
-        showToast(outcome.feedback.text);
-      }
+      await runWedgeSubmit({
+        term: searchTerm,
+        scan: onScanned,
+        clearSearch: () => setSearch(""),
+        showInline: showToast,
+      });
     } finally {
       searchScanBusy.current = false;
     }
@@ -1842,8 +1837,44 @@ function ProductPicker({
           onScanned={onScanned}
           onClose={() => setScanOpen(false)}
           continuous={!!onPickAndStay}
+          // Stop decoding while a hand-off sheet is up, but keep the camera
+          // mounted so dismissing it resumes scanning instantly.
+          paused={pickCode !== null || createCode !== null}
         />
       ) : null}
+
+      {/* Ambiguous scan → choose from the matches, over the paused camera. */}
+      <ProductPickerSheet
+        visible={pickCode !== null}
+        title="Which product?"
+        initialSearch={pickCode ?? undefined}
+        onClose={() => setPickCode(null)}
+        onSelect={(prod) => {
+          setPickCode(null);
+          const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
+          if (onPickAndStay) onPickAndStay(picked, "case");
+          else {
+            setScanOpen(false);
+            onPick(picked, "case");
+          }
+        }}
+      />
+
+      {/* Miss → create it inline and drop it straight on the order. */}
+      <InlineCreateProductSheet
+        visible={createCode !== null}
+        initialCode={createCode ?? undefined}
+        onClose={() => setCreateCode(null)}
+        onCreated={(prod) => {
+          setCreateCode(null);
+          const picked = prod as unknown as PickedProduct & { unitsPerBox?: number | null };
+          if (onPickAndStay) onPickAndStay(picked, "case");
+          else {
+            setScanOpen(false);
+            onPick(picked, "case");
+          }
+        }}
+      />
     </>
   );
 }
