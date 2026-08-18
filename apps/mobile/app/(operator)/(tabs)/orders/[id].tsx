@@ -117,17 +117,20 @@ function statusActions(current: string): StatusAction[] {
     case "CONFIRMED":
       return [
         {
-          label: "Send for delivery",
-          toStatus: "OUT_FOR_DELIVERY",
-          style: "primary",
-          icon: "car-outline",
-        },
-        {
-          label: "Quick deliver",
+          // PR-4: this is the van-sale two-tap flow — DELIVERED already chains
+          // openSendForOrder() → SendInvoiceSheet below, so promoting it to
+          // primary makes "deliver, then send" the default path.
+          label: "Deliver & send invoice",
           toStatus: "DELIVERED",
-          style: "secondary",
+          style: "primary",
           icon: "flash-outline",
           confirmMessage: "Mark as delivered without going through dispatch?",
+        },
+        {
+          label: "Send for delivery",
+          toStatus: "OUT_FOR_DELIVERY",
+          style: "secondary",
+          icon: "car-outline",
         },
         {
           label: "Back to pending",
@@ -303,10 +306,11 @@ export default function OrderDetailScreen() {
   };
 
   /**
-   * R4: after confirming an order, jump straight to its (draft) invoice for
-   * convenience — the operator can tap back to return to the order. from-order is
-   * idempotent get-or-create; `push` (not `replace`) keeps the order underneath so
-   * the invoice screen's back button returns here.
+   * Get-or-create the invoice for this order and navigate to it. Used by the
+   * explicit "Generate invoice" tile only — PR-4 removed the auto-fire on
+   * confirm, which used to dump the operator onto a locked pending-mirror
+   * invoice. `push` (not `replace`) keeps the order underneath so the invoice
+   * screen's back button returns here.
    */
   const openInvoiceForOrder = () => {
     createInvoiceMut.mutate(order.id, {
@@ -315,7 +319,7 @@ export default function OrderDetailScreen() {
         if (inv) router.push(`/(operator)/invoices/${inv.id}` as any);
         else showToast("Invoice ready — open it from the Invoices tab.");
       },
-      onError: (e) => toastError(e, "Order confirmed. Open the invoice from the Invoices tab."),
+      onError: (e) => toastError(e, "Couldn't prepare the invoice. Open it from Invoices."),
     });
   };
 
@@ -346,9 +350,10 @@ export default function OrderDetailScreen() {
           showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
           refetch();
           // Post-delivery: offer to send the invoice (any path into DELIVERED).
+          // PR-4: confirming just toasts and stays — it no longer auto-opens the
+          // invoice, which used to push the operator onto a locked
+          // pending-mirror invoice they couldn't edit or send.
           if (action.toStatus === "DELIVERED") openSendForOrder();
-          // R4: on confirm, auto-open the (draft) invoice for convenience.
-          else if (action.toStatus === "CONFIRMED") openInvoiceForOrder();
         },
         onError: (e: unknown) => toastError(e),
       },

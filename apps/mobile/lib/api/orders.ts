@@ -267,6 +267,75 @@ export function useCreateOrder() {
   });
 }
 
+/**
+ * A line on a `POST /orders/sell` request. EITHER a catalog line (productId
+ * set, boxed split optional) OR an unlisted ad-hoc line (`name` set, no
+ * productId) — mirrors {@link CreateOrderItemInput}. Unlisted lines are NOT
+ * filtered out here: the sale gate (`lib/sale-mode.ts`) already accounts for
+ * them in its total-equality assertion, so they must ride along on the wire.
+ */
+export type CreateSaleItemInput =
+  | {
+      productId: string;
+      qty: number;
+      boxes?: number;
+      pieces?: number;
+      unitPrice?: number;
+      notes?: string;
+    }
+  | { name: string; qty: number; unitPrice: number; notes?: string };
+
+/**
+ * `POST /orders/sell` DTO — the van-sale "collapse" path (create order +
+ * mark delivered + move stock + issue/send invoice in one call). Mirrors
+ * web's `CreateSaleDto` (`apps/web/lib/api/orders.ts`) but deliberately
+ * narrower:
+ *  - NO `send`: the server ignores `dto.send` entirely (`orders.service.ts`
+ *    ~1681-1685) — it's a dead field, so we don't pretend it does anything.
+ *  - NO `discountAmount`: the sale gate (`saleModeGate`, WP1) only ever
+ *    allows this path when the invoice-level discount is 0 (an invoice
+ *    discount is silently dropped by `createInvoiceFromOrder`), so there is
+ *    never a non-zero value to send.
+ */
+export interface CreateSaleDto {
+  customerId: string;
+  items: CreateSaleItemInput[];
+  /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
+  deliveredNow: boolean;
+  notes?: string;
+  shippingFee?: number;
+  /** Business date (YYYY-MM-DD) for a sale entered late. Omit for a same-day sale. */
+  orderDate?: string;
+}
+
+/**
+ * What `POST /orders/sell` actually resolves to: the created INVOICE, not the
+ * order. `orders.service.ts` `createSale()` returns `invoicesService.send(inv.id)`
+ * for a delivered-now sale and `invoices[0]` otherwise — neither payload carries
+ * an `invoices` array. Web types it the same way (`apps/web/lib/api/orders.ts`).
+ */
+export interface CreatedSaleInvoice {
+  id: string;
+  invoiceNumber: string;
+}
+
+/**
+ * "Bill now": create an order AND its invoice in one step (POST /orders/sell).
+ * Mirrors web's `useCreateSale` — same cache invalidations as {@link useCreateOrder}
+ * plus `["invoices"]`, since the sale also issues (and may send) an invoice.
+ * Resolves to the created invoice ({@link CreatedSaleInvoice}).
+ */
+export function useCreateSale() {
+  const qc = useQueryClient();
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
+    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+    onSuccess: () => {
+      invalidateOrderCaches(qc);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
+
 export function useCreateOrderAsDriver() {
   const qc = useQueryClient();
   return useMutation<Order, Error, CreateOrderAsDriverDto>({
