@@ -9,6 +9,7 @@ import { ImportFileStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { DuplicateMatchService, formatSupplierInvoiceNote } from "./duplicate-match.service";
+import { matchSupplier } from "./supplier-match";
 import type { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
 
 /** The actual shape vendor-bills.scanInvoice returns (see its prompt schema + line matcher). */
@@ -41,35 +42,6 @@ interface ExtractedInvoice {
 
 /** Numeric confidence per line, to store a representative (worst-case) value. */
 const CONF_SCORE: Record<ScanConfidence, number> = { high: 1, medium: 0.66, low: 0.33, none: 0 };
-
-interface SupplierCandidate {
-  id: string;
-  name: string;
-}
-
-/**
- * Scored supplier auto-match: exact name → unique startsWith → unique
- * substring (either direction). Several equally-plausible candidates or no
- * candidate at all → null, never a silent wrong pick — the item is routed to
- * NEEDS_REVIEW instead (see `deriveStatus`).
- */
-function matchSupplier(detected: string, suppliers: SupplierCandidate[]): SupplierCandidate | null {
-  const d = detected.trim().toLowerCase();
-  if (!d) return null;
-  const exact = suppliers.filter((s) => s.name.trim().toLowerCase() === d);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-  const starts = suppliers.filter(
-    (s) => s.name.trim().toLowerCase().startsWith(d) || d.startsWith(s.name.trim().toLowerCase()),
-  );
-  if (starts.length === 1) return starts[0];
-  if (starts.length > 1) return null;
-  const contains = suppliers.filter((s) => {
-    const n = s.name.trim().toLowerCase();
-    return n.includes(d) || d.includes(n);
-  });
-  return contains.length === 1 ? contains[0] : null;
-}
 
 /**
  * The `duplicate` payload VendorBillsService.create attaches to its 409.

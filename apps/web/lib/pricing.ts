@@ -98,6 +98,22 @@ export function roundMoney(n: number): number {
   return (sign * Math.round((Math.abs(n) + Number.EPSILON) * 100)) / 100;
 }
 
+/**
+ * Round a per-unit cost to 4 decimal places — the client mirror of
+ * `COST_DP = 4` in `apps/api/src/inventory/costing.ts` (deliberately NOT
+ * that codebase's own `apps/api/src/common/pricing.ts`, which only ever
+ * rounds to cents via `roundMoney`). A per-piece cost derived by dividing a
+ * case cost by piecesPerBox needs the extra precision so scanned-line
+ * boxes<->pieces conversions (`scan-line-units.ts#toBillLine`) round-trip
+ * exactly; `roundMoney` still owns the final 2dp money total. Purely
+ * additive — does not alter `roundMoney` or any other existing helper.
+ */
+export function roundUnitCost(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  const sign = n < 0 ? -1 : 1;
+  return (sign * Math.round((Math.abs(n) + Number.EPSILON) * 10000)) / 10000;
+}
+
 export interface NormalizedQty {
   boxes: number | null;
   pieces: number | null;

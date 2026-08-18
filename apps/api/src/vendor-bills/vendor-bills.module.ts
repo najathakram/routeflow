@@ -5,6 +5,7 @@ import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
 import { DuplicateMatchModule } from "../import/duplicate-match.module";
+import { ProductAliasModule } from "../import/product-alias.module";
 import { StorageModule } from "../storage/storage.module";
 import { InventoryModule } from "../inventory/inventory.module";
 
@@ -14,6 +15,7 @@ import { InventoryModule } from "../inventory/inventory.module";
     ConfigModule,
     SystemConfigModule,
     DuplicateMatchModule,
+    ProductAliasModule,
     StorageModule,
     InventoryModule,
   ],

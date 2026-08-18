@@ -19,6 +19,15 @@ interface PickerProduct {
   parent?: { name: string } | null;
   pricePerUnit?: string | number;
   thumbnailUrl?: string | null;
+  /**
+   * Cost-side fields — a boxed product's invoice line is priced per CASE,
+   * not per piece, so callers need `unitsPerBox` alongside `averageCost` to
+   * prefill the CASE cost (avg × unitsPerBox) instead of the piece cost.
+   * Populated by `/products` rows; absent from the narrow static-mode lists.
+   */
+  unitsPerBox?: number | null;
+  averageCost?: string | number | null;
+  standardCost?: string | number | null;
 }
 
 interface SearchableProductPickerProps {

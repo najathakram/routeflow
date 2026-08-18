@@ -27,6 +27,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { ProductAliasService } from "../import/product-alias.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
@@ -58,6 +59,9 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService against the same prisma mock — these tests do
+        // not exercise alias learning, they just need the dependency satisfied.
+        ProductAliasService,
       ],
     }).compile();
     service = mod.get(VendorBillsService);
@@ -184,6 +188,9 @@ describe("check-duplicate — access control", () => {
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService against the same prisma mock — these tests do
+        // not exercise alias learning, they just need the dependency satisfied.
+        ProductAliasService,
       ],
     }).compile();
     dupMatch.findVendorBillDuplicate.mockResolvedValue({

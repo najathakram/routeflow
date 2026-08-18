@@ -24,8 +24,6 @@ import {
   getDuplicateVendorBillError,
   type DuplicateVendorBillInfo,
   type PriorScanSummary,
-  type ScanResult,
-  type ScannedItem,
 } from "../../../lib/api/vendor-bills";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import {
@@ -36,13 +34,21 @@ import {
   scanBillTotal,
   unmatchedCount,
   linkScanItem,
+  applyLineEdit,
   type ScanBillDto,
+  type ScanResultEx,
+  type ScannedItemEx,
 } from "../../../lib/vendor-bill-scan";
 import { showToast } from "../../../lib/toast";
 import { chooseAction, confirm } from "../../../lib/confirm";
 import { roundMoney } from "../../../lib/pricing";
 import { ProductPickerSheet } from "../../../components/ProductPickerSheet";
 import { InlineCreateProductSheet } from "../../../components/InlineCreateProductSheet";
+import {
+  LineEditSheet,
+  type LineEditCommit,
+  type LineEditLine,
+} from "../../../components/LineEditSheet";
 import type { CreatedProduct } from "../../../lib/api/products";
 
 type Step = "upload" | "scanning" | "review";
@@ -51,8 +57,8 @@ export default function ScanInvoiceScreen() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("upload");
   const [imageUri, setImageUri] = useState<string | null>(null);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [editedResult, setEditedResult] = useState<ScanResult | null>(null);
+  const [scanResult, setScanResult] = useState<ScanResultEx | null>(null);
+  const [editedResult, setEditedResult] = useState<ScanResultEx | null>(null);
 
   const scanMut = useScanInvoice();
   const createMut = useCreateVendorBill();
@@ -284,7 +290,7 @@ function ScanningStep({ imageUri }: { imageUri: string | null }) {
   );
 }
 
-function ConfidenceDot({ confidence }: { confidence: ScannedItem["confidence"] }) {
+function ConfidenceDot({ confidence }: { confidence: ScannedItemEx["confidence"] }) {
   const color =
     confidence === "high"
       ? ios.system.greenInk
@@ -336,23 +342,48 @@ function ReviewStep({
   imageUri,
   onOpenBill,
 }: {
-  result: ScanResult;
-  onChange: (r: ScanResult) => void;
+  result: ScanResultEx;
+  onChange: (r: ScanResultEx) => void;
   onSave: () => void;
   saving: boolean;
   checking: boolean;
   imageUri: string | null;
   onOpenBill: (billId: string) => void;
 }) {
-  // Row index whose "link existing product" picker / "create product" sheet is
-  // open (mutually exclusive).
+  // Row index whose "link existing product" picker / "create product" sheet /
+  // "edit line" sheet is open (mutually exclusive).
   const [linkFor, setLinkFor] = useState<number | null>(null);
   const [createFor, setCreateFor] = useState<number | null>(null);
+  const [editFor, setEditFor] = useState<number | null>(null);
   const unmatched = unmatchedCount(result);
 
   const applyLink = (index: number, productId: string, productName: string) => {
     onChange(linkScanItem(result, index, productId, productName));
   };
+
+  const applyEdit = (index: number, commit: LineEditCommit) => {
+    onChange(
+      applyLineEdit(
+        result,
+        index,
+        commit.snap,
+        commit.unit,
+        commit.piecesPerBox,
+        commit.catalogUnitsPerBox,
+      ),
+    );
+  };
+
+  const editLine: LineEditLine | null =
+    editFor != null && result.items[editFor]
+      ? {
+          extractedName: result.items[editFor].extractedName,
+          qty: result.items[editFor].qty ?? 0,
+          unitCost: result.items[editFor].unitCost ?? 0,
+          packSize: result.items[editFor].packSize,
+          matchedProductId: result.items[editFor].matchedProductId,
+        }
+      : null;
 
   return (
     <ScrollView showsVerticalScrollIndicator={false}>
@@ -419,10 +450,13 @@ function ReviewStep({
                       {item.qty != null ? `${item.qty} × ` : ""}
                       {item.unitCost != null ? `$${item.unitCost.toFixed(2)}` : ""}
                       {isMatched && item.matchedProductName ? " · linked" : ""}
+                      {item.matchSource === "alias" || item.matchSource === "memory"
+                        ? " · remembered"
+                        : ""}
                     </Text>
-                    {!isMatched ? (
-                      <>
-                        <View style={styles.lineActions}>
+                    <View style={styles.lineActions}>
+                      {!isMatched ? (
+                        <>
                           <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
                             <Ionicons name="link" size={13} color={ios.brand} />
                             <Text style={styles.lineActionText}>Link</Text>
@@ -431,29 +465,33 @@ function ReviewStep({
                             <Ionicons name="add-circle-outline" size={13} color={ios.brand} />
                             <Text style={styles.lineActionText}>Create</Text>
                           </Pressable>
-                        </View>
-                        {item.candidates?.length ? (
-                          <View style={styles.candidateChips}>
-                            {item.candidates.slice(0, 3).map((c) => (
-                              <Pressable
-                                key={c.productId}
-                                style={styles.candidateChip}
-                                onPress={() => applyLink(i, c.productId, c.name)}
-                              >
-                                <Text style={styles.candidateChipText} numberOfLines={1}>
-                                  Did you mean {c.name}? ({Math.round(c.score * 100)}%)
-                                </Text>
-                              </Pressable>
-                            ))}
-                          </View>
-                        ) : null}
-                      </>
-                    ) : (
-                      <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
-                        <Ionicons name="swap-horizontal" size={13} color={ios.label2} />
-                        <Text style={[styles.lineActionText, { color: ios.label2 }]}>Change</Text>
+                        </>
+                      ) : (
+                        <Pressable style={styles.lineActionBtn} onPress={() => setLinkFor(i)}>
+                          <Ionicons name="swap-horizontal" size={13} color={ios.label2} />
+                          <Text style={[styles.lineActionText, { color: ios.label2 }]}>Change</Text>
+                        </Pressable>
+                      )}
+                      <Pressable style={styles.lineActionBtn} onPress={() => setEditFor(i)}>
+                        <Ionicons name="create-outline" size={13} color={ios.label2} />
+                        <Text style={[styles.lineActionText, { color: ios.label2 }]}>Edit</Text>
                       </Pressable>
-                    )}
+                    </View>
+                    {!isMatched && item.candidates?.length ? (
+                      <View style={styles.candidateChips}>
+                        {item.candidates.slice(0, 3).map((c) => (
+                          <Pressable
+                            key={c.productId}
+                            style={styles.candidateChip}
+                            onPress={() => applyLink(i, c.productId, c.name)}
+                          >
+                            <Text style={styles.candidateChipText} numberOfLines={1}>
+                              Did you mean {c.name}? ({Math.round(c.score * 100)}%)
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    ) : null}
                   </View>
                   {item.lineTotal != null ? (
                     <Text style={styles.reviewItemTotal}>${item.lineTotal.toFixed(2)}</Text>
@@ -515,6 +553,16 @@ function ReviewStep({
         onCreated={(product: CreatedProduct) => {
           if (createFor != null) applyLink(createFor, product.id, product.name);
           setCreateFor(null);
+        }}
+      />
+
+      <LineEditSheet
+        visible={editFor != null}
+        line={editLine}
+        onClose={() => setEditFor(null)}
+        onSave={(commit) => {
+          if (editFor != null) applyEdit(editFor, commit);
+          setEditFor(null);
         }}
       />
     </ScrollView>
