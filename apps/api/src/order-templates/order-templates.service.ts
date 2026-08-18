@@ -7,16 +7,17 @@ import {
 } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { Cron } from "@nestjs/schedule";
-import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
 import { computeLineSubtotal, roundMoney } from "../common/pricing";
+import { taxRateFractionFrom } from "../common/tax-rate";
 
 function startOfDay(date: Date): Date {
   const d = new Date(date);
@@ -27,18 +28,15 @@ function startOfDay(date: Date): Date {
 @Injectable()
 export class OrderTemplatesService {
   private readonly logger = new Logger(OrderTemplatesService.name);
-  private readonly taxRate: number;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly tenantCtx: TenantContextService,
-    private readonly config: ConfigService,
     private readonly ordersService: OrdersService,
     private readonly authGuard: AuthorizationGuardService,
     private readonly notifications: NotificationsService,
-  ) {
-    this.taxRate = this.config.get<number>("taxRate") ?? 0.1;
-  }
+    private readonly systemConfig: SystemConfigService,
+  ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
 
@@ -373,7 +371,13 @@ export class OrderTemplatesService {
       };
     });
 
-    const tax = roundMoney(subtotal * this.taxRate);
+    // RF-4: read the tenant's own tax setting per-request rather than a
+    // constructor-cached env fallback — standing orders were previously taxed
+    // at a flat 10% (env TAX_RATE ?? 0.1) regardless of what the tenant had
+    // configured in Settings, same unit-mismatch bug as orders.service.
+    const storedTaxRate = await this.systemConfig.get("settings.taxRate");
+    const taxRate = taxRateFractionFrom(storedTaxRate);
+    const tax = roundMoney(subtotal * taxRate);
     const total = roundMoney(subtotal + tax);
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();

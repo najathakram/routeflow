@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -115,6 +116,16 @@ export class SettingsController {
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
+    // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
+    // bypass the web form's min(0).max(100) and store an out-of-range value
+    // that later gets divided by 100 into a fraction (see common/tax-rate.ts).
+    if (dto.taxRate !== undefined) {
+      const n = Number(dto.taxRate);
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        throw new BadRequestException("Tax rate must be between 0 and 100 (percent)");
+      }
+    }
+
     // businessName and email are NOT editable by tenant admin (set by super admin).
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
     const allowed = ["taxRate", "logoUrl"];

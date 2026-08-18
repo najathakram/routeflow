@@ -51,6 +51,7 @@ import {
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { getTierPrice } from "../utils/pricing";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import { taxRateFractionFrom } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -154,8 +155,7 @@ export class OrdersService implements OnApplicationBootstrap {
    */
   private async getTaxRate(): Promise<number> {
     const stored = await this.systemConfig.get("settings.taxRate");
-    if (stored !== null && stored !== "") return parseFloat(stored);
-    return 0;
+    return taxRateFractionFrom(stored);
   }
 
   /**

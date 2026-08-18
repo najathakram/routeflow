@@ -27,6 +27,7 @@ import { InventoryService } from "../inventory/inventory.service";
 import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
+import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -1052,12 +1053,47 @@ export class VendorBillsService {
 
   // ─── Product Mapping Memory ───────────────────────────────────────────────────
 
+  /**
+   * `ProductMapping`'s compound key (`@@unique([supplierName, rawDescription])`)
+   * has NO tenantId — it is a GLOBAL key. An `upsert` on that key can hit
+   * another tenant's row: tenant B correcting the same (supplier,
+   * description) pair as tenant A either 500s on the collision or silently
+   * overwrites A's mapping. Go tenant-scoped instead: look up this tenant's
+   * own row first, update it by id if found, otherwise attempt a create and
+   * swallow ONLY a P2002 on that create (another tenant already holds the
+   * global key) — log it and return gracefully rather than 500 the
+   * operator's correction. Any other error still rethrows.
+   */
   async saveProductMapping(supplierName: string, rawDescription: string, productId: string | null) {
-    return this.prisma.forTenant().productMapping.upsert({
-      where: { supplierName_rawDescription: { supplierName, rawDescription } },
-      create: { supplierName, rawDescription, productId },
-      update: { productId },
+    // Prisma DROPS `undefined` filter keys, so a missing supplierName or
+    // rawDescription would turn the lookup below into "this tenant's FIRST
+    // mapping" and then repoint an unrelated raw description at the wrong
+    // product. The controller's `SaveProductMappingDto` rejects that at the
+    // HTTP boundary; this keeps every other caller honest too.
+    if (typeof supplierName !== "string" || typeof rawDescription !== "string") {
+      throw new BadRequestException("supplierName and rawDescription are required");
+    }
+    const existing = await this.prisma.forTenant().productMapping.findFirst({
+      where: { supplierName, rawDescription },
     });
+    if (existing) {
+      return this.prisma.forTenant().productMapping.update({
+        where: { id: existing.id },
+        data: { productId },
+      });
+    }
+    const data: SaveProductMappingDto = { supplierName, rawDescription, productId };
+    try {
+      return await this.prisma.forTenant().productMapping.create({ data });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        this.logger.debug(
+          `saveProductMapping: P2002 on create for (${supplierName}, ${rawDescription}) — another tenant already holds this global mapping key`,
+        );
+        return null;
+      }
+      throw e;
+    }
   }
 
   async getProductMappings(supplierName: string) {

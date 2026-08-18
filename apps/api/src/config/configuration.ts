@@ -37,7 +37,6 @@ function resolveStorageSigningSecret(): string {
 export interface AppConfig {
   nodeEnv: string;
   port: number;
-  taxRate: number;
   database: {
     url: string;
   };
@@ -100,7 +99,6 @@ export interface AppConfig {
 export const configuration = (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: parseInt(process.env.PORT ?? "3000", 10),
-  taxRate: parseFloat(process.env.TAX_RATE ?? "0.1"),
   database: {
     url: process.env.DATABASE_URL ?? "",
   },
