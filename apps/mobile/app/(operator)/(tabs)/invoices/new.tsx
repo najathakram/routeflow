@@ -15,7 +15,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import {
+  FilterChipRow,
+  NavBackButton,
+  NavBar,
+  SearchBar,
+  SegmentedControl,
+} from "@routeflow/ui/mobile/ios";
 import {
   useAdminCustomer,
   useAdminCustomers,
@@ -25,6 +31,9 @@ import { useProductCategories } from "../../../../lib/api/products";
 import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
+import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
+import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
@@ -49,7 +58,13 @@ import {
   type InvoiceTotals,
   type InvoiceTotalsLine,
 } from "../../../../lib/invoice-totals";
-import { DEFAULT_TERMS, ISO_DATE, TERM_CHIPS, dueDateFor } from "../../../../lib/invoice-terms";
+import {
+  DEFAULT_TERMS,
+  ISO_DATE,
+  TERM_CHIPS,
+  dueDateFor,
+  todayPlusDays,
+} from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
 import { alertInfo, chooseAction } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
@@ -114,6 +129,9 @@ type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /** Regulated category this product belongs to — drives the van-sale gate's
+   *  "a regulated item bills on its own invoice" check (WP4). */
+  trackedCategoryId?: string | null;
 };
 
 // `unitPrice` is an optional one-time price override (the "discounted price").
@@ -366,6 +384,19 @@ function InvoiceComposer({
   const [referenceNumber, setReferenceNumber] = useState("");
   const [subject, setSubject] = useState("");
 
+  // ── Van-sale mode (WP4, PR-4) ─────────────────────────────────────────────
+  // "Delivered today?" — default YES, the common van-sale case. Whether this
+  // actually collapses into POST /orders/sell is decided by saleModeGate below;
+  // this is just the operator's stated intent.
+  const [deliveredNow, setDeliveredNow] = useState(true);
+  // "Touched" flags for the header fields the sale gate disqualifies on — dirty
+  // means the operator EDITED the field, not that its current value happens to
+  // differ from the default (a from-order invoice has none of these set).
+  const [touchedDueDate, setTouchedDueDate] = useState(false);
+  const [touchedTerms, setTouchedTerms] = useState(false);
+  const [touchedReference, setTouchedReference] = useState(false);
+  const [touchedSubject, setTouchedSubject] = useState(false);
+
   // Tenant tax rate (a PERCENT in settings → fraction on the wire, web's exact
   // mapping) and the customer's exempt flag, which zeroes ALL tax server-side —
   // the preview must match or the operator quotes a total the invoice won't have.
@@ -386,6 +417,24 @@ function InvoiceComposer({
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
+
+  // Regulated categories that bill on their OWN invoice — a SEPARATE_INVOICE
+  // line can't ride the sale path (POST /orders/sell always creates ONE
+  // invoice). Reuses the shipped tracked-categories hook, no new API surface.
+  // NO `active` filter: `groupOrderLinesForInvoicing` looks categories up by id
+  // with no active filter (invoices.service.ts), so a DEACTIVATED category with
+  // products still assigned still splits server-side — the client set has to
+  // match what the server actually groups on.
+  // `isSuccess` matters: react-query hands back `undefined` both in flight AND
+  // after a failure, and an empty id set would silently disarm gate rule 6.
+  const { data: saleTrackedCategories, isSuccess: saleCategoriesLoaded } = useTrackedCategories();
+  const separateInvoiceCategoryIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of saleTrackedCategories ?? []) {
+      if (c.invoiceTreatment === "SEPARATE_INVOICE") s.add(c.id);
+    }
+    return s;
+  }, [saleTrackedCategories]);
 
   // Debounced, server-filtered, paged — replaces the `limit: 0` fetch-all.
   // See NewOrderScreen and lib/use-product-search.ts.
@@ -677,17 +726,23 @@ function InvoiceComposer({
     listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
   }, [pendingScroll, filtered]);
 
-  // Full money preview through lib/invoice-totals — the same formula the server
-  // runs, so the footer/review totals equal the saved invoice to the cent.
-  const { totals, totalItems } = useMemo(() => {
+  // The exact line set fed to computeInvoiceTotals below — ALSO fed verbatim to
+  // saleModeGate (WP4). The gate's equality assertion is only meaningful when
+  // both the preview and the gate see the identical lines; building them twice
+  // (even from the same inputs) would risk the two silently drifting apart.
+  const { invoiceLines, totalItems, hasSeparateInvoiceCategoryLine } = useMemo(() => {
     const lines: InvoiceTotalsLine[] = [];
     let totalItems = 0;
+    let hasSeparateInvoiceCategoryLine = false;
     for (const [id, line] of Object.entries(items)) {
       const p = productById.get(id);
       if (!p) continue;
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
       totalItems += qty;
+      if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
+        hasSeparateInvoiceCategoryLine = true;
+      }
       lines.push({
         unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
         qty,
@@ -708,28 +763,119 @@ function InvoiceComposer({
         taxRate: u.taxable ? taxRateFraction : 0,
       });
     }
-    return {
-      totals: computeInvoiceTotals({
-        lines,
-        discount: invDiscount ?? 0,
-        shippingFee: shippingFee ?? 0,
-        isTaxExempt,
-      }),
-      totalItems,
-    };
+    return { invoiceLines: lines, totalItems, hasSeparateInvoiceCategoryLine };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     items,
     productById,
     unlisted,
-    invDiscount,
-    shippingFee,
-    isTaxExempt,
     taxRateFraction,
     cpMap,
     customerTier,
+    separateInvoiceCategoryIds,
   ]);
+
+  // Full money preview through lib/invoice-totals — the same formula the server
+  // runs, so the footer/review totals equal the saved invoice to the cent.
+  const totals = useMemo(
+    () =>
+      computeInvoiceTotals({
+        lines: invoiceLines,
+        discount: invDiscount ?? 0,
+        shippingFee: shippingFee ?? 0,
+        isTaxExempt,
+      }),
+    [invoiceLines, invDiscount, shippingFee, isTaxExempt],
+  );
   const total = totals.total;
+
+  // Any unlisted line the operator hasn't finished filling in yet — can't ride
+  // the sale path (POST /orders/sell requires a real name + price per item).
+  const hasUnlistedInvalid = useMemo(
+    () => unlisted.some((u) => u.name.trim() === "" || u.unitPrice <= 0),
+    [unlisted],
+  );
+
+  // The gate's input — pure, no network. Fed the SAME `invoiceLines` array as
+  // `totals` above (see lib/sale-mode.ts for the full rule set and the final
+  // total-equality assertion that is the real safety net). Hoisted so the gate
+  // can also be re-run at a hypothetical control position below.
+  const saleGateInput = useMemo(
+    () => ({
+      lines: invoiceLines,
+      hasUnlistedInvalid,
+      invDiscount: invDiscount ?? 0,
+      shippingFee: shippingFee ?? 0,
+      isTaxExempt,
+      taxRateFraction,
+      touched: {
+        dueDate: touchedDueDate,
+        terms: touchedTerms,
+        reference: touchedReference,
+        subject: touchedSubject,
+      },
+      sendNowOn: send,
+      deliveredNow,
+      hasSeparateInvoiceCategoryLine,
+    }),
+    [
+      invoiceLines,
+      hasUnlistedInvalid,
+      invDiscount,
+      shippingFee,
+      isTaxExempt,
+      taxRateFraction,
+      touchedDueDate,
+      touchedTerms,
+      touchedReference,
+      touchedSubject,
+      send,
+      deliveredNow,
+      hasSeparateInvoiceCategoryLine,
+    ],
+  );
+
+  const saleGate = useMemo(() => saleModeGate(saleGateInput), [saleGateInput]);
+
+  // Ineligibility the gate itself can't see, layered on top of it. Both are
+  // independent of the "Delivered today?" / Send controls, so they also decide
+  // whether that control stays tappable (see `saleControlEnabled`).
+  //  - saleModeGate deliberately leaves `hasUnlistedInvalid` unenforced — its
+  //    own doc comment makes this the CALLER's call. It has to be one here: an
+  //    unlisted line with a real price but no name still counts toward the
+  //    previewed total above, but the submit path below drops it (a nameless
+  //    line can't go on the wire), which would silently undercharge an
+  //    "eligible" sale.
+  //  - Rule 6 needs the tracked categories to have actually loaded. Until then
+  //    `separateInvoiceCategoryIds` is empty and the rule can't fire, so an
+  //    unresolved/failed fetch has to fail CLOSED — otherwise a
+  //    SEPARATE_INVOICE line rides the sale path and the server splits it into
+  //    sibling invoices that match neither the preview nor the success handler.
+  const saleExtraReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (hasUnlistedInvalid) reasons.push("an unlisted item needs a name and price");
+    if (!saleCategoriesLoaded) reasons.push("regulated categories haven't loaded yet");
+    return reasons;
+  }, [hasUnlistedInvalid, saleCategoriesLoaded]);
+
+  const saleMode = useMemo(() => {
+    if (saleExtraReasons.length === 0) return saleGate;
+    const reasons = saleGate.eligible ? [] : saleGate.reasons;
+    return { eligible: false as const, reasons: [...reasons, ...saleExtraReasons] };
+  }, [saleGate, saleExtraReasons]);
+
+  // Whether the "Delivered today?" control may be operated. It must NOT disable
+  // itself for an ineligibility it produced: rule 5 ("sending now without
+  // delivery") is a function of this control's own value, so disabling on it
+  // would strand the operator on "No" with no way back to "Yes". Re-run the
+  // gate at the control's clean position (delivered + not sending) — only a
+  // CART-level problem locks the control.
+  const saleControlEnabled = useMemo(
+    () =>
+      saleExtraReasons.length === 0 &&
+      saleModeGate({ ...saleGateInput, deliveredNow: true, sendNowOn: false }).eligible,
+    [saleGateInput, saleExtraReasons],
+  );
 
   // Newest-first "invoice so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -908,11 +1054,20 @@ function InvoiceComposer({
   );
 
   const createMut = useCreateInvoice();
-  const canSave = totalItems > 0 && !createMut.isPending;
+  const createSaleMut = useCreateSale();
+  const saving = createMut.isPending || createSaleMut.isPending;
+  // A recorded sale already moved stock and issued an invoice. If we ever fail
+  // to navigate away from it (see the sale onSuccess below) the builder stays
+  // mounted with the whole cart intact — latch the Create button off so a
+  // missed toast can't become a second order, a second stock deduction and a
+  // second issued invoice.
+  const [saleRecorded, setSaleRecorded] = useState(false);
+  const canSave = totalItems > 0 && !saving && !saleRecorded;
 
   const onTermsChange = (t: string) => {
     setTerms(t);
     setDueDate(dueDateFor(issueDate, t));
+    setTouchedTerms(true);
   };
 
   const onIssueDateChange = (v: string) => {
@@ -920,21 +1075,34 @@ function InvoiceComposer({
     if (ISO_DATE.test(v)) setDueDate(dueDateFor(v, terms));
   };
 
-  const onSave = () => {
+  const onDueDateChange = (v: string) => {
+    setDueDate(v);
+    setTouchedDueDate(true);
+  };
+
+  const onReferenceNumberChange = (v: string) => {
+    setReferenceNumber(v);
+    setTouchedReference(true);
+  };
+
+  const onSubjectChange = (v: string) => {
+    setSubject(v);
+    setTouchedSubject(true);
+  };
+
+  /**
+   * @param fromReview true only when the review sheet's own Create button fired
+   *   this. The van-sale path is gated on it — see the sale branch below.
+   */
+  const onSave = (fromReview = false) => {
     if (!canSave) {
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
     }
-    if (!ISO_DATE.test(dueDate)) {
-      alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
-      return;
-    }
-    const issueTrim = issueDate.trim();
-    if (issueTrim && !ISO_DATE.test(issueTrim)) {
-      alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
-      return;
-    }
-    // The server's own money guards, surfaced before the round-trip.
+    // The server's own money guards, surfaced before the round-trip. Both save
+    // paths below are subject to them — the sale gate's own rules already keep
+    // an eligible sale clear of a line discount / invoice discount, but they
+    // still apply to the POST /invoices fallback.
     if (totals.hasNegativeLine) {
       alertInfo("Check line discounts", "A line's discount is larger than the line itself.");
       return;
@@ -944,6 +1112,90 @@ function InvoiceComposer({
         "Discount too large",
         `The invoice discount ($${totals.discount.toFixed(2)}) can't exceed the subtotal ($${totals.subtotal.toFixed(2)}).`,
       );
+      return;
+    }
+    const issueTrim = issueDate.trim();
+    if (issueTrim && !ISO_DATE.test(issueTrim)) {
+      alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
+      return;
+    }
+
+    // Van-sale mode: collapse into ONE POST /orders/sell call. saleMode.eligible
+    // already re-ran the total-equality assertion against `invoiceLines` — the
+    // SAME lines `totals` above was computed from — so this can never silently
+    // save for a different amount than what's on screen. Every catalog line
+    // sends its EFFECTIVE unitPrice explicitly (never omitted) so the server's
+    // price resolution can't diverge from the previewed price.
+    if (saleMode.eligible) {
+      // A sale may only be recorded from the review sheet, because that is the
+      // only place the "Delivered today?" control, its disclosure and a button
+      // that NAMES the sale are on screen together (sheet sticky footer — see
+      // SaleModeField). The catalogue footer's Create opens the sheet instead;
+      // it can never move stock or issue an invoice on its own.
+      if (!fromReview) {
+        setReviewOpen(true);
+        return;
+      }
+      const saleItems: CreateSaleItemInput[] = [];
+      for (const [productId, line] of Object.entries(items)) {
+        const p = productById.get(productId);
+        if (!p) continue;
+        const qty = effectiveQty(line, p.unitsPerBox);
+        if (qty <= 0) continue;
+        const upb = Number(p.unitsPerBox ?? 0);
+        saleItems.push({
+          productId,
+          qty,
+          unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
+          ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
+          ...(line.note?.trim() ? { notes: line.note.trim() } : {}),
+        });
+      }
+      // Unlisted lines are NOT filtered out — the gate's total-equality
+      // assertion already accounts for them, so they must ride along.
+      for (const u of unlisted) {
+        if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
+        saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
+      }
+      createSaleMut.mutate(
+        {
+          customerId,
+          items: saleItems,
+          deliveredNow,
+          ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+          // Only a genuinely backdated sale carries orderDate — a same-day sale
+          // stays unsent so deliveredAt lands at the full current timestamp.
+          ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+        },
+        {
+          // POST /orders/sell resolves to the created INVOICE (not the order) —
+          // see CreatedSaleInvoice in lib/api/orders.ts.
+          onSuccess: (inv) => {
+            if (inv?.id) {
+              onSaved(inv.id, inv.invoiceNumber);
+              return;
+            }
+            // Defensive only: the sale IS already recorded server-side, so lock
+            // the builder instead of leaving a live Create button behind a toast
+            // that's easy to miss on a phone.
+            setSaleRecorded(true);
+            showToast("Sale recorded — open the invoice from the Invoices tab.");
+          },
+          onError: (err: any) => {
+            alertInfo(
+              "Couldn't record the sale",
+              err?.response?.data?.message ?? err?.message ?? "Try again.",
+            );
+          },
+        },
+      );
+      return;
+    }
+
+    // Fallback: the existing standalone-invoice path (no order, no stock move).
+    if (!ISO_DATE.test(dueDate)) {
+      alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
       return;
     }
     const payload: CreateInvoiceItem[] = [];
@@ -1190,11 +1442,11 @@ function InvoiceComposer({
         <Pressable
           style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
           disabled={!canSave}
-          onPress={onSave}
+          onPress={() => onSave()}
           accessibilityState={{ disabled: !canSave }}
         >
           <Text style={styles.confirmBtnText} numberOfLines={1}>
-            {createMut.isPending ? "Saving…" : "Create"}
+            {saving ? "Saving…" : "Create"}
           </Text>
           <Ionicons name="arrow-forward" size={14} color="#fff" />
         </Pressable>
@@ -1234,7 +1486,7 @@ function InvoiceComposer({
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
-        saving={createMut.isPending}
+        saving={saving}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
         onDecrement={removeOne}
@@ -1258,21 +1510,27 @@ function InvoiceComposer({
           issueDate,
           onChangeIssueDate: onIssueDateChange,
           dueDate,
-          onChangeDueDate: setDueDate,
+          onChangeDueDate: onDueDateChange,
           send,
           onToggleSend: () => setSend((s) => !s),
           referenceNumber,
-          onChangeReferenceNumber: setReferenceNumber,
+          onChangeReferenceNumber: onReferenceNumberChange,
           subject,
-          onChangeSubject: setSubject,
+          onChangeSubject: onSubjectChange,
           invoiceDiscount: invDiscount,
           onChangeInvoiceDiscount: setInvDiscount,
           shippingFee,
           onChangeShippingFee: setShippingFee,
+          total,
+          deliveredNow,
+          onChangeDeliveredNow: setDeliveredNow,
+          saleEligible: saleMode.eligible,
+          saleReasons: saleMode.eligible ? [] : saleMode.reasons,
+          saleControlEnabled,
         }}
         onSave={() => {
           setReviewOpen(false);
-          onSave();
+          onSave(true);
         }}
       />
 
@@ -1336,6 +1594,23 @@ interface InvoiceDetails {
   /** Flat shipping added after tax; never taxed. Null = unset. */
   shippingFee: number | null;
   onChangeShippingFee: (v: number | null) => void;
+  /** The invoice grand total — only for the ineligible-sale disclosure copy. */
+  total: number;
+  // ── Van-sale mode (WP4) ──────────────────────────────────────────────────
+  /** "Delivered today?" control state — default true, independent of eligibility. */
+  deliveredNow: boolean;
+  onChangeDeliveredNow: (v: boolean) => void;
+  /** Whether the current cart can collapse into POST /orders/sell (saleModeGate). */
+  saleEligible: boolean;
+  /** Operator-facing reasons it can't, when ineligible ([] when eligible). */
+  saleReasons: string[];
+  /**
+   * Whether the Yes/No control itself may be operated. NOT `saleEligible`:
+   * gate rule 5 ("sending now without delivery") is a function of this
+   * control's own value, so disabling on it would strand the operator on "No".
+   * True whenever the CART could collapse at the control's clean position.
+   */
+  saleControlEnabled: boolean;
 }
 
 function ReviewSheet({
@@ -1481,6 +1756,11 @@ function ReviewSheet({
           </ScrollView>
 
           <View style={styles.cartFooter}>
+            {/* Sticky, NOT in the ScrollView above: the sale disclosure has to
+                be on screen at the moment the operator commits, and anything in
+                the scrolling content sits below every line row. */}
+            <SaleModeField details={details} />
+
             {/* Money breakdown — only the rows that apply, so the common
                 no-tax/no-adjustment invoice keeps the old one-line footer. */}
             {totals.taxTotal > 0 || totals.discount > 0 || totals.shippingFee > 0 ? (
@@ -1527,7 +1807,11 @@ function ReviewSheet({
                   onPress={onSave}
                   accessibilityState={{ disabled: totalItems === 0 || saving }}
                 >
-                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Create invoice"}</Text>
+                  <Text style={styles.confirmBtnText}>
+                    {saving
+                      ? "Saving…"
+                      : saveActionLabel(details.saleEligible, details.deliveredNow)}
+                  </Text>
                   <Ionicons name="checkmark" size={14} color="#fff" />
                 </Pressable>
               </View>
@@ -1839,8 +2123,55 @@ function StepperRow({
   );
 }
 
+/**
+ * What the button about to be tapped will actually do. A van sale creates an
+ * order, deducts stock and (delivered-today) issues AND sends the invoice, so
+ * the label may never keep saying "Create invoice" on that path.
+ */
+function saveActionLabel(saleEligible: boolean, deliveredNow: boolean): string {
+  if (!saleEligible) return "Create invoice";
+  return deliveredNow ? "Record sale" : "Create order";
+}
+
+/**
+ * Van-sale mode (WP4/PR-4): collapses create→confirm→deliver→invoice→send into
+ * ONE POST /orders/sell call when saleModeGate says the previewed total can't
+ * silently change at save. Locked (both items disabled) when the CART can't
+ * collapse at all; the reason is always shown.
+ *
+ * This lives in the review sheet's STICKY footer, next to the Create button —
+ * never inside the scrolling content, which sits below every line row and so
+ * could let an operator record a sale without the disclosure ever rendering.
+ */
+function SaleModeField({ details: d }: { details: InvoiceDetails }) {
+  const disclosure = !d.saleEligible
+    ? `Saving as a regular invoice (no delivery tracking) — ${d.saleReasons.join(", ")}. Your total stays $${d.total.toFixed(2)} exactly as shown.`
+    : d.deliveredNow
+      ? "Records the sale now: the order is marked delivered, stock is deducted, and the invoice is issued and sent. Available customer credit is applied automatically."
+      : "Creates a pending order with a draft invoice. Stock is deducted now; the invoice unlocks for sending once the order is delivered.";
+
+  return (
+    <View style={styles.saleModeField}>
+      <Text style={styles.detailLabel}>Delivered today?</Text>
+      <SegmentedControl
+        items={["Yes", "No"]}
+        value={d.deliveredNow ? "Yes" : "No"}
+        onChange={(v) => d.onChangeDeliveredNow(v === "Yes")}
+        disabledItems={d.saleControlEnabled ? [] : ["Yes", "No"]}
+      />
+      <Text style={styles.detailHelp}>{disclosure}</Text>
+    </View>
+  );
+}
+
 /** Terms, dates and delivery — everything that isn't a line, in one card. */
 function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
+  // Sending is implied (not optional) only once the sale path is actually
+  // going to run — eligible AND the operator asked for delivered-today. An
+  // ineligible cart, or a NO (deliver-later) sale, still needs an explicit
+  // Send choice.
+  const showSendToggle = !(d.saleEligible && d.deliveredNow);
+
   return (
     <View style={styles.detailsCard}>
       <Text style={styles.detailsTitle}>Invoice details</Text>
@@ -1931,12 +2262,14 @@ function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
         </View>
       </View>
 
-      <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
-        <View style={[styles.checkbox, d.send && styles.checkboxOn]}>
-          {d.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
-        </View>
-        <Text style={styles.sendLabel}>Send immediately on create</Text>
-      </Pressable>
+      {showSendToggle ? (
+        <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
+          <View style={[styles.checkbox, d.send && styles.checkboxOn]}>
+            {d.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
+          </View>
+          <Text style={styles.sendLabel}>Send immediately on create</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2388,6 +2721,15 @@ const styles = StyleSheet.create({
   },
   detailsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   detailField: { gap: 6 },
+  // Same field styling, but it sits in the sheet's sticky footer above the
+  // money breakdown — hence its own rule off.
+  saleModeField: {
+    gap: 6,
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
   detailLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   detailInput: {
     backgroundColor: ios.fill3,
