@@ -5,7 +5,11 @@ dockerfilePath = "apps/db-backup/Dockerfile"
 watchPatterns = ["apps/db-backup/**"]
 
 [deploy]
-# Daily production pg_dump → Cloudflare R2 at 02:00 UTC. Cron containers run
-# to completion and must NOT restart-loop.
-cronSchedule = "0 2 * * *"
+# Production pg_dump → Cloudflare R2 every 2 hours. Was nightly at 02:00 UTC
+# until the 2026-08-17 data loss, where the nightly cadence cost a full
+# trading day; 2-hourly caps the dump-based loss window at 2 hours (dumps are
+# ~1.6 MB, pruned after 30 days ⇒ ~360 objects, still trivial R2 usage).
+# Railway volume snapshots (daily/weekly/monthly, Pro) are the second layer.
+# Cron containers run to completion and must NOT restart-loop.
+cronSchedule = "7 */2 * * *"
 restartPolicyType = "NEVER"
