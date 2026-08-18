@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
+import { DraftStrip } from "../../../../components/DraftStrip";
 
 // Default filter is "All" so operators land on the full picture rather than
 // only Pending. Reordered to surface All first, then statuses left-to-right
@@ -109,6 +110,9 @@ export default function OrdersListScreen() {
         value={labelForFilter(filter)}
         onChange={(label) => setFilter(filterByLabel(label))}
       />
+
+      {/* Parked drafts (PR-3) — renders nothing when there are none. */}
+      <DraftStrip />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

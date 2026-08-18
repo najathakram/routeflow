@@ -26,6 +26,12 @@ export interface DraftLineItem {
   unitCost?: number;
   category?: string;
   isUnlisted?: boolean;
+  /**
+   * Per-line note. Round-tripped only by mobile's parked drafts
+   * (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the shapes stay
+   * identical, but never reads or writes it.
+   */
+  note?: string;
 }
 
 export interface DraftCustomer {
@@ -48,6 +54,12 @@ export interface OrderDraftPayload {
   urgent: boolean;
   /** tempIds the operator chose "Sell anyway" on (below-floor acks). */
   floorAcked: string[];
+  /**
+   * Credit notes the operator picked to apply. Round-tripped only by mobile's
+   * parked drafts (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the
+   * shapes stay identical, but never reads or writes it.
+   */
+  selectedCreditIds?: string[];
 }
 
 /** A short, human label for the device a draft was last touched on. */

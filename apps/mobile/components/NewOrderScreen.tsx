@@ -13,9 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import { apiClient } from "../lib/api-client";
 import { useAdminCustomers } from "../lib/api/admin";
 import { useProductCategories } from "../lib/api/products";
 import { useProductSearch } from "../lib/use-product-search";
@@ -95,6 +96,19 @@ import {
 import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../lib/unlisted-affordance";
 import { orderSubmitGate } from "../lib/order-draft-logic";
+// Parked drafts (PR-3): NewOrderScreen resolves ?resumeDraft= and hydrates
+// only the customer; ProductPickView (it owns all other parkable state) binds
+// the autosave hook and drives create/update/delete of the SAME draft.
+import { useDraft, useCreateDraft, useUpdateDraft, useDeleteDraft } from "../lib/api/drafts";
+import {
+  toOrderDraftPayload,
+  fromOrderDraftPayload,
+  draftParkable,
+  type OrderDraftPayload,
+  type DraftBuilderState,
+  type DraftCatalogLine,
+} from "../lib/drafts-payload";
+import { useDraftAutosave, type DraftRowMeta } from "../lib/use-draft-autosave";
 
 export interface NewOrderScreenProps {
   /** When present, customer is locked (e.g. invoked from a specific stop). */
@@ -122,6 +136,13 @@ export interface NewOrderScreenProps {
    * "back is not working" report).
    */
   onBack?: () => void;
+  /**
+   * Resume a parked draft (DraftStrip's tap target, `?resumeDraft=<id>` on
+   * the operator route). Loaded here so the customer can be seeded before
+   * ProductPickView mounts; a 404 (deleted on another device) falls through
+   * to a normal empty builder. Never set from the driver/stop flow.
+   */
+  resumeDraftId?: string;
 }
 
 type Product = {
@@ -150,6 +171,12 @@ type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /**
+   * `GET /products/:id` (used only by draft-resume hydration below) returns
+   * an archived product too, unlike the catalog list — checked explicitly so
+   * an archived line drops on resume instead of silently reappearing.
+   */
+  isActive?: boolean | null;
 };
 
 /**
@@ -252,6 +279,7 @@ export function NewOrderScreen({
   backLabel,
   onSaved,
   onBack,
+  resumeDraftId: urlResumeDraftId,
 }: NewOrderScreenProps) {
   const router = useRouter();
   const [pickedCustomerId, setPickedCustomerId] = useState<string | null>(
@@ -262,8 +290,65 @@ export function NewOrderScreen({
   );
   const customerLocked = !!initialCustomerId;
 
+  // The draft this screen is bound to. Seeded from the URL on open; kept in
+  // sync afterwards via onDraftBound so a later onChangeCustomer round trip
+  // (ProductPickView unmounts/remounts) resumes the SAME server draft rather
+  // than creating a second one.
+  const [boundDraftId, setBoundDraftId] = useState<string | null>(urlResumeDraftId ?? null);
+  const { data: loadedDraft, isFetching: draftLoading, error: draftError } = useDraft(boundDraftId);
+  // Guards so hydration/404-handling each fire once per draft id, not on
+  // every refetch (autosave keeps this query warm for the life of the screen).
+  const hydratedCustomerRef = useRef<string | null>(null);
+  const notFoundRef = useRef<string | null>(null);
+  // Whether THIS screen instance was ever asked to resume a draft — gates the
+  // full-screen spinner so it only covers the very first load, never a later
+  // onChangeCustomer round trip (which must show the customer picker, not a
+  // spinner, even while that same bound draft happens to be refetching).
+  const resumeAttemptedRef = useRef(!!urlResumeDraftId);
+  const resolvedCustomerOnceRef = useRef(!!initialCustomerId);
+  useEffect(() => {
+    if (pickedCustomerId) resolvedCustomerOnceRef.current = true;
+  }, [pickedCustomerId]);
+
+  // Seed the customer from the resumed draft's payload (once per draft id).
+  // Strictly a RESUME concern: once this screen has resolved a customer even
+  // once, tapping "Change" clears `pickedCustomerId`, and without this gate
+  // the effect would immediately re-seed the bound draft's original customer
+  // (the picker flashes for a frame and snaps back) — making the customer
+  // un-changeable for any order that has already been parked.
+  useEffect(() => {
+    if (!resumeAttemptedRef.current || resolvedCustomerOnceRef.current) return;
+    if (!loadedDraft || pickedCustomerId) return;
+    if (hydratedCustomerRef.current === loadedDraft.id) return;
+    hydratedCustomerRef.current = loadedDraft.id;
+    const payload = (loadedDraft.payload ?? {}) as Partial<OrderDraftPayload>;
+    if (payload.customer) {
+      setPickedCustomerId(payload.customer.id);
+      setPickedCustomerName(payload.customer.businessName ?? null);
+    }
+  }, [loadedDraft, pickedCustomerId]);
+
+  // A deleted-elsewhere draft 404s — toast once, then fall through to a
+  // normal empty builder rather than getting stuck on the spinner.
+  useEffect(() => {
+    if (!draftError || !boundDraftId) return;
+    const status = (draftError as { response?: { status?: number } })?.response?.status;
+    if (status !== 404) return;
+    if (notFoundRef.current === boundDraftId) return;
+    notFoundRef.current = boundDraftId;
+    alertInfo("That draft is gone", "It may have already been resumed or discarded elsewhere.");
+    setBoundDraftId(null);
+  }, [draftError, boundDraftId]);
+
   // If a customer isn't selected yet, the picker takes over — product list hidden.
   const needsCustomer = !pickedCustomerId;
+  // Waiting on the very first resume to resolve: neither the picker nor the
+  // builder can render meaningfully yet (we don't know the customer).
+  const resolvingResume =
+    resumeAttemptedRef.current &&
+    !resolvedCustomerOnceRef.current &&
+    !pickedCustomerId &&
+    draftLoading;
 
   /**
    * Cross-platform-safe back handler. `router.back()` is a no-op on web when
@@ -282,6 +367,16 @@ export function NewOrderScreen({
       router.replace("/(operator)/(tabs)/home" as any);
     }
   };
+
+  if (resolvingResume) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={ios.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -306,7 +401,21 @@ export function NewOrderScreen({
           onChangeCustomer={() => {
             setPickedCustomerId(null);
             setPickedCustomerName(null);
+            // boundDraftId deliberately survives — the SAME server draft
+            // carries over so the next customer's builder resumes with
+            // these lines intact instead of starting a second draft.
           }}
+          initialDraft={
+            loadedDraft
+              ? {
+                  id: loadedDraft.id,
+                  // `payload` is `Record<string, unknown>` on the wire — same
+                  // double cast web's CreateOrderModal uses to read it back.
+                  payload: (loadedDraft.payload ?? {}) as unknown as OrderDraftPayload,
+                }
+              : null
+          }
+          onDraftBound={setBoundDraftId}
           onSaved={(orderNumber: string) => {
             showToast(`Order ${orderNumber} saved`);
             if (onSaved) onSaved(orderNumber);
@@ -411,6 +520,8 @@ function ProductPickView({
   onBack,
   onChangeCustomer,
   onSaved,
+  initialDraft,
+  onDraftBound,
 }: {
   customerId: string;
   customerName: string | null;
@@ -421,6 +532,12 @@ function ProductPickView({
   onBack: () => void;
   onChangeCustomer: () => void;
   onSaved: (orderNumber: string) => void;
+  /** One-shot seed for a resumed draft — read only by lazy useState initializers. */
+  initialDraft?: { id: string; payload: OrderDraftPayload } | null;
+  /** Fires when this view binds a server draft (created or resumed), and on
+   * "Change customer" with the live id so the next mount reuses it. Never
+   * fires with `null` just because a fresh mount has no id yet. */
+  onDraftBound?: (id: string | null) => void;
 }) {
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
@@ -431,12 +548,29 @@ function ProductPickView({
   // endpoints already return cost to them). Buyers never reach this screen.
   const canSeeCost = isStaff || userRole === "DRIVER";
 
+  // Parked drafts (PR-3): `initialDraft` is a one-shot prop — read it via
+  // `fromOrderDraftPayload` exactly once (a plain ref, not useState, since we
+  // need the parsed value available to several OTHER lazy initializers below)
+  // so a later re-render (or an onChangeCustomer remount with a stale prop
+  // reference) never re-seeds already-edited state.
+  const draftSeedRef = useRef<DraftBuilderState | null>(null);
+  if (draftSeedRef.current === null && initialDraft) {
+    draftSeedRef.current = fromOrderDraftPayload(initialDraft.payload);
+  }
+  const draftSeed = draftSeedRef.current;
+
   const [category, setCategory] = useState("All");
   /** Scanned code with several substring matches → open a picker over the camera. */
   const [pickCode, setPickCode] = useState<string | null>(null);
+  // Catalog lines start EMPTY even when resuming — the hydration-safety pass
+  // below (money-critical) populates them only after cross-checking each
+  // parked productId against the LIVE catalog, so a stale/removed product or
+  // price can never render, let alone autosave back to the server.
   const [items, setItems] = useState<Record<string, LineState>>({});
-  // Ad-hoc lines not in the product catalog (productId null on submit).
-  const [unlisted, setUnlisted] = useState<UnlistedLine[]>([]);
+  // Ad-hoc (non-catalog) lines need no live-product check — DraftUnlistedLine
+  // is field-for-field the same shape as this screen's UnlistedLine, so the
+  // seed drops in directly.
+  const [unlisted, setUnlisted] = useState<UnlistedLine[]>(() => draftSeed?.unlisted ?? []);
   const [unlistedModalOpen, setUnlistedModalOpen] = useState(false);
   // Name to prefill the unlisted-item composer with (from an empty search).
   const [unlistedPrefill, setUnlistedPrefill] = useState("");
@@ -452,7 +586,10 @@ function ProductPickView({
   const { data: marginConfig } = useMarginConfig();
   // Lines the operator explicitly acked as "sell anyway" below the margin
   // floor (pos-cost-roles-spec §1) — keyed by product id, session-local.
-  const [floorAcked, setFloorAcked] = useState<Set<string>>(new Set());
+  // tempId === productId for catalog lines, so a parked ack round-trips.
+  const [floorAcked, setFloorAcked] = useState<Set<string>>(
+    () => new Set(draftSeed?.floorAcked ?? []),
+  );
   // REG-4: category lookup for the invoice-split preview. Reuses the shipped
   // P10-REG-A hook — no new API surface. Called unconditionally, matching the
   // rest of this screen's hooks (tenants with no regulated categories just get []).
@@ -489,16 +626,21 @@ function ProductPickView({
   const licenseRetryRef = useRef<"merge" | "separate" | undefined>(undefined);
   // Order-level options (mirror web CreateOrderModal): notes, urgent flag,
   // requested delivery date (YYYY-MM-DD), and an order-level discount.
-  const [orderNotes, setOrderNotes] = useState("");
-  const [orderUrgent, setOrderUrgent] = useState(false);
-  const [deliveryDate, setDeliveryDate] = useState("");
+  const [orderNotes, setOrderNotes] = useState(() => draftSeed?.orderNotes ?? "");
+  const [orderUrgent, setOrderUrgent] = useState(() => draftSeed?.orderUrgent ?? false);
+  const [deliveryDate, setDeliveryDate] = useState(() => draftSeed?.deliveryDate ?? "");
   // Business date of the order (YYYY-MM-DD); blank = today. Staff only.
-  const [orderDate, setOrderDate] = useState("");
-  const [discountRaw, setDiscountRaw] = useState("");
-  const [shippingFeeRaw, setShippingFeeRaw] = useState("");
+  const [orderDate, setOrderDate] = useState(() => draftSeed?.orderDate ?? "");
+  const [discountRaw, setDiscountRaw] = useState(() => draftSeed?.discountRaw ?? "");
+  const [shippingFeeRaw, setShippingFeeRaw] = useState(() => draftSeed?.shippingFeeRaw ?? "");
   // Apply-credit selection (mobile v1: toggle only, no amount input — null
   // amount = up to the credit's remaining balance, resolved server-side).
-  const [selectedCreditIds, setSelectedCreditIds] = useState<string[]>([]);
+  // A resumed id is re-validated below (once the customer's open credits
+  // load) against the SAME isCreditOpenForApply predicate and silently
+  // dropped if it's no longer open — never trusted blindly from the payload.
+  const [selectedCreditIds, setSelectedCreditIds] = useState<string[]>(
+    () => draftSeed?.selectedCreditIds ?? [],
+  );
   const { data: openCredits } = useCreditNotes({
     customerId: customerId || undefined,
     status: "ISSUED",
@@ -520,12 +662,34 @@ function ProductPickView({
     for (const cn of justCreatedCredits) if (!rows.has(cn.id)) rows.set(cn.id, cn);
     return Array.from(rows.values());
   }, [openCredits, justCreatedCredits]);
-  // Reset the selection whenever the customer changes so a stale credit id
-  // from a previous customer never rides along into this order's payload.
+  // Reset the selection on a GENUINE customer change (never on the initial
+  // mount, which may have just seeded a resumed selection above — this ref
+  // starts pinned to the mount's own customerId so the first run is a no-op).
+  const mountedCustomerRef = useRef(customerId);
   useEffect(() => {
+    if (mountedCustomerRef.current === customerId) return;
+    mountedCustomerRef.current = customerId;
     setSelectedCreditIds([]);
     setJustCreatedCredits([]);
   }, [customerId]);
+  // Re-validate a resumed credit selection once the customer's open credits
+  // have loaded (once per mount — later expiries during the session are left
+  // alone so an applied credit doesn't vanish mid-edit).
+  const creditsValidatedRef = useRef(false);
+  useEffect(() => {
+    if (creditsValidatedRef.current) return;
+    if (!draftSeed || draftSeed.selectedCreditIds.length === 0) {
+      creditsValidatedRef.current = true;
+      return;
+    }
+    if (!openCredits) return; // wait for the customer's credits to load
+    creditsValidatedRef.current = true;
+    const now = new Date();
+    const openIds = new Set(
+      (openCredits.data ?? []).filter((cn) => isCreditOpenForApply(cn, now)).map((cn) => cn.id),
+    );
+    setSelectedCreditIds((ids) => ids.filter((id) => openIds.has(id)));
+  }, [openCredits, draftSeed]);
   // Scroll the just-added row into view. The target is kept as an ID and
   // re-resolved against whatever the list renders each pass — a cached row
   // offset goes stale the moment clearing the search swaps the rendered list.
@@ -542,6 +706,125 @@ function ProductPickView({
    * actual cost of the order is not updating … while scanning items").
    */
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
+
+  // Resume hydration safety (money-critical, PR-3): a parked catalog line is
+  // never trusted at face value — the product may since have been archived
+  // or deleted, or its live price/packaging may have moved. While this is
+  // in flight the whole builder stays behind a spinner (see the early return
+  // near the bottom) so nothing unvalidated can ever render or autosave.
+  const [hydrating, setHydrating] = useState<boolean>(
+    () => !!draftSeed && draftSeed.items.length > 0,
+  );
+  // Bumped by the retry action below to re-run a hydration that failed for a
+  // reason other than "the product is gone" (flaky connection, 5xx).
+  const [hydrateAttempt, setHydrateAttempt] = useState(0);
+  // The alert offering that retry is dismissible (backdrop tap on web,
+  // `cancelable` on native), and nothing else re-triggers the effect — so the
+  // retry ALSO lives in the spinner view itself, never only in the dialog.
+  const [hydrateFailed, setHydrateFailed] = useState(false);
+  const retryHydrate = useCallback(() => {
+    setHydrateFailed(false);
+    setHydrateAttempt((n) => n + 1);
+  }, []);
+  const hydrationStartedRef = useRef(false);
+  useEffect(() => {
+    if (!hydrating || hydrationStartedRef.current) return;
+    hydrationStartedRef.current = true;
+    const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        parkedLines.map(async (li) => {
+          try {
+            const { data } = await apiClient.get<Product>(`/products/${li.productId}`);
+            // findOne returns an archived product too (unlike the catalog
+            // list, which filters isActive:true) — treat it the same as gone.
+            if (data.isActive === false)
+              return { li, product: null as Product | null, failed: false };
+            return { li, product: data as Product | null, failed: false };
+          } catch (err) {
+            // ONLY a 404 means the product is genuinely gone. A timeout, a 5xx
+            // or an offline handset must never be read as "deleted": dropping
+            // the line there would both lie to the operator and let autosave
+            // PATCH the truncated cart back over the parked draft.
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            return { li, product: null as Product | null, failed: status !== 404 };
+          }
+        }),
+      );
+      if (cancelled) return;
+      if (results.some((r) => r.failed)) {
+        // Abort the whole hydration: `hydrating` stays true, so the builder
+        // keeps its spinner and — money-critical — autosave stays disabled and
+        // the server draft is left exactly as parked.
+        hydrationStartedRef.current = false;
+        setHydrateFailed(true);
+        chooseAction(
+          "Couldn't restore your order",
+          "Some items couldn't be loaded. Check your connection and try again.",
+          [
+            { label: "Go back", style: "cancel", onPress: onBack },
+            { label: "Retry", onPress: retryHydrate },
+          ],
+        );
+        return;
+      }
+      const nextItems: Record<string, LineState> = {};
+      const nextScanned: Record<string, Product> = {};
+      const droppedNames: string[] = [];
+      for (const { li, product } of results) {
+        if (!product) {
+          droppedNames.push(li.productName || li.productId);
+          continue;
+        }
+        nextScanned[li.productId] = product;
+        const liveUpb = Number(product.unitsPerBox ?? 0);
+        const parkedUpb = Number(li.unitsPerBox ?? 0);
+        let boxes = li.boxes;
+        let pieces = li.pieces;
+        let qty = li.qty;
+        // unitsPerBox changed on the live product: keep the parked PHYSICAL
+        // counts (boxes/pieces) and re-derive qty with the LIVE packaging —
+        // never keep the stale qty, which would silently over/under-charge.
+        // Every direction of the change has to go through the helper, not just
+        // case→case: a line that LOST its packaging must shed boxes/pieces
+        // (otherwise effectiveQty reads `boxes*0 + pieces`), and a plain-qty
+        // line whose product GAINED packaging must gain the split (otherwise
+        // computeLineSubtotal charges the new CASE price per piece).
+        if (liveUpb !== parkedUpb) {
+          const n = normalizeBoxesPieces({ boxes, pieces, qty, unitsPerBox: liveUpb });
+          boxes = n.boxes ?? undefined;
+          pieces = n.pieces ?? undefined;
+          qty = n.qty;
+        }
+        const line: LineState = { qty };
+        if (boxes != null) line.boxes = boxes;
+        if (pieces != null) line.pieces = pieces;
+        if (li.note) line.note = li.note;
+        // Pin the parked price ONLY for a genuine operator override — every
+        // other line re-derives from the LIVE tier price (lineUnitFor below),
+        // matching submitOrder's own override rule; the server owns tier/promo
+        // pricing, so a stale tier/list price is never allowed to stick.
+        if (li.priceType === "MANUAL" && li.unitPrice != null) {
+          line.unitPrice = li.unitPrice;
+        }
+        nextItems[li.productId] = line;
+      }
+      setItems(nextItems);
+      setScannedById((prev) => ({ ...prev, ...nextScanned }));
+      setHydrating(false);
+      if (droppedNames.length > 0) {
+        alertInfo(
+          "Items removed",
+          `Removed ${droppedNames.length} item(s) no longer in your catalog: ${droppedNames.join(", ")}`,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrating, hydrateAttempt]);
 
   /**
    * Debounced, server-filtered, 50-rows-at-a-time. This used to be a single
@@ -1148,16 +1431,244 @@ function ProductPickView({
     ],
   );
 
+  // ── Parked drafts (PR-3): serialize every piece of parkable state this view
+  // owns into the pure module's DraftBuilderState shape (field names mirror
+  // these variables 1:1 by design — see drafts-payload.ts). Every money value
+  // flows through computeLineSubtotal elsewhere (never re-derived here); this
+  // memo just packages the CURRENT effective price/qty per line.
+  const draftCatalogLines = useMemo<DraftCatalogLine[]>(() => {
+    const lines: DraftCatalogLine[] = [];
+    for (const [productId, line] of Object.entries(items)) {
+      const p = productById.get(productId);
+      if (!p) continue;
+      const qty = effectiveQty(line, p.unitsPerBox);
+      if (qty <= 0) continue;
+      const special = isSpecialFor(p);
+      const tierPrice = tierPriceFor(p);
+      const listPrice = toNumber(p.pricePerUnit);
+      // Mobile has no separate "permanent discount" concept — any explicit
+      // override the operator set is tagged MANUAL (never DISCOUNTED), which
+      // is exactly what the resume-hydration pin rule above checks for.
+      const hasOverride = !special && line.unitPrice != null && line.unitPrice !== tierPrice;
+      lines.push({
+        productId,
+        productName: displayName(p),
+        unit: p.unit ?? "each",
+        listPrice,
+        ...(special ? { specialPrice: tierPrice } : {}),
+        ...(hasOverride ? { discountedPrice: line.unitPrice } : {}),
+        unitPrice: special ? tierPrice : hasOverride ? line.unitPrice! : listPrice,
+        priceType: special ? "SPECIAL" : hasOverride ? "MANUAL" : "STANDARD",
+        qty,
+        ...(p.unitsPerBox ? { unitsPerBox: Number(p.unitsPerBox) } : {}),
+        ...(line.boxes != null ? { boxes: line.boxes } : {}),
+        ...(line.pieces != null ? { pieces: line.pieces } : {}),
+        ...(p.averageCost != null
+          ? { unitCost: toNumber(p.averageCost) }
+          : p.standardCost != null
+            ? { unitCost: toNumber(p.standardCost) }
+            : {}),
+        ...(p.category ? { category: p.category } : {}),
+        ...(line.note?.trim() ? { note: line.note.trim() } : {}),
+      });
+    }
+    return lines;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, productById, cpMap, customerTier]);
+
+  const draftBuilderState = useMemo<DraftBuilderState>(
+    () => ({
+      customer: { id: customerId, businessName: customerName ?? "", pricingTier: customerTier },
+      items: draftCatalogLines,
+      unlisted,
+      floorAcked: Array.from(floorAcked),
+      orderNotes,
+      orderUrgent,
+      deliveryDate,
+      orderDate,
+      discountRaw,
+      shippingFeeRaw,
+      selectedCreditIds,
+    }),
+    [
+      customerId,
+      customerName,
+      customerTier,
+      draftCatalogLines,
+      unlisted,
+      floorAcked,
+      orderNotes,
+      orderUrgent,
+      deliveryDate,
+      orderDate,
+      discountRaw,
+      shippingFeeRaw,
+      selectedCreditIds,
+    ],
+  );
+  const draftPayload = useMemo<OrderDraftPayload>(
+    () => toOrderDraftPayload(draftBuilderState),
+    [draftBuilderState],
+  );
+
+  const createDraftMutation = useCreateDraft();
+  const updateDraftMutation = useUpdateDraft();
+  const deleteDraftMutation = useDeleteDraft();
+  // The engine deps are read only once (at mount) by useDraftAutosave, so
+  // these don't need to be memoized for referential stability.
+  const createDraftDep = (input: DraftRowMeta & { payload: unknown }) =>
+    createDraftMutation.mutateAsync({
+      ...input,
+      payload: input.payload as Record<string, unknown>,
+    });
+  const updateDraftDep = (input: { id: string; payload: unknown } & Partial<DraftRowMeta>) =>
+    updateDraftMutation.mutateAsync({
+      ...input,
+      payload: input.payload as Record<string, unknown>,
+    });
+  const deleteDraftDep = (id: string) => deleteDraftMutation.mutateAsync(id);
+
+  // Bind point: this hook owns the create/autosave/single-flight-create
+  // lifecycle; ProductPickView only reads its result and drives the
+  // submit-time poison-pill + delete below. Never enabled for a route/stop
+  // order (driver flows never park — the run/stop itself is the "draft") and
+  // — money-critical — never enabled while a resumed session is still
+  // hydrating: `items` is deliberately empty until the live-product
+  // cross-check finishes (see above), so `draftPayload` would otherwise be
+  // missing every catalog line and an autosave write in that window would
+  // PATCH the server draft down to just the unlisted ones.
+  //
+  // `draftParkable` (decisions doc §PR-3.5) rides the separate `parkable`
+  // flag, NOT `enabled`: it must stop the first POST, but it must not freeze
+  // a draft that already exists — an operator who deletes every line and
+  // walks away has to leave an emptied draft behind, not one DraftStrip still
+  // offers with the items they just removed.
+  const {
+    flush: flushDraft,
+    discard: discardDraft,
+    draftId,
+    getDraftId,
+  } = useDraftAutosave(draftPayload, {
+    enabled: !runId && !stopId && !hydrating,
+    parkable: draftParkable(draftBuilderState),
+    kind: "ORDER",
+    customerId,
+    customerName,
+    title: customerName ? `Order, ${customerName}` : "Order draft",
+    createDraft: createDraftDep,
+    updateDraft: updateDraftDep,
+    deleteDraft: deleteDraftDep,
+    hydrate: initialDraft ? { draftId: initialDraft.id, payload: initialDraft.payload } : null,
+  });
+  useEffect(() => {
+    // Only ever lift a REAL id upward. `draftId` is null on every mount until
+    // the engine creates (or hydration seeds) one, so pushing it would clear a
+    // `boundDraftId` the PREVIOUS mount just handed the parent through
+    // `onDraftBound(getDraftId())` on "Change customer" — that disables
+    // `useDraft`, so `initialDraft` never arrives and the first line POSTs a
+    // second server draft. The parent owns clearing (it does so on the 404).
+    if (draftId) onDraftBound?.(draftId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftId]);
+
+  // Flush points (navigation only — never blocks the action itself). Every
+  // flush is swallowed: parking is best-effort, and an unhandled rejection
+  // from a failed draft write must never surface as an app-level error.
+  const flushDraftQuietly = useCallback(() => flushDraft().catch(() => {}), [flushDraft]);
+  const navigation = useNavigation();
+  useEffect(() => {
+    const nav = navigation as unknown as {
+      addListener: (event: "beforeRemove", cb: () => void) => () => void;
+    };
+    const unsubscribe = nav.addListener("beforeRemove", () => {
+      void flushDraftQuietly();
+    });
+    return unsubscribe;
+  }, [navigation, flushDraftQuietly]);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    if (typeof document === "undefined") return;
+    const handler = () => {
+      if (document.visibilityState === "hidden") void flushDraftQuietly();
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [flushDraftQuietly]);
+
+  /**
+   * Stamp the bound draft as submitted (poison-pill) and delete it, awaited
+   * with a budget so a slow delete never stalls the confirm. `discard()`
+   * runs FIRST so no further autosave write can race the delete.
+   */
+  const finalizeBoundDraft = async () => {
+    // Read the LIVE id, never the `draftId` state value: `onSuccess` closes
+    // over the render that invoked submitOrder, and the draft is often created
+    // by that submit's own `flush()` (confirm tapped inside the 900ms
+    // debounce). The state update lands after this closure was captured, so a
+    // stale read here would leave the just-created draft un-pilled and
+    // undeleted — DraftStrip would then offer an already-submitted order.
+    const id = getDraftId();
+    if (!id) return;
+    discardDraft();
+    await updateDraftMutation
+      .mutateAsync({
+        id,
+        payload: { ...draftPayload, submittedAt: new Date().toISOString() },
+      })
+      .catch(() => {
+        // Best-effort poison pill — proceed to the delete attempt regardless.
+      });
+    const timeout = (ms: number) =>
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms));
+    const outcome = await Promise.race([
+      deleteDraftMutation
+        .mutateAsync(id)
+        .then(() => "deleted" as const)
+        .catch(() => "failed" as const),
+      timeout(1500),
+    ]);
+    if (outcome !== "deleted") {
+      // One background retry — best-effort. If both writes ultimately fail
+      // (offline), the poison-pilled draft resurfaces honestly and
+      // DraftStrip sweeps it the next time its list loads.
+      deleteDraftMutation.mutate(id, { onError: () => {} });
+    }
+  };
+
   const createOrder = useCreateOrderAsDriver();
   // Pre-check the customer's open draft/pending order so we can ask before submitting.
   const { data: activeOrder } = useActiveOrderForCustomer(customerId);
 
-  const canSave = totalItems > 0 && !createOrder.isPending;
+  // Re-entrancy latch. `createOrder.isPending` alone leaves two windows open
+  // where the button still reads "Confirm": the pre-submit draft flush (a
+  // whole POST/PATCH round trip before `mutate` is even called) and the
+  // post-success `finalizeBoundDraft` (react-query clears isPending before
+  // running this call's onSuccess). A second tap in either window would create
+  // a SECOND order — there is deliberately no idempotency key on POST /orders.
+  // The ref is what actually gates (set synchronously in the tap handler); the
+  // state exists only to re-render the disabled button.
+  const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const endSubmit = () => {
+    submittingRef.current = false;
+    setSubmitting(false);
+  };
+
+  const canSave = totalItems > 0 && !createOrder.isPending && !submitting;
   // "Save as draft" needs only a customer (a zero-item DRAFT is allowed server-side).
-  const canSaveDraft = !!customerId && !createOrder.isPending;
+  const canSaveDraft = !!customerId && !createOrder.isPending && !submitting;
 
   /** Submit with a specific (or no) merge choice; `asDraft` parks it as a DRAFT. */
-  const submitOrder = (mergeChoice?: "merge" | "separate", asDraft = false) => {
+  const submitOrder = async (mergeChoice?: "merge" | "separate", asDraft = false) => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    // Flush BEFORE mutate so a failed create still leaves an up-to-date
+    // parked draft behind (nothing about this order is lost) — but NEVER let
+    // it gate the order: a rejected draft write (offline queue, 404 on a draft
+    // discarded from web) would otherwise abort submitOrder before `mutate`,
+    // leaving Confirm a dead button with no error shown.
+    await flushDraft().catch(() => {});
     const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
@@ -1222,15 +1733,23 @@ function ProductPickView({
           : {}),
       },
       {
-        onSuccess: (order) => {
+        onSuccess: async (order) => {
           if (mergeChoice === "merge") {
             showToast(`Merged into order ${order.orderNumber}`);
           } else if (asDraft) {
             showToast("Saved as draft");
           }
+          // The parked draft has become a real order (or a formal DRAFT
+          // order, or was merged) — either way it's no longer needed.
+          await finalizeBoundDraft();
           onSaved(order.orderNumber);
         },
         onError: (err: Error) => {
+          // Release the latch on EVERY failure branch below — each of them
+          // either replays submitOrder (merge choice, license guard) or hands
+          // the operator the button back. Success deliberately stays latched:
+          // that path navigates away.
+          endSubmit();
           const errAny = err as unknown as {
             response?: {
               status?: number;
@@ -1278,8 +1797,8 @@ function ProductPickView({
       `This customer has an open order ${existing.orderNumber ?? ""} with ${existing.itemCount} item${existing.itemCount === 1 ? "" : "s"} ($${existing.total.toFixed(2)}). Merge into it or create a separate order?`,
       [
         { label: "Cancel", style: "cancel" },
-        { label: "Merge", onPress: () => submitOrder("merge", asDraft) },
-        { label: "Create separate", onPress: () => submitOrder("separate", asDraft) },
+        { label: "Merge", onPress: () => void submitOrder("merge", asDraft) },
+        { label: "Create separate", onPress: () => void submitOrder("separate", asDraft) },
       ],
     );
   };
@@ -1297,7 +1816,7 @@ function ProductPickView({
       promptMergeChoice(activeOrder, asDraft);
       return;
     }
-    submitOrder(undefined, asDraft);
+    void submitOrder(undefined, asDraft);
   };
 
   // The cart sheet's copy of this opener is unreachable until the cart has a
@@ -1313,19 +1832,84 @@ function ProductPickView({
     ? `Add "${searchTerm}" as an unlisted item`
     : "Add an unlisted item";
 
+  const handleBackWithFlush = () => {
+    void flushDraftQuietly();
+    onBack();
+  };
+  const handleChangeCustomerWithFlush = () => {
+    // This flush may be the POST that CREATES the draft, and this view is
+    // about to unmount — which detaches the engine's id listener, so
+    // `onDraftBound` would never fire and the next customer's builder would
+    // start a SECOND server draft. Lift the (live) id to the parent once the
+    // flush settles; the engine outlives the unmount via this closure.
+    void flushDraftQuietly().then(() => onDraftBound?.(getDraftId()));
+    onChangeCustomer();
+  };
+
+  // Resume hydration in flight (money-critical, see the effect above) — the
+  // whole builder stays behind a spinner rather than rendering anything
+  // unvalidated. All hooks above have already run, so this early return is
+  // safe. The NavBar rides along so Back is always reachable: this screen sits
+  // outside the tab stack, and a failed hydrate leaves `hydrating` true, so
+  // without it a dismissed retry dialog would strand the operator here.
+  if (hydrating) {
+    return (
+      <>
+        <NavBar
+          inlineTitle="New order"
+          leading={
+            <NavBackButton
+              label={backLabel ?? customerName ?? "Back"}
+              onPress={handleBackWithFlush}
+            />
+          }
+        />
+        <View style={styles.hydrateState}>
+          {hydrateFailed ? (
+            <>
+              <Text style={styles.hydrateFailTitle}>Couldn&apos;t restore your order</Text>
+              <Text style={styles.hydrateFailText}>
+                Some items couldn&apos;t be loaded. Check your connection and try again.
+              </Text>
+              <Pressable
+                style={styles.hydrateRetryBtn}
+                onPress={retryHydrate}
+                accessibilityRole="button"
+                accessibilityLabel="Retry restoring your parked order"
+              >
+                <Ionicons name="refresh" size={16} color={ios.brand} />
+                <Text style={styles.hydrateRetryText}>Retry</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator color={ios.brand} />
+              <Text style={styles.emptyText}>Restoring your parked order…</Text>
+            </>
+          )}
+        </View>
+      </>
+    );
+  }
+
   return (
     <>
       {/* One save trigger only — the footer Confirm. */}
       <NavBar
         inlineTitle="New order"
-        leading={<NavBackButton label={backLabel ?? customerName ?? "Back"} onPress={onBack} />}
+        leading={
+          <NavBackButton
+            label={backLabel ?? customerName ?? "Back"}
+            onPress={handleBackWithFlush}
+          />
+        }
       />
 
       {/* Customer chip — tappable to re-pick when not locked */}
       <View style={styles.customerChipWrap}>
         <Pressable
           style={styles.customerChip}
-          onPress={customerLocked ? undefined : onChangeCustomer}
+          onPress={customerLocked ? undefined : handleChangeCustomerWithFlush}
           disabled={customerLocked}
         >
           <Ionicons name="person-outline" size={14} color={ios.brand} />
@@ -1524,7 +2108,7 @@ function ProductPickView({
             accessibilityState={{ disabled: !canSave }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
-              {createOrder.isPending ? "Saving…" : "Confirm"}
+              {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
             </Text>
             <Ionicons name="arrow-forward" size={14} color="#fff" />
           </Pressable>
@@ -1535,7 +2119,7 @@ function ProductPickView({
           ) : (
             <View style={{ flex: 1 }} />
           )}
-          {canSaveDraft || createOrder.isPending ? (
+          {canSaveDraft || createOrder.isPending || submitting ? (
             <Pressable onPress={() => onSave(true)} disabled={!canSaveDraft} hitSlop={6}>
               <Text style={[styles.footerDraftText, !canSaveDraft && { opacity: 0.4 }]}>
                 Save as draft
@@ -1593,7 +2177,7 @@ function ProductPickView({
         onResolved={() => {
           const mc = licenseRetryRef.current;
           setLicenseBlock(null);
-          submitOrder(mc);
+          void submitOrder(mc);
         }}
         onRemoveLines={(categoryIds) => {
           setItems((prev) => {
@@ -2819,6 +3403,33 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bgElev },
   center: { padding: 40, alignItems: "center" },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
+  // Resume-hydration screen: spinner, or the failed state's inline retry.
+  hydrateState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingHorizontal: 32,
+  },
+  hydrateFailTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: ios.label },
+  hydrateFailText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
+  hydrateRetryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 4,
+    minHeight: 44,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    backgroundColor: ios.brandWash,
+  },
+  hydrateRetryText: { color: ios.brand, fontSize: 15, fontFamily: "Inter_600SemiBold" },
   list: {
     marginHorizontal: 16,
     backgroundColor: ios.bgElev,
