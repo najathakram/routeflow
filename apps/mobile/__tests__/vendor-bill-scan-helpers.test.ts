@@ -301,20 +301,23 @@ describe("priorScanPrompt", () => {
 });
 
 describe("mappingsFromScan", () => {
-  it("returns one mapping per matched line, keyed by the scanned supplier name", () => {
-    expect(mappingsFromScan(scanResult())).toEqual([
+  // Only OPERATOR-confirmed links are taught back (`linkScanItem` sets
+  // `operatorConfirmed`) — a line the AI auto-matched on its own is never
+  // learned, or the matcher would train on its own guesses.
+  it("returns one mapping per operator-confirmed line, keyed by the scanned supplier name", () => {
+    const confirmed = linkScanItem(scanResult(), 0, "prod-1", "Cola 24 Pack");
+    expect(mappingsFromScan(confirmed)).toEqual([
       { supplierName: "Metro Wholesale", rawDescription: "Cola 24pk", productId: "prod-1" },
     ]);
   });
 
   it("returns nothing without a supplier name (server mapping key)", () => {
-    expect(mappingsFromScan(scanResult({ supplier: "  " }))).toEqual([]);
+    const confirmed = linkScanItem(scanResult({ supplier: "  " }), 0, "prod-1", "Cola 24 Pack");
+    expect(mappingsFromScan(confirmed)).toEqual([]);
   });
 
-  it("skips unmatched lines", () => {
-    const result = scanResult();
-    result.items[0].matchedProductId = null;
-    expect(mappingsFromScan(result)).toEqual([]);
+  it("skips lines the AI matched but the operator never confirmed", () => {
+    expect(mappingsFromScan(scanResult())).toEqual([]);
   });
 });
 

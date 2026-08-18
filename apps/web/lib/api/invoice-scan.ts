@@ -24,10 +24,22 @@ export interface ScannedItem {
   packSize?: number | null;
   /** Ranked alternates when the match was too weak to auto-assign. */
   candidates?: ScanCandidate[];
+  /**
+   * Set when the match came from a remembered correction — the tenant-scoped
+   * `ProductAlias` tier ("alias") or the legacy `ProductMapping` tier
+   * ("memory") — rather than fresh fuzzy matching. Absent for a fuzzy match.
+   */
+  matchSource?: "alias" | "memory";
 }
 
 export interface ScanResult {
   supplier: string | null;
+  /**
+   * Server-resolved supplier id for this invoice (via the shared
+   * `supplier-match` matcher, tenant-scoped) — preferred over re-matching
+   * `supplier` by name on the client.
+   */
+  supplierId?: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   expenseDescription: string | null;

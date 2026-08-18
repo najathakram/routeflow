@@ -11,6 +11,7 @@ import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
+import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -131,6 +132,10 @@ describe("VendorBillsService", () => {
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService (not a jest mock) wired against the same
+        // prisma mock — so the alias tests below exercise its actual
+        // resolve/resolveMany/learn/unlearn logic, not a stub.
+        ProductAliasService,
       ],
     }).compile();
     inventory.recomputeProductInTx.mockReset();
@@ -1071,6 +1076,91 @@ describe("VendorBillsService", () => {
         service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
       ).rejects.toThrow("db is down");
     });
+
+    // ── alias dual-write (2026-08-18: scanner match memory) ──────────────────
+    describe("alias dual-write", () => {
+      it("does not learn a ProductAlias when the supplier name does not resolve", async () => {
+        prisma.supplier.findMany.mockResolvedValue([]); // no active supplier named "Acme Foods"
+        prisma.productMapping.findFirst.mockResolvedValue(null);
+        prisma.productMapping.create.mockResolvedValue({
+          id: "map-2",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9");
+
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalled();
+        expect(prisma.productAlias.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("learns a supplier-scoped ProductAlias once the supplier name resolves", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productMapping.findFirst.mockResolvedValue(null);
+        prisma.productMapping.create.mockResolvedValue({
+          id: "map-2",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9");
+
+        expect(prisma.productAlias.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              tenantId_supplierId_rawText: {
+                tenantId: "test-tenant",
+                supplierId: "sup-1",
+                rawText: "SUGAR 10LB",
+              },
+            },
+            create: expect.objectContaining({
+              supplierId: "sup-1",
+              rawText: "SUGAR 10LB",
+              productId: "prod-9",
+            }),
+          }),
+        );
+        // Never the "" any-supplier scope from this flow.
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              tenantId_supplierId_rawText: expect.objectContaining({ supplierId: "" }),
+            }),
+          }),
+        );
+      });
+
+      it("unlearns BOTH the supplier-scoped and any-supplier alias rows when a match is cleared", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productMapping.findFirst.mockResolvedValue({
+          id: "map-1",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+        prisma.productMapping.update.mockResolvedValue({
+          id: "map-1",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: null,
+        });
+        prisma.productAlias.deleteMany.mockResolvedValue({ count: 2 });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", null);
+
+        expect(prisma.productAlias.deleteMany).toHaveBeenCalledWith({
+          where: {
+            tenantId: "test-tenant",
+            rawText: "SUGAR 10LB",
+            supplierId: { in: ["sup-1", ""] },
+          },
+        });
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // ─── scanInvoice ────────────────────────────────────────────────────────────
@@ -1089,6 +1179,7 @@ describe("VendorBillsService", () => {
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },
           { provide: InventoryService, useValue: inventory },
+          ProductAliasService,
         ],
       }).compile();
       service = module.get<VendorBillsService>(VendorBillsService);
@@ -1096,6 +1187,8 @@ describe("VendorBillsService", () => {
       mockSharpToBuffer.mockReset();
       prisma.product.findMany.mockResolvedValue([]);
       prisma.productMapping.findMany.mockResolvedValue([]);
+      prisma.productAlias.findMany.mockResolvedValue([]);
+      prisma.supplier.findMany.mockResolvedValue([]);
     });
 
     it("maps an Anthropic auth failure to a typed AI_KEY_INVALID 400 (not an opaque 500)", async () => {
@@ -1253,6 +1346,116 @@ describe("VendorBillsService", () => {
         confidence: "high",
       });
       expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    // ── matching tiers + supplier resolution (2026-08-18: scanner memory) ────
+    describe("scanner match memory", () => {
+      it("a learned ProductAlias beats a competing legacy mapping AND a competing fuzzy catalog match", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productAlias.findMany.mockResolvedValue([
+          {
+            rawText: "WIDGET",
+            supplierId: "sup-1",
+            productId: "prod-alias",
+            expenseCategoryId: null,
+          },
+        ]);
+        prisma.productMapping.findMany.mockResolvedValue([
+          {
+            supplierName: "Acme Foods",
+            rawDescription: "widget",
+            productId: "prod-mapping",
+            product: {
+              id: "prod-mapping",
+              name: "Mapping Widget",
+              sku: null,
+              barcode: null,
+              parentProductId: null,
+              parent: null,
+            },
+          },
+        ]);
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: "prod-alias",
+            name: "Alias Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+          // Would win an EXACT-name fuzzy match if the alias/mapping tiers didn't run first.
+          {
+            id: "prod-fuzzy",
+            name: "Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+        ]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Acme Foods",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.items[0]).toMatchObject({
+          matchedProductId: "prod-alias",
+          matchedProductName: "Alias Widget",
+          confidence: "high",
+          matchSource: "alias",
+        });
+        expect(result.supplierId).toBe("sup-1");
+      });
+
+      it("resolves supplierId server-side and persists it on InvoiceScan", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Acme Foods",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.supplierId).toBe("sup-1");
+        expect(invoiceScan.create.mock.calls[0][0].data.supplierId).toBe("sup-1");
+      });
+
+      it("leaves supplierId null when the extracted supplier name doesn't resolve", async () => {
+        prisma.supplier.findMany.mockResolvedValue([]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Some Unknown Supplier",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.supplierId).toBeNull();
+        expect(invoiceScan.create.mock.calls[0][0].data.supplierId).toBeNull();
+      });
     });
 
     it("carries the per-line sku through from the OCR JSON to the response", async () => {
@@ -1418,6 +1621,66 @@ describe("VendorBillsService", () => {
           supplierInvoiceNumber: "INV08841",
           total: 108.26,
         });
+      });
+
+      it("re-matches a cache hit — a just-taught alias applies on a rescan of the same file", async () => {
+        // The stored payload's line was unmatched at scan time (no alias existed yet).
+        invoiceScan.findFirst.mockResolvedValue({
+          id: "scan-earlier",
+          createdAt: new Date("2026-08-01T10:00:00Z"),
+          status: "SCANNED",
+          vendorBillId: null,
+          supplierInvoiceNumber: null,
+          total: 5,
+          extractedPayload: {
+            supplier: "Acme Foods",
+            items: [
+              {
+                extractedName: "Widget",
+                qty: 1,
+                unitCost: 5,
+                matchedProductId: null,
+                matchedProductName: null,
+                confidence: "none",
+              },
+            ],
+          },
+          vendorBill: null,
+        });
+        // The operator has since taught an alias — the rescan must pick it up.
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productAlias.findMany.mockResolvedValue([
+          {
+            rawText: "WIDGET",
+            supplierId: "sup-1",
+            productId: "prod-taught",
+            expenseCategoryId: null,
+          },
+        ]);
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: "prod-taught",
+            name: "Taught Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+        ]);
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(mockAnthropicCreate).not.toHaveBeenCalled();
+        // The stored extractedPayload must never be rewritten by a rescan.
+        expect(invoiceScan.create).not.toHaveBeenCalled();
+        expect(invoiceScan.update).not.toHaveBeenCalled();
+        expect(result.items[0]).toMatchObject({
+          matchedProductId: "prod-taught",
+          matchedProductName: "Taught Widget",
+          confidence: "high",
+          matchSource: "alias",
+        });
+        expect(result.supplierId).toBe("sup-1");
       });
 
       it("looks the file up by hash, skipping scans the operator discarded", async () => {

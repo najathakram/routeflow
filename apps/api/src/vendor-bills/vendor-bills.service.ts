@@ -24,6 +24,8 @@ import {
 } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { ProductAliasService, type AliasTarget } from "../import/product-alias.service";
+import { matchSupplier } from "../import/supplier-match";
 import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
@@ -118,6 +120,7 @@ export class VendorBillsService {
     private readonly duplicateMatch: DuplicateMatchService,
     private readonly storage: StorageService,
     private readonly inventory: InventoryService,
+    private readonly productAlias: ProductAliasService,
   ) {}
 
   /**
@@ -1076,24 +1079,46 @@ export class VendorBillsService {
     const existing = await this.prisma.forTenant().productMapping.findFirst({
       where: { supplierName, rawDescription },
     });
+    let mapping: any;
     if (existing) {
-      return this.prisma.forTenant().productMapping.update({
+      mapping = await this.prisma.forTenant().productMapping.update({
         where: { id: existing.id },
         data: { productId },
       });
-    }
-    const data: SaveProductMappingDto = { supplierName, rawDescription, productId };
-    try {
-      return await this.prisma.forTenant().productMapping.create({ data });
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        this.logger.debug(
-          `saveProductMapping: P2002 on create for (${supplierName}, ${rawDescription}) — another tenant already holds this global mapping key`,
-        );
-        return null;
+    } else {
+      const data: SaveProductMappingDto = { supplierName, rawDescription, productId };
+      try {
+        mapping = await this.prisma.forTenant().productMapping.create({ data });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          this.logger.debug(
+            `saveProductMapping: P2002 on create for (${supplierName}, ${rawDescription}) — another tenant already holds this global mapping key`,
+          );
+          mapping = null;
+        } else {
+          throw e;
+        }
       }
-      throw e;
     }
+
+    // Dual-write into ProductAlias — tenant-scoped and normalized, the
+    // eventual replacement for the legacy global-keyed table above — but
+    // ONLY when the supplier name actually resolves to a real Supplier. The
+    // scan flow must NEVER learn under the "" any-supplier scope: that scope
+    // is reserved for batch-import's own any-supplier aliases, and writing
+    // there from an unresolved-supplier correction would let it wrongly
+    // answer for every other supplier too. Clearing a match (productId null)
+    // unlearns instead of learning null.
+    const supplierId = await this.resolveSupplierId(supplierName);
+    if (supplierId) {
+      if (productId) {
+        await this.productAlias.learn(supplierId, rawDescription, { productId });
+      } else {
+        await this.productAlias.unlearn(supplierId, rawDescription);
+      }
+    }
+
+    return mapping;
   }
 
   async getProductMappings(supplierName: string) {
@@ -1101,6 +1126,123 @@ export class VendorBillsService {
       where: { supplierName },
       include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
     });
+  }
+
+  /** Resolve a supplier's raw scanned name to a real Supplier via the shared scorer. */
+  private async resolveSupplierId(supplierRaw: string | null | undefined): Promise<string | null> {
+    if (!supplierRaw) return null;
+    const suppliers = await this.prisma.forTenant().supplier.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+    return matchSupplier(supplierRaw, suppliers)?.id ?? null;
+  }
+
+  /**
+   * Phase-2 server-side matching: resolve the supplier's raw name to a real
+   * Supplier, then match every line against three tiers in priority order —
+   * a learned `ProductAlias` (this supplier, falling back to the ""
+   * any-supplier scope), the legacy `ProductMapping` table, then the fuzzy
+   * composed-name matcher. Runs on BOTH the fresh-scan path and a re-scanned
+   * cache hit (see `rematchPriorScan`) so a just-taught alias applies on the
+   * very next scan of the same document.
+   */
+  private async matchItems(
+    supplierRaw: string | null | undefined,
+    items: any[],
+  ): Promise<{ supplierId: string | null; items: any[] }> {
+    const supplierId = await this.resolveSupplierId(supplierRaw);
+
+    const [products, allMappings, aliasMap] = await Promise.all([
+      this.prisma.forTenant().product.findMany({
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          barcode: true,
+          unitSku: true,
+          parentProductId: true,
+          parent: { select: { name: true } },
+        },
+      }),
+      this.prisma.forTenant().productMapping.findMany({
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              barcode: true,
+              parentProductId: true,
+              parent: { select: { name: true } },
+            },
+          },
+        },
+      }),
+      this.productAlias.resolveMany(
+        supplierId,
+        items.map((item) => item.extractedName ?? ""),
+      ),
+    ]);
+
+    // Build mapping index keyed by supplierName → rawDescription (lowercase)
+    const mappingIndex: Record<
+      string,
+      Record<string, { productId: string | null; productName: string | null }>
+    > = {};
+    for (const m of allMappings) {
+      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
+      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
+        productId: m.productId,
+        productName: m.product ? composedProductName(m.product) : null,
+      };
+    }
+
+    const supplierName = supplierRaw ?? "";
+    const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
+
+    // Rarity-weighted token weights over the composed catalog names — computed
+    // once for the whole scan, reused per line.
+    const weights = buildTokenWeights(products);
+
+    const matched = items.map((item) => {
+      const raw: string = item.extractedName ?? "";
+      const rawLower = raw.toLowerCase();
+
+      // 0. Learned alias — tenant-scoped and normalized, takes priority over
+      //    the legacy mapping tier below. Supplier-specific beats the ""
+      //    any-supplier fallback (resolveMany already applied that order).
+      const aliasTarget: AliasTarget | undefined = aliasMap.get(raw);
+      if (aliasTarget?.productId) {
+        const product = products.find((p) => p.id === aliasTarget.productId);
+        return {
+          ...item,
+          matchedProductId: aliasTarget.productId,
+          matchedProductName: product ? composedProductName(product) : null,
+          confidence: "high",
+          matchSource: "alias",
+        };
+      }
+
+      // 1. Exact mapping hit (learned from previous corrections) — learned
+      //    mappings stay authoritative, no candidates.
+      if (supplierMappings[rawLower]?.productId) {
+        const m = supplierMappings[rawLower];
+        return {
+          ...item,
+          matchedProductId: m.productId,
+          matchedProductName: m.productName,
+          confidence: "high",
+          matchSource: "memory",
+        };
+      }
+
+      // 2-3. Composed-name / rarity-weighted fuzzy matching against the catalog.
+      const match = matchLine(raw, item.sku ?? null, products, weights);
+      return { ...item, ...match };
+    });
+
+    return { supplierId, items: matched };
   }
 
   /**
@@ -1118,7 +1260,7 @@ export class VendorBillsService {
   async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
-    if (prior) return prior;
+    if (prior) return this.rematchPriorScan(prior);
 
     // Look up API key: DB-stored key takes precedence over env var
     const storedKey = await this.systemConfig.get("anthropic.apiKey");
@@ -1303,77 +1445,13 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       parsed.notes = priorNotes ? `${priorNotes} ${skipNote}` : skipNote;
     }
 
-    // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
-    const [products, allMappings] = await Promise.all([
-      this.prisma.forTenant().product.findMany({
-        select: {
-          id: true,
-          name: true,
-          sku: true,
-          barcode: true,
-          unitSku: true,
-          parentProductId: true,
-          parent: { select: { name: true } },
-        },
-      }),
-      this.prisma.forTenant().productMapping.findMany({
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              sku: true,
-              barcode: true,
-              parentProductId: true,
-              parent: { select: { name: true } },
-            },
-          },
-        },
-      }),
-    ]);
+    // ── Phase 2: Server-side supplier + product matching (free, instant) ──
+    const { supplierId, items } = await this.matchItems(
+      typeof parsed.supplier === "string" ? parsed.supplier : null,
+      (parsed.items as any[]) ?? [],
+    );
 
-    // Build mapping index keyed by supplierName → rawDescription (lowercase)
-    const mappingIndex: Record<
-      string,
-      Record<string, { productId: string | null; productName: string | null }>
-    > = {};
-    for (const m of allMappings) {
-      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
-      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
-        productId: m.productId,
-        productName: m.product ? composedProductName(m.product) : null,
-      };
-    }
-
-    const supplierName = (parsed.supplier as string) ?? "";
-    const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
-
-    // Rarity-weighted token weights over the composed catalog names — computed
-    // once for the whole scan, reused per line.
-    const weights = buildTokenWeights(products);
-
-    const items = ((parsed.items as any[]) ?? []).map((item: any) => {
-      const raw: string = item.extractedName ?? "";
-      const rawLower = raw.toLowerCase();
-
-      // 1. Exact mapping hit (learned from previous corrections) — learned
-      //    mappings stay first and authoritative, no candidates.
-      if (supplierMappings[rawLower]?.productId) {
-        const m = supplierMappings[rawLower];
-        return {
-          ...item,
-          matchedProductId: m.productId,
-          matchedProductName: m.productName,
-          confidence: "high",
-        };
-      }
-
-      // 2-3. Composed-name / rarity-weighted fuzzy matching against the catalog.
-      const match = matchLine(raw, item.sku ?? null, products, weights);
-      return { ...item, ...match };
-    });
-
-    const result = { ...parsed, items };
+    const result = { ...parsed, items, supplierId };
     const scan = await this.persistScan({
       files,
       fileHash,
@@ -1382,6 +1460,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       result,
       scanDurationMs,
       scannedById,
+      supplierId,
     });
     return { ...result, scanId: scan?.id ?? null };
   }
@@ -1433,6 +1512,25 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     >;
   }
 
+  /**
+   * A cached scan's payload was matched (or not) against whatever aliases and
+   * mappings existed at scan time. A rescan is exactly the moment an operator
+   * expects a just-taught correction to apply, so strip the stale match
+   * fields and re-run `matchItems` in memory before returning — the stored
+   * `extractedPayload` (fingerprints, scan history) is never rewritten.
+   */
+  private async rematchPriorScan(prior: Record<string, any>): Promise<Record<string, any>> {
+    const rawItems: any[] = Array.isArray(prior.items) ? prior.items : [];
+    const strippedItems = rawItems.map((item: any) => {
+      const { matchedProductId, matchedProductName, confidence, candidates, matchSource, ...rest } =
+        item ?? {};
+      return rest;
+    });
+    const supplierRaw = typeof prior.supplier === "string" ? prior.supplier : null;
+    const { supplierId, items } = await this.matchItems(supplierRaw, strippedItems);
+    return { ...prior, items, supplierId };
+  }
+
   /** Record the scan and file it under all three duplicate keys. Never throws. */
   private async persistScan(args: {
     files: ScanInvoiceFile[];
@@ -1442,6 +1540,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     result: Record<string, unknown>;
     scanDurationMs: number;
     scannedById?: string;
+    supplierId?: string | null;
   }): Promise<{ id: string } | null> {
     const { files, fileHash, parsed, items, result } = args;
     try {
@@ -1459,6 +1558,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           model: SCAN_MODEL,
           scanDurationMs: args.scanDurationMs,
           supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
+          supplierId: args.supplierId ?? null,
           supplierInvoiceNumber: invoiceNumber || null,
           invoiceDate: this.parseDate(parsed.invoiceDate as string | null),
           subtotal: this.moneyOrNull(parsed.subtotal),

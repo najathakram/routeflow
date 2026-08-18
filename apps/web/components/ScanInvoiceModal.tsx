@@ -27,6 +27,12 @@ import {
   type ScanResult,
   type ScanCandidate,
 } from "@/lib/api/invoice-scan";
+import {
+  toBillLine,
+  type ScanLineUnit,
+  type PieceSnapshot,
+  type BillLineDenomination,
+} from "@/lib/scan-line-units";
 import { useSuppliers } from "@/lib/api/inventory";
 import {
   useCheckVendorBillDuplicate,
@@ -88,6 +94,36 @@ interface ReviewItem {
   /** Units per box/case, if the OCR read one — prefills the create-product
    *  form's units-per-box field when the operator adds this line as a new product. */
   packSize?: number | null;
+  /**
+   * Set when the scan's match came from a remembered correction (the
+   * `ProductAlias` or legacy `ProductMapping` tier) rather than fresh fuzzy
+   * matching. Cleared on any manual product change — once the operator
+   * picks, the badge should no longer claim it was "remembered".
+   */
+  matchSource?: ScannedItem["matchSource"] | null;
+  /**
+   * Canonical pieces-terms truth for this line: `{qtyPieces, costPerPiece}`.
+   * Established once from the scan extraction (or the current on-screen
+   * values for a manually-added row) and kept in sync with direct
+   * qty/unitCost/packSize edits. The Boxes/Pieces toggle replays THIS
+   * through `toBillLine` instead of re-deriving from whatever's currently
+   * displayed, so switching back and forth never drifts a cent from the
+   * original numbers — a Boxes line posted without an explicit `packSize`
+   * is the #335/#336 stock/AVCO corruption class (see A3).
+   */
+  preConvert?: PieceSnapshot;
+  /**
+   * UI-only pieces-per-box draft. Lets the operator dial in — or a linked
+   * product arm from its `unitsPerBox` — a case size WITHOUT silently
+   * changing the line's actual unit; only applied to `packSize` once the
+   * operator explicitly switches this line to Boxes.
+   */
+  ppbDraft?: number | null;
+  /** The linked product's own units-per-box, if any — flags a mismatch
+   *  against the on-screen case size (the on-screen value always wins). */
+  catalogUnitsPerBox?: number | null;
+  /** Last unit-conversion's warning, if the requested unit couldn't be honored. */
+  unitWarning?: BillLineDenomination["warning"];
   /** Ranked "Did you mean…" suggestions for a line that didn't confidently match. */
   candidates?: ScanCandidate[];
   qty: string;
@@ -250,11 +286,45 @@ function matchSupplier(
   return { id: "", ambiguous: contains.length > 1 };
 }
 
+/**
+ * A row's pieces-terms canonical truth, derived from its current on-screen
+ * qty/unitCost/packSize (unit is DERIVED from `packSize > 1`, never stored
+ * separately). Recomputed after every DIRECT qty/unitCost/packSize edit so
+ * the Boxes/Pieces toggle always replays what's actually on screen — never a
+ * stale OCR extraction. The toggle itself must NOT call this: it replays the
+ * row's existing `preConvert` snapshot instead, so repeated toggling never
+ * drifts (see `toBillLine` in lib/scan-line-units.ts).
+ */
+function canonicalizeLine(qty: string, unitCost: string, packSize: number | null): PieceSnapshot {
+  const q = parseFloat(qty) || 0;
+  const c = parseFloat(unitCost) || 0;
+  const pack = packSize && packSize > 1 ? packSize : null;
+  return pack ? { qtyPieces: q * pack, costPerPiece: c / pack } : { qtyPieces: q, costPerPiece: c };
+}
+
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // server-side Multer per-file cap
 const MAX_PAGES_PER_INVOICE = 10; // server-side FilesInterceptor cap per scan call
 const MAX_INVOICES_PER_BATCH = 10; // bounds Claude spend per batch
 
-function ConfidenceBadge({ confidence }: { confidence: ScannedItem["confidence"] }) {
+function ConfidenceBadge({
+  confidence,
+  matchSource,
+}: {
+  confidence: ScannedItem["confidence"];
+  /** Present when the match came from a taught correction — outranks the
+   *  fuzzy-confidence label below, since it isn't a guess. */
+  matchSource?: ScannedItem["matchSource"] | null;
+}) {
+  if (matchSource === "alias" || matchSource === "memory") {
+    return (
+      <span
+        className="inline-flex items-center whitespace-nowrap rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700"
+        title="Remembered from a previous correction on this supplier. Clearing this match makes the scanner forget it — the next scan will guess again."
+      >
+        Remembered match
+      </span>
+    );
+  }
   const styles: Record<ScannedItem["confidence"], string> = {
     high: "bg-green-100 text-green-700",
     medium: "bg-yellow-100 text-yellow-700",
@@ -543,21 +613,36 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
 
   /** Seed an invoice's review state from its scan result. */
   const applyScan = (id: string, result: ArchivedScanResult) => {
-    const items: ReviewItem[] = (result.items ?? []).map((item) => ({
-      extractedName: item.extractedName,
-      productId: item.matchedProductId ?? "",
-      description: item.matchedProductName ?? item.extractedName,
-      matchedProductName: item.matchedProductName ?? null,
-      sku: item.sku ?? null,
-      packSize: item.packSize ?? null,
-      candidates: item.candidates,
-      qty: String(item.qty ?? 1),
-      unitCost: String(item.unitCost ?? ""),
-      lineTotal: item.lineTotal ?? null,
-      extractedQty: String(item.qty ?? 1),
-      extractedUnitCost: String(item.unitCost ?? ""),
-      confidence: item.confidence,
-    }));
+    const items: ReviewItem[] = (result.items ?? []).map((item) => {
+      const qty = item.qty ?? 1;
+      const unitCost = item.unitCost ?? 0;
+      // unit is DERIVED from packSize > 1 — normalize a stray packSize of 1
+      // (or less) to null so it never falsely reads as a boxed line.
+      const packSize = item.packSize && item.packSize > 1 ? item.packSize : null;
+      return {
+        extractedName: item.extractedName,
+        productId: item.matchedProductId ?? "",
+        description: item.matchedProductName ?? item.extractedName,
+        matchedProductName: item.matchedProductName ?? null,
+        matchSource: item.matchSource ?? null,
+        sku: item.sku ?? null,
+        packSize,
+        // Arms the Boxes toggle with whatever case size the OCR read, so a
+        // scanned case line can round-trip Pieces → Boxes without the
+        // operator having to retype it.
+        ppbDraft: packSize,
+        // Canonicalize ONCE at scan-parse time — the toggle replays this
+        // snapshot forever after, never re-deriving it from the display.
+        preConvert: canonicalizeLine(String(qty), String(unitCost), packSize),
+        candidates: item.candidates,
+        qty: String(qty),
+        unitCost: String(unitCost),
+        lineTotal: item.lineTotal ?? null,
+        extractedQty: String(qty),
+        extractedUnitCost: String(unitCost),
+        confidence: item.confidence,
+      };
+    });
     const patch: Partial<InvoiceGroup> = {
       status: "scanned",
       error: null,
@@ -565,7 +650,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       reviewItems: items.length > 0 ? items : [emptyReviewItem()],
       invoiceNumber: result.invoiceNumber ?? "",
     };
-    if (result.supplier) {
+    // The server resolves the supplier tenant-scoped (supplier-match.ts) —
+    // prefer it over re-matching the free-text `supplier` name on the client.
+    if (result.supplierId) {
+      patch.supplierId = result.supplierId;
+      patch.supplierMatchAmbiguous = false;
+    } else if (result.supplier) {
       const match = matchSupplier(result.supplier, suppliers);
       patch.supplierId = match.id;
       patch.supplierMatchAmbiguous = match.ambiguous;
@@ -771,6 +861,85 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     ]);
   };
 
+  /** unit is DERIVED from packSize > 1 — never stored as its own field. */
+  const unitOfItem = (item: ReviewItem): ScanLineUnit =>
+    (item.packSize ?? 0) > 1 ? "boxes" : "pieces";
+
+  /**
+   * Apply a DIRECT edit to qty/unitCost/packSize and re-canonicalize —
+   * keeps `preConvert` in sync with whatever's actually on screen so the
+   * NEXT toggle replays the edit rather than a stale extraction. Clears any
+   * conversion warning from a now-superseded state.
+   */
+  const updateLineValue = (
+    i: number,
+    patch: Partial<Pick<ReviewItem, "qty" | "unitCost" | "packSize">>,
+  ) => {
+    setReviewItems((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== i) return row;
+        const next = { ...row, ...patch };
+        return {
+          ...next,
+          preConvert: canonicalizeLine(next.qty, next.unitCost, next.packSize ?? null),
+          unitWarning: undefined,
+        };
+      }),
+    );
+  };
+
+  /**
+   * Boxes/Pieces toggle: replays the row's canonical `preConvert` snapshot
+   * through `toBillLine` — never re-derives it from the currently-displayed
+   * qty/unitCost — so switching units repeatedly is lossless (A3).
+   */
+  const setLineUnit = (i: number, unit: ScanLineUnit) => {
+    const item = reviewItems[i];
+    const snap =
+      item.preConvert ?? canonicalizeLine(item.qty, item.unitCost, item.packSize ?? null);
+    const ppb = item.ppbDraft ?? item.packSize ?? undefined;
+    const result = toBillLine(snap, unit, ppb, item.catalogUnitsPerBox ?? undefined);
+    updateItem(i, {
+      preConvert: snap,
+      qty: String(result.qty),
+      unitCost: String(result.unitCost),
+      packSize: result.packSize,
+      unitWarning: result.warning,
+    });
+  };
+
+  /**
+   * Edit the pieces-per-box draft (the case-size input beside the toggle).
+   * While already in Boxes mode this live-recomputes the case qty/cost from
+   * the canonical snapshot at the new size; in Pieces mode it just arms the
+   * draft for the next switch to Boxes.
+   */
+  const setLinePpb = (i: number, ppb: number | null) => {
+    const item = reviewItems[i];
+    if (unitOfItem(item) !== "boxes") {
+      // Just arming the draft — no conversion attempted yet, so any warning
+      // from a PRIOR attempt no longer describes this (unattempted) value.
+      updateItem(i, { ppbDraft: ppb, unitWarning: undefined });
+      return;
+    }
+    const snap =
+      item.preConvert ?? canonicalizeLine(item.qty, item.unitCost, item.packSize ?? null);
+    const result = toBillLine(
+      snap,
+      "boxes",
+      ppb ?? undefined,
+      item.catalogUnitsPerBox ?? undefined,
+    );
+    updateItem(i, {
+      ppbDraft: ppb,
+      preConvert: snap,
+      qty: String(result.qty),
+      unitCost: String(result.unitCost),
+      packSize: result.packSize,
+      unitWarning: result.warning,
+    });
+  };
+
   const handleProductSelect = (
     i: number,
     productId: string,
@@ -784,11 +953,15 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       id: string;
       name: string;
       sku?: string | null;
+      /** Arms `ppbDraft` for the Boxes toggle — never silently sets packSize. */
+      unitsPerBox?: number | null;
     },
   ) => {
     const item = reviewItems[i];
     const product = productId ? pickedProduct : undefined;
     if (product) {
+      const catalogUnitsPerBox =
+        product.unitsPerBox && product.unitsPerBox > 1 ? product.unitsPerBox : null;
       // Only update the product link + description.
       // Keep the invoice-extracted price — that is what the supplier is actually charging.
       // The product's averageCost is our historical average, not the current invoice price.
@@ -801,12 +974,21 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         // unitCost intentionally NOT overwritten — preserve the extracted invoice price
         // Changing the matched product invalidates any in-progress split.
         splits: undefined,
+        // A manual pick is no longer a "remembered" match.
+        matchSource: null,
+        catalogUnitsPerBox,
+        // Arm the Boxes draft from the catalog when the line doesn't already
+        // have one of its own — but NEVER touch `packSize` here: linking a
+        // product must not silently change the bill's actual unit.
+        ppbDraft: item.ppbDraft ?? item.packSize ?? catalogUnitsPerBox,
       });
     } else {
       updateItem(i, {
         productId: "",
         description: item.extractedName,
         splits: undefined,
+        matchSource: null,
+        catalogUnitsPerBox: null,
       });
     }
 
@@ -2035,6 +2217,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                   const originalQty = parseFloat(item.qty) || 0;
                                   const sumMatchesOriginal =
                                     originalQty === 0 || Math.abs(splitTotal - originalQty) < 0.001;
+                                  // unit is DERIVED from packSize > 1 — the Boxes/Pieces toggle
+                                  // reads/writes packSize via toBillLine, never a separate field.
+                                  const unit = unitOfItem(item);
                                   return (
                                     <React.Fragment key={i}>
                                       <tr className="group align-top transition-colors hover:bg-brand-50/30">
@@ -2116,7 +2301,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                           </div>
                                         </td>
                                         <td className="px-3 py-3">
-                                          <ConfidenceBadge confidence={item.confidence} />
+                                          <ConfidenceBadge
+                                            confidence={item.confidence}
+                                            matchSource={item.matchSource}
+                                          />
                                         </td>
                                         <td className="px-2 py-3">
                                           {isSplit ? (
@@ -2149,7 +2337,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                 inputMode="decimal"
                                                 value={item.qty}
                                                 onChange={(e) =>
-                                                  updateItem(i, { qty: e.target.value })
+                                                  updateLineValue(i, { qty: e.target.value })
                                                 }
                                                 // appearance:textfield + spin-button overrides hide the native
                                                 // up/down arrows that eat ~18px of input width in Chrome/Firefox
@@ -2161,30 +2349,86 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                                   AI: {item.extractedQty}
                                                 </div>
                                               )}
-                                              {/* Case size: qty × pcs lands as pieces + per-piece
-                                                  cost at receive. Clear it for per-unit lines. */}
-                                              <div
-                                                className="mt-1 flex items-center justify-end gap-1 text-[10px] text-navy/60"
-                                                title="Units per case — when set, the cost is the CASE cost and receiving converts to pieces"
-                                              >
-                                                <span>×</span>
-                                                <input
-                                                  type="number"
-                                                  min="0"
-                                                  step="1"
-                                                  inputMode="numeric"
-                                                  value={item.packSize ?? ""}
-                                                  placeholder="—"
-                                                  onChange={(e) => {
-                                                    const n = parseInt(e.target.value, 10);
-                                                    updateItem(i, {
-                                                      packSize:
-                                                        Number.isFinite(n) && n > 0 ? n : null,
-                                                    });
-                                                  }}
-                                                  className="w-10 rounded border border-surface-border px-1 py-0.5 text-right text-[10px] tabular-nums text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                                                />
-                                                <span>pcs</span>
+                                              {/* Boxes/Pieces toggle: unit is DERIVED from
+                                                  packSize > 1. Replays the row's canonical
+                                                  PieceSnapshot through toBillLine so switching
+                                                  is lossless — a Boxes line posted without an
+                                                  explicit packSize is the #335/#336 stock/AVCO
+                                                  corruption class (A3). */}
+                                              <div className="mt-1 flex flex-col items-end gap-1">
+                                                <div className="flex items-center gap-1.5">
+                                                  <div className="inline-flex overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setLineUnit(i, "pieces")}
+                                                      className={cn(
+                                                        "px-1.5 py-0.5 transition-colors",
+                                                        unit === "pieces"
+                                                          ? "bg-brand-500 text-white"
+                                                          : "text-navy/60 hover:bg-surface-raised",
+                                                      )}
+                                                    >
+                                                      Pieces
+                                                    </button>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setLineUnit(i, "boxes")}
+                                                      className={cn(
+                                                        "px-1.5 py-0.5 transition-colors",
+                                                        unit === "boxes"
+                                                          ? "bg-brand-500 text-white"
+                                                          : "text-navy/60 hover:bg-surface-raised",
+                                                      )}
+                                                    >
+                                                      Boxes
+                                                    </button>
+                                                  </div>
+                                                  <div
+                                                    className="flex items-center gap-1 text-[10px] text-navy/60"
+                                                    title="Units per case — Boxes prices the CASE; receiving converts to pieces"
+                                                  >
+                                                    <span>×</span>
+                                                    <input
+                                                      type="number"
+                                                      min="2"
+                                                      step="1"
+                                                      inputMode="numeric"
+                                                      value={item.ppbDraft ?? ""}
+                                                      placeholder="—"
+                                                      onChange={(e) => {
+                                                        const n = parseInt(e.target.value, 10);
+                                                        setLinePpb(
+                                                          i,
+                                                          Number.isFinite(n) && n > 0 ? n : null,
+                                                        );
+                                                      }}
+                                                      className="w-10 rounded border border-surface-border px-1 py-0.5 text-right text-[10px] tabular-nums text-navy placeholder:text-navy/30 focus:outline-none focus:ring-1 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                                    />
+                                                    <span>pcs</span>
+                                                  </div>
+                                                </div>
+                                                {unit === "boxes" && item.preConvert && (
+                                                  <span className="text-[10px] text-navy/50">
+                                                    from {item.preConvert.qtyPieces} pcs @{" "}
+                                                    {fmt(item.preConvert.costPerPiece)}
+                                                  </span>
+                                                )}
+                                                {item.unitWarning === "NOT_DIVISIBLE" && (
+                                                  <span
+                                                    className="text-[10px] font-medium text-amber-600"
+                                                    title="This piece count doesn't divide evenly into cases — kept as pieces so stock never drifts."
+                                                  >
+                                                    Not divisible — kept as pieces
+                                                  </span>
+                                                )}
+                                                {item.unitWarning === "PPB_MISMATCH" && (
+                                                  <span
+                                                    className="text-[10px] font-medium text-amber-600"
+                                                    title="The linked product's catalog case size differs from the case size on screen — the on-screen value is used."
+                                                  >
+                                                    Case size differs from catalog
+                                                  </span>
+                                                )}
                                               </div>
                                               {canSplit && (
                                                 <button
@@ -2229,7 +2473,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                                               inputMode="decimal"
                                               value={item.unitCost}
                                               onChange={(e) =>
-                                                updateItem(i, { unitCost: e.target.value })
+                                                updateLineValue(i, { unitCost: e.target.value })
                                               }
                                               className="w-full rounded-lg border border-surface-border py-1.5 pl-5 pr-2 text-right text-sm tabular-nums text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 [appearance:textfield] [&::-webkit-inner-spin-button]:m-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:m-0 [&::-webkit-outer-spin-button]:appearance-none"
                                             />
@@ -2504,6 +2748,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               productId: product.id,
               description: product.name,
               splits: undefined,
+              matchSource: null,
+              catalogUnitsPerBox:
+                product.unitsPerBox && product.unitsPerBox > 1 ? product.unitsPerBox : null,
             });
             // Teach the matcher this supplier's wording for next time.
             const detectedSupplier = scanResult?.supplier;

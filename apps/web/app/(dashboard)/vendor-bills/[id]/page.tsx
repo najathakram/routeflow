@@ -478,6 +478,46 @@ const emptyRow = (): EditLineItemRow => ({
   packSize: "",
 });
 
+/** What a picked catalog product contributes to the line's cost fields. */
+interface PickableCostProduct {
+  id: string;
+  name: string;
+  averageCost?: string | number | null;
+  standardCost?: string | number | null;
+  unitsPerBox?: number | null;
+}
+
+/**
+ * Prefill for a linked line — COST-side truth, never the selling price.
+ * `averageCost`/`standardCost` are per PIECE; a boxed product's invoice line
+ * is priced per CASE, so a boxed product prefills the CASE cost
+ * (avg × unitsPerBox) and the case size together — receive() converts back
+ * to pieces at unitCost ÷ packSize (`lineInventoryDelta` in
+ * vendor-bills.service.ts). Mirrors mobile's `linePrefillFor`
+ * (apps/mobile/app/(operator)/vendor-bills/new.tsx). The old prefill here put
+ * a PIECE cost straight into the CASE cost field for any boxed product —
+ * over-costing every linked case line by a factor of `unitsPerBox`.
+ *
+ * Unlike mobile (a NEW bill, rows start blank), this is the EDIT screen: rows
+ * are seeded from the saved bill, so a product that declares no `unitsPerBox`
+ * must leave the row's own `packSize`/case cost alone — clearing them would
+ * silently re-denominate an already-boxed line into pieces.
+ */
+function linePrefillFor(p: PickableCostProduct, row: EditLineItemRow): Partial<EditLineItemRow> {
+  const perPiece = Number(p.averageCost ?? p.standardCost ?? 0);
+  const upb = Number(p.unitsPerBox ?? 0);
+  const patch: Partial<EditLineItemRow> = { productId: p.id, description: p.name };
+  if (upb > 1) {
+    patch.packSize = String(upb);
+    if (perPiece > 0) patch.unitCost = (perPiece * upb).toFixed(4);
+  } else if (perPiece > 0 && !(parseInt(row.packSize, 10) > 1)) {
+    // No catalog case size: only prefill when the row itself is priced per
+    // piece — never overwrite a case cost with a per-piece one.
+    patch.unitCost = perPiece.toFixed(4);
+  }
+  return patch;
+}
+
 function EditLineItems({
   items,
   onChange,
@@ -509,16 +549,7 @@ function EditLineItems({
               selectedLabel={row.description}
               placeholder="Search products… (or leave as custom item)"
               onChange={(id, product) =>
-                product
-                  ? update(i, {
-                      productId: id,
-                      description: product.name,
-                      unitCost:
-                        (product as any).averageCost != null
-                          ? String(parseFloat(String((product as any).averageCost)).toFixed(4))
-                          : row.unitCost,
-                    })
-                  : update(i, { productId: "" })
+                product ? update(i, linePrefillFor(product, row)) : update(i, { productId: "" })
               }
             />
             {!row.productId && (

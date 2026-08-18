@@ -79,6 +79,100 @@ export class ProductAliasService {
     });
   }
 
+  /**
+   * Batched `resolve()` for a whole scan's worth of lines — one round trip
+   * instead of N. Same supplier-then-any-supplier precedence and dangling
+   * product cleanup as `resolve()`, keyed by the ORIGINAL raw text passed in
+   * (not the normalized form) so callers can look a line up directly. No
+   * tenant context returns an empty map rather than throwing — matching runs
+   * opportunistically inside a scan and must never abort it.
+   */
+  async resolveMany(
+    supplierId: string | null | undefined,
+    rawTexts: string[],
+  ): Promise<Map<string, AliasTarget>> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return new Map();
+
+    const sid = supplierId ?? "";
+    const supplierScopes = sid ? [sid, ""] : [""];
+
+    // Group the original raw strings by their normalized form so duplicate/
+    // near-duplicate lines share one lookup and one result.
+    const rawByNorm = new Map<string, string[]>();
+    for (const raw of rawTexts) {
+      const norm = this.normalize(raw);
+      if (!norm) continue;
+      const group = rawByNorm.get(norm);
+      if (group) group.push(raw);
+      else rawByNorm.set(norm, [raw]);
+    }
+    if (rawByNorm.size === 0) return new Map();
+
+    const rows = await this.prisma.forTenant().productAlias.findMany({
+      where: { rawText: { in: [...rawByNorm.keys()] }, supplierId: { in: supplierScopes } },
+    });
+    if (!rows.length) return new Map();
+
+    // Supplier-specific alias wins over the any-supplier fallback, per
+    // normalized text — same precedence as resolve().
+    const chosenByNorm = new Map<string, (typeof rows)[number]>();
+    for (const row of rows) {
+      const existing = chosenByNorm.get(row.rawText);
+      if (!existing || (existing.supplierId !== sid && row.supplierId === sid)) {
+        chosenByNorm.set(row.rawText, row);
+      }
+    }
+
+    // One batched existence check for every aliased product instead of one
+    // query per line, so a deleted product never yields a dangling match.
+    const productIds = [
+      ...new Set(
+        [...chosenByNorm.values()].map((r) => r.productId).filter((id): id is string => !!id),
+      ),
+    ];
+    const existingProductIds = productIds.length
+      ? new Set(
+          (
+            await this.prisma
+              .forTenant()
+              .product.findMany({ where: { id: { in: productIds } }, select: { id: true } })
+          ).map((p) => p.id),
+        )
+      : new Set<string>();
+
+    const result = new Map<string, AliasTarget>();
+    for (const [norm, rawGroup] of rawByNorm) {
+      const row = chosenByNorm.get(norm);
+      if (!row) continue;
+      const productId =
+        row.productId && existingProductIds.has(row.productId) ? row.productId : null;
+      const target: AliasTarget = { productId, expenseCategoryId: row.expenseCategoryId };
+      for (const raw of rawGroup) result.set(raw, target);
+    }
+    return result;
+  }
+
+  /**
+   * Forget a learned correction at BOTH scopes — the supplier-specific one
+   * AND the "" any-supplier fallback. The operator's intent when clearing a
+   * remembered match is "stop suggesting this", and the suggestion may have
+   * come from the "" fallback, which a supplier-scoped-only delete would miss.
+   */
+  async unlearn(
+    supplierId: string | null | undefined,
+    rawText: string,
+  ): Promise<{ deleted: number }> {
+    const tenantId = this.requireTenant();
+    const norm = this.normalize(rawText);
+    if (!norm) return { deleted: 0 };
+    const sid = supplierId ?? "";
+    const res = await this.prisma.forTenant().productAlias.deleteMany({
+      where: { tenantId, rawText: norm, supplierId: { in: [sid, ""] } },
+    });
+    return { deleted: res.count };
+  }
+
   /** List aliases for the tenant (optionally text-filtered). */
   async list(search?: string) {
     const where = search ? { rawText: { contains: this.normalize(search) } } : {};
