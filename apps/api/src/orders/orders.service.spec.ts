@@ -480,7 +480,7 @@ describe("OrdersService", () => {
       prisma.order.create.mockResolvedValue(MOCK_ORDER);
       // Tax rate is read from SystemConfigService at request time; seed 10%
       (service as any).systemConfig.get.mockImplementation((key: string) =>
-        key === "settings.taxRate" ? "0.1" : null,
+        key === "settings.taxRate" ? "10" : null,
       );
 
       const result = await service.create(
@@ -881,7 +881,7 @@ describe("OrdersService", () => {
             unitBasis: null,
             priceIncludesTax: false,
           },
-          "0.1",
+          "10",
         );
 
         // subtotal 20; regular tax 10% = 2; category tax 5% = 1; total 20+2+1 = 23.
@@ -969,7 +969,7 @@ describe("OrdersService", () => {
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockImplementation((key: string) =>
-          key === "settings.taxRate" ? "0.1" : null,
+          key === "settings.taxRate" ? "10" : null,
         );
 
         await service.create(
@@ -994,7 +994,7 @@ describe("OrdersService", () => {
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockImplementation((key: string) =>
-          key === "settings.taxRate" ? "0.1" : null,
+          key === "settings.taxRate" ? "10" : null,
         );
 
         await service.create(
@@ -1020,7 +1020,7 @@ describe("OrdersService", () => {
         prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
         prisma.order.create.mockResolvedValue(MOCK_ORDER);
         (service as any).systemConfig.get.mockImplementation((key: string) =>
-          key === "settings.taxRate" ? "0.1" : null,
+          key === "settings.taxRate" ? "10" : null,
         );
 
         await service.create(
@@ -1132,7 +1132,7 @@ describe("OrdersService", () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]);
       (service as any).systemConfig.get.mockImplementation((k: string) =>
-        k === "settings.taxRate" ? "0.1" : null,
+        k === "settings.taxRate" ? "10" : null,
       );
       (service as any).authGuard.assertAuthorizedOrThrow.mockRejectedValueOnce(blocked);
 

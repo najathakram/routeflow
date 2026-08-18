@@ -977,6 +977,102 @@ describe("VendorBillsService", () => {
     });
   });
 
+  // ─── saveProductMapping ─────────────────────────────────────────────────────
+  // ProductMapping's compound key (supplierName, rawDescription) has NO tenantId
+  // — it is GLOBAL. These pin the tenant-safe findFirst→update/create rewrite
+  // that replaced the old `upsert` (which could hit another tenant's row).
+
+  describe("saveProductMapping", () => {
+    it("updates the existing row by id for this tenant, without creating", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "old-prod",
+      });
+      prisma.productMapping.update.mockResolvedValue({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "new-prod",
+      });
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "flour 25lb", "new-prod"),
+      ).resolves.toEqual({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "new-prod",
+      });
+      expect(prisma.productMapping.findFirst).toHaveBeenCalledWith({
+        where: { supplierName: "Acme Foods", rawDescription: "flour 25lb" },
+      });
+      expect(prisma.productMapping.update).toHaveBeenCalledWith({
+        where: { id: "map-1" },
+        data: { productId: "new-prod" },
+      });
+      expect(prisma.productMapping.create).not.toHaveBeenCalled();
+    });
+
+    it("creates a new row when this tenant has no existing mapping", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockResolvedValue({
+        id: "map-2",
+        supplierName: "Acme Foods",
+        rawDescription: "sugar 10lb",
+        productId: "prod-9",
+      });
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).resolves.toEqual({
+        id: "map-2",
+        supplierName: "Acme Foods",
+        rawDescription: "sugar 10lb",
+        productId: "prod-9",
+      });
+      expect(prisma.productMapping.create).toHaveBeenCalledWith({
+        data: { supplierName: "Acme Foods", rawDescription: "sugar 10lb", productId: "prod-9" },
+      });
+      expect(prisma.productMapping.update).not.toHaveBeenCalled();
+    });
+
+    it("swallows a P2002 on create — another tenant already holds the global key", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "7.8.0",
+        }),
+      );
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).resolves.toBeNull();
+    });
+
+    it("rejects a missing rawDescription instead of matching an unrelated row", async () => {
+      // Prisma drops `undefined` filter keys — without the guard this would
+      // findFirst on supplierName alone and repoint someone else's mapping.
+      await expect(
+        service.saveProductMapping("Acme Foods", undefined as unknown as string, "prod-9"),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.productMapping.findFirst).not.toHaveBeenCalled();
+      expect(prisma.productMapping.update).not.toHaveBeenCalled();
+      expect(prisma.productMapping.create).not.toHaveBeenCalled();
+    });
+
+    it("rethrows a non-P2002 error from create", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockRejectedValue(new Error("db is down"));
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).rejects.toThrow("db is down");
+    });
+  });
+
   // ─── scanInvoice ────────────────────────────────────────────────────────────
 
   describe("scanInvoice", () => {

@@ -24,6 +24,7 @@ import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
+import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -123,9 +124,7 @@ export class VendorBillsController {
 
   // Product mapping memory — must be before :id routes
   @Post("product-mappings")
-  saveProductMapping(
-    @Body() dto: { supplierName: string; rawDescription: string; productId: string | null },
-  ) {
+  saveProductMapping(@Body() dto: SaveProductMappingDto) {
     return this.vendorBillsService.saveProductMapping(
       dto.supplierName,
       dto.rawDescription,

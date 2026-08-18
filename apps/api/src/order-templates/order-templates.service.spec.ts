@@ -3,7 +3,7 @@ import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { ConfigService } from "@nestjs/config";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -52,7 +52,11 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
+        // settings.taxRate is stored as a PERCENT string — "10" is 10%.
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn().mockResolvedValue("10") },
+        },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
@@ -157,7 +161,11 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
+        // settings.taxRate is stored as a PERCENT string — "10" is 10%.
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn().mockResolvedValue("10") },
+        },
         { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
         {
           provide: AuthorizationGuardService,
