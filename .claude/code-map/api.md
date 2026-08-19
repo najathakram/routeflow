@@ -94,6 +94,11 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `assertSafeTarget()` (DATABASE_URL host must be localhost/127.0.0.1/::1/postgres and
   NODE_ENV≠production, else throws unless `SEED_ALLOW_REMOTE=1` — reaching a remote DB is
   always a deliberate act).
+- **`scripts/e2e-seed.js`** — idempotent seed for the `e2e-routeflow` tenant (operator
+  `admin`/`Admin@123`, customer `harbor_cafe`); on an existing tenant it also SWEEPS stale
+  parked SaleDrafts from the operator's dock (kind ORDER + device "Desktop web" + title
+  `Order…` — residue web e2e 08-create-order-escape parked before it cleaned up after itself,
+  2026-08-19).
 - **`prisma/migrations/`** (2026-08-15, baselined) — two migrations only. `0_init` is
   generated to equal PRODUCTION exactly, replacing 75 partial migrations that could not build
   a database from scratch (40 of 106 models were never created; deploy died at
