@@ -185,9 +185,34 @@ export function useCreateInvoice() {
   });
 }
 
+/**
+ * Shape of a successful `send-email` / `send-reminder` response. Mirrors web's
+ * `SendInvoiceEmailResult` (apps/web/lib/api/invoices.ts).
+ *
+ * `warning` is non-blocking: the tenant's own SMTP failed but Resend (RouteFlow's
+ * platform mail service) rescued the send, so the invoice really did go out. It
+ * carries `email.service.ts#send()`'s mapped `smtpFallbackReason`, and
+ * `fromAddress` is the platform address the mail actually came from — the
+ * operator has to be told both, or a dead mailbox stays invisible.
+ */
+export interface SendInvoiceEmailResult {
+  success: boolean;
+  sentTo: string;
+  warning?: string;
+  fromAddress?: string;
+}
+
+/** `/send-email` resolves to `SendInvoiceEmailResult`; the bodyless `/send`
+ *  (mark-as-sent) resolves to the updated invoice. Narrow with `"warning" in res`. */
+export type SendInvoiceResult = Invoice | SendInvoiceEmailResult;
+
 export function useSendInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string; email?: string; variant?: InvoicePdfVariant }>({
+  return useMutation<
+    SendInvoiceResult,
+    Error,
+    { id: string; email?: string; variant?: InvoicePdfVariant }
+  >({
     // Two branches: send-email (attaches the PDF at the chosen stage) vs `/send`
     // mark-as-sent (no email). `variant` rides ONLY on the send-email body — the
     // mark-as-sent call must stay bodyless.
@@ -291,7 +316,7 @@ export function useUpdateInvoice() {
  * explicitly (web does the same — the server also accepts an override address).
  */
 export function useSendInvoiceReminder() {
-  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+  return useMutation<SendInvoiceEmailResult, Error, { id: string; email?: string }>({
     mutationFn: ({ id, email }) =>
       apiClient.post(`/invoices/${id}/send-reminder`, email ? { email } : {}).then((r) => r.data),
   });

@@ -323,10 +323,25 @@ export function deriveInvoiceVariant(inv: {
   return "draft";
 }
 
+/** Shared by `send-email` and `send-reminder` — both disclose the SMTP fallback. */
+export interface SendInvoiceEmailResult {
+  success: boolean;
+  sentTo: string;
+  /**
+   * Non-blocking warning: the tenant's own SMTP failed but Resend (RouteFlow's
+   * platform mail service) rescued the send, so `success` is still true. Set by
+   * `email.service.ts#send()`'s `smtpFallbackReason` (mapped, human-readable —
+   * e.g. the STARTTLS-unavailable or M365 Authenticated-SMTP message).
+   */
+  warning?: string;
+  /** The platform address the email actually went out from when `warning` is set. */
+  fromAddress?: string;
+}
+
 export function useSendInvoiceEmail() {
   const qc = useQueryClient();
   return useMutation<
-    { success: boolean; sentTo: string },
+    SendInvoiceEmailResult,
     Error,
     { id: string; email?: string; variant?: InvoicePdfVariant }
   >({
@@ -341,7 +356,7 @@ export function useSendInvoiceEmail() {
 
 export function useSendInvoiceReminder() {
   const qc = useQueryClient();
-  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+  return useMutation<SendInvoiceEmailResult, Error, { id: string; email?: string }>({
     mutationFn: ({ id, email }) =>
       apiClient.post(`/invoices/${id}/send-reminder`, { email }).then((r) => r.data),
   });

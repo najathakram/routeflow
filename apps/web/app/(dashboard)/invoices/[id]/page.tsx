@@ -1423,12 +1423,27 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     sendInvoiceEmail.mutate(
       { id: invoice.id, email: customerEmail, variant: pdfVariant },
       {
-        onSuccess: (res) =>
+        onSuccess: (res) => {
+          // Resend rescued a tenant-SMTP failure — this is still a success (the
+          // invoice went out), but the operator needs to know their OWN mail is
+          // broken and that the From address silently changed. Distinct from the
+          // plain success toast, and never buried as a footnote.
+          if (res.warning) {
+            toast({
+              title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
+              description: `Sent via RouteFlow's mail service${
+                res.fromAddress ? ` (from ${res.fromAddress})` : ""
+              } — your own email couldn't send: ${res.warning}.`,
+              variant: "warning",
+            });
+            return;
+          }
           toast({
             title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
             description: `Sent to ${res.sentTo}`,
             variant: "success",
-          }),
+          });
+        },
         onError: (e: any) => {
           // R5: the API now refuses to claim "sent" when email isn't set up / the send
           // failed. On EMAIL_NOT_CONFIGURED, take the operator straight to Email settings.
@@ -1513,12 +1528,26 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     sendInvoiceReminder.mutate(
       { id: invoice.id, email: customerEmail },
       {
-        onSuccess: (res) =>
+        onSuccess: (res) => {
+          // Same disclosure as the send path — a reminder rescued by Resend must
+          // not stay silent about the operator's own mail being broken, or the
+          // warning would depend on which button they happened to press.
+          if (res.warning) {
+            toast({
+              title: "Reminder sent",
+              description: `Sent via RouteFlow's mail service${
+                res.fromAddress ? ` (from ${res.fromAddress})` : ""
+              } — your own email couldn't send: ${res.warning}.`,
+              variant: "warning",
+            });
+            return;
+          }
           toast({
             title: "Reminder sent",
             description: `Reminder emailed to ${res.sentTo}`,
             variant: "success",
-          }),
+          });
+        },
         onError: (e: any) =>
           toast({
             title: "Failed to send reminder",

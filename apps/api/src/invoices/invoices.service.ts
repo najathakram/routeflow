@@ -2700,7 +2700,17 @@ export class InvoicesService {
         })
         .catch(() => {});
     }
-    return { success: true, sentTo: recipientEmail };
+    // Non-blocking: the send succeeded (Resend rescued a failing tenant SMTP attempt),
+    // but the operator's own mailbox is still broken and nobody else will tell them —
+    // surface it as a warning, not a failure (the invoice really was emailed). The From
+    // address silently changed too (tenant mailbox → platform address) — disclose it,
+    // not bury it.
+    return {
+      success: true,
+      sentTo: recipientEmail,
+      ...(sendResult.smtpFallbackReason ? { warning: sendResult.smtpFallbackReason } : {}),
+      ...(sendResult.fromAddress ? { fromAddress: sendResult.fromAddress } : {}),
+    };
   }
 
   /** Send a payment reminder email without changing the invoice status. */
@@ -2781,7 +2791,14 @@ export class InvoicesService {
       });
     }
 
-    return { success: true, sentTo: recipientEmail };
+    // Non-blocking: see the matching comment in sendEmail() above — Resend rescued a
+    // failing tenant SMTP attempt, so tell the operator without blocking the reminder.
+    return {
+      success: true,
+      sentTo: recipientEmail,
+      ...(sendResult.smtpFallbackReason ? { warning: sendResult.smtpFallbackReason } : {}),
+      ...(sendResult.fromAddress ? { fromAddress: sendResult.fromAddress } : {}),
+    };
   }
 
   /**

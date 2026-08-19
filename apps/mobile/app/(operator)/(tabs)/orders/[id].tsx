@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -33,14 +33,17 @@ import {
 } from "../../../../lib/api/invoices";
 import {
   invoiceReadyMessage,
+  nextPdfSharePhase,
+  planWhatsAppSend,
   preferredPhone,
   smsUrl,
-  whatsappUrl,
+  smtpFallbackNotice,
+  type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
-import { confirm } from "../../../../lib/confirm";
+import { alertInfo, confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
-import { sharePdf } from "../../../../lib/share-pdf";
+import { ACTIVATION_BUDGET_MS, canShareFilesHere, sharePdf } from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
@@ -238,6 +241,15 @@ export default function OrderDetailScreen() {
     invoiceNumber: string;
     totalFmt: string;
   } | null>(null);
+  // WhatsApp (file-share mode) and Share PDF each run their own prepare →
+  // (maybe) tap-again → share dance against ACTIVATION_BUDGET_MS — see
+  // share-pdf.ts. The ref holds the already-prepared sharePdf() args so a
+  // "PDF ready — tap to share" retap shares synchronously instead of
+  // re-fetching the signed url.
+  const [whatsAppPhase, setWhatsAppPhase] = useState<PdfSharePhase>("idle");
+  const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
+  const whatsAppShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  const pdfShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
   // The demotion awaiting a reason. The server rejects a blank one, so the sheet
   // holds the action until the operator supplies it.
   const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
@@ -295,6 +307,12 @@ export default function OrderDetailScreen() {
           showToast("Invoice created — open it from Invoices to send.");
           return;
         }
+        // Reset any leftover share phase/cache from a previous open — a
+        // stale "ready" tap-again would otherwise share the wrong PDF.
+        setWhatsAppPhase("idle");
+        setPdfSharePhase("idle");
+        whatsAppShareRef.current = null;
+        pdfShareRef.current = null;
         setSendSheet({
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
@@ -419,11 +437,101 @@ export default function OrderDetailScreen() {
         )
       : "";
 
+  /**
+   * Runs the shared "prepare → (maybe) tap-again → share" dance for a PDF
+   * channel (WhatsApp file-share mode, or the plain Share PDF row).
+   *
+   * THE TRAP (binding, see share-pdf.ts): never `await` a fetch between the
+   * tap and calling `sharePdf` — that includes the presigned-url mutation
+   * below. So this never does `await pdfMut.mutateAsync(...)` before calling
+   * `sharePdf`; instead it measures how much of ACTIVATION_BUDGET_MS the
+   * mutation itself spent and hands `sharePdf` only what's left, so the
+   * TOTAL tap→share() latency — url fetch + PDF fetch combined — never
+   * silently exceeds the browser's activation window.
+   *
+   * A SECOND tap (ref already holds a prepared call, from a first tap that
+   * timed out) skips the mutation entirely and re-tries `sharePdf` with a
+   * fresh full budget — this tap's own activation — against the SAME url,
+   * so it shares synchronously once the earlier fetch has finished caching.
+   */
+  const runPdfShare = (
+    ref: typeof whatsAppShareRef,
+    setPhase: (phase: PdfSharePhase) => void,
+    text: string | undefined,
+  ) => {
+    if (!sendSheet) return;
+
+    const cached = ref.current;
+    if (cached) {
+      ref.current = null;
+      setPhase("preparing");
+      sharePdf({ ...cached, budgetMs: ACTIVATION_BUDGET_MS })
+        .then((outcome) => {
+          if (outcome === "ready-await-tap") ref.current = cached;
+          setPhase(nextPdfSharePhase(outcome));
+        })
+        .catch((e) => {
+          setPhase("idle");
+          toastError(e, "Couldn't share the PDF.");
+        });
+      return;
+    }
+
+    const filename = `${sendSheet.invoiceNumber || "invoice"}.pdf`;
+    const dialogTitle = `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim();
+    const startedAt = Date.now();
+    setPhase("preparing");
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            setPhase("idle");
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          const remaining = ACTIVATION_BUDGET_MS - (Date.now() - startedAt);
+          // retapHandled: this screen flips its own control to "PDF ready —
+          // tap to share", so share-pdf.ts must not also raise a dialog.
+          const opts = {
+            url: data.url,
+            filename,
+            dialogTitle,
+            text,
+            budgetMs: remaining,
+            retapHandled: true,
+          };
+          try {
+            const outcome = await sharePdf(opts);
+            if (outcome === "ready-await-tap") ref.current = opts;
+            setPhase(nextPdfSharePhase(outcome));
+          } catch (e) {
+            setPhase("idle");
+            toastError(e, "Couldn't share the PDF.");
+          }
+        },
+        onError: (e) => {
+          setPhase("idle");
+          toastError(e);
+        },
+      },
+    );
+  };
+
   const handleWhatsApp = () => {
     if (!sendSheet || !sendPhone) return;
-    Linking.openURL(whatsappUrl(sendPhone, buildMessage())).catch(() =>
-      showToast("Couldn't open WhatsApp."),
-    );
+    const plan = planWhatsAppSend({
+      phone: sendPhone,
+      message: buildMessage(),
+      canShareFiles: canShareFilesHere(),
+    });
+    if (plan.mode === "share-file") {
+      runPdfShare(whatsAppShareRef, setWhatsAppPhase, plan.text);
+      return;
+    }
+    Linking.openURL(plan.url)
+      .then(() => showToast("Opened WhatsApp with a text message — share the PDF separately."))
+      .catch(() => showToast("Couldn't open WhatsApp."));
   };
   const handleSms = () => {
     if (!sendSheet || !sendPhone) return;
@@ -437,37 +545,30 @@ export default function OrderDetailScreen() {
     sendMut.mutate(
       { id: sendSheet.invoiceId, email: sendEmail },
       {
-        onSuccess: () => {
-          showToast("Invoice emailed");
-          setSendSheet(null);
+        onSuccess: (res) => {
+          const notice = "warning" in res ? smtpFallbackNotice(res) : null;
+          // Resend rescued a broken tenant SMTP: the invoice DID go out, so this
+          // is not an error — but the operator must learn their own mailbox is
+          // dead and that the From address changed. A toast is the wrong surface
+          // for it (nowrap, 2.2s, and a no-op on iOS), so disclose it in the
+          // single-button info dialog instead. Plain successes stay a toast.
+          if (notice) alertInfo("Invoice emailed", notice);
+          else showToast("Invoice emailed");
+          closeSendSheet();
         },
         onError: (e) => toastError(e),
       },
     );
   };
   const handleSharePdf = () => {
-    if (!sendSheet) return;
-    pdfMut.mutate(
-      { id: sendSheet.invoiceId, variant: "final" },
-      {
-        onSuccess: async (data) => {
-          if (!data?.url) {
-            showToast("PDF is still generating, try again in a moment.");
-            return;
-          }
-          try {
-            await sharePdf({
-              url: data.url,
-              filename: `${sendSheet.invoiceNumber || "invoice"}.pdf`,
-              dialogTitle: `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim(),
-            });
-          } catch (e) {
-            toastError(e, "Couldn't share the PDF.");
-          }
-        },
-        onError: (e) => toastError(e),
-      },
-    );
+    runPdfShare(pdfShareRef, setPdfSharePhase, undefined);
+  };
+  const closeSendSheet = () => {
+    setSendSheet(null);
+    setWhatsAppPhase("idle");
+    setPdfSharePhase("idle");
+    whatsAppShareRef.current = null;
+    pdfShareRef.current = null;
   };
 
   const handleDelete = () => {
@@ -934,14 +1035,15 @@ export default function OrderDetailScreen() {
 
       <SendInvoiceSheet
         open={sendSheet !== null}
-        onClose={() => setSendSheet(null)}
+        onClose={closeSendSheet}
         customerName={order.customer?.businessName ?? "Customer"}
         invoiceNumber={sendSheet?.invoiceNumber ?? ""}
         totalFmt={sendSheet?.totalFmt ?? ""}
         phone={sendPhone}
         email={sendEmail}
         emailSending={sendMut.isPending}
-        pdfSending={pdfMut.isPending}
+        whatsAppPhase={whatsAppPhase}
+        pdfPhase={pdfSharePhase}
         onWhatsApp={handleWhatsApp}
         onSms={handleSms}
         onEmail={handleEmailInvoice}

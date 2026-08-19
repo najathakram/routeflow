@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -49,9 +49,14 @@ import {
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
-import { confirm, chooseAction } from "../../../../lib/confirm";
+import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
-import { sharePdf } from "../../../../lib/share-pdf";
+import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
+import {
+  nextPdfSharePhase,
+  smtpFallbackNotice,
+  type PdfSharePhase,
+} from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
@@ -136,6 +141,18 @@ export default function InvoiceDetailScreen() {
   const [advanceSheetOpen, setAdvanceSheetOpen] = useState(false);
   // Draft/Final PDF stage — null means follow the smart default (deriveInvoiceVariant).
   const [pdfVariantOverride, setPdfVariantOverride] = useState<InvoicePdfVariant | null>(null);
+  // The Share tile's prepare → (maybe) tap-again → share dance against
+  // ACTIVATION_BUDGET_MS — see share-pdf.ts. The ref holds the prepared
+  // sharePdf() args so a "PDF ready — tap to share" retap shares
+  // synchronously instead of re-fetching the signed url. The variant is
+  // stored WITH them: a prepared call belongs to the PDF stage it was
+  // fetched for, so a retap after a stage flip must re-fetch rather than
+  // share the other stage's file.
+  const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
+  const pdfShareRef = useRef<{
+    variant: InvoicePdfVariant;
+    opts: Parameters<typeof sharePdf>[0];
+  } | null>(null);
 
   if (isLoading || !invoice) {
     return (
@@ -213,8 +230,15 @@ export default function InvoiceDetailScreen() {
     sendMut.mutate(
       { id, email: customerEmail, variant: pdfVariant },
       {
-        onSuccess: () => {
-          showToast(`${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`);
+        onSuccess: (res) => {
+          const label = `${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`;
+          const notice = "warning" in res ? smtpFallbackNotice(res) : null;
+          // The send succeeded (Resend rescued the tenant's failing SMTP), so this
+          // is a disclosure, not an error — but it can't ride a toast: showToast is
+          // nowrap/2.2s and a no-op on iOS, and a dead tenant mailbox has to be
+          // read. Plain successes keep the toast.
+          if (notice) alertInfo(label, notice);
+          else showToast(label);
           refetch();
         },
         onError: (e: any) => {
@@ -331,30 +355,75 @@ export default function InvoiceDetailScreen() {
     );
   };
 
+  /**
+   * Share the invoice PDF, respecting `navigator.share()`'s transient
+   * activation window (see share-pdf.ts). THE TRAP: never `await` a fetch
+   * between the tap and calling `sharePdf` — that includes the presigned-url
+   * mutation below, so instead of awaiting it first, this measures how much
+   * of ACTIVATION_BUDGET_MS the mutation spent and hands `sharePdf` only
+   * what's left. A second tap (the ref already holds a prepared call from a
+   * first tap that ran out of budget) skips the mutation and re-tries
+   * `sharePdf` with a fresh full budget — this tap's own activation — but
+   * ONLY when it's for the same PDF stage; after a Draft/Final flip the
+   * cached call is for the wrong stage, so that tap prepares afresh.
+   */
   const handlePdf = (variant: InvoicePdfVariant) => {
     if (!id) return;
+
+    const cached = pdfShareRef.current;
+    if (cached && cached.variant === variant) {
+      pdfShareRef.current = null;
+      setPdfSharePhase("preparing");
+      sharePdf({ ...cached.opts, budgetMs: ACTIVATION_BUDGET_MS })
+        .then((outcome) => {
+          if (outcome === "ready-await-tap") pdfShareRef.current = cached;
+          setPdfSharePhase(nextPdfSharePhase(outcome));
+        })
+        .catch((e: any) => {
+          setPdfSharePhase("idle");
+          showToast(e?.message ?? "Couldn't share the PDF.");
+        });
+      return;
+    }
+
+    const filename = `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`;
+    const dialogTitle = `${variant === "draft" ? "Draft" : "Final"} invoice ${
+      invoice.invoiceNumber ?? ""
+    }`.trim();
+    const startedAt = Date.now();
+    setPdfSharePhase("preparing");
     pdfMut.mutate(
       { id, variant },
       {
         onSuccess: async (data) => {
           if (!data?.url) {
+            setPdfSharePhase("idle");
             showToast("PDF is still generating, try again in a moment.");
             return;
           }
-          // Share the PDF directly to the OS/browser share sheet — no download.
+          const remaining = ACTIVATION_BUDGET_MS - (Date.now() - startedAt);
+          // retapHandled: this screen flips its own control to "PDF ready —
+          // tap to share", so share-pdf.ts must not also raise a dialog.
+          const opts = {
+            url: data.url,
+            filename,
+            dialogTitle,
+            budgetMs: remaining,
+            retapHandled: true,
+          };
           try {
-            await sharePdf({
-              url: data.url,
-              filename: `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`,
-              dialogTitle: `${variant === "draft" ? "Draft" : "Final"} invoice ${
-                invoice.invoiceNumber ?? ""
-              }`.trim(),
-            });
+            const outcome = await sharePdf(opts);
+            if (outcome === "ready-await-tap") pdfShareRef.current = { variant, opts };
+            setPdfSharePhase(nextPdfSharePhase(outcome));
           } catch (e: any) {
+            setPdfSharePhase("idle");
             showToast(e?.message ?? "Couldn't share the PDF.");
           }
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          setPdfSharePhase("idle");
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
       },
     );
   };
@@ -387,7 +456,13 @@ export default function InvoiceDetailScreen() {
     reminderMut.mutate(
       { id, email },
       {
-        onSuccess: (res) => showToast(`Reminder emailed to ${res.sentTo}`),
+        onSuccess: (res) => {
+          // Same disclosure as the send path — otherwise whether the operator
+          // hears about their broken mailbox depends on which button they pressed.
+          const notice = smtpFallbackNotice(res);
+          if (notice) alertInfo("Reminder sent", notice);
+          else showToast(`Reminder emailed to ${res.sentTo}`);
+        },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
@@ -552,7 +627,14 @@ export default function InvoiceDetailScreen() {
               <SegmentedControl
                 items={["Draft", "Final"]}
                 value={pdfVariant === "draft" ? "Draft" : "Final"}
-                onChange={(v) => setPdfVariantOverride(v === "Draft" ? "draft" : "final")}
+                onChange={(v) => {
+                  const next: InvoicePdfVariant = v === "Draft" ? "draft" : "final";
+                  setPdfVariantOverride(next);
+                  // "PDF ready — tap to share" belongs to the stage that was
+                  // prepared; once the stage changes the next tap prepares
+                  // afresh, so the tile must stop claiming otherwise.
+                  if (next !== pdfVariant) setPdfSharePhase("idle");
+                }}
               />
             </View>
           </View>
@@ -604,10 +686,16 @@ export default function InvoiceDetailScreen() {
             <ActionTile
               icon="share-outline"
               label={
-                pdfMut.isPending
-                  ? "Loading…"
-                  : `Share ${pdfVariant === "draft" ? "draft" : "final"}`
+                pdfSharePhase === "preparing"
+                  ? "Preparing PDF…"
+                  : pdfSharePhase === "ready"
+                    ? "PDF ready — tap to share"
+                    : `Share ${pdfVariant === "draft" ? "draft" : "final"}`
               }
+              // A second tap while the presigned-url mutation is in flight
+              // would fire a concurrent one; "ready" stays tappable — that
+              // tap IS the share.
+              disabled={pdfSharePhase === "preparing"}
               onPress={() => handlePdf(pdfVariant)}
             />
             {flags.canSendReminder ? (
@@ -1138,15 +1226,21 @@ function ActionTile({
   label,
   onPress,
   tone = "default",
+  disabled = false,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
   tone?: "default" | "danger";
+  disabled?: boolean;
 }) {
   const isDanger = tone === "danger";
   return (
-    <Pressable style={[styles.tile, isDanger && styles.tileDanger]} onPress={onPress}>
+    <Pressable
+      style={[styles.tile, isDanger && styles.tileDanger, disabled && { opacity: 0.5 }]}
+      disabled={disabled}
+      onPress={onPress}
+    >
       <Ionicons name={icon} size={22} color={isDanger ? ios.system.red : ios.brand} />
       <Text style={[styles.tileLabel, isDanger && { color: ios.system.red }]}>{label}</Text>
     </Pressable>
