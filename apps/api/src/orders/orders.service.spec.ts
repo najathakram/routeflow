@@ -2189,6 +2189,280 @@ describe("OrdersService", () => {
       );
     });
 
+    // ─── B3: staff override on substitution ────────────────────────────────
+    // The substitute branch used to hardcode unitPrice = product.pricePerUnit
+    // and never read item.unitPrice, silently discarding an operator's price
+    // override (and the customer's tier) on every substitution. Fixed to honor
+    // it for staff only, using the same net-unitPrice / originalPrice /
+    // DISCOUNTED-vs-MANUAL convention as create()'s operator-override ladder.
+
+    it("operator override below the substitute's list price bills boxes × override and stores DISCOUNTED", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 30,
+        unitsPerBox: 12,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 40, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            {
+              id: "li-A",
+              substituteProductId: "prod-tob",
+              boxes: 2,
+              pieces: 0,
+              unitPrice: 20,
+              overrideReason: "matched last invoice price",
+            },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            unitPrice: 20,
+            qty: 24,
+            boxes: 2,
+            pieces: 0,
+            // computeLineSubtotal: 20 * (2 boxes + 0/12) = 40 — NOT 20 * 24 = 480.
+            subtotal: 40,
+            priceType: "DISCOUNTED",
+            originalPrice: 30,
+            overrideReason: "matched last invoice price",
+            overriddenBy: "user-op",
+          }),
+        }),
+      );
+    });
+
+    it("operator override above the substitute's list price stores MANUAL (upsell)", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 30,
+        unitsPerBox: 12,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 35, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { id: "li-A", substituteProductId: "prod-tob", boxes: 1, pieces: 0, unitPrice: 35 },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 35,
+            qty: 12,
+            subtotal: 35,
+            priceType: "MANUAL",
+            originalPrice: 30,
+          }),
+        }),
+      );
+    });
+
+    it("an override equal to the substitute's list price is not treated as an override", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 8,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 3, unitPrice: 8 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            unitPrice: 8,
+            priceType: "STANDARD",
+            originalPrice: null,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("substitution without unitPrice keeps billing the substitute's list price (regression pin)", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 8,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", substituteProductId: "prod-tob", qty: 3 }], replaceAll: false },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            unitPrice: 8,
+            subtotal: 24,
+            priceType: "STANDARD",
+            originalPrice: null,
+            overrideReason: null,
+            overriddenBy: null,
+          }),
+        }),
+      );
+    });
+
+    it("a driver's substitution attempt bills at the substitute's list price — override never reaches this line", async () => {
+      // A DRIVER never reaches the staff-only substituteProductId branch above —
+      // role routes to the always-replace buyer/driver path (top of this
+      // transaction), which already re-prices server-side regardless of any
+      // client-sent unitPrice. This pins that a driver can't gain price control
+      // via a substitution-shaped edit either — B13, non-staff never set prices.
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-tob", pricePerUnit: 8, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 24, status: "PENDING" }]);
+
+      const driverPayload = { ...operatorPayload, sub: "user-drv", role: "DRIVER" as const };
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-tob", qty: 3, unitPrice: 5 }] },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-tob",
+            unitPrice: 8,
+            priceType: "STANDARD",
+          }),
+        }),
+      );
+    });
+
+    // ─── B2: the incoming split is denominated in the REPLACED product's box ───
+    // Clients now send boxes/pieces on substitution, but that split is sized to
+    // the line's OLD case. The branch must re-resolve it against the substitute.
+
+    it("a boxed line substituted onto a loose product bills the piece qty, not a zeroed split", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-loose",
+        pricePerUnit: 2,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 96, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            // 2 cases of a 24-pack = 48 pieces, swapped onto a single-unit product.
+            { id: "li-A", substituteProductId: "prod-loose", qty: 48, boxes: 2, pieces: 0 },
+          ],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({
+            productId: "prod-loose",
+            // 2 * (unitsPerBox ?? 0) would have been qty 0 / subtotal 0 — a free line.
+            qty: 48,
+            boxes: null,
+            pieces: null,
+            unitsPerBox: null,
+            subtotal: 96,
+          }),
+        }),
+      );
+    });
+
+    it("a split sized to another case is normalized against the substitute's unitsPerBox", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-4pack",
+        pricePerUnit: 10,
+        unitsPerBox: 4,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 25, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-4pack", boxes: 1, pieces: 6 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            // 1*4 + 6 = 10 pieces → 2 boxes + 2 pieces, never pieces >= unitsPerBox.
+            qty: 10,
+            boxes: 2,
+            pieces: 2,
+            unitsPerBox: 4,
+            subtotal: 25,
+          }),
+        }),
+      );
+    });
+
+    it("a substitution resolving to qty 0 is skipped, not written as a free line", async () => {
+      prisma.order.findUnique.mockResolvedValue(orderWithItems);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-tob",
+        pricePerUnit: 30,
+        unitsPerBox: 12,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 10, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-tob", boxes: 0, pieces: 0 }],
+          replaceAll: false,
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+    });
+
     it("legacy heuristic — an all-id-less payload with no flag still replaces all (mobile)", async () => {
       prisma.order.findUnique.mockResolvedValue(orderWithItems);
       prisma.product.findMany.mockResolvedValue([

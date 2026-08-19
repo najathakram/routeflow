@@ -57,9 +57,11 @@ import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
   formatQtySplit,
+  getTierPrice,
   normalizeBoxesPieces,
   roundMoney,
 } from "@/lib/pricing";
+import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
@@ -316,6 +318,16 @@ interface EditItemState {
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
+  /** The line's own denomination, restored when a substitution is undone (a
+   *  substitute re-denominates the line against ITS case size). */
+  originalUnitsPerBox?: number | null;
+  originalBoxSplit?: boolean;
+  /** The line's own price, restored alongside the denomination when a
+   *  substitution is undone — otherwise the original product would save at the
+   *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
+  originalUnitPrice?: number;
+  originalBasePrice?: number;
+  originalOverrideReason?: string;
   productId: string;
   productName: string;
   qty: number;
@@ -366,6 +378,51 @@ function boxedDtoFields(it: { qty: number; unitsPerBox?: number | null; boxSplit
 } {
   const { boxes, pieces } = editBoxedSplit(it);
   return boxes != null ? { boxes, pieces: pieces ?? 0 } : {};
+}
+
+/**
+ * The substitution payload — shared by BOTH save paths (Save Draft/Save and
+ * Save & Publish) so they can never drift apart again.
+ *
+ * Carries the box split (already re-denominated against the SUBSTITUTE's case
+ * size when the product was picked, so the split the server prices is the one
+ * the preview shows — a bare `qty` bills the substitute's BOX price per piece)
+ * plus any operator override in EITHER direction. Mirrors mobile's
+ * `buildOrderItemDiff` substitute branch exactly; the server maps below-base to
+ * DISCOUNTED and above-base to MANUAL, so dropping an upsell here would silently
+ * bill the substitute's list price.
+ */
+function substituteDtoUpdate(it: EditItemState): ItemUpdate {
+  return {
+    id: it.id,
+    substituteProductId: it.substituteProductId,
+    qty: it.qty,
+    ...boxedDtoFields(it),
+    ...(isPriceOverridden(it)
+      ? { unitPrice: it.unitPrice, overrideReason: it.overrideReason }
+      : {}),
+  };
+}
+
+/** An override is any net unit price DIVERGING from the line's base — a discount
+ *  below it or an operator upsell above it (same EPS test as `PriceEditRow` and
+ *  mobile's `buildOrderItemDiff`; a downward-only test drops upsells). */
+function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolean {
+  return Math.abs(it.unitPrice - it.basePrice) > 0.0001;
+}
+
+/**
+ * The line's own price, for the Undo handlers. Substituting rewrites unitPrice /
+ * basePrice / overrideReason to the SUBSTITUTE's; without this an abandoned
+ * substitution leaves the original product carrying the substitute's price, and
+ * the plain UPDATE branch (which fires on `priceChanged`) saves it.
+ */
+function restoredPrice(it: EditItemState): Partial<EditItemState> {
+  return {
+    ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
+    ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
+    overrideReason: it.originalOverrideReason,
+  };
 }
 
 /** Boxed-aware line subtotal for the edit preview (matches server pricing). */
@@ -458,11 +515,29 @@ function DemoteReasonModal({
 
 // ─── Substitute product picker ────────────────────────────────────────────────
 
+/**
+ * A picker row. `unitsPerBox` comes along so the caller can re-denominate the
+ * line against the SUBSTITUTE's case size (the server prices the split with it,
+ * not the replaced product's), and the tier ladder so it can resolve THIS
+ * customer's price for the substitute instead of billing list.
+ */
+interface SubstituteOption {
+  id: string;
+  name: string;
+  sku?: string;
+  pricePerUnit: number;
+  unitsPerBox?: number | null;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}
+
 function SubstitutePicker({
   onSelect,
   onClose,
 }: {
-  onSelect: (product: { id: string; name: string; sku?: string; pricePerUnit: number }) => void;
+  onSelect: (product: SubstituteOption) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = React.useState("");
@@ -491,7 +566,7 @@ function SubstitutePicker({
         {data?.data?.length === 0 && (
           <p className="px-3 py-2 text-sm text-navy/70">No products found.</p>
         )}
-        {data?.data?.map((p: { id: string; name: string; sku?: string; pricePerUnit: number }) => (
+        {data?.data?.map((p: SubstituteOption) => (
           <button
             key={p.id}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
@@ -650,6 +725,7 @@ function EditableLineItems({
   onDelete,
   canEditPrice,
   priceHistory,
+  tierPriceFor,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -661,6 +737,9 @@ function EditableLineItems({
   canEditPrice: boolean;
   /** Remembered per-customer prices — pre-fills a scanned line's price. */
   priceHistory?: CustomerPriceHistory;
+  /** This customer's contracted price for a product (per-product tier override,
+   *  else the customer's tier). Mirrors mobile's `tierPriceFor`. */
+  tierPriceFor: (product: SubstituteOption) => number;
 }) {
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -737,6 +816,13 @@ function EditableLineItems({
         qty: 1,
         unitPrice: startPrice,
         basePrice: catalog,
+        originalUnitPrice: startPrice,
+        originalBasePrice: catalog,
+        // Carry the case size so a later substitution re-denominates this
+        // line's selling-unit qty correctly (boxSplit stays unset — a plain
+        // new line still bills in selling units and sends no split).
+        unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
+        originalUnitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
         cancelled: false,
       });
       setScrollToId(newId);
@@ -815,6 +901,8 @@ function EditableLineItems({
       qty,
       unitPrice: price,
       basePrice: price,
+      originalUnitPrice: price,
+      originalBasePrice: price,
       cancelled: false,
     });
     setScrollToId(newId);
@@ -918,10 +1006,21 @@ function EditableLineItems({
                   onClick={() =>
                     update(item.id, {
                       cancelled: false,
-                      productId: item.originalProductId,
-                      productName: item.originalProductName,
-                      qty: item.originalQty,
-                      substituteProductId: undefined,
+                      // "Not available" only set cancelled:true, so undo just
+                      // clears it — restoring product/qty/denomination/price
+                      // here would discard edits made before the mis-click.
+                      // Only a substituted-then-cancelled line reverts fully.
+                      ...(item.substituteProductId
+                        ? {
+                            productId: item.originalProductId,
+                            productName: item.originalProductName,
+                            qty: item.originalQty,
+                            unitsPerBox: item.originalUnitsPerBox ?? null,
+                            boxSplit: item.originalBoxSplit ?? false,
+                            ...restoredPrice(item),
+                            substituteProductId: undefined,
+                          }
+                        : {}),
                     })
                   }
                 >
@@ -946,6 +1045,12 @@ function EditableLineItems({
                           productId: item.originalProductId,
                           productName: item.originalProductName,
                           qty: item.originalQty,
+                          // Back to the original product's own denomination —
+                          // otherwise the line would keep the substitute's case
+                          // size and re-price the original against it on save.
+                          unitsPerBox: item.originalUnitsPerBox ?? null,
+                          boxSplit: item.originalBoxSplit ?? false,
+                          ...restoredPrice(item),
                           substituteProductId: undefined,
                         })
                       }
@@ -1005,18 +1110,35 @@ function EditableLineItems({
           {substituteOpenId === item.id && (
             <SubstitutePicker
               onSelect={(p) => {
+                // Re-denominate the line against the SUBSTITUTE's case size, the
+                // same way mobile's buildSubstituteLine does: the ordered PIECE
+                // count carries across the swap and boxes/pieces are re-derived
+                // from the substitute's unitsPerBox. Keeping the replaced
+                // product's split would preview one case size while the server
+                // (which prices the split with the substitute's) bills another —
+                // and on a loose substitute it would send boxes for a product
+                // that has none.
+                const upb = p.unitsPerBox == null ? null : Number(p.unitsPerBox);
+                const lineUpb = Number(item.unitsPerBox ?? 0);
+                // A box-split line's qty is already in pieces; a boxed line
+                // without a split counts SELLING UNITS (boxes).
+                const pieces = item.boxSplit || lineUpb <= 1 ? item.qty : item.qty * lineUpb;
+                const split = normalizeBoxesPieces({ qty: pieces, unitsPerBox: upb });
                 update(item.id, {
                   substituteProductId: p.id,
                   productId: p.id,
                   productName: p.name,
-                  unitPrice: Number(p.pricePerUnit ?? 0),
+                  // The customer's contracted price for the SUBSTITUTE, over its
+                  // list price as the strikethrough base — same split mobile's
+                  // buildSubstituteLine stores. Pinning both to list made every
+                  // substitution look un-overridden, so no unitPrice reached the
+                  // server and a tier customer silently lost their price.
+                  unitPrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
-                  // The substitute's box split is resolved server-side and the
-                  // substitute push omits boxes/pieces, so the server charges
-                  // unitPrice*qty. Clear boxSplit so the preview matches (no
-                  // proration with the ORIGINAL product's unitsPerBox).
-                  boxSplit: false,
+                  qty: split.qty,
+                  unitsPerBox: upb,
+                  boxSplit: split.boxes != null,
                 });
                 setSubstituteOpenId(null);
               }}
@@ -1240,6 +1362,22 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const { setTitle } = usePageTitle();
   const { data: order, isLoading, isError } = useOrder(params.id);
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
+  // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
+  // line prices off the customer's effective tier, not the raw list price.
+  const { data: customerDetail } = useCustomer(order?.customerId ?? "");
+  const { data: customerPrices } = useCustomerPrices(order?.customerId);
+  const cpMap = React.useMemo(() => {
+    const m = new Map<string, number>();
+    for (const cp of (customerPrices ?? []) as Array<{ productId: string; pricingTier: number }>) {
+      m.set(cp.productId, cp.pricingTier);
+    }
+    return m;
+  }, [customerPrices]);
+  const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
+  const tierPriceFor = React.useCallback(
+    (p: SubstituteOption) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1),
+    [cpMap, customerTier],
+  );
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
@@ -1330,14 +1468,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 qty: Math.round(Number(li.qty)),
                 unitPrice: Number(li.unitPrice),
                 basePrice: Number(li.originalPrice ?? li.unitPrice),
+                originalUnitPrice: Number(li.unitPrice),
+                originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
+                originalOverrideReason: li.overrideReason ?? undefined,
                 cancelled: false,
                 notes: li.notes,
                 overrideReason: li.overrideReason ?? undefined,
                 unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
                 // Prefer the line's sale-time box-size snapshot over the live product.
                 unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
                 category: li.product?.category ?? null,
                 boxSplit: li.boxes != null || li.pieces != null,
+                originalBoxSplit: li.boxes != null || li.pieces != null,
               };
             }),
         );
@@ -1468,6 +1611,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             qty: Math.round(Number(li.qty)),
             unitPrice: Number(li.unitPrice),
             basePrice: Number(li.originalPrice ?? li.unitPrice),
+            originalUnitPrice: Number(li.unitPrice),
+            originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
+            originalOverrideReason: li.overrideReason ?? undefined,
             cancelled: false,
             notes: li.notes,
             overrideReason: li.overrideReason ?? undefined,
@@ -1475,7 +1621,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             // Prefer the line's sale-time snapshot over the live product so a later
             // packaging change can't re-price an existing line.
             unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+            originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
             boxSplit: li.boxes != null || li.pieces != null,
+            originalBoxSplit: li.boxes != null || li.pieces != null,
           };
         }),
     );
@@ -1505,18 +1653,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
-  function handleSaveItems() {
+  /**
+   * The line-item diff for the edit builder — the ONE payload builder both save
+   * paths use ("Save Draft"/"Save Changes" and "Save & Publish"), so publishing
+   * can never bill differently from saving. Deletes are added by the caller.
+   */
+  function buildItemUpdates(): ItemUpdate[] {
     const original = order!.lineItems;
     const updates: ItemUpdate[] = [];
 
-    // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
-    for (const id of pendingDeletes) {
-      updates.push({ id, action: "DELETE" });
-    }
-
     for (const edited of editItems) {
-      // A line is "discounted" when its net unit price sits below the list/base price.
-      const overridden = edited.unitPrice < edited.basePrice - 0.0001;
+      // A line is overridden when its net unit price diverges from the list/base
+      // price in EITHER direction (discount or upsell) — see isPriceOverridden.
+      const overridden = isPriceOverridden(edited);
       const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
       if (edited.isNew) {
         if (edited.isUnlisted) {
@@ -1555,11 +1704,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       if (edited.cancelled) {
         updates.push({ id: edited.id, action: "CANCEL" });
       } else if (edited.substituteProductId) {
-        updates.push({
-          id: edited.id,
-          substituteProductId: edited.substituteProductId,
-          qty: edited.qty,
-        });
+        updates.push(substituteDtoUpdate(edited));
       } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
         // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
         updates.push({
@@ -1582,6 +1727,15 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         });
       }
     }
+    return updates;
+  }
+
+  function handleSaveItems() {
+    // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
+    const updates: ItemUpdate[] = [
+      ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+      ...buildItemUpdates(),
+    ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
@@ -2157,6 +2311,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   onDelete={handleDeleteItem}
                   canEditPrice={canEdit}
                   priceHistory={priceHistory}
+                  tierPriceFor={tierPriceFor}
                 />
 
                 {/* Live total preview */}
@@ -2222,50 +2377,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         size="sm"
                         leftIcon={<CheckCircle2 className="h-4 w-4" />}
                         onClick={() => {
-                          // Save items first, then publish
-                          const original = order!.lineItems;
-                          const updates: any[] = [];
-                          for (const edited of editItems) {
-                            const noteChanged =
-                              (edited.notes ?? "").trim() !==
-                              (
-                                (original.find((li) => li.id === edited.id)?.notes as string) ?? ""
-                              ).trim();
-                            if (edited.isNew) {
-                              updates.push({
-                                productId: edited.productId,
-                                qty: edited.qty,
-                                ...boxedDtoFields(edited),
-                                ...(edited.notes?.trim() ? { notes: edited.notes.trim() } : {}),
-                              });
-                              continue;
-                            }
-                            const orig = original.find((li) => li.id === edited.id);
-                            if (!orig) continue;
-                            if (edited.cancelled) {
-                              updates.push({ id: edited.id, action: "CANCEL" });
-                            } else if (edited.substituteProductId) {
-                              // Substitute proration is keyed to the SUBSTITUTE product's
-                              // unitsPerBox (resolved server-side), not this line's — so we
-                              // don't derive boxes/pieces from the original product here.
-                              updates.push({
-                                id: edited.id,
-                                substituteProductId: edited.substituteProductId,
-                                qty: edited.qty,
-                              });
-                            } else if (
-                              Math.abs(edited.qty - Number(orig.qty)) > 0.0001 ||
-                              noteChanged
-                            ) {
-                              updates.push({
-                                id: edited.id,
-                                action: "UPDATE",
-                                qty: edited.qty,
-                                ...boxedDtoFields(edited),
-                                ...(noteChanged ? { notes: (edited.notes ?? "").trim() } : {}),
-                              });
-                            }
-                          }
+                          // Save items first, then publish. Exactly the payload
+                          // "Save Draft" sends — deletes and prices included — so
+                          // publishing straight from edit mode can't bill differently.
+                          const updates: ItemUpdate[] = [
+                            ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+                            ...buildItemUpdates(),
+                          ];
                           const doPublish = () =>
                             updateStatus.mutate(
                               { id: order!.id, status: "PENDING" as any },
@@ -2298,11 +2416,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   // lines. Mirrors handleSaveItems.
                                   replaceAll: false,
                                   ...(feeChanged ? { shippingFee: editShippingFee } : {}),
-                                  // Same dual-path threading as handleSaveItems — this
-                                  // Publish flow builds its own `updates` array rather
-                                  // than reusing handleSaveItems, so credits need the
-                                  // same explicit carry-through (shippingFee had this
-                                  // exact miss last PR — do not repeat it).
+                                  // Same dual-path threading as handleSaveItems — the
+                                  // line payload is shared (buildItemUpdates) but this
+                                  // flow still assembles its own mutation, so credits
+                                  // need the explicit carry-through (shippingFee had
+                                  // this exact miss last PR — do not repeat it).
                                   ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
                                 },
                                 {
