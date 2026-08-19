@@ -98,6 +98,99 @@ describe("buildOrderItemDiff", () => {
     expect(out).toEqual([{ id: "L1", substituteProductId: "P2", qty: 10 }]);
   });
 
+  // ── B1/B2/B3 regression pins (2026-08-19 boxed/substitution money fixes) ──
+
+  it("B1: a fresh boxed add (1 case, boxSplit true) emits boxes/pieces", () => {
+    const out = run({
+      catalog: [
+        cat({
+          productId: "P9",
+          qty: 12,
+          boxes: 1,
+          pieces: 0,
+          boxSplit: true,
+          unitPrice: 24,
+          basePrice: 24,
+        }),
+      ],
+    });
+    expect(out).toEqual([{ productId: "P9", qty: 12, boxes: 1, pieces: 0 }]);
+  });
+
+  it("B2: a boxed substitution (2 cases of 12 = qty 24) emits {boxes: 2, pieces: 0}", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          productId: "P2",
+          substituteProductId: "P2",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitPrice: 24, // substitute's own list price — nothing to send
+          basePrice: 24,
+        }),
+      ],
+      originals: [origLine({ id: "L1", productId: "P1", qty: 24, unitPrice: 24 })],
+    });
+    expect(out).toEqual([{ id: "L1", substituteProductId: "P2", qty: 24, boxes: 2, pieces: 0 }]);
+  });
+
+  it("B3: a substitution with an operator override emits unitPrice + overrideReason", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          productId: "P2",
+          substituteProductId: "P2",
+          qty: 24,
+          boxes: 2,
+          pieces: 0,
+          unitPrice: 20,
+          basePrice: 24, // substitute's list price — 20 diverges from it
+          overrideReason: "bulk deal",
+        }),
+      ],
+      originals: [origLine({ id: "L1", productId: "P1", qty: 24, unitPrice: 24 })],
+    });
+    expect(out).toEqual([
+      {
+        id: "L1",
+        substituteProductId: "P2",
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitPrice: 20,
+        overrideReason: "bulk deal",
+      },
+    ]);
+  });
+
+  it("a substitution AT the substitute's list price sends NO unitPrice (even if the original line priced differently)", () => {
+    const out = run({
+      catalog: [
+        cat({
+          lineId: "L1",
+          productId: "P2",
+          substituteProductId: "P2",
+          qty: 10,
+          unitPrice: 7,
+          basePrice: 7, // substitute's own list price
+        }),
+      ],
+      originals: [origLine({ id: "L1", productId: "P1", qty: 10, unitPrice: 5 })],
+    });
+    expect(out).toEqual([{ id: "L1", substituteProductId: "P2", qty: 10 }]);
+  });
+
+  it("a plain qty line still emits no boxes/pieces (the data-presence gate doesn't leak)", () => {
+    const out = run({
+      catalog: [cat({ lineId: "L1", qty: 12, unitPrice: 5 })],
+      originals: [origLine({ id: "L1", qty: 10, unitPrice: 5 })],
+    });
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", qty: 12 }]);
+  });
+
   it("trash → DELETE, not-available → CANCEL", () => {
     const out = run({ pendingDeletes: ["L1"], pendingCancels: ["L2"] });
     expect(out).toEqual([

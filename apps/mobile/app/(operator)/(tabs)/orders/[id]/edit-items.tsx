@@ -36,6 +36,7 @@ import {
   roundMoney,
 } from "../../../../../lib/pricing";
 import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
+import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
 import type { ScanOutcome } from "../../../../../lib/scan-loop";
 import { useMarginConfig, floorForCategory } from "../../../../../lib/api/margin";
@@ -503,7 +504,7 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
         return kind === "piece"
           ? { ...d, [p.id]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
-          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0 } };
+          : { ...d, [p.id]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
       }
       return { ...d, [p.id]: { ...base, qty: 1 } };
     });
@@ -748,28 +749,22 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
           onPickAndStay={substituteFor ? undefined : (p, kind) => addPickedToDraft(p, kind)}
           onPick={(p, kind) => {
             if (substituteFor) {
-              const catalogPrice = tierPriceFor(p);
-              const upbRaw = p.unitsPerBox;
-              const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
+              const tierPrice = tierPriceFor(p);
+              const listPrice = toNumber(p.pricePerUnit);
               setDraft((d) => {
                 const next = { ...d };
                 const old = next[substituteFor];
-                const inheritedQty = old?.qty ?? 1;
                 delete next[substituteFor];
-                next[p.id] = {
-                  productId: p.id,
-                  qty: inheritedQty,
-                  unitsPerBox,
-                  unitPrice: catalogPrice,
-                  catalogPrice,
-                  name: p.name,
-                  unit: p.unit,
-                  // Preserve the original line id so the diff emits a substitution
-                  // (swap product on the same line) rather than delete + create.
-                  lineId: old?.lineId,
-                  substituteProductId: old?.lineId ? p.id : undefined,
-                  boxSplit: old?.boxSplit,
-                };
+                // Re-denominates the inherited piece count against the
+                // SUBSTITUTE's box size and keeps its LIST price as the line's
+                // base, so the box split and the customer's tier price both
+                // reach the server (lib/substitute-line.ts).
+                next[p.id] = buildSubstituteLine({
+                  previous: old,
+                  product: { id: p.id, name: p.name, unit: p.unit, unitsPerBox: p.unitsPerBox },
+                  tierPrice,
+                  listPrice,
+                });
                 return next;
               });
               setSubstituteFor(null);

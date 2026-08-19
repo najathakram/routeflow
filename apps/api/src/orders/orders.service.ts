@@ -2505,18 +2505,53 @@ export class OrdersService implements OnApplicationBootstrap {
                 });
                 const existingQty = order.lineItems.find((li) => li.id === item.id)?.qty ?? 1;
                 // Substitution may also carry a box/piece split when the substitute
-                // is itself a boxed product. Honor it the same way as a fresh add.
-                let qtyVal = item.qty ?? Number(existingQty);
-                if (item.boxes != null || item.pieces != null) {
-                  const upb = Number(product.unitsPerBox ?? 0);
-                  qtyVal = (item.boxes ?? 0) * upb + (item.pieces ?? 0);
+                // is itself a boxed product. Honor it the same way as a fresh add —
+                // but only when the SUBSTITUTE is case-packed: the incoming split is
+                // denominated in the REPLACED product's box size, so multiplying it by
+                // a loose substitute's unitsPerBox (null/1) would collapse the line to
+                // its loose pieces (qty 0 on a whole-case line). Fall back to the piece
+                // qty there, and normalize otherwise so a split sized to a different
+                // case can't persist with pieces >= the substitute's unitsPerBox.
+                const upb = Number(product.unitsPerBox ?? 0);
+                const split =
+                  (item.boxes != null || item.pieces != null) && upb > 1
+                    ? normalizeBoxesPieces({
+                        boxes: item.boxes,
+                        pieces: item.pieces,
+                        unitsPerBox: upb,
+                      })
+                    : null;
+                const qtyVal = split ? split.qty : (item.qty ?? Number(existingQty));
+                if (qtyVal <= 0) continue;
+                // B3: staff (OPERATOR/TENANT_ADMIN) may re-price the substitute line —
+                // same house override convention as create()'s operator-override ladder
+                // and the operator update branches above: net unitPrice, DISCOUNTED
+                // below the substitute's list price, MANUAL above it, originalPrice =
+                // the displaced list price. This branch is only reachable via the
+                // operator/admin path (drivers/customers replace-all above and never
+                // carry substituteProductId), but the role check stays explicit so a
+                // driver/customer DTO can never buy price control here — B13, non-staff
+                // never set prices. No override (or one equal to list) keeps today's
+                // STANDARD/list-price behavior.
+                const isStaffCaller =
+                  user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
+                const listPrice = Number(product.pricePerUnit);
+                const overridePrice =
+                  isStaffCaller && item.unitPrice != null ? Number(item.unitPrice) : null;
+                let unitPrice = listPrice;
+                let priceType: PriceType = PriceType.STANDARD;
+                let originalPrice: number | null = null;
+                const isOverridden = overridePrice != null && overridePrice !== listPrice;
+                if (isOverridden && overridePrice != null) {
+                  unitPrice = overridePrice;
+                  priceType = overridePrice < listPrice ? PriceType.DISCOUNTED : PriceType.MANUAL;
+                  originalPrice = listPrice;
                 }
-                const unitPrice = Number(product.pricePerUnit);
                 const subtotal = computeLineSubtotal({
                   unitPrice,
                   qty: qtyVal,
-                  boxes: item.boxes ?? null,
-                  pieces: item.pieces ?? null,
+                  boxes: split?.boxes ?? null,
+                  pieces: split?.pieces ?? null,
                   unitsPerBox: product.unitsPerBox,
                 });
                 await tx.orderItem.update({
@@ -2525,20 +2560,19 @@ export class OrdersService implements OnApplicationBootstrap {
                     productId: item.substituteProductId,
                     unitPrice,
                     qty: qtyVal,
-                    boxes: item.boxes ?? null,
-                    pieces: item.pieces ?? null,
+                    // Always set the split explicitly — a loose substitute must not
+                    // keep the replaced product's boxes/pieces.
+                    boxes: split?.boxes ?? null,
+                    pieces: split?.pieces ?? null,
                     // Re-snapshot the substitute's box size on box-split lines.
-                    unitsPerBox:
-                      item.boxes != null && Number(product.unitsPerBox ?? 0) > 1
-                        ? Number(product.unitsPerBox)
-                        : null,
+                    unitsPerBox: split ? upb : null,
                     subtotal,
                     status: "PENDING",
                     notes: item.notes,
-                    priceType: PriceType.STANDARD,
-                    originalPrice: null,
-                    overrideReason: null,
-                    overriddenBy: null,
+                    priceType,
+                    originalPrice,
+                    overrideReason: isOverridden ? (item.overrideReason ?? null) : null,
+                    overriddenBy: isOverridden ? (user?.sub ?? null) : null,
                     // The product changed — re-snapshot the substitute's category so
                     // it doesn't keep the replaced product's (spec §7).
                     trackedCategoryId: product.trackedCategoryId ?? null,

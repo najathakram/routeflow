@@ -16,19 +16,29 @@ IMPLEMENTED) under `.claude/pipeline/plans/`.
 
 ## 1. ▶ NEXT UP — pick from these
 
-1. **Deep-dive bug backlog (2026-08-17, owner triage needed):** 14 confirmed bugs are
-   recorded in memory `project_deep_dive_findings_2026-08-17` — the 3 batch blockers are
-   FIXED (#356 + gates in #358/#359), but the rest are NOT, incl. **2 CRITICAL boxed
-   overcharges** (fresh boxed add in order edit-items drops boxSplit ⇒ ×unitsPerBox
-   overcharge; substitutions never send boxes/pieces — shared web+mobile defect), the
-   DRAFT-invoice payment trap, the regulated-tax drop on price adjustment, PO receive
-   clobbering STANDARD costs, and 2 security findings (uploads cross-tenant prefixes,
-   driver-settable prices).
-2. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
+1. **UX EXPANSION BATCH (owner-approved 2026-08-19)** — full plan at
+   [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md).
+   Sequencing locked by the owner: **PR-A** (mobile send never dead-ends + inventory
+   search full toolset + cross-links + **NEW CRITICAL: driver edits wipe orders** —
+   driver diff payloads hit the server's replace-all branch and deleteMany all lines,
+   orders.service.ts:2136) → **PR-B** order-search-by-product + per-buyer price history →
+   **PR-C** stock-count mode (single counter multi-ready; migration) → **PR-D**
+   generic→variant split (one mechanism, two entry points) → **PR-E** FIFO payment
+   allocation AP+AR, on-account credit, bulk mark-paid (migration) → **PR-F** AI
+   supplier-statement reconciliation, one review screen (migration). Locked decisions
+   and per-PR edge cases are in the plan file.
+2. **D1 boxed-substitution money fixes:** verified and awaiting ship at time of writing
+   (working tree; plan `.claude/pipeline/plans/2026-08-19-d1-boxed-substitution-money-fixes.md`).
+   Ships together with the two chip branches: `claude/affectionate-davinci-bb3096`
+   (CP-07 spec fix, committed) and `claude/bold-bouman-d76cd5` (e2e drafts leak fix,
+   committed).
+3. **Deep-dive bug backlog remainder (B7–B14)** from
+   `project_deep_dive_findings_2026-08-17` — regulated-tax drop on price adjustment,
+   estimate/recurring/returns races, STANDARD-cost clobber, DRAFT-payment trap, 2
+   security items (uploads cross-tenant prefixes, driver price), ActionTile double-tap,
+   finance-list debounce. Ride as small PRs interleaved with the batch above.
+4. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
    size (#45) — see §4.
-3. Two pending task chips from 2026-08-19: e2e draft-accumulation cleanup (43 stale
-   drafts in the e2e tenant dock); the CP-07 chip is RESOLVED (spec artifact — see
-   memory `reference_cp07_textcontent_concat_artifact`).
 
 **2026-08-17/18 incident context every future session should know:** production Postgres
 had NO VOLUME and was wiped by a Railway platform incident; restored from the 02:02 UTC
@@ -38,11 +48,13 @@ R2 dump (Sunday 01:40→20:00 UTC trading lost, Railway support ticket = owner).
 work.**
 
 **Owner actions still open:** enable **Authenticated SMTP** on the M365 mailbox (the
-test-send now says this itself); rename supplier "Mike's Novelties Wholesale" →
-"MWI — Mike's Novelties Wholesale" then re-run the alias backfill so the 440 MWI
-corrections graduate off the legacy tier (62 already migrated 2026-08-19); Railway
+test-send now says this itself — owner deferred 2026-08-19, "SMTP can wait"); Railway
 billing auto-top-up; healthchecks.io cadence to 2-hourly; an uptime monitor on
-`/api/v1/health`.
+`/api/v1/health`. Owner questions pending in the batch plan §Open questions (mobile-send
+repro details, count CSV export, statement capture path, AR field collection).
+**DONE 2026-08-19:** MWI supplier renamed + alias backfill complete — 511/511 groups
+migrated (441 MWI), verified in prod. Both 2026-08-19 task chips are RESOLVED (CP-07 =
+spec artifact, fixed on its branch; e2e drafts leak fixed + 43 rows deleted).
 
 ---
 

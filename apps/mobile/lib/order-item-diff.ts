@@ -13,10 +13,20 @@
  * - new unlisted line → `{ name, qty, unitPrice }`;
  * - existing UPDATE → `{ id, action:"UPDATE", qty, [boxes,pieces], [unitPrice,overrideReason] }`
  *   (qty always sent; price only when it changed vs the original);
- * - substitute → `{ id, substituteProductId, qty }`;
+ * - substitute → `{ id, substituteProductId, qty, [boxes,pieces], [unitPrice,overrideReason] }`
+ *   (same box-split + override rules as a fresh add — the SUBSTITUTE's own LIST
+ *   price, carried in `basePrice`, is what "diverges" is measured against: it is
+ *   the price the server applies when the payload carries none, so a tier price
+ *   or an operator override must both go on the wire);
  * - trash → `{ id, action:"DELETE" }` (server hard-deletes only if uninvoiced/undelivered);
  * - not-available → `{ id, action:"CANCEL" }`.
  * Only DTO-whitelisted keys are emitted — never spread a UI draft.
+ *
+ * The `boxes`/`pieces` fields are emitted whenever the line carries that DATA
+ * (`boxes != null || pieces != null`), not off a separately-maintained
+ * `boxSplit` boolean — a producer that forgets to flip a flag can no longer
+ * silently strip a real box split from the payload (see B1: a fresh case-add
+ * that skipped `boxSplit: true` billed box-price × piece-count).
  */
 import type { UpdateOrderItemInput } from "./api/orders";
 
@@ -30,10 +40,20 @@ export interface DiffCatalogLine {
   qty: number;
   boxes?: number | null;
   pieces?: number | null;
-  /** Send boxes/pieces only for a genuinely box-split line (stored denomination). */
+  /**
+   * Stored denomination hint from the UI (client state only — never sent to
+   * the server as its own field). The `boxFields` gate below no longer trusts
+   * this flag; it reads `boxes`/`pieces` DATA presence instead, so this field
+   * is now informational only. Kept on the interface for callers that already
+   * track it.
+   */
   boxSplit: boolean;
   unitPrice: number;
-  /** The customer's tier/base price — a new line sends unitPrice only if it diverges. */
+  /**
+   * The base this line's price is measured against — the customer's tier price
+   * on a fresh add, the SUBSTITUTE's list price on a substitution. `unitPrice`
+   * goes on the wire only when it diverges from this.
+   */
   basePrice: number;
   overrideReason?: string;
   /** Set when this row substitutes a different product onto its original line. */
@@ -90,7 +110,12 @@ export function buildOrderItemDiff(args: {
 
   for (const line of catalog) {
     if (line.qty <= 0) continue; // zero-out goes through delete/cancel; DTO qty is Min(1)
-    const boxFields = line.boxSplit ? { boxes: line.boxes ?? 0, pieces: line.pieces ?? 0 } : {};
+    // Data presence, not the separately-maintained `boxSplit` flag — a producer
+    // that forgets to flip the flag can no longer silently drop a real split (B1).
+    const boxFields =
+      line.boxes != null || line.pieces != null
+        ? { boxes: line.boxes ?? 0, pieces: line.pieces ?? 0 }
+        : {};
     const noteVal = (line.notes ?? "").trim();
 
     if (!line.lineId) {
@@ -115,7 +140,26 @@ export function buildOrderItemDiff(args: {
     if (!orig) continue;
 
     if (line.substituteProductId && line.substituteProductId !== orig.productId) {
-      out.push({ id: line.lineId, substituteProductId: line.substituteProductId, qty: line.qty });
+      // Substitution: honor a box split + operator override the same way as a
+      // fresh add (the server explicitly supports both on this branch).
+      // Inheriting bare qty silently overcharged by unitsPerBox (B2), and any
+      // price other than the substitute's list price was discarded (B3).
+      // `basePrice` here is the SUBSTITUTE's own LIST price (see
+      // lib/substitute-line.ts), which is exactly what the server bills when no
+      // `unitPrice` arrives — so a tier price diverges from it and is sent too.
+      const overridden = Math.abs(line.unitPrice - line.basePrice) > EPS;
+      out.push({
+        id: line.lineId,
+        substituteProductId: line.substituteProductId,
+        qty: line.qty,
+        ...boxFields,
+        ...(overridden
+          ? {
+              unitPrice: line.unitPrice,
+              ...(line.overrideReason ? { overrideReason: line.overrideReason } : {}),
+            }
+          : {}),
+      });
       continue;
     }
 
