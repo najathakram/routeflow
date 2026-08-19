@@ -6,7 +6,9 @@
  *   • Operator:  admin / Admin@123
  *   • Customer:  harbor_cafe / Customer1!
  *
- * Safe to run multiple times — skips creation if data already exists.
+ * Safe to run multiple times — skips creation if data already exists. On an
+ * existing tenant it also sweeps stale parked SaleDrafts the web e2e suite
+ * left in the operator's dock (see 08-create-order-escape.spec.ts).
  *
  * Usage (from repo root):
  *   Local:   node apps/api/scripts/e2e-seed.js
@@ -83,6 +85,34 @@ async function main() {
       console.log(`  ✓ Created missing customer: ${CUSTOMER_USERNAME}`);
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
+    }
+
+    // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
+    // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
+    // device "Desktop web") on this tenant; the spec now deletes its own, but runs
+    // before that fix accumulated two rows per run. No seed creates SaleDrafts
+    // (the draft-resume specs mock the endpoints), so every Desktop-web ORDER
+    // draft owned by the e2e operator is residue — safe to delete.
+    const operator =
+      op ??
+      (await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: OPERATOR_USERNAME },
+      }));
+    if (operator) {
+      const sweep = await prisma.saleDraft.deleteMany({
+        where: {
+          tenantId: existing.id,
+          userId: operator.id,
+          kind: "ORDER",
+          device: "Desktop web",
+          title: { startsWith: "Order" },
+        },
+      });
+      console.log(
+        sweep.count > 0
+          ? `  ✓ Swept ${sweep.count} stale parked draft(s) from the operator's dock`
+          : "  ✓ No stale parked drafts to sweep",
+      );
     }
 
     console.log("\n✅ E2E tenant ready.\n");
