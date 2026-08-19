@@ -306,6 +306,9 @@ against production data.**
 
 `06-critical-paths.spec.ts` is the key regression guard for the money-math fix: verifies all
 displayed amounts are `$X.XX`, API money fields have ≤2 dp, and invoice `total = subtotal + tax`.
+CP-07 (finance dashboard) extracts amounts with `allInnerTexts()` joined by `\n` — NEVER
+`allTextContents()`: textContent glues an amount to the next label's leading digits (AR-aging
+"$0.00"+"1 to 15 days" → "$0.001"), a false failure whenever the tenant has open AR.
 
 Run: `cd apps/web && npx playwright test`
 

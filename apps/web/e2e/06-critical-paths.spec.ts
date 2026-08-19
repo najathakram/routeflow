@@ -335,9 +335,15 @@ test.describe("Critical Paths — Money Math & Core Integrity", () => {
     const count = await amounts.count();
     if (count === 0) return;
 
-    const texts = await amounts.allTextContents();
+    // innerText, NOT textContent: textContent concatenates adjacent nodes with no
+    // separator, so an amount absorbs the leading digits of the next label. The
+    // AR-aging legend ("$0.00" then "1 to 15 days") read as "$0.001" whenever the
+    // tenant had any open AR — a false "malformatted" hit on perfectly-rounded
+    // values (nightly 2026-08-19). innerText keeps block/flex boundaries as line
+    // breaks, and \n also separates the per-element strings below.
+    const texts = await amounts.allInnerTexts();
     // Extract dollar amounts from card text (may contain labels + amounts mixed)
-    const dollarMatches = texts.join(" ").match(/\$[\d,]+\.\d+/g) ?? [];
+    const dollarMatches = texts.join("\n").match(/\$[\d,]+\.\d+/g) ?? [];
     const badAmounts = dollarMatches.filter((t) => !MONEY_RE.test(t));
     expect(
       badAmounts,
