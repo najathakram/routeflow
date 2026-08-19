@@ -1,8 +1,7 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** PLANNED — **RESERVED FOR AN EXTERNAL IMPLEMENTER (owner decision 2026-08-19).
-Do NOT start this batch from the owner's Claude sessions; keep this document and HANDOFF §1
-updated on their behalf.** This plan is written to be self-contained: recon anchors
+**Status:** PLANNED, not started — the owner directs next steps (who implements, and when)
+from their next session. This plan is self-contained for any implementer: recon anchors
 (file:line), locked decisions, edge cases and error handling are all inline. Read
 `CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
 backup-first prod flow, and the test-tenant policy is absolute.

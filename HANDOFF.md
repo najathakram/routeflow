@@ -1,46 +1,56 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-19 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
+**Written:** 2026-08-19 (evening) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through **PR #360 is SHIPPED + LIVE**. The 2026-08-17 mobile UX batch is
-**COMPLETE**: #352 (PR-1 guaranteed-400s), #353 (PR-2 scan ladder + quiet catalogue),
-#356 (PR-B tax-unit + tenant-safe mappings), #357 (PR-3 parked drafts), #358 (PR-4
-van sale + post-confirm), #359 (PR-5 scanner memory + boxes/pieces), #360 (PR-6 list
-restore + movements links + WhatsApp PDF + SMTP diagnostics). Also shipped alongside:
-#351 (web list page-position on Back), #354 (2-hourly R2 dumps), #355 (backup runbook
-indexed). Binding architecture decisions for the batch live at
-`.claude/pipeline/decisions/2026-08-18-batch-architecture.md`; per-PR plans (all
-IMPLEMENTED) under `.claude/pipeline/plans/`.
+Everything through **PR #364 is SHIPPED + LIVE** (post-deploy check green). New today:
+**#362** (D1 boxed-substitution money fixes — the 2 critical silent overcharges + tier
+price on substitution, api+web+mobile, adversarially verified), **#363** (CP-07 spec
+concat artifact + order-builder e2e draft leak; the 43 stale e2e drafts were also
+deleted from prod), **#364** (docs). Earlier: the full 2026-08-17 mobile UX batch
+#351–#361, incl. 2-hourly R2 dumps. Note: the `ebe30eb6` Railway deploys show FAILED —
+that snapshot raced the private flip; its delta was e2e/docs only, and the LIVE build
+`71f44020` carries all runtime code (verified). Nothing to repair; the next apps/\*\*
+push will confirm the GitHub App still clones private fine (fallback: `railway up`).
 
 ---
 
-## 1. ▶ NEXT UP — pick from these
+## 1. ▶ NEXT UP — the owner drives all of these from the next session
 
-1. **UX EXPANSION BATCH (owner-approved 2026-08-19) — ⛔ RESERVED: the owner is having
-   this implemented by someone else. Claude sessions must NOT build it — only keep the
-   plan and this handoff updated.** Full plan at
-   [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md).
-   Sequencing locked by the owner: **PR-A** (mobile send never dead-ends + inventory
-   search full toolset + cross-links + **NEW CRITICAL: driver edits wipe orders** —
-   driver diff payloads hit the server's replace-all branch and deleteMany all lines,
-   orders.service.ts:2136) → **PR-B** order-search-by-product + per-buyer price history →
-   **PR-C** stock-count mode (single counter multi-ready; migration) → **PR-D**
-   generic→variant split (one mechanism, two entry points) → **PR-E** FIFO payment
-   allocation AP+AR, on-account credit, bulk mark-paid (migration) → **PR-F** AI
-   supplier-statement reconciliation, one review screen (migration). Locked decisions
-   and per-PR edge cases are in the plan file.
-2. **D1 boxed-substitution money fixes:** verified and awaiting ship at time of writing
-   (working tree; plan `.claude/pipeline/plans/2026-08-19-d1-boxed-substitution-money-fixes.md`).
-   Ships together with the two chip branches: `claude/affectionate-davinci-bb3096`
-   (CP-07 spec fix, committed) and `claude/bold-bouman-d76cd5` (e2e drafts leak fix,
-   committed).
-3. **Deep-dive bug backlog remainder (B7–B14)** from
+The owner will decide who implements what (self, Claude, or an external dev). Nothing
+here is blocked — this is the complete pick-up list.
+
+1. **UX EXPANSION BATCH (owner-approved 2026-08-19, planned, not started).** Full
+   self-contained plan at
+   [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md)
+   (recon anchors, locked decisions, edge cases, 3 migrations). Owner-locked sequencing:
+   **PR-A** (mobile send never dead-ends + inventory search full toolset + cross-links)
+   → **PR-B** order-search-by-product + per-buyer price history → **PR-C** stock-count
+   mode (single counter, multi-ready; migration) → **PR-D** generic→variant split (one
+   mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
+   credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
+   one review screen (migration).
+2. **CRITICAL bug, decide who fixes it first: driver edits wipe orders.** A driver
+   saving ANY item edit deletes every untouched line on that order — the driver app
+   sends an incremental diff but the server routes DRIVER to the always-replace branch
+   (`deleteMany` then re-create only `productId`-carrying entries,
+   apps/api/src/orders/orders.service.ts:2136; found + confirmed during D1
+   verification, pre-existing). Filed as PR-A item A4 in the plan, but it is live data
+   loss today and can be fixed standalone in one small server PR + specs.
+3. **Owner questions the batch needs answered** (plan §Open questions): (a) the exact
+   screen/steps where mobile invoice-send blocked you (screenshot ideal); (b) should a
+   committed stock count also export CSV/PDF; (c) do supplier statements arrive as
+   PDFs or on paper (camera path priority); (d) do drivers collect lump-sum customer
+   payments in the field (mobile AR parity sooner)?
+4. **Deep-dive bug backlog remainder (B7–B14)** from
    `project_deep_dive_findings_2026-08-17` — regulated-tax drop on price adjustment,
    estimate/recurring/returns races, STANDARD-cost clobber, DRAFT-payment trap, 2
    security items (uploads cross-tenant prefixes, driver price), ActionTile double-tap,
-   finance-list debounce. Ride as small PRs interleaved with the batch above.
-4. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
+   finance-list debounce. Small PRs, independent of the batch, unassigned.
+5. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
    size (#45) — see §4.
+6. **New chip suggestion from the drafts-cleanup session:** harden the e2e suite's auth
+   setup — full-suite runs >1h expire the operator storage state and mass-fail late
+   projects on the login page (pre-existing, not a regression).
 
 **2026-08-17/18 incident context every future session should know:** production Postgres
 had NO VOLUME and was wiped by a Railway platform incident; restored from the 02:02 UTC
@@ -52,8 +62,7 @@ work.**
 **Owner actions still open:** enable **Authenticated SMTP** on the M365 mailbox (the
 test-send now says this itself — owner deferred 2026-08-19, "SMTP can wait"); Railway
 billing auto-top-up; healthchecks.io cadence to 2-hourly; an uptime monitor on
-`/api/v1/health`. Owner questions pending in the batch plan §Open questions (mobile-send
-repro details, count CSV export, statement capture path, AR field collection).
+`/api/v1/health`.
 **DONE 2026-08-19:** MWI supplier renamed + alias backfill complete — 511/511 groups
 migrated (441 MWI), verified in prod. Both 2026-08-19 task chips are RESOLVED (CP-07 =
 spec artifact, fixed on its branch; e2e drafts leak fixed + 43 rows deleted).
