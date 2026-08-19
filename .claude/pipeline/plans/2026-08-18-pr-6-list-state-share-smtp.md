@@ -1,6 +1,6 @@
 # PR-6 — list state, product↔movements, WhatsApp PDF, SMTP diagnostics
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — shipped 2026-08-18/19; see the PR for the verified final shape
 **Scale:** major (mobile + api; the SMTP part changes how mail is sent for every tenant)
 **Sources of truth:** `.claude/pipeline/decisions/2026-08-18-batch-architecture.md` **§PR-6** (binding) and `docs/plans/mobile-ux-batch-2026-08-17.md` §PR-6. Decisions doc wins on conflict.
 

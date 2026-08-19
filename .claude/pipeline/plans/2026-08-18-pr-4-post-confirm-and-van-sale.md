@@ -1,6 +1,6 @@
 # PR-4 — post-confirm flow + van sale
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — shipped 2026-08-18/19; see the PR for the verified final shape
 **Scale:** major (mobile-only, but money-critical: a new save path that creates orders and moves stock)
 **Sources of truth:** `.claude/pipeline/decisions/2026-08-18-batch-architecture.md` **§A2** (the gate contract — binding, quoted below) and **§PR-4**. Also `docs/plans/mobile-ux-batch-2026-08-17.md` §PR-4. If anything here disagrees with the decisions doc, the decisions doc wins.
 

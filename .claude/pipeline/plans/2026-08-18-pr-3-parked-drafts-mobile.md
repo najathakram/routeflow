@@ -1,6 +1,6 @@
 # PR-3 — parked drafts on mobile
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — shipped 2026-08-18/19; see the PR for the verified final shape
 **Scale:** major (mobile-only, new subsystem, money-adjacent on resume)
 **Sources of truth:** `.claude/pipeline/decisions/2026-08-18-batch-architecture.md` §PR-3 (binding — the five numbered designs) and `docs/plans/mobile-ux-batch-2026-08-17.md` §PR-3. If this file and the decisions doc disagree, the decisions doc wins.
 

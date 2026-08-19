@@ -1,6 +1,6 @@
 # PR-5 — scanner match memory + boxes/pieces on scanned lines
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — shipped 2026-08-18/19; see the PR for the verified final shape
 **Scale:** major (api + web + mobile; touches receive-time stock and cost denomination)
 **Sources of truth:** `.claude/pipeline/decisions/2026-08-18-batch-architecture.md` **§A3** (the `toBillLine` contract — binding) and **§PR-5** (alias scope, unlearn, cache path). Also `docs/plans/mobile-ux-batch-2026-08-17.md` §PR-5. Decisions doc wins on conflict.
 
