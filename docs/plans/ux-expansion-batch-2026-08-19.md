@@ -94,6 +94,35 @@ the diff branch regardless of role (keeping the driver re-pricing + no-price-con
 or reject diff-shaped payloads on the replace path with a 400 instead of destroying lines.
 Spec-pin both. This ships in PR-A because it is live data loss.
 
+### A5. Buyer-portal login: new user gets an empty dashboard; second computer loses the seller connection (owner-reported 2026-08-19, NOT yet investigated)
+
+Two symptoms from one buyer account: (a) after logging in, the dashboard and its fields
+never load; (b) logging in from a different computer, the buyer cannot see their
+connection with the seller at all. **Investigate before fixing** — reproduce with a
+throwaway buyer on an approved test tenant (`test` / `e2e-*` only), never on a live
+client. Leads, in order of suspicion:
+
+1. **Tenant context on a fresh device.** The tenant-slug cookie must never be httpOnly
+   (a prior bug — httpOnly silently broke login), and a brand-new computer has no tenant
+   cookie/localStorage at all. If the buyer's seller association is resolved from
+   client-side tenant context rather than server-side from their user record, a second
+   device would show exactly this "no connection with the seller" symptom. Check how
+   the buyer→tenant association is loaded after auth (JWT carries `tenantId`/role — does
+   the customer portal derive the seller list from the token/server, or from the URL
+   slug/stored context?), and what an invite link plants that a plain login doesn't.
+2. **New-account empty state.** A just-created buyer has no orders/invoices; if the
+   customer dashboard hard-fails on empty data (unhandled null, forever-spinner on a
+   4xx), symptom (a) reproduces on ANY device. Check the customer dashboard's queries
+   and their error/empty states.
+3. Collect from the affected user: exact URL (including any `?desktop=1` or tenant slug
+   in it), browser, and whether the first login came through an invite link. The July
+   2026 login/domain outage had URL-dependent behavior (`www.routeflow.info/login`) —
+   rule out a stale bookmark to a broken host.
+
+Fix whatever falls out, with a regression test for "fresh device, valid credentials →
+dashboard loads and seller connection visible." Ships in PR-A (client-facing login
+failure outranks everything else in this PR).
+
 ---
 
 ## PR-B — Find orders by product, and see what we sold it for

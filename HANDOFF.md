@@ -29,26 +29,39 @@ here is blocked — this is the complete pick-up list.
    mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
    credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
    one review screen (migration).
-2. **CRITICAL bug, decide who fixes it first: driver edits wipe orders.** A driver
+2. **NEW client-facing bug (owner-reported 2026-08-19 evening, NOT yet investigated):
+   buyer-portal login broken for a new user.** Two symptoms from the same buyer account:
+   (a) after logging in, the dashboard and its fields never load; (b) logging in from a
+   DIFFERENT computer, the buyer cannot see their connection with the seller (tenant
+   link missing). Investigate before fixing — leads to start from: the tenant-slug
+   cookie rules (memory `feedback_tenant_cookie_must_not_be_httponly` — httpOnly
+   silently breaks login; a fresh device has no tenant context at all, which would
+   explain the missing seller connection), how the buyer's seller/tenant association is
+   resolved server-side vs client-side on first login, and whether the customer
+   dashboard breaks on a brand-new account with no data (empty-state crash). Get the
+   exact URL used, browser, and whether the user came through an invite link vs direct
+   login — an invite link may be what plants the tenant context, which a second
+   computer never receives. Also filed in the batch plan as PR-A item A5.
+3. **CRITICAL bug, decide who fixes it first: driver edits wipe orders.** A driver
    saving ANY item edit deletes every untouched line on that order — the driver app
    sends an incremental diff but the server routes DRIVER to the always-replace branch
    (`deleteMany` then re-create only `productId`-carrying entries,
    apps/api/src/orders/orders.service.ts:2136; found + confirmed during D1
    verification, pre-existing). Filed as PR-A item A4 in the plan, but it is live data
    loss today and can be fixed standalone in one small server PR + specs.
-3. **Owner questions the batch needs answered** (plan §Open questions): (a) the exact
+4. **Owner questions the batch needs answered** (plan §Open questions): (a) the exact
    screen/steps where mobile invoice-send blocked you (screenshot ideal); (b) should a
    committed stock count also export CSV/PDF; (c) do supplier statements arrive as
    PDFs or on paper (camera path priority); (d) do drivers collect lump-sum customer
    payments in the field (mobile AR parity sooner)?
-4. **Deep-dive bug backlog remainder (B7–B14)** from
+5. **Deep-dive bug backlog remainder (B7–B14)** from
    `project_deep_dive_findings_2026-08-17` — regulated-tax drop on price adjustment,
    estimate/recurring/returns races, STANDARD-cost clobber, DRAFT-payment trap, 2
    security items (uploads cross-tenant prefixes, driver price), ActionTile double-tap,
    finance-list debounce. Small PRs, independent of the batch, unassigned.
-5. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
+6. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
    size (#45) — see §4.
-6. **New chip suggestion from the drafts-cleanup session:** harden the e2e suite's auth
+7. **New chip suggestion from the drafts-cleanup session:** harden the e2e suite's auth
    setup — full-suite runs >1h expire the operator storage state and mass-fail late
    projects on the login page (pre-existing, not a regression).
 
