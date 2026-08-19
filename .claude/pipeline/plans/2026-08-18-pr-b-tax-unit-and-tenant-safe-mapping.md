@@ -1,6 +1,6 @@
 # PR-B — tax-rate unit fix + tenant-safe product mapping
 
-**Status:** PLANNED
+**Status:** IMPLEMENTED — shipped 2026-08-18/19; see the PR for the verified final shape
 **Scale:** major (api-only; money-affecting + a live cross-tenant bug)
 **Source of truth:** `.claude/pipeline/decisions/2026-08-18-batch-architecture.md` §A1 and §PR-5 (commit 1). Read it if anything here is ambiguous — it wins.
 

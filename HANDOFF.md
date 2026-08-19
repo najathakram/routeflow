@@ -1,54 +1,48 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-17 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
-**Working tree:** clean except the usual untracked personal files (`.personal/`, this file, `docs/audit/`).
+**Written:** 2026-08-19 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through PR #349 is SHIPPED + LIVE (credit-restore landed as #341 on 2026-08-14;
-#343–#349 were e2e/db/seed repairs and the web list-search Back fix #346).
+Everything through **PR #360 is SHIPPED + LIVE**. The 2026-08-17 mobile UX batch is
+**COMPLETE**: #352 (PR-1 guaranteed-400s), #353 (PR-2 scan ladder + quiet catalogue),
+#356 (PR-B tax-unit + tenant-safe mappings), #357 (PR-3 parked drafts), #358 (PR-4
+van sale + post-confirm), #359 (PR-5 scanner memory + boxes/pieces), #360 (PR-6 list
+restore + movements links + WhatsApp PDF + SMTP diagnostics). Also shipped alongside:
+#351 (web list page-position on Back), #354 (2-hourly R2 dumps), #355 (backup runbook
+indexed). Binding architecture decisions for the batch live at
+`.claude/pipeline/decisions/2026-08-18-batch-architecture.md`; per-PR plans (all
+IMPLEMENTED) under `.claude/pipeline/plans/`.
 
 ---
 
-## 1. ▶ NEXT UP — mobile UX batch (planned + APPROVED 2026-08-17, not started)
+## 1. ▶ NEXT UP — pick from these
 
-**Execute from the approved plan — it is the source of truth:**
-[`docs/plans/mobile-ux-batch-2026-08-17.md`](docs/plans/mobile-ux-batch-2026-08-17.md)
-(committed copy; original lived at `~\.claude\plans\i-noticed-a-couple-lazy-elephant.md`)
+1. **Deep-dive bug backlog (2026-08-17, owner triage needed):** 14 confirmed bugs are
+   recorded in memory `project_deep_dive_findings_2026-08-17` — the 3 batch blockers are
+   FIXED (#356 + gates in #358/#359), but the rest are NOT, incl. **2 CRITICAL boxed
+   overcharges** (fresh boxed add in order edit-items drops boxSplit ⇒ ×unitsPerBox
+   overcharge; substitutions never send boxes/pieces — shared web+mobile defect), the
+   DRAFT-invoice payment trap, the regulated-tax drop on price adjustment, PO receive
+   clobbering STANDARD costs, and 2 security findings (uploads cross-tenant prefixes,
+   driver-settable prices).
+2. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
+   size (#45) — see §4.
+3. Two pending task chips from 2026-08-19: e2e draft-accumulation cleanup (43 stale
+   drafts in the e2e tenant dock); the CP-07 chip is RESOLVED (spec artifact — see
+   memory `reference_cp07_textcontent_concat_artifact`).
 
-Ten owner-reported items (Zoho screenshots as a _simplicity_ reference — keep RouteFlow's
-look/icons). Six PRs, ship **sequentially in this order**, each through the canonical
-rebuild routine (`npm run verify` → public → push/CI → squash-merge → private
-IMMEDIATELY with read-back → watch deploy → `SMOKE_BASE_URL=… npm run post-deploy-check`),
-code-map updated surgically per PR (Stop-hook enforced):
+**2026-08-17/18 incident context every future session should know:** production Postgres
+had NO VOLUME and was wiped by a Railway platform incident; restored from the 02:02 UTC
+R2 dump (Sunday 01:40→20:00 UTC trading lost, Railway support ticket = owner). Volume +
+`PGDATA` subdir now attached; Railway volume backups Daily/Weekly/Monthly (Pro) +
+2-hourly R2 dumps. **Read memory `project_prod_data_loss_2026-08-17` before ANY prod DB
+work.**
 
-| PR   | Content                                                                                                                                                                                                                                                                          | Notes                  |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
-| PR-1 | Two guaranteed-400 fixes: Send tile on pending-mirror invoices; demotions missing required `reason` (ReasonSheet)                                                                                                                                                                | small, ship first      |
-| PR-2 | Shared scan ladder (`lib/scan-ladder.ts`) → scan-to-create + ambiguous-pick in edit-items + draft-invoice edit; quiet catalog (`visibleCatalogRows`, browse behind a button)                                                                                                     | mobile only            |
-| PR-3 | Parked drafts: mirror web `/drafts` (SaleDraft), 900ms continuous autosave, DraftStrip resume on orders+invoices lists                                                                                                                                                           | backend already exists |
-| PR-4 | Post-confirm flow: no auto-open of locked invoice; "Deliver & send invoice" primary; invoice-builder van-sale via `POST /orders/sell` (`deliveredNow`)                                                                                                                           |                        |
-| PR-5 | Scanner: match memory on ProductAlias (tenant-safe; fixes live ProductMapping cross-tenant bug), learn-on-confirm-only, "Remembered match" badge, backfill script; boxes/pieces unit toggle (web modal + new mobile LineEditSheet), `roundUnitCost`, web bill-detail prefill bug | api+web+mobile         |
-| PR-6 | Products-list search/filter/scroll restore (`list-ui-snapshot` + `listUiStore`); product↔movements links (fix mislinked Warehouse quick-action); WhatsApp share attaches the PDF via share sheet; SMTP diagnostics (requireTLS 587, mapped test-send errors)                     | SMTP last per owner    |
-
-**Locked owner decisions (do NOT re-ask):** WhatsApp = PDF via OS share sheet (wa.me text
-= fallback with toast; recipient no longer preselected); van-sale "Delivered today?"
-default ON (falls back to plain `POST /invoices` when per-line tax/discount/terms in
-use); browse + category chips behind a "Browse catalogue" button; non-divisible pieces
-stay pieces + warning (never fractional cases); scan prompt gains `unitLabel` hint
-(preselect only, never auto-convert); clearing a remembered match = forget (unlearn).
-
-**Execution facts:** NO Prisma migrations anywhere in the batch (ProductAlias +
-InvoiceScan.supplierId already in the baseline). One manual data script after PR-5
-deploys: `railway run --service postgres node apps/api/scripts/backfill-product-aliases.mjs`
-(dry-run default, `--apply` to write, idempotent). Don't touch driver route/stop flows,
-buyer portal, ScanOrderSheet internals, or pricing helpers beyond the additive
-`roundUnitCost`. Full per-PR file lists, signatures, Jest specs, and the manual
-browser-verification checklist are in the plan file.
-
-**Likely SMTP root cause to tell the owner:** the Microsoft mailbox almost certainly has
-"Authenticated SMTP" disabled (M365 default) — admin center → Users → Active users →
-select user → Mail → Manage email apps → tick Authenticated SMTP. PR-6 makes the
-test-send say this itself; OAuth2/Graph is a deferred follow-up needing owner's Azure
-app registration.
+**Owner actions still open:** enable **Authenticated SMTP** on the M365 mailbox (the
+test-send now says this itself); rename supplier "Mike's Novelties Wholesale" →
+"MWI — Mike's Novelties Wholesale" then re-run the alias backfill so the 440 MWI
+corrections graduate off the legacy tier (62 already migrated 2026-08-19); Railway
+billing auto-top-up; healthchecks.io cadence to 2-hourly; an uptime monitor on
+`/api/v1/health`.
 
 ---
 
