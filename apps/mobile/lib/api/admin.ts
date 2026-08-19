@@ -1,4 +1,10 @@
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 
 export interface PaginationMeta {
@@ -520,6 +526,10 @@ export function useAdminProductsInfinite(params?: {
     getNextPageParam: (last) =>
       last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
     staleTime: 15_000,
+    // Every keystroke of the list's search mints a new query key. Without this
+    // the rows blank to a spinner between debounced fetches; callers gate
+    // `onEndReached` on `isPlaceholderData` so the stale page can't be paged.
+    placeholderData: keepPreviousData,
   });
 }
 

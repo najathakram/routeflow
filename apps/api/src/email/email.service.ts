@@ -80,6 +80,18 @@ export function mapSmtpError(
     );
   }
 
+  // STARTTLS unavailable on port 587 with requireTLS set: nodemailer either fails the
+  // EHLO ("does not support required STARTTLS") or the STARTTLS command itself (code
+  // ETLS). Either way the server can't do the upgrade we now insist on — checked BEFORE
+  // the generic certificate/ssl/tls fallback below, since that fallback's substring
+  // match on "tls" would otherwise swallow this case under a less actionable message.
+  if (code === "ETLS" || lower.includes("starttls")) {
+    return (
+      "The mail server didn't offer a secure connection on port 587 — check the host, or use " +
+      "port 465 with the secure toggle ON."
+    );
+  }
+
   // Gmail: normal passwords are always rejected — an App Password is required.
   if (lower.includes("application-specific password") || msg.includes("5.7.9")) {
     return (
@@ -558,10 +570,16 @@ export class EmailService {
     }
 
     try {
+      const secure = !!candidate.secure;
       const transport = nodemailer.createTransport({
         host,
         port,
-        secure: !!candidate.secure,
+        secure,
+        // A 587 server that won't offer STARTTLS would otherwise hand the tenant's
+        // password over in cleartext — refuse instead of silently degrading. Every
+        // mainstream host (Gmail, M365) offers STARTTLS on 587; 465 already implies
+        // TLS-from-connect (secure:true) so this only applies to the STARTTLS pairing.
+        requireTLS: port === 587 && !secure,
         auth: { user, pass },
         // Fail fast — the settings UI is waiting on this round-trip.
         connectionTimeout: 10_000,
@@ -583,10 +601,25 @@ export class EmailService {
     const html = `<p>This is a test email from ${businessName}. Your SMTP configuration is working correctly.</p>`;
     // send() is honest-by-result and never throws for a delivery/config problem.
     const result = await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
+
     if (result.delivered) {
+      // Resend rescued a failing tenant SMTP attempt: the test mail DID arrive (say so
+      // honestly), but stay quiet about nothing else — the tenant's own SMTP is still
+      // broken and this is the one place they'll find out, so append the mapped reason.
+      if (result.smtpFallbackReason) {
+        return {
+          success: true,
+          message: `Test email delivered via RouteFlow's mail service — but your own SMTP failed: ${result.smtpFallbackReason}`,
+        };
+      }
       return { success: true, message: "Test email sent successfully" };
     }
-    // Generic messages (don't leak SMTP internals); the full error is logged already.
+
+    // Not delivered. Prefer the mapped SMTP diagnostic — the same one /email/verify
+    // shows — over a generic message whenever the SMTP attempt actually produced one.
+    if (result.smtpFallbackReason) {
+      return { success: false, message: result.smtpFallbackReason };
+    }
     return {
       success: false,
       message:
@@ -637,6 +670,19 @@ export class EmailService {
     transport: "smtp" | "resend" | "none";
     id?: string;
     error?: string;
+    /**
+     * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
+     * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
+     * rejection, no-transport). This is what lets a Resend-rescued send still tell the
+     * operator their own mail is broken instead of quietly looking fine.
+     */
+    smtpFallbackReason?: string;
+    /**
+     * The bare platform address actually used, set alongside `smtpFallbackReason` on a
+     * Resend rescue — the From identity silently changed from the tenant's own mailbox
+     * to the platform address, and that's part of the disclosure, not a footnote.
+     */
+    fromAddress?: string;
   }> {
     // Reply-To = the business's own email so customer replies reach the tenant, not the
     // (platform) sending address. Applies to both transports.
@@ -646,6 +692,7 @@ export class EmailService {
     // caught (not thrown) so we can fall back to Resend and stay honest-by-result.
     const emailCfg = await this.getTenantEmailConfig();
     let smtpError: string | undefined;
+    let smtpFallbackReason: string | undefined;
     if (emailCfg) {
       try {
         assertSafeSmtpEndpoint(emailCfg.host, emailCfg.port);
@@ -658,6 +705,10 @@ export class EmailService {
           host: emailCfg.host,
           port: emailCfg.port,
           secure: emailCfg.secure,
+          // A 587 server that won't offer STARTTLS would otherwise hand the tenant's
+          // password over in cleartext — refuse instead of silently degrading (mirrors
+          // the pre-save verify transport above).
+          requireTLS: emailCfg.port === 587 && !emailCfg.secure,
           auth: { user: emailCfg.user, pass: emailCfg.pass },
           // Fail fast — invoice send/download UX awaits this round-trip. Without
           // these, nodemailer's 2-minute default connect timeout makes an
@@ -680,8 +731,14 @@ export class EmailService {
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
-        smtpError = err?.message ?? "SMTP send failed";
-        this.logger.error(`Tenant SMTP send failed: ${smtpError}. Falling back to Resend.`);
+        const rawMessage: string = err?.message ?? "SMTP send failed";
+        smtpError = rawMessage;
+        smtpFallbackReason = mapSmtpError(err, emailCfg.host, emailCfg.port);
+        this.logger.error(
+          `Tenant SMTP send failed [code=${err?.code ?? "unknown"}` +
+            `${err?.responseCode ? ` responseCode=${err.responseCode}` : ""}]: ` +
+            `${redactAddresses(rawMessage)}. Falling back to Resend. Mapped reason: ${smtpFallbackReason}`,
+        );
       }
     }
 
@@ -700,16 +757,27 @@ export class EmailService {
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
           this.logger.error(`Resend rejected email to ${params.to}: ${msg}`);
-          return { delivered: false, transport: "resend", error: msg };
+          return { delivered: false, transport: "resend", error: msg, smtpFallbackReason };
         }
         this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
-        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+        // Resend rescued a failing tenant SMTP send — delivered:true is honest (the mail
+        // DID go out), but smtpFallbackReason must still ride along: this is exactly the
+        // case where, without it, nobody ever learns their own mailbox is broken. The From
+        // identity silently changed too (tenant mailbox → platform address) — surface it.
+        return {
+          delivered: true,
+          transport: "resend",
+          id: (result.data as any)?.id,
+          smtpFallbackReason,
+          fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
+        };
       } catch (err: any) {
         this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
         return {
           delivered: false,
           transport: "resend",
           error: err?.message ?? "Resend send failed",
+          smtpFallbackReason,
         };
       }
     }
@@ -718,7 +786,12 @@ export class EmailService {
     this.logger.warn(
       `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
-    return { delivered: false, transport: emailCfg ? "smtp" : "none", error: smtpError };
+    return {
+      delivered: false,
+      transport: emailCfg ? "smtp" : "none",
+      error: smtpError,
+      smtpFallbackReason,
+    };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────

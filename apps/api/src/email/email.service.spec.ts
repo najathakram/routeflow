@@ -102,6 +102,174 @@ describe("EmailService — honest send (R5)", () => {
   });
 });
 
+/**
+ * WP4 — fail-securely on STARTTLS-less 587: a 587 server that won't offer STARTTLS is
+ * accepting the tenant's password in cleartext, so `requireTLS: port===587 && !secure`
+ * is set on both transports (mirrors the pre-save verify transport tested separately in
+ * `email-smtp-verify.spec.ts`).
+ */
+describe("EmailService — requireTLS (fail-secure on 587 without SSL)", () => {
+  const smtpRows = (port: string, secure: string) => [
+    { key: "email.smtpHost", value: "smtp.example.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: port },
+    { key: "email.smtpSecure", value: secure },
+  ];
+
+  it("sets requireTLS on the SEND transport for 587 with secure off", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows("587", "false") });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 587, secure: false, requireTLS: true }),
+    );
+  });
+
+  it("does NOT set requireTLS on the SEND transport for 465 with secure on", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows("465", "true") });
+
+    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ port: 465, secure: true, requireTLS: false }),
+    );
+  });
+});
+
+/**
+ * WP4 — `smtpFallbackReason`: mapSmtpError(...) is captured at the SMTP catch and must
+ * ride along on EVERY branch that follows it (Resend rescue, both-fail, no-Resend) — the
+ * Resend-rescue case is exactly the one where, before this, nobody learned their own
+ * tenant SMTP was broken because `delivered:true` looked like nothing was wrong.
+ */
+describe("EmailService — smtpFallbackReason (mapped SMTP diagnostic on every branch)", () => {
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.office365.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+    { key: "email.smtpSecure", value: "false" },
+  ];
+  // The M365 disabled-Authenticated-SMTP fixture (5.7.139) — the exact failure the
+  // BYO-SMTP-first direction is meant to catch and explain.
+  const m365AuthError = () =>
+    Object.assign(
+      new Error(
+        "535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant.",
+      ),
+      { code: "EAUTH", responseCode: 535 },
+    );
+
+  it("SMTP fails + Resend rescues ⇒ delivered:true WITH the mapped smtpFallbackReason", async () => {
+    const sendMail = jest.fn().mockRejectedValue(m365AuthError());
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ resendKey: "re_test", systemConfigRows: smtpRows() });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "eml_1" }, error: null });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: true, transport: "resend" });
+    expect(res.smtpFallbackReason).toMatch(/Authenticated SMTP/);
+    // The From identity silently changed too (tenant mailbox → platform address) —
+    // that must ride along so the operator-facing toast can disclose it, not bury it.
+    expect(res.fromAddress).toBe("invoices@send.routeflow.info");
+  });
+
+  it("both SMTP and Resend fail ⇒ delivered:false, but the mapped smtpFallbackReason is still present", async () => {
+    const sendMail = jest.fn().mockRejectedValue(m365AuthError());
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ resendKey: "re_test", systemConfigRows: smtpRows() });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: "domain not verified" } });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({
+      delivered: false,
+      transport: "resend",
+      error: "domain not verified",
+    });
+    expect(res.smtpFallbackReason).toMatch(/Authenticated SMTP/);
+  });
+
+  it("SMTP fails with no Resend configured ⇒ delivered:false, transport:'smtp', mapped smtpFallbackReason", async () => {
+    const sendMail = jest.fn().mockRejectedValue(m365AuthError());
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() }); // no resendKey → no rescue
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(res).toMatchObject({ delivered: false, transport: "smtp" });
+    expect(res.smtpFallbackReason).toMatch(/Authenticated SMTP/);
+  });
+});
+
+/**
+ * WP4 — `sendTestEmail` must never fall back to the generic message when a mapped
+ * reason exists: a mapped failure is more actionable, and a Resend-rescued delivery
+ * must say BOTH "it arrived" and "your own SMTP is broken", not just the former.
+ */
+describe("EmailService.sendTestEmail — mapped reason over generic text", () => {
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.office365.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+    { key: "email.smtpSecure", value: "false" },
+  ];
+  const m365AuthError = () =>
+    Object.assign(
+      new Error(
+        "535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant.",
+      ),
+      { code: "EAUTH", responseCode: 535 },
+    );
+
+  it("SMTP fails + no Resend ⇒ success:false with the MAPPED message, not the generic one", async () => {
+    const sendMail = jest.fn().mockRejectedValue(m365AuthError());
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() });
+
+    const res = await svc.sendTestEmail("a@b.com");
+
+    expect(res.success).toBe(false);
+    expect(res.message).toMatch(/Authenticated SMTP/);
+    expect(res.message).not.toMatch(/Failed to send test email/);
+  });
+
+  it("SMTP fails + Resend delivers ⇒ success:true with the mapped SMTP reason APPENDED", async () => {
+    const sendMail = jest.fn().mockRejectedValue(m365AuthError());
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ resendKey: "re_test", systemConfigRows: smtpRows() });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "eml_1" }, error: null });
+
+    const res = await svc.sendTestEmail("a@b.com");
+
+    // Honest about delivery AND about the underlying tenant-SMTP problem.
+    expect(res.success).toBe(true);
+    expect(res.message).toMatch(/delivered/i);
+    expect(res.message).toMatch(/Authenticated SMTP/);
+  });
+
+  it("nothing configured at all ⇒ keeps the generic 'not set up' guidance", async () => {
+    const svc = makeService(); // no resend key, no SMTP config
+    const res = await svc.sendTestEmail("a@b.com");
+    expect(res.success).toBe(false);
+    expect(res.message).toMatch(/isn't set up yet/i);
+  });
+});
+
 describe("EmailService — transactional From identity + reply-to (Phase 1)", () => {
   it("Resend sends from '<Business name> <platform address>' with the tenant Reply-To", async () => {
     const svc = makeService({

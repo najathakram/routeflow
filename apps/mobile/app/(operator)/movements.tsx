@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import {
@@ -46,20 +46,25 @@ function pillForType(t: MovementType): {
 
 export default function MovementsScreen() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{ productId?: string; productName?: string }>();
   const [filter, setFilter] = useState<"ALL" | MovementType>("ALL");
   const [search, setSearch] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
   const [productFilter, setProductFilter] = useState<{
     id: string;
     label: string;
-  } | null>(null);
+  } | null>(
+    routeParams.productId
+      ? { id: routeParams.productId, label: routeParams.productName ?? "Product" }
+      : null,
+  );
 
-  const params = {
+  const queryParams = {
     type: filter === "ALL" ? undefined : filter,
     productId: productFilter?.id,
     limit: 100,
   };
-  const { data, isLoading } = useInventoryMovements(params);
+  const { data, isLoading } = useInventoryMovements(queryParams);
   const movements = data?.data ?? [];
 
   const filtered = useMemo(() => {
@@ -132,7 +137,13 @@ export default function MovementsScreen() {
         ) : (
           <View style={styles.list}>
             {filtered.map((m) => (
-              <MovementRow key={m.id} m={m} />
+              <MovementRow
+                key={m.id}
+                m={m}
+                onPress={
+                  m.productId ? () => router.push(`/(operator)/products/${m.productId}`) : undefined
+                }
+              />
             ))}
           </View>
         )}
@@ -148,7 +159,7 @@ export default function MovementsScreen() {
   );
 }
 
-function MovementRow({ m }: { m: InventoryMovement }) {
+function MovementRow({ m, onPress }: { m: InventoryMovement; onPress?: () => void }) {
   const p = pillForType(m.type);
   const positive = m.quantity > 0;
   const date = new Date(m.createdAt).toLocaleDateString(undefined, {
@@ -158,7 +169,7 @@ function MovementRow({ m }: { m: InventoryMovement }) {
     minute: "2-digit",
   });
   return (
-    <View style={styles.row}>
+    <Pressable style={styles.row} onPress={onPress} disabled={!onPress}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={styles.name} numberOfLines={1}>
           {m.productName ?? "Product"}
@@ -183,7 +194,7 @@ function MovementRow({ m }: { m: InventoryMovement }) {
       <Pill variant={p.variant} dot>
         {p.label}
       </Pill>
-    </View>
+    </Pressable>
   );
 }
 

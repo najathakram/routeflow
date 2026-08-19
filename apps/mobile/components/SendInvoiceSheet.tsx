@@ -5,6 +5,8 @@ import { ios } from "@routeflow/ui/tokens";
 
 type IoniconName = ComponentProps<typeof Ionicons>["name"];
 
+type PdfSharePhase = "idle" | "preparing" | "ready";
+
 interface SendInvoiceSheetProps {
   open: boolean;
   onClose: () => void;
@@ -17,13 +19,28 @@ interface SendInvoiceSheetProps {
   email?: string;
   /** True while the server-side email send is in flight. */
   emailSending?: boolean;
-  /** True while the PDF is being fetched/shared — guards against a double-tap
-   * firing two concurrent share sheets (expo-sharing throws on the second). */
-  pdfSending?: boolean;
+  /** Governs the "Share PDF" row's label/enabled state through the
+   * prepare → (maybe) tap-again → share dance (share-pdf.ts's
+   * ACTIVATION_BUDGET_MS contract): "preparing" while the fetch races the
+   * budget (busy, disabled), "ready" when the budget ran out first — the
+   * NEXT tap shares the by-then-cached PDF synchronously. */
+  pdfPhase?: PdfSharePhase;
+  /** Same states, for the WhatsApp row when it's attaching the actual PDF
+   * (file-share mode) instead of opening the wa.me text link. */
+  whatsAppPhase?: PdfSharePhase;
   onWhatsApp: () => void;
   onSms: () => void;
   onEmail: () => void;
   onSharePdf: () => void;
+}
+
+/** Turns a phase into the row's label — shared by the WhatsApp (file-share
+ * mode) and Share-PDF rows since both go through the same prepare/tap-again
+ * dance. */
+function pdfPhaseLabel(phase: PdfSharePhase | undefined, idleLabel: string): string {
+  if (phase === "preparing") return "Preparing PDF…";
+  if (phase === "ready") return "PDF ready — tap to share";
+  return idleLabel;
 }
 
 /**
@@ -42,7 +59,8 @@ export function SendInvoiceSheet({
   phone,
   email,
   emailSending,
-  pdfSending,
+  pdfPhase,
+  whatsAppPhase,
   onWhatsApp,
   onSms,
   onEmail,
@@ -59,7 +77,13 @@ export function SendInvoiceSheet({
         </Text>
         <View style={styles.rows}>
           {phone ? (
-            <ChannelRow icon="logo-whatsapp" label="WhatsApp" tint="#25D366" onPress={onWhatsApp} />
+            <ChannelRow
+              icon="logo-whatsapp"
+              label={pdfPhaseLabel(whatsAppPhase, "WhatsApp")}
+              tint="#25D366"
+              onPress={onWhatsApp}
+              disabled={whatsAppPhase === "preparing"}
+            />
           ) : null}
           {phone ? (
             <ChannelRow icon="chatbubble-outline" label="Text message" onPress={onSms} />
@@ -74,9 +98,9 @@ export function SendInvoiceSheet({
           ) : null}
           <ChannelRow
             icon="share-outline"
-            label={pdfSending ? "Sharing…" : "Share PDF"}
+            label={pdfPhaseLabel(pdfPhase, "Share PDF")}
             onPress={onSharePdf}
-            disabled={pdfSending}
+            disabled={pdfPhase === "preparing"}
           />
           {!phone && !email ? (
             <Text style={styles.note}>No phone or email on file — share the PDF instead.</Text>

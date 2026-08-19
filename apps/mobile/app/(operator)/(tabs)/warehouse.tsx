@@ -298,7 +298,7 @@ export default function WarehouseScreen() {
                 label="Movements"
                 color={ios.system.purpleInk}
                 bg={ios.system.purpleWash}
-                onPress={() => router.push("/(operator)/products")}
+                onPress={() => router.push("/(operator)/movements")}
               />
               <QuickBtn
                 icon="cube-outline"

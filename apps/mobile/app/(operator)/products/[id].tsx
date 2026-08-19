@@ -309,7 +309,19 @@ export default function ProductDetailScreen() {
 
           {movements?.data && movements.data.length > 0 ? (
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>Recent movements</Text>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>Recent movements</Text>
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(operator)/movements",
+                      params: { productId: id, productName: product.name },
+                    } as any)
+                  }
+                >
+                  <Text style={styles.linkText}>See all</Text>
+                </Pressable>
+              </View>
               {movements.data.slice(0, 10).map((m, i) => (
                 <View
                   key={m.id}

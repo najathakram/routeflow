@@ -1286,10 +1286,17 @@ function EmailSettingsTab() {
     try {
       const { data } = await apiClient.post("/settings/email/test", { toEmail: emailAddress });
       if (data.success) {
+        // sendTestEmail() returns the generic "Test email sent successfully" when the
+        // tenant's own SMTP delivered cleanly, but appends the mapped SMTP-diagnostic
+        // reason (verbatim) when Resend had to rescue the send. Show that distinctly —
+        // it's still a success, but the tenant's own mail is broken.
+        const isFallbackWarning = !!data.message && data.message !== "Test email sent successfully";
         toast({
-          title: "Test email sent!",
-          description: `Check ${emailAddress} for the test message.`,
-          variant: "success",
+          title: isFallbackWarning ? "Sent via RouteFlow's mail service" : "Test email sent!",
+          description: isFallbackWarning
+            ? data.message
+            : `Check ${emailAddress} for the test message.`,
+          variant: isFallbackWarning ? "warning" : "success",
         });
       } else {
         toast({ title: "Test failed", description: data.message, variant: "error" });
