@@ -16,7 +16,9 @@ IMPLEMENTED) under `.claude/pipeline/plans/`.
 
 ## 1. ▶ NEXT UP — pick from these
 
-1. **UX EXPANSION BATCH (owner-approved 2026-08-19)** — full plan at
+1. **UX EXPANSION BATCH (owner-approved 2026-08-19) — ⛔ RESERVED: the owner is having
+   this implemented by someone else. Claude sessions must NOT build it — only keep the
+   plan and this handoff updated.** Full plan at
    [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md).
    Sequencing locked by the owner: **PR-A** (mobile send never dead-ends + inventory
    search full toolset + cross-links + **NEW CRITICAL: driver edits wipe orders** —

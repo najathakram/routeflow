@@ -1,6 +1,11 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** PLANNED (approved sequencing; PR-A unblocked immediately)
+**Status:** PLANNED — **RESERVED FOR AN EXTERNAL IMPLEMENTER (owner decision 2026-08-19).
+Do NOT start this batch from the owner's Claude sessions; keep this document and HANDOFF §1
+updated on their behalf.** This plan is written to be self-contained: recon anchors
+(file:line), locked decisions, edge cases and error handling are all inline. Read
+`CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
+backup-first prod flow, and the test-tenant policy is absolute.
 **Owner input (locked 2026-08-19, do not re-ask):**
 
 1. **Sequencing = quick wins first**: PR-A fixes/links → PR-B order-search-by-product →
@@ -255,14 +260,14 @@ not just themselves — one source of truth.
 ## PR-F — AI supplier-statement reconciliation (last; builds on PR-E)
 
 **Pipeline (reuse the invoice-scan architecture wholesale):** upload (pdf/images, same
-RENDERABLE_INLINE_MIMES rules) → durable `SupplierStatementScan` row (migration #3; the
+RENDERABLE*INLINE_MIMES rules) → durable `SupplierStatementScan` row (migration #3; the
 InvoiceScan pattern: fileHash dedup, extractedPayload Json, status SCANNED|APPLIED|DISCARDED)
 → Claude parse (tenant-scoped anthropic key via SystemConfig, same typed error contract:
 AI_KEY_INVALID / AI_SCAN_REJECTED / AI_UNAVAILABLE / AI_PARSE_FAILED) to normalized JSON:
 `{supplier, periodStart, periodEnd, openingBalance?, closingBalance?, lines: [{date,
 kind: INVOICE|PAYMENT|CREDIT|ADJUSTMENT, refNumber?, amount, runningBalance?}]}`. Statements
 vary wildly per supplier — that's exactly why parsing is a model call, not a template. Use
-the scan model for OCR; run the _matching_ deterministically in code (auditable, testable):
+the scan model for OCR; run the \_matching* deterministically in code (auditable, testable):
 exact `supplierInvoiceNumber` match (it's normalized uppercase/no-whitespace already) →
 amount+date-window fuzzy (borrow `duplicate-match.service.ts` layering) → unmatched.
 
