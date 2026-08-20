@@ -125,6 +125,13 @@ export default function FinanceScreen() {
             bg={ios.system.greenWash}
             onPress={() => router.push("/(operator)/suppliers")}
           />
+          <QuickLink
+            icon="reader-outline"
+            label="Statements"
+            color={ios.system.orangeInk}
+            bg={ios.system.orangeWash}
+            onPress={() => router.push("/(operator)/statements")}
+          />
         </View>
 
         {/* Recent bills */}

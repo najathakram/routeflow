@@ -245,6 +245,12 @@ enum InvoiceScanStatus {
   DUPLICATE // repeats `duplicateOfId`; never posted
 }
 
+enum SupplierStatementScanStatus {
+  SCANNED
+  APPLIED
+  DISCARDED
+}
+
 enum ReturnReason {
   DAMAGED
   WRONG_ITEM
@@ -407,6 +413,7 @@ model Tenant {
   stockAlerts            StockAlert[]
   stockCountSessions     StockCountSession[]
   stockCountLines        StockCountLine[]
+  supplierStatementScans SupplierStatementScan[]
 
   @@index([slug])
   @@index([status])
@@ -1658,13 +1665,14 @@ model Supplier {
   updatedAt        DateTime @updatedAt
   tenantId         String?
 
-  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
-  stockMovements  StockMovement[]
-  purchaseOrders  PurchaseOrder[]
-  vendorBills     VendorBill[]
-  invoiceScans    InvoiceScan[]
-  expenses        Expense[]
-  supplierCredits SupplierCredit[]
+  tenant                 Tenant?                 @relation(fields: [tenantId], references: [id])
+  stockMovements         StockMovement[]
+  purchaseOrders         PurchaseOrder[]
+  vendorBills            VendorBill[]
+  invoiceScans           InvoiceScan[]
+  expenses               Expense[]
+  supplierCredits        SupplierCredit[]
+  supplierStatementScans SupplierStatementScan[]
 
   @@index([isActive])
   @@index([tenantId])
@@ -2357,6 +2365,56 @@ model InvoiceScan {
   @@index([tenantId, status])
   @@index([vendorBillId])
   @@index([supplierId])
+}
+
+/// A parsed supplier statement awaiting reconciliation. Mirrors InvoiceScan:
+/// fileHash dedups a re-upload without re-calling the model, extractedPayload
+/// keeps the model's verbatim output for audit, and status records whether the
+/// operator applied it.
+model SupplierStatementScan {
+  id       String  @id @default(uuid())
+  tenantId String?
+
+  // The document exactly as received.
+  fileKey   String? // storage key; null once the file is pruned
+  fileName  String?
+  mimeType  String?
+  byteSize  Int?
+  pageCount Int?
+  fileHash  String
+
+  // What the model read, verbatim and lossless.
+  extractedPayload Json
+  model            String?
+  scanDurationMs   Int?
+
+  // Key parameters promoted out of the payload so they can be queried and indexed.
+  supplierNameRaw String?
+  supplierId      String?
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  openingBalance  Decimal?  @db.Decimal(12, 2)
+  closingBalance  Decimal?  @db.Decimal(12, 2)
+  lineCount       Int?
+
+  status SupplierStatementScanStatus @default(SCANNED)
+
+  /// Set once applied — the paymentGroupId of the payments this scan wrote,
+  /// so the whole apply can be traced (and undone by voiding that group).
+  appliedPaymentGroupId String?
+  appliedAt             DateTime?
+  appliedById           String?
+  scannedById           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+
+  @@index([tenantId, fileHash])
+  @@index([tenantId, supplierId])
+  @@index([tenantId, status])
 }
 
 model VendorBillItem {
