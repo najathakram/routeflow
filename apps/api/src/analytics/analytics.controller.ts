@@ -32,6 +32,7 @@ export class AnalyticsController {
         "GET /analytics/price-history/:productId",
         "GET /analytics/cost-history/:productId",
         "GET /analytics/demand/:productId",
+        "GET /analytics/product-sales/:productId",
       ],
     };
   }
@@ -114,6 +115,16 @@ export class AnalyticsController {
   @Get("cost-history/:productId")
   getCostHistory(@Param("productId") id: string) {
     return this.analyticsService.getCostHistory(id);
+  }
+
+  /** PR-B: per-buyer sales history for the product Sales tab. `limit` caps the
+   *  returned lines (1-500, default 200) so a long-lived product can't return
+   *  an unbounded payload; an out-of-range value is clamped, not rejected. */
+  @Get("product-sales/:productId")
+  getProductSales(@Param("productId") id: string, @Query("limit") limit?: string) {
+    const parsed = limit != null && limit.trim() !== "" ? Number(limit) : NaN;
+    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.trunc(parsed))) : 200;
+    return this.analyticsService.getProductSales(id, take);
   }
 
   @Get("demand/:productId")

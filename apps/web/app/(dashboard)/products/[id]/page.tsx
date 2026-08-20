@@ -59,6 +59,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
+import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
@@ -2149,6 +2150,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
             <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+
+            {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                when, and at what price, with min/avg/max price summary chips. */}
+            <SalesHistoryCard productId={product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />

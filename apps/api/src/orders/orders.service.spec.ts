@@ -237,6 +237,43 @@ describe("OrdersService", () => {
       expect(result.meta.total).toBe(1);
     });
 
+    // ── PR-B: find the orders that contained a given product ────────────────
+    it("productId narrows to orders carrying that line, alongside other filters", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll(
+        { page: 1, limit: 20, productId: "prod-A", status: "PENDING" as any },
+        operatorPayload,
+      );
+
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      // AND-ed, not a replacement — the status filter must survive.
+      expect(where.lineItems).toEqual({ some: { productId: "prod-A" } });
+      expect(where.status).toBe("PENDING");
+    });
+
+    it("omits the line filter entirely when no productId is given", async () => {
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20 }, operatorPayload);
+
+      expect(prisma.order.findMany.mock.calls.at(-1)?.[0].where.lineItems).toBeUndefined();
+    });
+
+    it("a CUSTOMER filtering by product stays scoped to their OWN orders", async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
+      prisma.order.findMany.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 1, limit: 20, productId: "prod-A" }, customerPayload);
+
+      const where = prisma.order.findMany.mock.calls.at(-1)?.[0].where;
+      expect(where.customerId).toBe("cust-1");
+      expect(where.lineItems).toEqual({ some: { productId: "prod-A" } });
+    });
+
     it("should scope to customer when role is CUSTOMER", async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
       prisma.order.findMany.mockResolvedValue([]);

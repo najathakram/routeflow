@@ -224,6 +224,8 @@ export function useAdminOrders(params?: {
   limit?: number;
   urgent?: boolean;
   customerId?: string;
+  /** PR-B: "which orders had this item?" — mirrors ListOrdersDto.productId. */
+  productId?: string;
 }) {
   return useQuery<{ data: AdminOrder[]; meta: PaginationMeta }>({
     queryKey: ["admin", "orders", params],

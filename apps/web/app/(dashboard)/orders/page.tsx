@@ -17,10 +17,13 @@ import {
   ChevronRight,
   Download,
   History,
+  Package,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
+import { useProduct } from "@/lib/api/products";
+import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
@@ -107,11 +110,17 @@ export default function OrdersPage() {
     urgent: false,
     dateFrom: "",
     dateTo: "",
+    // PR-B: "which orders had this item?" — round-trips through the URL like
+    // every other chip here so a deep link / Back nav preserves it.
+    productId: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
+  const productIdFilter = (urlFilters.productId as string) ?? "";
+  // Only fetched to render the chip's label — the filter itself is the id.
+  const { data: filterProduct } = useProduct(productIdFilter);
 
   // Customer search is URL-backed like the chips above, so drilling into an order
   // and pressing Back returns to the search that found it.
@@ -239,7 +248,7 @@ export default function OrdersPage() {
   // Reset page when filters change — but not on mount: page now lives in the
   // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
   // restored when the operator presses Back from an order.
-  useResetPageOnChange(setPage, [statusFilter, urgentOnly, dateFrom, dateTo]);
+  useResetPageOnChange(setPage, [statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter]);
 
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
@@ -247,7 +256,7 @@ export default function OrdersPage() {
       SAVED_VIEWS.find((v) => {
         const keys = Object.keys(v.filters);
         if (keys.length === 0) {
-          return !statusFilter && !urgentOnly && !dateFrom && !dateTo;
+          return !statusFilter && !urgentOnly && !dateFrom && !dateTo && !productIdFilter;
         }
         return keys.every(
           (k) =>
@@ -256,7 +265,7 @@ export default function OrdersPage() {
         );
       })?.id ?? null
     );
-  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo]);
+  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
     clearFilters();
@@ -270,6 +279,7 @@ export default function OrdersPage() {
     urgent: urgentOnly || undefined,
     deliveryDateFrom: dateFrom || undefined,
     deliveryDateTo: dateTo || undefined,
+    productId: productIdFilter || undefined,
     page,
     limit,
   });
@@ -555,6 +565,31 @@ export default function OrdersPage() {
           )}
         </button>
 
+        {/* Product filter — "which orders had this item?" (PR-B). Selecting a
+            product swaps the picker for a removable chip (X clears it back
+            to the picker), mirroring the urgent toggle / date-clear affordances. */}
+        {productIdFilter ? (
+          <button
+            type="button"
+            onClick={() => setFilter("productId", "")}
+            className="flex h-10 items-center gap-2 rounded-ctl border border-brand-200 bg-brand-50 px-3 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100"
+            title="Remove product filter"
+          >
+            <Package className="h-4 w-4" />
+            {filterProduct?.name ?? "Loading…"}
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <div className="w-56">
+            <SearchableProductPicker
+              async
+              value=""
+              onChange={(id) => setFilter("productId", id)}
+              placeholder="Filter by product…"
+            />
+          </div>
+        )}
+
         {/* Delivery date range filter */}
         <div className="flex items-center gap-1.5">
           <Calendar className="h-4 w-4 text-navy/70" />
@@ -591,7 +626,12 @@ export default function OrdersPage() {
         </div>
 
         {/* Clear active filters */}
-        {(statusFilter || urgentOnly || dateFrom || dateTo || customerSearch) && (
+        {(statusFilter ||
+          urgentOnly ||
+          dateFrom ||
+          dateTo ||
+          productIdFilter ||
+          customerSearch) && (
           <button
             onClick={() => {
               clearFilters();
@@ -674,7 +714,12 @@ export default function OrdersPage() {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={selectMode ? 10 : 9} className="p-0">
-                    {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
+                    {statusFilter ||
+                    urgentOnly ||
+                    dateFrom ||
+                    dateTo ||
+                    productIdFilter ||
+                    customerSearch ? (
                       <EmptyState
                         variant="orders"
                         title="No matching orders"
