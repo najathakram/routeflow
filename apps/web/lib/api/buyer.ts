@@ -2,6 +2,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { buyerApiClient } from "@/lib/buyer-api-client";
+import { getStoredActiveSeller } from "@/lib/buyer-auth";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@/lib/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
@@ -295,6 +296,9 @@ export function useBuyerShelf() {
     queryKey: ["buyer", "shelf"],
     queryFn: () => buyerApiClient.get("/buyer/shelf").then((r) => r.data),
     staleTime: 60 * 1000,
+    // A5: without an active seller there is no X-Tenant-Slug header and the
+    // request 400s server-side — don't fire a doomed request.
+    enabled: !!getStoredActiveSeller(),
   });
 }
 
@@ -561,6 +565,8 @@ export function useBuyerDashboard(frequentWindow?: "30d" | "90d" | "all") {
     queryKey: ["buyer", "dashboard", frequentWindow],
     queryFn: () =>
       buyerApiClient.get("/buyer/dashboard", { params: { frequentWindow } }).then((r) => r.data),
+    // A5: seller-scoped — a call without X-Tenant-Slug 400s (see useBuyerShelf).
+    enabled: !!getStoredActiveSeller(),
   });
 }
 
@@ -570,6 +576,8 @@ export function useBuyerTemplates() {
   return useQuery<{ data: OrderTemplate[]; meta: { total: number } }>({
     queryKey: ["buyer", "templates"],
     queryFn: () => buyerApiClient.get("/buyer/templates").then((r) => r.data),
+    // A5: seller-scoped — a call without X-Tenant-Slug 400s (see useBuyerShelf).
+    enabled: !!getStoredActiveSeller(),
   });
 }
 

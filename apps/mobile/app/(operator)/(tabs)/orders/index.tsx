@@ -13,8 +13,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
-import { useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
+import { useAdminCustomer, useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
 import { DraftStrip } from "../../../../components/DraftStrip";
+import {
+  customerFilterChipLabel,
+  resolveCustomerIdParam,
+} from "../../../../lib/customer-order-filter";
 
 // Default filter is "All" so operators land on the full picture rather than
 // only Pending. Reordered to surface All first, then statuses left-to-right
@@ -66,19 +70,33 @@ function formatCurrency(n: number | string | undefined): string {
 
 export default function OrdersListScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ status?: string }>();
+  const params = useLocalSearchParams<{ status?: string; customerId?: string }>();
   const initialFilter: StatusFilter =
     STATUS_FILTERS.find((f) => f.id === params.status)?.id ?? "ALL";
 
   const [filter, setFilter] = useState<StatusFilter>(initialFilter);
   const [search, setSearch] = useState("");
+  // A3 cross-link: the customer detail screen's "View orders" pushes ?customerId=,
+  // which used to be dropped here — every operator saw ALL orders instead of just
+  // this customer's. Seeded once from the route param; dismissing the chip clears
+  // both this state and the param so the filter can't silently reappear on remount.
+  const [customerFilter, setCustomerFilter] = useState<string | null>(() =>
+    resolveCustomerIdParam(params.customerId),
+  );
 
   const statusParam = filter === "ALL" ? undefined : filter;
   const { data, isLoading, isFetching, refetch } = useAdminOrders({
     status: statusParam,
     search: search.trim() || undefined,
+    customerId: customerFilter ?? undefined,
     limit: 50,
   });
+  const { data: filteredCustomer } = useAdminCustomer(customerFilter ?? "");
+
+  const clearCustomerFilter = () => {
+    setCustomerFilter(null);
+    router.setParams({ customerId: undefined });
+  };
 
   const orders = data?.data ?? [];
 
@@ -104,6 +122,16 @@ export default function OrdersListScreen() {
       />
 
       <SearchBar placeholder="Search orders, customers…" value={search} onChangeText={setSearch} />
+
+      {customerFilter ? (
+        <Pressable style={styles.activeFilterBanner} onPress={clearCustomerFilter}>
+          <Ionicons name="person-outline" size={14} color={ios.brand} />
+          <Text style={styles.activeFilterText} numberOfLines={1}>
+            {customerFilterChipLabel(filteredCustomer?.businessName)}
+          </Text>
+          <Ionicons name="close" size={14} color={ios.brand} />
+        </Pressable>
+      ) : null}
 
       <FilterChipRow
         chips={STATUS_FILTERS.map((f) => ({ label: f.label }))}
@@ -227,6 +255,23 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center", justifyContent: "center", gap: 14, flex: 1 },
   emptyTitle: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label2 },
+  activeFilterBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+  },
+  activeFilterText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.brand,
+  },
   primaryBtn: {
     backgroundColor: ios.brand,
     flexDirection: "row",

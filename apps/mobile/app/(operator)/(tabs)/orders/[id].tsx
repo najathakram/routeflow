@@ -43,7 +43,12 @@ import {
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
-import { ACTIVATION_BUDGET_MS, canShareFilesHere, sharePdf } from "../../../../lib/share-pdf";
+import {
+  ACTIVATION_BUDGET_MS,
+  canShareFilesHere,
+  openPdfInTab,
+  sharePdf,
+} from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
@@ -250,6 +255,11 @@ export default function OrderDetailScreen() {
   const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
   const whatsAppShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
   const pdfShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  // A1: "Open PDF" — the guaranteed-visible fallback when Share PDF is
+  // unavailable/fails. Own pending flag rather than piggybacking on the
+  // Share-PDF phase dance (pdfSharePhase/pdfShareRef), which owns the
+  // separate prepare→tap-again→share budget contract.
+  const [openPdfPending, setOpenPdfPending] = useState(false);
   // The demotion awaiting a reason. The server rejects a blank one, so the sheet
   // holds the action until the operator supplies it.
   const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
@@ -563,10 +573,65 @@ export default function OrderDetailScreen() {
   const handleSharePdf = () => {
     runPdfShare(pdfShareRef, setPdfSharePhase, undefined);
   };
+  /**
+   * A1: explicit "Open PDF" row — reuses `openPdfInTab` (share-pdf.ts), the
+   * same window.open fallback `sharePdf` itself falls back to. Independent of
+   * the share dance/budget above: no transient-activation window to protect
+   * since it never calls `navigator.share`, so a plain await-then-act is fine
+   * here. Always visible in the sheet, so it never depends on the share API
+   * being available or having just failed.
+   */
+  const handleOpenPdf = () => {
+    if (!sendSheet) return;
+    setOpenPdfPending(true);
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: (data) => {
+          setOpenPdfPending(false);
+          if (!data?.url) {
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          openPdfInTab(data.url);
+        },
+        onError: (e) => {
+          setOpenPdfPending(false);
+          toastError(e, "Couldn't open the PDF.");
+        },
+      },
+    );
+  };
+  /**
+   * A1: "Mark as Sent" — the SAME bodyless `/invoices/:id/send` mutation
+   * (useSendInvoice called without `email`) the invoice-detail dialog already
+   * uses for its own Mark as Sent action. Always visible in the sheet: the
+   * guaranteed "I delivered it myself" path so the sheet can never dead-end.
+   */
+  // Email and Mark-as-Sent ride the SAME useSendInvoice instance, so a bare
+  // `isPending` lights up both rows at once. The in-flight variables tell them
+  // apart: `email` present = the email send, absent = the bodyless mark-as-sent.
+  const emailSending = sendMut.isPending && sendMut.variables?.email != null;
+  const markingSent = sendMut.isPending && sendMut.variables?.email == null;
+  const handleMarkAsSent = () => {
+    if (!sendSheet) return;
+    sendMut.mutate(
+      { id: sendSheet.invoiceId },
+      {
+        onSuccess: () => {
+          showToast("Invoice marked as sent");
+          closeSendSheet();
+          refetch();
+        },
+        onError: (e) => toastError(e),
+      },
+    );
+  };
   const closeSendSheet = () => {
     setSendSheet(null);
     setWhatsAppPhase("idle");
     setPdfSharePhase("idle");
+    setOpenPdfPending(false);
     whatsAppShareRef.current = null;
     pdfShareRef.current = null;
   };
@@ -1041,13 +1106,17 @@ export default function OrderDetailScreen() {
         totalFmt={sendSheet?.totalFmt ?? ""}
         phone={sendPhone}
         email={sendEmail}
-        emailSending={sendMut.isPending}
+        emailSending={emailSending}
         whatsAppPhase={whatsAppPhase}
         pdfPhase={pdfSharePhase}
         onWhatsApp={handleWhatsApp}
         onSms={handleSms}
         onEmail={handleEmailInvoice}
         onSharePdf={handleSharePdf}
+        onOpenPdf={handleOpenPdf}
+        openPdfPending={openPdfPending}
+        onMarkAsSent={handleMarkAsSent}
+        markingSent={markingSent}
       />
 
       <ReasonSheet

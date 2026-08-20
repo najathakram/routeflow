@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   type BuyerUser,
   type BuyerSeller,
+  getBuyerAccessToken,
   getStoredBuyer,
   getStoredActiveSeller,
   storeActiveSeller,
@@ -48,8 +49,10 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
     if (stored) {
       setBuyer(stored);
       setActiveSellerState(storedSeller);
-      // Refresh sellers list in background
-      const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+      // Refresh sellers list in background. A5: read through the canonical
+      // accessor — the legacy "buyerAccessToken" literal is only written by
+      // the Google callback, so password logins never populated sellers here.
+      const token = getBuyerAccessToken();
       if (token) {
         getBuyerSellers(token)
           .then(setSellers)
@@ -62,8 +65,7 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
           if (data) {
             setBuyer(data.buyer);
             setActiveSellerState(getStoredActiveSeller());
-            const token =
-              typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+            const token = getBuyerAccessToken();
             if (token) {
               getBuyerSellers(token)
                 .then(setSellers)
@@ -82,7 +84,7 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
   const login = React.useCallback(async (email: string, password: string): Promise<BuyerUser> => {
     const data = await buyerLogin(email, password);
     setBuyer(data.buyer);
-    const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+    const token = getBuyerAccessToken();
     if (token) {
       const list = await getBuyerSellers(token);
       setSellers(list);
@@ -114,7 +116,7 @@ export function BuyerAuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshSellers = React.useCallback(async () => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+    const token = getBuyerAccessToken();
     if (!token) return;
     const list = await getBuyerSellers(token);
     setSellers(list);

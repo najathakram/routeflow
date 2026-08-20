@@ -41,7 +41,6 @@ import {
   useForecasting,
   useUpdateReorderSettings,
   useInventoryValuation,
-  useSetCostBasis,
   useBulkSetCostBasis,
   useRecomputeCosts,
   type RecomputeCostsResult,
@@ -53,6 +52,7 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { StockCountTab } from "@/components/inventory/StockCountTab";
+import { SetCostModal } from "@/components/SetCostModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
@@ -443,6 +443,8 @@ function StockTable({
   setAdjustPreselectId,
   setShowAdjustModal,
   onSetCost,
+  scrollToId,
+  onScrolled,
 }: {
   stockItems: StockItem[];
   stockSearch: string;
@@ -454,6 +456,14 @@ function StockTable({
   setAdjustPreselectId: (id: string | undefined) => void;
   setShowAdjustModal: (v: boolean) => void;
   onSetCost: (item: StockItem) => void;
+  /** Product id to scroll to + briefly highlight (set when a search suggestion
+   *  is picked). Left unset while it's not found — e.g. a filter still hides
+   *  the row on this render — so the effect retries once `sorted` changes
+   *  (the caller clears any filter that would hide it). */
+  scrollToId?: string | null;
+  /** Called once the target row has actually been found and scrolled to, so
+   *  the caller can clear `scrollToId`. */
+  onScrolled?: () => void;
 }) {
   // 1) Filter by search first so sort only operates on visible rows.
   const filtered = React.useMemo(() => {
@@ -484,6 +494,28 @@ function StockTable({
       totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
     },
   });
+
+  // 3) Scroll-to + brief highlight support for a picked search suggestion.
+  // `scrollToId` may not resolve to a visible row on the render it's set on
+  // (a filter can still be clearing) — the effect just no-ops and retries the
+  // next time `sorted` changes, rather than giving up.
+  const rowRefs = React.useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const [flashId, setFlashId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!scrollToId) return;
+    const el = rowRefs.current.get(scrollToId);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashId(scrollToId);
+    onScrolled?.();
+  }, [scrollToId, sorted, onScrolled]);
+
+  React.useEffect(() => {
+    if (!flashId) return;
+    const handle = setTimeout(() => setFlashId(null), 1600);
+    return () => clearTimeout(handle);
+  }, [flashId]);
 
   if (filtered.length === 0) {
     const q = stockSearch.trim();
@@ -578,9 +610,14 @@ function StockTable({
           {sorted.map((item) => (
             <tr
               key={item.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(item.id, el);
+                else rowRefs.current.delete(item.id);
+              }}
               className={cn(
                 "group transition-colors hover:bg-surface-raised/50",
                 item.currentStock <= 0 && "bg-danger-bg/30",
+                flashId === item.id && "bg-brand-50 hover:bg-brand-50",
               )}
             >
               <td className="px-4 py-3 font-medium text-navy">
@@ -659,6 +696,12 @@ function StockTable({
                     className="text-xs text-brand-500 hover:underline"
                   >
                     Movements
+                  </Link>
+                  <Link
+                    href={`/products/${item.id}`}
+                    className="text-xs text-brand-500 hover:underline"
+                  >
+                    Open product
                   </Link>
                 </div>
               </td>
@@ -1924,100 +1967,6 @@ function ForecastingTab({
 
 // ─── Set Cost Basis Modal ─────────────────────────────────────────────────────
 
-function SetCostModal({ item, onClose }: { item: StockItem; onClose: () => void }) {
-  const setCostBasis = useSetCostBasis();
-  const { toast } = useToast();
-  const [unitCost, setUnitCost] = React.useState(
-    item.averageCost != null ? String(item.averageCost) : "",
-  );
-  const [notes, setNotes] = React.useState("");
-  const [applyToLots, setApplyToLots] = React.useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCostBasis.mutate(
-      {
-        productId: item.id,
-        unitCost: Number(unitCost),
-        notes: notes || undefined,
-        applyToLots: applyToLots || undefined,
-      },
-      {
-        onSuccess: () => {
-          toast({
-            title: "Cost basis set",
-            description: `${item.name} now carries a unit cost of $${Number(unitCost).toFixed(4)}.`,
-            variant: "success",
-          });
-          onClose();
-        },
-        onError: () =>
-          toast({
-            title: "Failed to set cost",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Set cost basis — ${item.name}`}
-      description="Manually sets the average cost. Recorded as an audited COST_BASIS movement; future purchases keep updating the average from here."
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
-          <input
-            required
-            autoFocus
-            type="number"
-            min={0}
-            step={0.0001}
-            value={unitCost}
-            onChange={(e) => setUnitCost(e.target.value)}
-            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            placeholder="0.0000"
-          />
-          <p className="mt-1 text-xs text-navy/70">
-            Current: {item.averageCost != null ? `$${Number(item.averageCost).toFixed(4)}` : "none"}{" "}
-            · Stock: {item.currentStock} {item.unit}
-          </p>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-navy">Notes</label>
-          <textarea
-            rows={2}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="e.g. opening cost basis from supplier price list"
-            className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm text-navy/70">
-          <input
-            type="checkbox"
-            checked={applyToLots}
-            onChange={(e) => setApplyToLots(e.target.checked)}
-          />
-          Also rewrite open stock lots (FIFO/LIFO products)
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={setCostBasis.isPending}>
-            Set Cost
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 // ─── Bulk Set Costs Modal (products with no cost basis) ───────────────────────
 
 function BulkSetCostModal({
@@ -2260,6 +2209,10 @@ export default function InventoryPage() {
   const [stockSuggestOpen, setStockSuggestOpen] = React.useState(false);
   const [stockSuggestHighlight, setStockSuggestHighlight] = React.useState(0);
   const stockSearchContainerRef = React.useRef<HTMLDivElement>(null);
+  // Product id to scroll to + briefly highlight in the (already-filtered)
+  // StockTable when a search suggestion is picked, instead of force-opening
+  // Adjust Stock — the table already offers Set cost / Adjust / Movements.
+  const [scrollToProductId, setScrollToProductId] = React.useState<string | null>(null);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
   // Cost-basis tooling
@@ -2328,6 +2281,32 @@ export default function InventoryPage() {
     }
     return [...skuExact, ...skuPrefix, ...nameMatch, ...other].slice(0, 8);
   }, [stockSearch, stockItems]);
+
+  // Picking a suggestion scrolls to and highlights its row in the table
+  // instead of opening a modal. Clear only the filter(s) that would actually
+  // hide the picked row — missingCostOnly / the regulated-section tab — so
+  // the row is guaranteed visible without discarding an unrelated filter.
+  const pickSuggestion = React.useCallback(
+    (id: string) => {
+      const target = (stockItems as StockItem[]).find((i) => i.id === id);
+      if (target) {
+        if (missingCostOnly && target.averageCost != null) setMissingCostOnly(false);
+        const hiddenBySection =
+          sectionFilter === "any"
+            ? target.trackedCategoryId == null
+            : sectionFilter === "none"
+              ? target.trackedCategoryId != null
+              : sectionFilter
+                ? target.trackedCategoryId !== sectionFilter
+                : false;
+        if (hiddenBySection) setUrlFilter("section", "");
+      }
+      setStockSuggestOpen(false);
+      setScrollToProductId(id);
+    },
+    [stockItems, missingCostOnly, sectionFilter, setUrlFilter],
+  );
+  const clearScrollTarget = React.useCallback(() => setScrollToProductId(null), []);
 
   const tabs = [
     { value: "stock", label: "Stock" },
@@ -2500,9 +2479,7 @@ export default function InventoryPage() {
                     const pick = stockSuggestions[stockSuggestHighlight];
                     if (pick) {
                       e.preventDefault();
-                      setAdjustPreselectId(pick.id);
-                      setShowAdjustModal(true);
-                      setStockSuggestOpen(false);
+                      pickSuggestion(pick.id);
                     }
                   } else if (e.key === "Escape") {
                     setStockSuggestOpen(false);
@@ -2554,38 +2531,85 @@ export default function InventoryPage() {
                             role="option"
                             aria-selected={idx === stockSuggestHighlight}
                             onMouseEnter={() => setStockSuggestHighlight(idx)}
-                            onMouseDown={(e) => {
-                              // mousedown so it fires before the input loses focus / closes the menu
-                              e.preventDefault();
-                              setAdjustPreselectId(s.id);
-                              setShowAdjustModal(true);
-                              setStockSuggestOpen(false);
-                            }}
                             className={cn(
-                              "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors",
+                              "flex flex-col gap-1.5 px-3 py-2 text-sm transition-colors",
                               idx === stockSuggestHighlight
                                 ? "bg-brand-50"
                                 : "hover:bg-surface-raised",
                             )}
                           >
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate font-medium text-navy" title={s.name}>
-                                {s.name}
-                              </p>
-                              <p className="truncate text-[11px] text-navy/70">
-                                {s.sku ? (
-                                  <span className="font-mono">{s.sku}</span>
-                                ) : (
-                                  <span className="italic">no SKU</span>
+                            {/* Primary pick: scrolls to + highlights the row in the
+                                table below, instead of force-opening a modal. */}
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                // mousedown so it fires before the input loses focus / closes the menu
+                                e.preventDefault();
+                                pickSuggestion(s.id);
+                              }}
+                              className="flex w-full cursor-pointer items-center gap-3 text-left"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate font-medium text-navy" title={s.name}>
+                                  {s.name}
+                                </p>
+                                <p className="truncate text-[11px] text-navy/70">
+                                  {s.sku ? (
+                                    <span className="font-mono">{s.sku}</span>
+                                  ) : (
+                                    <span className="italic">no SKU</span>
+                                  )}
+                                  {s.category ? <span> · {s.category}</span> : null}
+                                </p>
+                              </div>
+                              <p
+                                className={cn(
+                                  "shrink-0 text-xs font-medium tabular-nums",
+                                  stockColor,
                                 )}
-                                {s.category ? <span> · {s.category}</span> : null}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className={cn("text-xs font-medium tabular-nums", stockColor)}>
+                              >
                                 {stockLabel} {s.unit}
                               </p>
-                              <p className="text-[10px] text-brand-600">Adjust →</p>
+                            </button>
+                            {/* Same action set as the table row, plus the product link. */}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-0.5 text-[11px] font-medium">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setCostTarget(s);
+                                  setStockSuggestOpen(false);
+                                }}
+                                className="text-brand-600 hover:underline"
+                              >
+                                Set cost
+                              </button>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setAdjustPreselectId(s.id);
+                                  setShowAdjustModal(true);
+                                  setStockSuggestOpen(false);
+                                }}
+                                className="text-brand-600 hover:underline"
+                              >
+                                Adjust
+                              </button>
+                              <Link
+                                href={`/inventory/movements?product=${s.id}`}
+                                className="text-brand-500 hover:underline"
+                                onClick={() => setStockSuggestOpen(false)}
+                              >
+                                Movements
+                              </Link>
+                              <Link
+                                href={`/products/${s.id}`}
+                                className="text-brand-500 hover:underline"
+                                onClick={() => setStockSuggestOpen(false)}
+                              >
+                                Open product
+                              </Link>
                             </div>
                           </li>
                         );
@@ -2688,6 +2712,8 @@ export default function InventoryPage() {
                 setAdjustPreselectId={setAdjustPreselectId}
                 setShowAdjustModal={setShowAdjustModal}
                 onSetCost={setCostTarget}
+                scrollToId={scrollToProductId}
+                onScrolled={clearScrollTarget}
               />
             )}
           </div>

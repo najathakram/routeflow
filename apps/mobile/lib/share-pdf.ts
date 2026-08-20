@@ -1,4 +1,4 @@
-import { Platform } from "react-native";
+import { Linking, Platform } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { showToast } from "./toast";
@@ -86,6 +86,30 @@ export function canShareFilesHere(): boolean {
   if (Platform.OS !== "web") return true;
   const nav: any = typeof navigator !== "undefined" ? navigator : undefined;
   return !!(nav?.share && nav?.canShare);
+}
+
+/**
+ * Open a (signed) PDF url directly — the plain "Open PDF" action, independent
+ * of whether the OS/browser share API is available or a share just failed.
+ * This is the SAME `window.open(url, "_blank", "noopener")` fallback
+ * `sharePdf` itself already falls back to once file-sharing isn't available
+ * or the activation budget runs out (see the two `window.open` call sites
+ * below) — exposed standalone so a caller can offer it as its own always-on
+ * row instead of only reaching it through a failed/degraded share attempt.
+ * Native has no tab to open, so it defers to `Linking.openURL` — the same
+ * pattern already used elsewhere in this app to open receipt/tracking links
+ * (e.g. `(operator)/(tabs)/invoices/[id].tsx`'s payment-receipt viewer).
+ */
+export function openPdfInTab(url: string): void {
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    showToast("Couldn't open the PDF.");
+    return;
+  }
+  Linking.openURL(url).catch(() => showToast("Couldn't open the PDF."));
 }
 
 // Per-url fetch cache. Lets a "second tap" (after the first timed out against

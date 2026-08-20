@@ -66,9 +66,22 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-export function getStoredBuyer(): BuyerUser | null {
+/**
+ * Canonical accessor for the buyer access token — the namespaced key first,
+ * falling back to the legacy pre-NEW-m2-1 key so sessions written by older
+ * code paths keep working. ALL buyer token reads must go through this: the
+ * A5 seller-list outage came from call sites still reading the legacy
+ * literal ("buyerAccessToken"), which plain email/password login never
+ * writes — only the Google OAuth callback backfilled it, so password logins
+ * on a fresh device saw no sellers and could never reach a dashboard.
+ */
+export function getBuyerAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem(BUYER_KEYS.accessToken);
+  return localStorage.getItem(BUYER_KEYS.accessToken) ?? localStorage.getItem(LEGACY_BUYER_ACCESS);
+}
+
+export function getStoredBuyer(): BuyerUser | null {
+  const token = getBuyerAccessToken();
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;

@@ -2069,6 +2069,49 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new BadRequestException("Items can't be edited on a cancelled order");
     }
 
+    // A4: the mobile item editor is SHARED between the operator and driver screens
+    // and always sends an incremental diff — {id, action} entries with
+    // replaceAll:false — while the CUSTOMER/DRIVER branch below is a full replace
+    // (deleteMany, then re-create only productId-carrying entries). A diff routed
+    // through the replace branch therefore deleted every untouched line on the
+    // order. Diff-shaped DRIVER payloads go through the operator merge branch
+    // instead (price fields stripped just below), and a diff-shaped CUSTOMER
+    // payload is rejected outright: no buyer client sends one (web+mobile buyer
+    // portals send full {productId, qty} lists), and failing loudly beats
+    // silently destroying the order's lines.
+    const isDiffPayload =
+      dto.replaceAll === false ||
+      (dto.items ?? []).some(
+        (i) => i.id != null || i.action != null || i.substituteProductId != null,
+      );
+    if (user?.role === UserRole.CUSTOMER && isDiffPayload) {
+      throw new BadRequestException(
+        "Buyer edits must send the full item list as {productId, qty} entries; incremental item diffs are not supported on this path",
+      );
+    }
+    const driverDiffEdit = user?.role === UserRole.DRIVER && isDiffPayload;
+    if (driverDiffEdit) {
+      // B13: non-staff never set prices. The merge branch honors per-line
+      // unitPrice overrides for operators, so strip price fields from every
+      // catalog-linked driver entry before it gets there — a fresh add prices
+      // from the catalog and a qty edit keeps the line's stored price (which
+      // may be an operator's override; a driver edit must not disturb it).
+      // Unlisted (catalog-free) lines keep their client price: they have no
+      // catalog price to fall back to, matching the replace branch's
+      // long-standing unlisted handling.
+      const unlistedLineIds = new Set(
+        (order.lineItems ?? []).filter((li) => !li.productId).map((li) => li.id),
+      );
+      dto.items = (dto.items ?? []).map((i) => {
+        const isUnlistedLine = i.id
+          ? unlistedLineIds.has(i.id)
+          : !i.productId && (i.name ?? "").trim() !== "";
+        if (isUnlistedLine) return i;
+        const { unitPrice: _unitPrice, overrideReason: _overrideReason, ...rest } = i;
+        return rest;
+      });
+    }
+
     // R1: a POST-DELIVERY edit (order already OUT_FOR_DELIVERY / PARTIALLY_DELIVERED /
     // DELIVERED) re-syncs its finalized / paid / delivery-batch invoice(s) IN PLACE
     // after the mutation (resyncOrderInvoicesForEdit) — keeping payments and surfacing
@@ -2132,8 +2175,13 @@ export class OrdersService implements OnApplicationBootstrap {
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
     const { subtotal, tax, total, shouldRevert, shippingFee } = await this.prisma.tenantTransaction(
       async (tx: any) => {
-        // Customer/Driver path: replace items by productId
-        if (user?.role === UserRole.CUSTOMER || user?.role === UserRole.DRIVER) {
+        // Customer/Driver path: replace items by productId. A4: a DRIVER diff
+        // payload skips this branch entirely — it merges below like an operator
+        // edit (with prices already stripped), so untouched lines survive.
+        if (
+          user?.role === UserRole.CUSTOMER ||
+          (user?.role === UserRole.DRIVER && !isDiffPayload)
+        ) {
           if (user.role === UserRole.CUSTOMER) {
             const customer = await tx.customer.findFirst({ where: { userId: user.sub } });
             if (!customer || order.customerId !== customer.id) throw new ForbiddenException();
@@ -2296,7 +2344,10 @@ export class OrdersService implements OnApplicationBootstrap {
           // keep working. The web edit UI sends `replaceAll: false`, so adding a new
           // item there merges/appends instead of deleting the untouched lines.
           const allNewItems = dto.items.every((i) => !i.id);
-          const replaceAll = dto.replaceAll ?? allNewItems;
+          // A4: a driver only ever reaches this branch with a diff payload —
+          // never let one replace-all (that path deletes lines wholesale).
+          const replaceAll =
+            user?.role === UserRole.DRIVER ? false : (dto.replaceAll ?? allNewItems);
 
           if (replaceAll) {
             // Replace-all: client sends the full item list. Delete existing items then
