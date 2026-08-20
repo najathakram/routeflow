@@ -2,8 +2,13 @@
 
 **Written:** 2026-08-20 (night) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through **PR #369 is SHIPPED + LIVE** (post-deploy check green; the new
-`/analytics/product-sales/:productId` route verified registered in prod). New tonight:
+Everything through **PR #371 is SHIPPED + LIVE** (post-deploy check green; the new
+`/analytics/product-sales/:productId` and `/inventory/stock-counts` routes verified
+against prod, the latter with a real authenticated read on `e2e-routeflow` proving the
+new tables + tenancy work). **#371 = PR-C** — durable stock-count sessions, and **the
+batch's first migration is APPLIED to prod** (`20260820000000_add_stock_count_sessions`,
+purely additive; fresh 9.3 MB pre-migration backup taken and validated first, and the
+migration was proven on a fresh Postgres 16 in CI before it touched prod). New tonight:
 **#367 = PR-A of the UX expansion batch** — the two live client-facing bugs (**A4** driver
 edits wiped orders, **A5** buyer password login never reached its sellers) plus **A1**
 mobile send-sheet no-dead-end, **A2** inventory search reach + shared `SetCostModal`,
@@ -54,10 +59,27 @@ here is blocked — this is the complete pick-up list.
    (Σsubtotal ÷ Σqty, NOT a mean of unit prices), and the reader goes **through
    `Invoice`** with a nested `items` filter — never `invoiceItem.findMany`, whose
    nested-created rows can carry `tenantId = null`.
-   **▶ PR-C (stock-count mode) is the next build — it carries MIGRATION #1**, so it must
-   follow the backup-first prod flow: apply the migration BEFORE the app deploy
-   (`railway run --service postgres node apps/api/scripts/prod-migrate.mjs`), never
-   auto-migrate. Model + counting/review/commit design is fully specced in the plan.
+   **PR-C: ✅ SHIPPED + LIVE as #371 (2026-08-20), migration #1 applied.** Durable
+   `StockCountSession`/`StockCountLine` — before this a count lived only in the client
+   (`lib/api/stock-count.ts` said so outright), so it could not resume on another device
+   and left no history. Three money rules a future change must not reverse: a line's
+   `unitCostOverride` writes COST_BASIS **before** its quantity adjustment (else the
+   corrected cost is stamped stale onto the adjustment and any new lot); `expectedQty`
+   snapshots on the FIRST count only; variance is valued at the product's current
+   `averageCost`, never the override. Commit is blocked while autosave is dirty.
+   **▶ PR-D (generic→variant split) is the next build** — no migration. Then PR-E
+   (payment allocation, migration #2) and PR-F (AI statements, migration #3).
+
+   **Migration mechanics that worked, reuse them:** `pg_dump` is NOT installed locally,
+   but it IS inside the Railway postgres container — take the pre-migration backup with
+   `railway ssh --service postgres 'pg_dump --no-password --format=plain --no-acl
+--no-owner -U $POSTGRES_USER -d $POSTGRES_DB' > backups/<file>.sql`, then VALIDATE it
+   (expect ~109 `CREATE TABLE`, a matching `COPY` count, and the "dump complete" marker —
+   a truncated dump is worse than none). **CI now replays the whole migration history
+   against a fresh Postgres before tests** (it previously only ran `prisma db push`, which
+   never exercises migration files at all) — that step is the real gate; if it fails, do
+   not touch prod.
+
 2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
    FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
    portal's password login/register write only the namespaced `rf:buyer:accessToken`
