@@ -83,7 +83,7 @@ the table row already offers Set cost / Adjust / Movements (:638-663). The searc
 | Mobile customer "View orders"                                       | BROKEN scoping — pushes `customerId` param but orders index drops it ((tabs)/orders/index.tsx:69-81; hook accepts it, lib/api/admin.ts:226) | Read the param, forward to `useAdminOrders`, show a dismissible "Customer: X" filter chip |
 | Mobile movement → product, order→customer (both), product→movements | EXIST (#360)                                                                                                                                | —                                                                                         |
 
-### A4. NEW CRITICAL (found during D1 verification, pre-existing): driver edits wipe orders
+### A4. ✅ SHIPPED STANDALONE (2026-08-19 night session) — driver edits wipe orders
 
 `apps/mobile/app/(driver)/route/stop/[stopId]/edit-items.tsx` mounts the shared editor, which
 sends an incremental diff (`{id, action}` entries, `replaceAll:false`) — but the server routes
@@ -94,7 +94,7 @@ the diff branch regardless of role (keeping the driver re-pricing + no-price-con
 or reject diff-shaped payloads on the replace path with a 400 instead of destroying lines.
 Spec-pin both. This ships in PR-A because it is live data loss.
 
-### A5. Buyer-portal login: new user gets an empty dashboard; second computer loses the seller connection (owner-reported 2026-08-19, NOT yet investigated)
+### A5. ✅ SHIPPED STANDALONE (2026-08-19 night session) — buyer-portal login: root cause was the legacy `"buyerAccessToken"` localStorage key (see HANDOFF §1.2 for the full mechanism; `getBuyerAccessToken()` is now the only sanctioned read). Original investigation brief kept below for context.
 
 Two symptoms from one buyer account: (a) after logging in, the dashboard and its fields
 never load; (b) logging in from a different computer, the buyer cannot see their

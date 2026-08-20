@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket } from "../socket";
+import { getBuyerAccessToken } from "../buyer-auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,10 +67,11 @@ export function useBuyerNotifications() {
     });
   }, []);
 
-  // Connect to WebSocket using the buyer's access token
+  // Connect to WebSocket using the buyer's access token (A5: canonical
+  // accessor — the legacy literal is unset for password logins).
   React.useEffect(() => {
     if (typeof window === "undefined") return;
-    const token = localStorage.getItem("buyerAccessToken");
+    const token = getBuyerAccessToken();
     if (!token) return;
 
     const socket = connectSocket(token);

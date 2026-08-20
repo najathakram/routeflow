@@ -78,6 +78,34 @@ test.describe("Buyer Portal", () => {
     ).toBeVisible({ timeout: 15_000 });
   });
 
+  test("BY-14 password login fires the authorized seller-list fetch (A5 regression)", async ({
+    page,
+  }) => {
+    // Pre-A5 bug: buyerLogin() wrote only the namespaced rf:buyer:accessToken
+    // key while the auth context still read the legacy "buyerAccessToken"
+    // literal — so after a plain email/password login this request NEVER fired
+    // (only Google logins backfilled the legacy key, masking the bug), the
+    // seller list stayed empty on any fresh device, and the buyer could never
+    // reach a dashboard. Works for a zero-seller buyer too: the fetch itself
+    // must happen and return 200.
+    const sellersRequest = page.waitForRequest(
+      (req) => req.url().includes("/buyer/sellers") && !!req.headers()["authorization"],
+      { timeout: 20_000 },
+    );
+    await page.goto("/buyer/login");
+    await page.getByPlaceholder("Enter your email").fill(BUYER_EMAIL);
+    await page.getByPlaceholder("Enter your password").fill(BUYER_PASS);
+    await page.getByRole("button", { name: /sign in/i }).click();
+
+    const req = await sellersRequest;
+    const res = await req.response();
+    expect(res?.status()).toBe(200);
+
+    // The canonical (namespaced) key is what login writes — pin that too.
+    const token = await page.evaluate(() => localStorage.getItem("rf:buyer:accessToken"));
+    expect(token).toBeTruthy();
+  });
+
   // ── Unauthenticated access ─────────────────────────────────────────────────
 
   test("BY-06 unauthenticated /buyer/portal → redirect to /buyer/login", async ({

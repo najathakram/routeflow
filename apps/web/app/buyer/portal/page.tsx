@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { requestSellerConnection } from "@/lib/buyer-auth";
+import { requestSellerConnection, getBuyerAccessToken } from "@/lib/buyer-auth";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -125,8 +125,7 @@ function ConnectSellerModal({
 
   const onSubmit = async (data: ConnectFormValues) => {
     setApiError(null);
-    const accessToken =
-      typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+    const accessToken = getBuyerAccessToken();
     if (!accessToken) {
       setApiError("You are not logged in. Please sign in again.");
       return;

@@ -29,26 +29,27 @@ here is blocked — this is the complete pick-up list.
    mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
    credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
    one review screen (migration).
-2. **NEW client-facing bug (owner-reported 2026-08-19 evening, NOT yet investigated):
-   buyer-portal login broken for a new user.** Two symptoms from the same buyer account:
-   (a) after logging in, the dashboard and its fields never load; (b) logging in from a
-   DIFFERENT computer, the buyer cannot see their connection with the seller (tenant
-   link missing). Investigate before fixing — leads to start from: the tenant-slug
-   cookie rules (memory `feedback_tenant_cookie_must_not_be_httponly` — httpOnly
-   silently breaks login; a fresh device has no tenant context at all, which would
-   explain the missing seller connection), how the buyer's seller/tenant association is
-   resolved server-side vs client-side on first login, and whether the customer
-   dashboard breaks on a brand-new account with no data (empty-state crash). Get the
-   exact URL used, browser, and whether the user came through an invite link vs direct
-   login — an invite link may be what plants the tenant context, which a second
-   computer never receives. Also filed in the batch plan as PR-A item A5.
-3. **CRITICAL bug, decide who fixes it first: driver edits wipe orders.** A driver
-   saving ANY item edit deletes every untouched line on that order — the driver app
-   sends an incremental diff but the server routes DRIVER to the always-replace branch
-   (`deleteMany` then re-create only `productId`-carrying entries,
-   apps/api/src/orders/orders.service.ts:2136; found + confirmed during D1
-   verification, pre-existing). Filed as PR-A item A4 in the plan, but it is live data
-   loss today and can be fixed standalone in one small server PR + specs.
+2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
+   FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
+   portal's password login/register write only the namespaced `rf:buyer:accessToken`
+   key while 7 call sites (auth context ×4, invite-accept, ConnectSellerModal,
+   `useBuyerNotifications`) still read the legacy `"buyerAccessToken"` literal — which
+   ONLY the Google OAuth callback backfills. So a password login (e.g. the buyer's
+   second computer) never fetched the seller list → "no connection with the seller",
+   nothing selectable → dashboard unreachable; invite-accept was a silent no-op. Seller
+   association is server-derived (`buyerAccountId` → `CustomerLink`) and was never
+   broken. Fix: canonical `getBuyerAccessToken()` (namespaced-first, legacy fallback),
+   all readers migrated, admin impersonation writes the namespaced key, dashboard/
+   shelf/templates queries gated on an active seller, e2e BY-14 pins "password login
+   fires the authorized /buyer/sellers fetch". Worth telling the affected buyer to
+   simply log in again once deployed — no data was lost.
+3. ~~CRITICAL: driver edits wipe orders~~ — **FIXED (2026-08-19 night session, A4) +
+   spec-pinned.** Diff-shaped payloads (`replaceAll:false` or entries with
+   `id`/`action`/`substituteProductId`) from a DRIVER now route through the operator
+   merge branch (price fields stripped — fresh adds at catalog price, qty edits keep
+   the stored price incl. operator overrides); diff-shaped CUSTOMER payloads 400
+   instead of wiping; legacy id-less driver full-lists still replace. 7 new specs in
+   `orders.service.spec.ts` ("driver diff routing (A4)").
 4. **Owner questions the batch needs answered** (plan §Open questions): (a) the exact
    screen/steps where mobile invoice-send blocked you (screenshot ideal); (b) should a
    committed stock count also export CSV/PDF; (c) do supplier statements arrive as

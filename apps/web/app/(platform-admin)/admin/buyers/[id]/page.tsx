@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { superAdminClient } from "@/lib/admin-api";
+import { BUYER_KEYS } from "@/lib/auth-keys";
 import { AdminBadge } from "../../../_components/AdminBadge";
 import { AdminModal } from "../../../_components/AdminModal";
 import {
@@ -207,7 +208,10 @@ export default function BuyerDetailPage() {
       const res = await superAdminClient.post<{ accessToken: string }>(
         `/platform-admin/buyer-accounts/${id}/impersonate`,
       );
-      localStorage.setItem("buyerAccessToken", res.data.accessToken);
+      // A5: write the NAMESPACED key — the portal reads tokens through
+      // getBuyerAccessToken() (rf:buyer:accessToken first). Writing only the
+      // legacy literal left the portal looking logged-out after impersonation.
+      localStorage.setItem(BUYER_KEYS.accessToken, res.data.accessToken);
       window.open("/buyer/portal", "_blank");
     } catch (err: unknown) {
       alert(

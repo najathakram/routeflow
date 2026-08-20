@@ -415,7 +415,14 @@ describe("OrdersService", () => {
     it("F10-002: CUSTOMER editing a CONFIRMED order reverts it to PENDING", async () => {
       primeEditMocks();
 
-      await service.updateOrderItems("ord-1", editDto, customerPayload);
+      // Buyers send the full item list ({productId, qty}) — a diff-shaped
+      // payload is rejected on the customer path (A4), so this test uses the
+      // shape the buyer portals actually send.
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-1", qty: 3 }] },
+        customerPayload,
+      );
 
       expect(prisma.order.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2542,6 +2549,218 @@ describe("OrdersService", () => {
           data: expect.objectContaining({ status: "CANCELLED" }),
         }),
       );
+    });
+  });
+
+  // ─── updateOrderItems — driver diff routing (A4) ────────────────────────────
+  // The mobile item editor is shared between the operator and driver screens and
+  // sends an incremental diff ({id, action} entries, replaceAll:false). The
+  // CUSTOMER/DRIVER branch is a full replace (deleteMany + re-create from
+  // productId-carrying entries), so a driver diff routed through it deleted
+  // every untouched line on the order. These pin the fix: driver diffs merge
+  // like operator edits (with price fields stripped — B13), buyer diffs 400.
+
+  describe("updateOrderItems — driver diff routing (A4: driver edits must not wipe orders)", () => {
+    const driverPayload = { ...operatorPayload, sub: "user-drv", role: "DRIVER" as const };
+    const twoLineOrder = {
+      ...MOCK_ORDER,
+      status: "OUT_FOR_DELIVERY" as const,
+      routeRun: { status: "DISPATCHED", startedAt: new Date() },
+      lineItems: [
+        {
+          id: "li-A",
+          orderId: "ord-1",
+          productId: "prod-A",
+          qty: 2,
+          unitPrice: 5,
+          subtotal: 10,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+        {
+          id: "li-B",
+          orderId: "ord-1",
+          productId: "prod-B",
+          qty: 1,
+          unitPrice: 7,
+          subtotal: 7,
+          status: "PENDING",
+          boxes: null,
+          pieces: null,
+        },
+      ],
+    };
+
+    it("a driver diff UPDATE merges — the untouched line survives, no wholesale delete", async () => {
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 25, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", action: "UPDATE", qty: 5 }], replaceAll: false },
+        driverPayload,
+      );
+
+      // The old routing deleteMany'd ALL lines and re-created none (a diff
+      // entry carries no productId) — the whole order vanished on save.
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).toHaveBeenCalledTimes(1);
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({ qty: 5, unitPrice: 5, subtotal: 25 }),
+        }),
+      );
+    });
+
+    it("a driver diff UPDATE cannot smuggle a price — the line's stored (operator-set) price survives", async () => {
+      // li-A carries an operator override ($4.50 vs $5 list). A driver qty edit
+      // must keep it — the old replace path re-priced every line back to list.
+      prisma.order.findUnique.mockResolvedValue({
+        ...twoLineOrder,
+        lineItems: [
+          { ...twoLineOrder.lineItems[0], unitPrice: 4.5, priceType: "MANUAL" },
+          twoLineOrder.lineItems[1],
+        ],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 13.5, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [
+            { id: "li-A", action: "UPDATE", qty: 3, unitPrice: 0.01, overrideReason: "driver" },
+          ],
+          replaceAll: false,
+        },
+        driverPayload,
+      );
+
+      const call = prisma.orderItem.update.mock.calls.at(-1)?.[0];
+      expect(call.where).toEqual({ id: "li-A" });
+      expect(call.data.unitPrice).toBe(4.5); // stored price, not 0.01
+      expect(call.data.subtotal).toBe(13.5);
+      expect(call.data.priceType).toBeUndefined(); // no new override recorded
+      expect(call.data.overriddenBy).toBeUndefined();
+    });
+
+    it("a driver diff fresh add prices from the catalog, ignoring the client price", async () => {
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-C",
+        pricePerUnit: 9,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 10, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+        { subtotal: 18, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-C", qty: 2, unitPrice: 0.5 }], replaceAll: false },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            productId: "prod-C",
+            unitPrice: 9,
+            priceType: "STANDARD",
+          }),
+        }),
+      );
+    });
+
+    it("a driver diff DELETE removes only the targeted line", async () => {
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.deliveryMutation.count.mockResolvedValue(0);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 7, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ id: "li-A", action: "DELETE" }], replaceAll: false },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.delete).toHaveBeenCalledWith({ where: { id: "li-A" } });
+    });
+
+    it("a driver diff substitution bills the substitute's list price (B13 — no price control)", async () => {
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.product.findUniqueOrThrow.mockResolvedValue({
+        id: "prod-sub",
+        pricePerUnit: 8,
+        unitsPerBox: null,
+      });
+      prisma.orderItem.findMany.mockResolvedValue([
+        { subtotal: 24, status: "PENDING" },
+        { subtotal: 7, status: "PENDING" },
+      ]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        {
+          items: [{ id: "li-A", substituteProductId: "prod-sub", qty: 3, unitPrice: 1 }],
+          replaceAll: false,
+        },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "li-A" },
+          data: expect.objectContaining({
+            productId: "prod-sub",
+            unitPrice: 8,
+            priceType: "STANDARD",
+            originalPrice: null,
+          }),
+        }),
+      );
+    });
+
+    it("a driver legacy full id-less list (old clients) still replaces", async () => {
+      prisma.order.findUnique.mockResolvedValue(twoLineOrder);
+      prisma.product.findMany.mockResolvedValue([
+        { id: "prod-A", pricePerUnit: 5, unitsPerBox: null },
+      ]);
+      prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 20, status: "PENDING" }]);
+
+      await service.updateOrderItems(
+        "ord-1",
+        { items: [{ productId: "prod-A", qty: 4 }] },
+        driverPayload,
+      );
+
+      expect(prisma.orderItem.deleteMany).toHaveBeenCalledWith({ where: { orderId: "ord-1" } });
+    });
+
+    it("a buyer (CUSTOMER) diff-shaped payload is rejected with 400 before any mutation", async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...twoLineOrder, status: "PENDING" });
+
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ id: "li-A", action: "UPDATE", qty: 3 }], replaceAll: false },
+          customerPayload,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(prisma.orderItem.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.orderItem.update).not.toHaveBeenCalled();
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
     });
   });
 

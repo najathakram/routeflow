@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Building2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { getInviteDetails, acceptInvite } from "@/lib/buyer-auth";
+import { getInviteDetails, acceptInvite, getBuyerAccessToken } from "@/lib/buyer-auth";
 
 // ─── Inline Google icon (no external requests) ────────────────────────────────
 function GoogleIcon({ className }: { className?: string }) {
@@ -71,9 +71,14 @@ export default function BuyerInvitePage() {
 
   const handleAccept = async () => {
     if (!isAuthenticated) return;
-    const accessToken =
-      typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
-    if (!accessToken) return;
+    // A5: read through the canonical accessor — this used to read the legacy
+    // "buyerAccessToken" literal, which password logins never write, so the
+    // Accept button silently did nothing for email/password buyers.
+    const accessToken = getBuyerAccessToken();
+    if (!accessToken) {
+      setAcceptError("Your session has expired — please sign in again.");
+      return;
+    }
 
     setIsAccepting(true);
     setAcceptError(null);
