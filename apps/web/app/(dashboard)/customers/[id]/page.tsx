@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeft,
@@ -30,6 +31,7 @@ import {
   Upload,
   Download,
   ShieldCheck,
+  Wallet,
 } from "lucide-react";
 import {
   Avatar,
@@ -119,6 +121,7 @@ import {
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -1521,6 +1524,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const { data: statement } = useCustomerStatement(params.id);
   const { data: advancePayments } = useCustomerAdvancePayments(params.id);
   const createAdvance = useCreateAdvancePayment();
+  const queryClient = useQueryClient();
 
   const [invoiceFilter, setInvoiceFilter] = React.useState<"all" | "outstanding" | "paid" | "void">(
     "all",
@@ -1635,6 +1639,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     },
     [uploadTaxDocs],
   );
+
+  // Customer-level payment allocation (lump sum across open invoices)
+  const [isRecordPaymentOpen, setIsRecordPaymentOpen] = React.useState(false);
 
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
@@ -3010,6 +3017,14 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     {fmt(statement?.outstandingAmount ?? 0)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    leftIcon={<Wallet className="h-4 w-4" />}
+                    onClick={() => setIsRecordPaymentOpen(true)}
+                  >
+                    Record Payment
+                  </Button>
                 </div>
               </Card>
               <Card>
@@ -3286,6 +3301,20 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               </div>
             </div>
           </div>
+
+          {isRecordPaymentOpen && (
+            <CustomerRecordPaymentModal
+              customerId={params.id}
+              customerName={customer.businessName}
+              onClose={() => setIsRecordPaymentOpen(false)}
+              // useRecordPaymentStandalone only invalidates ["invoices"]; the Open
+              // Balance headline and the advance list on this tab live under
+              // ["customers", id, …] and would otherwise stay stale.
+              onSuccess={() => {
+                void queryClient.invalidateQueries({ queryKey: ["customers", params.id] });
+              }}
+            />
+          )}
 
           <Modal
             open={isAdvanceOpen}

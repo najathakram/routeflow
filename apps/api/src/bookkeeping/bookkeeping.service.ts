@@ -19,6 +19,7 @@ import {
 } from "../common/invoiced-sales";
 import { ListTransactionsDto } from "./dto/list-transactions.dto";
 import { RecordPaymentDto } from "./dto/record-payment.dto";
+import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
 import { InvoiceService } from "./invoice.service";
 import { StorageService } from "../storage/storage.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
@@ -533,6 +534,161 @@ export class BookkeepingService implements OnModuleInit {
       }
     }
     return { updated, failed };
+  }
+
+  /**
+   * Bulk "mark paid" — each eligible id gets one full-remaining `BillPayment`
+   * through the SAME ledger every other payment writes (no special status
+   * jump straight to PAID). Follows the vendor-bills `bulkDelete`
+   * partition-and-report convention: eligibility is precomputed, an
+   * ineligible id is reported in `skipped`, never thrown.
+   *
+   * `ids` may be VendorBill ids (the vendor-bills list) or Expense ids (the
+   * expenses list). Landmine 2: `Expense.vendorBillId` is a bare unique
+   * column with no Prisma relation, so a bill-linked expense needs a manual
+   * second lookup — marking it paid pays off the underlying BILL (the money
+   * side) via the same ledger, while `updateExpense`/`buildStatusPatch` still
+   * stamps the expense's own status/receivedAt/paidAt exactly as before. An
+   * unlinked expense has no bill ledger to pay against, so it just flips
+   * status — unchanged from what `batchUpdateExpenseStatus` already does.
+   */
+  async bulkMarkPaid(dto: BulkMarkPaidDto): Promise<{
+    paid: number;
+    totalAmount: number;
+    skipped: { id: string; billNumber: string; reason: string }[];
+  }> {
+    const ids = Array.from(new Set(dto.ids));
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+    const skipped: { id: string; billNumber: string; reason: string }[] = [];
+    let paid = 0;
+    let totalAmount = 0;
+
+    if (ids.length === 0) return { paid, totalAmount, skipped };
+
+    // Identity only — the money side (status/owed/paid) is re-read inside
+    // payBillFully's transaction, never carried over from this snapshot.
+    const bills = await this.prisma.forTenant().vendorBill.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, billNumber: true },
+    });
+    const billsById = new Map(bills.map((b) => [b.id, b]));
+
+    // Whatever didn't resolve to a bill might be an expense (landmine 2).
+    const expenseIds = ids.filter((id) => !billsById.has(id));
+    const expenses = expenseIds.length
+      ? await this.prisma.forTenant().expense.findMany({
+          where: { id: { in: expenseIds }, deletedAt: null },
+          select: { id: true, status: true, vendorBillId: true },
+        })
+      : [];
+    const expensesById = new Map(expenses.map((e) => [e.id, e]));
+
+    for (const id of ids) {
+      try {
+        const bill = billsById.get(id);
+        if (bill) {
+          const result = await this.payBillFully(bill.id, dto, paidAt);
+          if (result.ok) {
+            paid++;
+            totalAmount = roundMoney(totalAmount + result.amount);
+          } else {
+            skipped.push({ id: bill.id, billNumber: bill.billNumber, reason: result.reason });
+          }
+          continue;
+        }
+
+        const expense = expensesById.get(id);
+        if (!expense) {
+          skipped.push({ id, billNumber: "", reason: "Not found" });
+          continue;
+        }
+
+        if (expense.vendorBillId) {
+          const linkedBill = await this.prisma.forTenant().vendorBill.findUnique({
+            where: { id: expense.vendorBillId },
+            select: { id: true, billNumber: true },
+          });
+          if (!linkedBill) {
+            skipped.push({ id, billNumber: "", reason: "Linked bill not found" });
+            continue;
+          }
+          const result = await this.payBillFully(linkedBill.id, dto, paidAt);
+          if (!result.ok) {
+            skipped.push({ id, billNumber: linkedBill.billNumber, reason: result.reason });
+            continue;
+          }
+          // Bill is paid through the ledger; keep the expense's own status
+          // truthful too — buildStatusPatch's auto-stamping is untouched.
+          await this.updateExpense(expense.id, { status: "PAID" });
+          paid++;
+          totalAmount = roundMoney(totalAmount + result.amount);
+          continue;
+        }
+
+        // Unlinked expense — no bill ledger to pay against. Unchanged from
+        // batchUpdateExpenseStatus: flip status, no BillPayment row.
+        await this.updateExpense(expense.id, { status: "PAID" });
+        paid++;
+      } catch (e: any) {
+        skipped.push({ id, billNumber: "", reason: e?.message ?? "Unknown error" });
+      }
+    }
+
+    return { paid, totalAmount, skipped };
+  }
+
+  /**
+   * Full-remaining payment for one bill — the exact math `recordPayment`
+   * uses (`newPaid >= totalOwed - 0.001 ? PAID : PARTIAL`), so a bulk
+   * mark-paid bill reaches the same state a manual full payment would.
+   * Landmine 1: eligibility is `totalOwed − totalPaid > 0.001`, arithmetic
+   * only — VendorBillStatus.PARTIAL is overloaded (short-received OR
+   * part-paid) so it is never trusted here, only used to exclude VOID.
+   *
+   * The bill is re-read INSIDE the transaction and what it already owes is
+   * totalled off the BillPayment ledger (exactly as `recordPayment` does),
+   * never off the caller's pre-loop snapshot: one request can reach the same
+   * bill twice — a bill id AND the expense linked to it — and a stale
+   * `totalPaid` would write a second full payment against a bill this very
+   * loop just settled, leaving the ledger double what the column says.
+   */
+  private async payBillFully(
+    billId: string,
+    dto: BulkMarkPaidDto,
+    paidAt: Date,
+  ): Promise<{ ok: true; amount: number } | { ok: false; reason: string }> {
+    return this.prisma.tenantTransaction(async (tx) => {
+      const bill = await tx.vendorBill.findUnique({
+        where: { id: billId },
+        include: { payments: true },
+      });
+      if (!bill) return { ok: false as const, reason: "Bill not found" };
+      if (bill.status === "VOID") return { ok: false as const, reason: "Bill is void" };
+
+      const alreadyPaid = roundMoney(
+        (bill.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0),
+      );
+      const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
+      if (remaining <= 0.001) return { ok: false as const, reason: "No outstanding balance" };
+
+      await tx.billPayment.create({
+        data: {
+          vendorBillId: bill.id,
+          amount: remaining,
+          method: dto.method,
+          reference: dto.reference,
+          paidAt,
+        },
+      });
+      const newPaid = roundMoney(alreadyPaid + remaining);
+      const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
+      await tx.vendorBill.update({
+        where: { id: bill.id },
+        data: { totalPaid: newPaid, status: newStatus as any },
+      });
+
+      return { ok: true as const, amount: remaining };
+    });
   }
 
   async deleteExpense(id: string) {

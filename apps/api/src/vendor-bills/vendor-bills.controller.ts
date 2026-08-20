@@ -25,6 +25,7 @@ import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
+import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 
 @Controller("vendor-bills")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -136,6 +137,19 @@ export class VendorBillsController {
   getProductMappings(@Query("supplierName") supplierName: string) {
     if (!supplierName) throw new BadRequestException("supplierName is required");
     return this.vendorBillsService.getProductMappings(supplierName);
+  }
+
+  // Supplier-level payment allocation — the AP mirror of
+  // POST /invoices/payments/record. Must be before the :id routes.
+  @Post("payments/record") recordSupplierPayment(@Body() dto: RecordSupplierPaymentDto) {
+    return this.vendorBillsService.recordSupplierPayment(dto);
+  }
+
+  // Running-balance statement for one supplier. Must be before the :id routes.
+  @Get("suppliers/:supplierId/statement") getSupplierStatement(
+    @Param("supplierId") supplierId: string,
+  ) {
+    return this.vendorBillsService.getSupplierStatement(supplierId);
   }
 
   @Get(":id") findOne(@Param("id") id: string) {

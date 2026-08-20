@@ -99,17 +99,21 @@ export class SuppliersService {
   async remove(id: string) {
     await this.findOne(id);
 
-    // VendorBill.supplierId and PurchaseOrder.supplierId are non-nullable —
-    // we cannot null them out, so block deletion if any exist.
-    const [billCount, poCount] = await Promise.all([
+    // VendorBill.supplierId, PurchaseOrder.supplierId and SupplierCredit.supplierId are
+    // non-nullable (the credit FK is ON DELETE RESTRICT) — we cannot null them out, so
+    // block deletion if any exist rather than letting Postgres raise a raw FK violation.
+    const [billCount, poCount, creditCount] = await Promise.all([
       this.prisma.forTenant().vendorBill.count({ where: { supplierId: id } }),
       this.prisma.forTenant().purchaseOrder.count({ where: { supplierId: id } }),
+      this.prisma.forTenant().supplierCredit.count({ where: { supplierId: id } }),
     ]);
 
-    if (billCount > 0 || poCount > 0) {
+    if (billCount > 0 || poCount > 0 || creditCount > 0) {
       const parts: string[] = [];
       if (billCount > 0) parts.push(`${billCount} vendor bill${billCount !== 1 ? "s" : ""}`);
       if (poCount > 0) parts.push(`${poCount} purchase order${poCount !== 1 ? "s" : ""}`);
+      if (creditCount > 0)
+        parts.push(`${creditCount} on-account credit${creditCount !== 1 ? "s" : ""}`);
       throw new BadRequestException(
         `Cannot delete: supplier has ${parts.join(" and ")}. Delete those first, or deactivate the supplier instead.`,
       );

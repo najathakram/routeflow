@@ -526,3 +526,31 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`lib/api/variant-assign.ts` (new)** — `useAssignToVariants()`. Entry point:
   `app/(operator)/products/[id].tsx` Stock card ("Unassigned stock: N" + "Assign to variants",
   only when the product has variants and no parent).
+
+### PR-E 2026-08-20 — AP payment allocation (supplier) + customer payment entry point
+
+- **`lib/supplier-payment-logic.ts` (new)** — pure AP waterfall math, the mirror of
+  `lib/payments-logic.ts`'s AR side: oldest-bill-first ordering, greedy pre-fill, per-row
+  clamping and remainder. Eligibility is **`totalOwed − totalPaid > 0.001`, never
+  `VendorBillStatus`** — PARTIAL is written both for a SHORT RECEIPT and for a part payment, so a
+  short-received bill with `totalPaid = 0` is fully allocatable. Specs:
+  `__tests__/supplier-payment-logic.test.ts` (18).
+- **`components/RecordSupplierPaymentSheet.tsx` (new)** — FormSheet allocation sheet; every row
+  editable before confirm, remainder shown as "stays on account".
+- **`lib/api/supplier-payments.ts` (new)** — `useRecordSupplierPayment`
+  (`POST /vendor-bills/payments/record`) + `useSupplierStatement`
+  (`GET /vendor-bills/suppliers/:supplierId/statement`), both registered ahead of the `:id`
+  routes in `vendor-bills.controller.ts`. ⚠️ The statement response is **`timeline`, not `rows`**,
+  each entry keyed `description` (not `label`) with a **SIGNED** `amount` (BILL +,
+  PAYMENT/CREDIT −) — types mirror web's `lib/api/supplier-payments.ts`. A SupplierCredit
+  draw-down is folded into the bill's `totalPaid` and omitted as its own row (not new money), so
+  PAYMENT rows are real cash only. Unlike the AR standalone endpoint the server DOES validate:
+  wrong-supplier bill, over-bill allocation and `Σ allocations > totalAmount` each 400 + roll back.
+- **`(operator)/suppliers/[id].tsx`** — "Account standing" card: outstanding / owed / paid /
+  account-credit tiles, "Record payment", and a most-recent-first 8-row activity feed off
+  `statement.timeline`.
+- **`(operator)/customers/[id].tsx`** — "Record payment" row above the existing "Record advance
+  payment", pushing `/(operator)/payments/record` with `{ customerId, customerName }`.
+- **`(operator)/payments/record.tsx`** — seeds its customer state from those optional params so
+  the picker step is skipped when the caller already knows the customer; no params = picker as
+  before, and "Change" clears back to it either way.

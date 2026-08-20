@@ -13,17 +13,25 @@ import {
   Pencil,
   DollarSign,
   Receipt,
+  Wallet,
   X,
   CheckCircle2,
   AlertCircle,
   FileText,
   Truck,
+  History,
 } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useSupplier, useUpdateSupplier, type Supplier } from "@/lib/api/suppliers";
 import { useVendorBills, type VendorBill, type VendorBillStatus } from "@/lib/api/vendor-bills";
+import {
+  useSupplierStatement,
+  type SupplierStatementRow,
+  type SupplierStatementRowType,
+} from "@/lib/api/supplier-payments";
+import { RecordSupplierPaymentModal } from "@/components/RecordSupplierPaymentModal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,19 @@ const STATUS_VARIANTS: Record<VendorBillStatus, "neutral" | "warning" | "success
   PAID: "success",
   VOID: "danger",
 };
+
+const STATEMENT_ROW_LABELS: Record<SupplierStatementRowType, string> = {
+  BILL: "Bill",
+  PAYMENT: "Payment",
+  CREDIT: "Credit",
+};
+
+const STATEMENT_ROW_VARIANTS: Record<SupplierStatementRowType, "neutral" | "warning" | "success"> =
+  {
+    BILL: "warning",
+    PAYMENT: "success",
+    CREDIT: "neutral",
+  };
 
 // ─── Edit modal (reuses the form from the list page inline) ───────────────────
 
@@ -290,6 +311,33 @@ function BillRow({ bill }: { bill: VendorBill }) {
   );
 }
 
+// ─── Statement row (running-balance timeline) ──────────────────────────────────
+
+function StatementRow({ row }: { row: SupplierStatementRow }) {
+  // Signed per lib/api/supplier-payments.ts: BILL increases the balance (+),
+  // PAYMENT/CREDIT decreases it (-).
+  const signed =
+    Number(row.amount) >= 0 ? `+${fmt(Math.abs(row.amount))}` : `-${fmt(Math.abs(row.amount))}`;
+  return (
+    <tr className="border-b border-surface-border last:border-0 hover:bg-surface-raised/40 transition-colors">
+      <td className="px-5 py-3 text-sm text-navy/70">{fmtDate(row.date)}</td>
+      <td className="px-5 py-3">
+        <Badge variant={STATEMENT_ROW_VARIANTS[row.type]} label={STATEMENT_ROW_LABELS[row.type]} />
+      </td>
+      <td className="px-5 py-3 text-sm text-navy">{row.description}</td>
+      <td
+        className={cn(
+          "px-5 py-3 text-right text-sm font-medium",
+          row.type === "BILL" ? "text-navy" : "text-success",
+        )}
+      >
+        {signed}
+      </td>
+      <td className="px-5 py-3 text-right text-sm font-semibold text-navy">{fmt(row.balance)}</td>
+    </tr>
+  );
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function SupplierDetailPage() {
@@ -298,9 +346,11 @@ export default function SupplierDetailPage() {
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const [showEdit, setShowEdit] = React.useState(false);
+  const [showRecordPayment, setShowRecordPayment] = React.useState(false);
 
   const { data: supplier, isLoading, isError } = useSupplier(params.id);
   const { data: billsResult } = useVendorBills({ supplierId: params.id, limit: 50 });
+  const { data: statement } = useSupplierStatement(params.id);
   const updateSupplier = useUpdateSupplier();
 
   React.useEffect(() => {
@@ -363,6 +413,14 @@ export default function SupplierDetailPage() {
         />
       )}
 
+      {showRecordPayment && (
+        <RecordSupplierPaymentModal
+          supplierId={supplier.id}
+          supplierName={supplier.name}
+          onClose={() => setShowRecordPayment(false)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-start gap-4">
         <button
@@ -389,13 +447,21 @@ export default function SupplierDetailPage() {
               </div>
             </div>
           </div>
-          <Button
-            variant="secondary"
-            leftIcon={<Pencil className="h-4 w-4" />}
-            onClick={() => setShowEdit(true)}
-          >
-            Edit
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              leftIcon={<Wallet className="h-4 w-4" />}
+              onClick={() => setShowRecordPayment(true)}
+            >
+              Record payment
+            </Button>
+            <Button
+              variant="secondary"
+              leftIcon={<Pencil className="h-4 w-4" />}
+              onClick={() => setShowEdit(true)}
+            >
+              Edit
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -617,6 +683,69 @@ export default function SupplierDetailPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Account Activity — running-balance timeline: bills (up), payments and
+          account credit (down), each row carrying the balance after it. */}
+      <div className="rounded-xl border border-surface-border bg-white shadow-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-4">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-navy/70" />
+            <h2 className="text-sm font-semibold text-navy">Account Activity</h2>
+          </div>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-navy/70">
+              Outstanding:{" "}
+              <span className="font-semibold text-warning">
+                {fmt(statement?.outstanding ?? outstanding)}
+              </span>
+            </span>
+            {(statement?.creditBalance ?? 0) > 0 && (
+              <span className="text-navy/70">
+                Account credit:{" "}
+                <span className="font-semibold text-success">
+                  {fmt(statement?.creditBalance ?? 0)}
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {!statement || statement.timeline.length === 0 ? (
+          <div className="py-12 text-center">
+            <History className="mx-auto mb-3 h-8 w-8 text-navy/15" />
+            <p className="text-sm text-navy/70">No activity recorded for this supplier yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised/60">
+                  <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Date
+                  </th>
+                  <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Type
+                  </th>
+                  <th className="px-5 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Description
+                  </th>
+                  <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Amount
+                  </th>
+                  <th className="px-5 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Balance
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {statement.timeline.map((row) => (
+                  <StatementRow key={`${row.type}-${row.id}`} row={row} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

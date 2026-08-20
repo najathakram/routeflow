@@ -31,6 +31,7 @@ import {
   CreateMileageRateDto,
   BulkCreateExpenseDto,
 } from "./dto/create-expense.dto";
+import { BulkMarkPaidDto } from "../vendor-bills/dto/bulk-mark-paid.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -125,6 +126,16 @@ export class BookkeepingController {
     @Body() body: { ids: string[]; status: "PENDING" | "RECEIVED" | "PAID" | "VOID" },
   ) {
     return this.bookkeepingService.batchUpdateExpenseStatus(body?.ids ?? [], body?.status);
+  }
+
+  // Bulk mark-paid for vendor bills and expenses — full-remaining payments through
+  // the normal ledger, not a status jump. Real DTO (landmine 6): this moves money.
+  // Route lives under "bills/" because InventoryPurchasesTab (the vendor-bills
+  // list) is the primary caller; ids may also be Expense ids (see service).
+  @Post("bills/bulk-mark-paid")
+  @HttpCode(HttpStatus.OK)
+  bulkMarkPaid(@Body() dto: BulkMarkPaidDto) {
+    return this.bookkeepingService.bulkMarkPaid(dto);
   }
 
   @Post("expenses")

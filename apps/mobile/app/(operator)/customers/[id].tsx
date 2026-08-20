@@ -257,6 +257,18 @@ export default function CustomerDetailScreen() {
               <Text style={styles.linkText}>View custom prices</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
             </Pressable>
+            <Pressable
+              style={styles.linkRow}
+              onPress={() =>
+                router.push({
+                  pathname: "/(operator)/payments/record",
+                  params: { customerId: id, customerName: customer.businessName },
+                } as any)
+              }
+            >
+              <Text style={styles.linkText}>Record payment</Text>
+              <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+            </Pressable>
             <Pressable style={styles.linkRow} onPress={() => setAdvanceOpen(true)}>
               <Text style={styles.linkText}>Record advance payment</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
