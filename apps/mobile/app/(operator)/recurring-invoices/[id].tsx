@@ -53,6 +53,14 @@ export default function RecurringInvoiceDetailScreen() {
     if (!id) return;
     runMut.mutate(id, {
       onSuccess: (inv) => {
+        // The server claims the cycle atomically, so a losing racer (a second
+        // tap, or the cron) gets an empty body back — never announce/navigate
+        // to an invoice that this call did not create.
+        if (!inv?.id) {
+          showToast("This cycle was already generated");
+          refetch();
+          return;
+        }
         showToast("Invoice generated");
         // run returns the created INVOICE (keyed `id`), not the template.
         router.push(`/(operator)/invoices/${inv.id}`);

@@ -756,6 +756,99 @@ describe("OrdersService", () => {
       ).rejects.toThrow(/Prices have been updated/);
     });
 
+    // ── B13: non-staff never set prices via the DISCOUNTED-branch override ──
+
+    it("B13: a DRIVER-supplied below-list unitPrice is ignored — bills at list price as STANDARD", async () => {
+      // Driver resolves the target customer via customer.findUnique (not
+      // findFirst), and the same mock backs the later pricingTier lookup.
+      prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 1 });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+      const driverPayload = { ...operatorPayload, role: "DRIVER" as const };
+
+      await service.create(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, unitPrice: 1 }] },
+        driverPayload,
+      );
+
+      // Pre-fix this hand-crafted below-list price would have been honored
+      // verbatim (DISCOUNTED at $1) — the gate must fall it through to list.
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  unitPrice: 4.99,
+                  priceType: "STANDARD",
+                  originalPrice: null,
+                }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("B13: an OPERATOR below-list override still bills DISCOUNTED at the override price", async () => {
+      prisma.customer.findUnique.mockResolvedValue({
+        id: "cust-1",
+        pricingTier: 1,
+        user: { status: "ACTIVE" },
+      });
+      prisma.customerPrice.findMany.mockResolvedValue([]);
+      prisma.product.findMany.mockResolvedValue([MOCK_PRODUCT]); // pricePerUnit 4.99
+      prisma.order.create.mockResolvedValue(MOCK_ORDER);
+      (service as any).systemConfig.get.mockResolvedValue("0");
+
+      await service.create(
+        { customerId: "cust-1", items: [{ productId: "prod-1", qty: 1, unitPrice: 3 }] },
+        operatorPayload,
+      );
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({
+                  unitPrice: 3,
+                  priceType: "DISCOUNTED",
+                  originalPrice: 4.99,
+                }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
+    it("B13: a CUSTOMER echoing their tier price stays on the tier ladder (SPECIAL), never a staff DISCOUNTED override", async () => {
+      // Tier-3 price is 8, list is 10 (TIERED_PRODUCT). Sending unitPrice: 8
+      // used to satisfy overridePrice < listPrice and get mislabeled DISCOUNTED
+      // by the (now-gated) staff-only branch instead of the tier ladder.
+      seedBuyerTierMocks(3);
+
+      await service.create(
+        { items: [{ productId: "prod-1", qty: 1, unitPrice: 8 }] },
+        customerPayload,
+      );
+
+      expect(prisma.order.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lineItems: {
+              create: expect.arrayContaining([
+                expect.objectContaining({ unitPrice: 8, originalPrice: 10, priceType: "SPECIAL" }),
+              ]),
+            },
+          }),
+        }),
+      );
+    });
+
     it("should throw BadRequestException when operator creates without valid customerId", async () => {
       prisma.customer.findUnique.mockResolvedValue(null);
       await expect(service.create({ items: [] } as any, operatorPayload)).rejects.toThrow(

@@ -40,6 +40,7 @@ import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
 import { isInternalEmail } from "../../../../lib/internal-email";
 import {
+  canRecordPayment,
   canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
@@ -167,9 +168,12 @@ export default function InvoiceDetailScreen() {
 
   const s = statusPill(invoice.status);
   const balance = invoice.balanceDue ?? invoice.total;
-  const isPaid = invoice.status === "PAID";
   const isVoid = invoice.status === "VOID";
-  const canRecord = !isPaid && !isVoid;
+  // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
+  // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
+  // the POST succeeds, but recomputeStatus treats DRAFT as terminal, so a
+  // fully-paid invoice stays DRAFT and drops out of AR/aging.
+  const canRecord = canRecordPayment(invoice.status);
   // Wave 2 action gating — pure mirrors of the server guards (invoices-logic).
   const flags = invoiceActionFlags({
     status: invoice.status,
@@ -191,6 +195,9 @@ export default function InvoiceDetailScreen() {
 
   const handleSend = () => {
     if (!id) return;
+    // B6: the tile stays visually tappable for one frame around a mutation
+    // settling; without this guard a fast double-tap fires two send emails.
+    if (sendMut.isPending) return;
     // Import sentinels (`…@imported.local` / `…@placeholder.local`) aren't real
     // inboxes — route to the same no-email sheet (Mark as Sent / Share PDF) instead
     // of a send that can only fail. Mirrors web invoice-detail handleSend.
@@ -444,6 +451,9 @@ export default function InvoiceDetailScreen() {
 
   const handleReminder = () => {
     if (!id) return;
+    // B6: same double-tap guard as handleSend — a fast second tap while the
+    // reminder mutation is in flight would fire a second reminder email.
+    if (reminderMut.isPending) return;
     const rawReminderEmail = invoice.customer?.email;
     const email =
       rawReminderEmail && !isInternalEmail(rawReminderEmail) ? rawReminderEmail : undefined;
@@ -664,6 +674,8 @@ export default function InvoiceDetailScreen() {
               <ActionTile
                 icon="paper-plane-outline"
                 label={sendMut.isPending ? "Sending…" : "Send"}
+                // B6: was tappable while pending — a fast double-tap fired two send emails.
+                disabled={sendMut.isPending}
                 onPress={handleSend}
               />
             ) : null}
@@ -702,6 +714,8 @@ export default function InvoiceDetailScreen() {
               <ActionTile
                 icon="alarm-outline"
                 label={reminderMut.isPending ? "Sending…" : "Send reminder"}
+                // B6: was tappable while pending — a fast double-tap fired two reminder emails.
+                disabled={reminderMut.isPending}
                 onPress={handleReminder}
               />
             ) : null}

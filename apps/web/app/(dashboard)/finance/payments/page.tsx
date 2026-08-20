@@ -438,7 +438,7 @@ export default function FinancePaymentsPage() {
   const { toast } = useToast();
 
   // Filters + sort state
-  const [search, setSearch] = useUrlSearch();
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [method, setMethod] = React.useState("");
   const [status, setStatus] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
@@ -456,7 +456,7 @@ export default function FinancePaymentsPage() {
   const params: PaymentListParams = {
     page,
     limit: 25,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     method: method || undefined,
     status: status || undefined,
     dateFrom: dateFrom || undefined,

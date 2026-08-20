@@ -534,7 +534,7 @@ export default function CreditNotesPage() {
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = useUrlSearch();
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [page, setPage] = useUrlPage();
@@ -543,7 +543,7 @@ export default function CreditNotesPage() {
 
   const { data, isLoading, isError } = useCreditNotes({
     status: statusFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     page,

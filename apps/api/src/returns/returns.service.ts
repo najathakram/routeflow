@@ -43,6 +43,12 @@ export class ReturnsService {
         `Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
       );
     }
+    // POST /returns binds `@Body() dto: any`, so nothing validates the payload
+    // shape — without this a body with no `items` reached the validation loop
+    // below and surfaced as a 500 ("dto.items is not iterable") instead of a 400.
+    if (!Array.isArray(dto.items) || dto.items.length === 0) {
+      throw new BadRequestException("At least one return item is required");
+    }
 
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: dto.orderId },
@@ -64,58 +70,77 @@ export class ReturnsService {
       }
     }
 
-    // Query existing returns for this order to prevent cumulative over-return
-    const existingReturns = await this.prisma.forTenant().return.findMany({
-      where: { orderId: dto.orderId, status: { not: "REJECTED" } },
-      include: { items: { select: { productId: true, qty: true } } },
-    });
+    // Cumulative-qty validation and the create must share one transaction: two
+    // concurrent requests previously read the same snapshot, both passed the
+    // remaining-qty check, and both committed — over-returning the order and
+    // (once each was refunded) paying the customer twice for the same goods.
+    const ret = await this.prisma.tenantTransaction(async (tx) => {
+      // The transaction ALONE does not close the race: tenantTransaction runs at
+      // Postgres' default READ COMMITTED, so two concurrent creates would each
+      // take a snapshot without the other's uncommitted insert, both pass the
+      // remaining-qty check, and both commit. Lock the order row first so they
+      // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
+      // recordPayment() and routes.service.ts dispatch.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
 
-    // Build a map of already-returned quantities per product
-    const alreadyReturned: Record<string, number> = {};
-    for (const ret of existingReturns) {
-      for (const ri of ret.items) {
-        alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
+      // Query existing returns for this order to prevent cumulative over-return
+      const existingReturns = await tx.return.findMany({
+        where: { orderId: dto.orderId, status: { not: "REJECTED" } },
+        include: { items: { select: { productId: true, qty: true } } },
+      });
+
+      // Build a map of already-returned quantities per product
+      const alreadyReturned: Record<string, number> = {};
+      for (const r of existingReturns) {
+        for (const ri of r.items) {
+          alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
+        }
       }
-    }
 
-    // Validate return qty does not exceed ordered qty per item (cumulative)
-    for (const item of dto.items) {
-      if (!item.qty || item.qty <= 0)
-        throw new BadRequestException("Return item quantity must be greater than zero");
-      const orderLine = (order as any).lineItems?.find(
-        (li: any) => li.productId === item.productId,
-      );
-      if (!orderLine)
-        throw new BadRequestException(`Product ${item.productId} was not in the original order`);
-      const orderedQty = Number(orderLine.qty);
-      const previouslyReturned = alreadyReturned[item.productId] ?? 0;
-      const remaining = orderedQty - previouslyReturned;
-      if (item.qty > remaining)
-        throw new BadRequestException(
-          `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
+      // Validate return qty does not exceed ordered qty per item (cumulative)
+      for (const item of dto.items) {
+        if (!item.qty || item.qty <= 0)
+          throw new BadRequestException("Return item quantity must be greater than zero");
+        const orderLine = (order as any).lineItems?.find(
+          (li: any) => li.productId === item.productId,
         );
-    }
+        if (!orderLine)
+          throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+        const orderedQty = Number(orderLine.qty);
+        const previouslyReturned = alreadyReturned[item.productId] ?? 0;
+        const remaining = orderedQty - previouslyReturned;
+        if (item.qty > remaining)
+          throw new BadRequestException(
+            `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
+          );
+        // Count this line against the running total too: a single payload that
+        // lists the same productId twice previously validated every line against
+        // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
+        // passed and over-returned with no concurrency involved at all.
+        alreadyReturned[item.productId] = previouslyReturned + Number(item.qty);
+      }
 
-    const ret = await this.prisma.forTenant().return.create({
-      data: {
-        returnNumber: this.generateReturnNumber(),
-        orderId: dto.orderId,
-        customerId: order.customerId,
-        reason: dto.reason,
-        notes: dto.notes,
-        photoUrls: dto.photoUrls ?? [],
-        status: "PENDING",
-        items: {
-          create: dto.items.map((i: any) => ({
-            productId: i.productId,
-            qty: i.qty,
-            reason: i.reason,
-            restock: i.restock ?? true,
-            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-          })),
+      return tx.return.create({
+        data: {
+          returnNumber: this.generateReturnNumber(),
+          orderId: dto.orderId,
+          customerId: order.customerId,
+          reason: dto.reason,
+          notes: dto.notes,
+          photoUrls: dto.photoUrls ?? [],
+          status: "PENDING",
+          items: {
+            create: dto.items.map((i: any) => ({
+              productId: i.productId,
+              qty: i.qty,
+              reason: i.reason,
+              restock: i.restock ?? true,
+              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+            })),
+          },
         },
-      },
-      include: { items: true },
+        include: { items: true },
+      });
     });
 
     this.gateway.emitReturnCreated(this.prisma.getTenantId(), {

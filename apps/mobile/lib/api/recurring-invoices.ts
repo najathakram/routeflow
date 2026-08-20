@@ -98,10 +98,15 @@ export function useCreateRecurringInvoice() {
  * Invoice keyed `id` (DRAFT, or SENT if the template auto-sends) — NOT a
  * RecurringInvoice — so type it `{ id }` and navigate to that invoice (same
  * class of fix as the estimates convert / credit-notes apply hooks).
+ *
+ * The server claims the cycle atomically before generating, so a losing racer
+ * (a second tap, or the daily cron) gets NO invoice back — the response body is
+ * empty. Typed nullable so callers must branch; axios yields `""` for that empty
+ * body, so guard on `inv?.id`, not `inv != null`.
  */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, string>({
+  return useMutation<{ id: string } | null, Error, string>({
     mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["recurring-invoices"] });

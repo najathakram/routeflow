@@ -772,9 +772,15 @@ export function useActivateRecurringInvoice() {
   });
 }
 
+/**
+ * Run a template now. The server claims the cycle atomically before generating,
+ * so a losing racer (a second "Run now" tap, or the daily cron) gets NO invoice
+ * back — the response body is empty. Typed nullable so callers must branch;
+ * axios yields `""` for that empty body, so guard on `inv?.id`, not `inv != null`.
+ */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
+  return useMutation<Invoice | null, Error, string>({
     mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

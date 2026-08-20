@@ -122,15 +122,39 @@ window exists ONLY to run CI, so keep it to minutes.
 > flips as part of this routine — a brief public window for CI is an accepted trade-off. Two hard
 > rules: (1) **never leave the repo public** — flip back to private even if CI fails, the merge
 > fails, or anything else goes wrong (treat the private flip as a `finally`); (2) keep the public
-> window minimal — flip private **immediately after the merge**, never wait for the Railway
-> deploy (it clones fine while private).
+> window minimal.
+>
+> **CORRECTED 2026-08-20 — do NOT flip private in the same breath as the merge.** The previous
+> instruction here ("flip private immediately after the merge, never wait for the Railway deploy")
+> caused **five consecutive failed deploys** (#367, #369, #371 and the two before them). Verified
+> root cause, read from the Railway dashboard's deployment **Details** panel — which the CLI hides,
+> `railway logs --build` only ever prints `scheduling build`:
+>
+> ```
+> Deployment failed during the initialization process
+> Initialization › Snapshot code            (00:02)
+>   [ERROR] ##NOT-FOUND## repository not found
+> ```
+>
+> It is **not** a permissions problem: the Railway GitHub App is installed on `najathakram` with
+> **"All repositories"** access (verified in the GitHub UI 2026-08-20), which covers current and
+> future private repos — and #318 deployed fine while fully private. It is a **race**: Railway's
+> webhook starts snapshotting ~2s after the merge, and the back-to-back private flip lands inside
+> that window, invalidating the installation token mid-clone.
+>
+> **So: merge → WAIT for the deploy to leave `Initialization › Snapshot code` (~60s is ample, watch
+> with `railway deployment list --service @routeflow/api`) → THEN flip private.** That costs about
+> a minute of extra public window and removes the failed-deploy + `railway up` recovery cycle
+> entirely. The private flip is still a `finally` — it must happen even if the deploy fails.
 
 1. **(schema change only)** apply the prod migration FIRST — fresh backup, then
    `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
 2. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
 3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
-4. **Make it private again, immediately** — `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
-   Do this even if CI failed or the merge was aborted.
+4. **Wait for Railway to finish snapshotting the code (~60s), THEN make it private again** —
+   `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
+   Do this even if CI failed or the merge was aborted. Flipping in the same breath as the merge is
+   what caused five consecutive `repository not found` deploy failures — see the corrected note above.
 5. **Watch the deploy** (`railway deployment list --service @routeflow/{api,web,mobile}`) until
    SUCCESS, then `npm run post-deploy-check`.
 
