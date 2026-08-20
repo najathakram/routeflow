@@ -2,11 +2,13 @@
 
 **Written:** 2026-08-20 (night) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through **PR #367 is SHIPPED + LIVE** (post-deploy check green). New tonight:
+Everything through **PR #369 is SHIPPED + LIVE** (post-deploy check green; the new
+`/analytics/product-sales/:productId` route verified registered in prod). New tonight:
 **#367 = PR-A of the UX expansion batch** — the two live client-facing bugs (**A4** driver
 edits wiped orders, **A5** buyer password login never reached its sellers) plus **A1**
 mobile send-sheet no-dead-end, **A2** inventory search reach + shared `SetCostModal`,
-**A3** three cross-links. CI green, no migrations. Earlier today: **#362** (D1
+**A3** three cross-links — and **#369 = PR-B** (orders-by-product filter + per-buyer sales
+history, api+web+mobile). Both CI green, neither needed a migration. Earlier today: **#362** (D1
 boxed-substitution money fixes), **#363** (CP-07 spec concat artifact + order-builder e2e
 draft leak; 43 stale e2e drafts deleted from prod), **#364**–**#366** (docs). Earlier: the
 full 2026-08-17 mobile UX batch #351–#361, incl. 2-hourly R2 dumps.
@@ -45,12 +47,17 @@ here is blocked — this is the complete pick-up list.
    reachable from the product page, **A3** the three cross-links (web
    movement→product/supplier, web customer order rows→order, mobile "View orders"
    `customerId` scoping with a dismissible chip).
-   **▶ PR-B is the next build** (order-search-by-product + per-buyer price history, no
-   migration). Its reader must query through `Invoice` with `REAL_INVOICE_STATUSES` +
-   `items: { some: { productId } }`, never `invoiceItem.findMany` (nested-created lines
-   can carry `tenantId = null`) — mirror `analytics.service.ts getProductDemand`
-   (:462). `ListOrdersDto` (apps/api/src/orders/dto/list-orders.dto.ts) gains
-   `productId?`; `OrderItem.productId` is already indexed.
+   **PR-B: ✅ SHIPPED + LIVE as #369 (2026-08-20).** `ListOrdersDto.productId` +
+   `GET /analytics/product-sales/:productId`; web orders product filter + product Sales
+   card; mobile Sales card (8 inline rows, "View all N") + a second dismissible chip.
+   Two decisions worth knowing before extending it: `avgPrice` is **revenue-weighted**
+   (Σsubtotal ÷ Σqty, NOT a mean of unit prices), and the reader goes **through
+   `Invoice`** with a nested `items` filter — never `invoiceItem.findMany`, whose
+   nested-created rows can carry `tenantId = null`.
+   **▶ PR-C (stock-count mode) is the next build — it carries MIGRATION #1**, so it must
+   follow the backup-first prod flow: apply the migration BEFORE the app deploy
+   (`railway run --service postgres node apps/api/scripts/prod-migrate.mjs`), never
+   auto-migrate. Model + counting/review/commit design is fully specced in the plan.
 2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
    FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
    portal's password login/register write only the namespaced `rf:buyer:accessToken`
