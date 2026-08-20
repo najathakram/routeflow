@@ -40,9 +40,23 @@ import { useSuppliers } from "@/lib/api/inventory";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { useProduct } from "@/lib/api/products";
 import { roundMoney } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
+
+/**
+ * Extra fields the API additively includes on a bill's `findOne` mapped-
+ * product select (PR-D WP2: `parentProductId` + `_count.variants`) so the
+ * line-item table can show a "split into variants" hint. The shared
+ * `VendorBillItem["product"]` type isn't widened for this (out of scope for
+ * this change) — narrowed locally instead.
+ */
+type MappedProductVariantHint = {
+  parentProductId?: string | null;
+  _count?: { variants: number };
+};
 
 // ─── Record Payment Modal ─────────────────────────────────────────────────────
 
@@ -291,6 +305,20 @@ function lineRemaining(bill: VendorBill, item: VendorBillItem): number {
         ? Number(item.qty)
         : 0;
   return Math.max(0, Number(item.qty) - received);
+}
+
+/**
+ * How much of a line has been received so far, converted from the bill's own
+ * denomination (cases, when `packSize > 1`) into `Product.currentStock`'s
+ * PIECE denomination — mirrors the API's `lineInventoryDelta` (PR-D WP4).
+ * Used as the default pool for a generic→variant split started from this
+ * line: assigning cases as though they were loose pieces would move the
+ * wrong quantity entirely.
+ */
+function lineReceivedBaseUnits(bill: VendorBill, item: VendorBillItem): number {
+  const receivedInBillDenom = Number(item.qty) - lineRemaining(bill, item);
+  const pack = item.packSize ?? 0;
+  return pack > 1 ? receivedInBillDenom * pack : receivedInBillDenom;
 }
 
 function ReceiveBillModal({
@@ -688,6 +716,14 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
   const [isReceiveOpen, setIsReceiveOpen] = React.useState(false);
+  // Variant-split modal (PR-D) — set from a line's "Generic — split into
+  // variants?" badge. The badge only carries the product id + this line's
+  // received qty; the full product (currentStock/averageCost/unitsPerBox/
+  // costingMethod) is fetched on demand once a target is picked, same as the
+  // product detail page does for itself.
+  const [variantSplitProductId, setVariantSplitProductId] = React.useState<string | null>(null);
+  const [variantSplitPool, setVariantSplitPool] = React.useState(0);
+  const { data: variantSplitProduct } = useProduct(variantSplitProductId ?? "");
   const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
   // The per-line quantities chosen in the receive modal — kept so the
   // UNLINKED_ITEMS confirm retry re-sends the same partial plan.
@@ -1230,6 +1266,16 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                     <tbody className="divide-y divide-surface-border">
                       {billItems.map((item) => {
                         const unlinked = !item.productId;
+                        // Undefined unless this line's mapped product is a
+                        // splittable generic (has variants, isn't itself one).
+                        const variantHint = item.product
+                          ? (item.product as NonNullable<VendorBillItem["product"]> &
+                              MappedProductVariantHint)
+                          : undefined;
+                        const showVariantHint =
+                          !!variantHint &&
+                          !variantHint.parentProductId &&
+                          !!variantHint._count?.variants;
                         return (
                           <tr
                             key={item.id}
@@ -1249,10 +1295,25 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                             </td>
                             <td className="px-4 py-3">
                               {item.product ? (
-                                <span className="inline-flex items-center gap-1.5 text-navy">
-                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
-                                  {item.product.name}
-                                </span>
+                                <div className="space-y-1">
+                                  <span className="inline-flex items-center gap-1.5 text-navy">
+                                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                                    {item.product.name}
+                                  </span>
+                                  {showVariantHint && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setVariantSplitProductId(variantHint!.id);
+                                        setVariantSplitPool(lineReceivedBaseUnits(bill, item));
+                                      }}
+                                      title="This generic has variants — optionally split the stock received on this line into them. Never required; unsplit units simply stay on the generic."
+                                      className="block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
+                                    >
+                                      Generic — split into variants?
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-xs font-medium text-amber-700">
                                   Not mapped
@@ -1473,6 +1534,30 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onConfirm={() => handleReceive(true, pendingReceiveItems)}
         isPending={receiveBill.isPending}
       />
+
+      {/* Variant-split modal (PR-D) — same component as the product detail
+          page and the Inventory Stock tab row action. Pool = this line's
+          received qty (converted to pieces), not the parent's full stock, so
+          splitting one bill doesn't offer up stock another line contributed.
+          Always skippable — never blocks receiving. */}
+      {variantSplitProductId && variantSplitProduct && (
+        <VariantSplitModal
+          parent={{
+            id: variantSplitProduct.id,
+            name: variantSplitProduct.name,
+            currentStock: Number(variantSplitProduct.currentStock ?? 0),
+            averageCost:
+              variantSplitProduct.averageCost != null
+                ? Number(variantSplitProduct.averageCost)
+                : null,
+            unitsPerBox: variantSplitProduct.unitsPerBox ?? null,
+            costingMethod: variantSplitProduct.costingMethod,
+          }}
+          pool={variantSplitPool}
+          onClose={() => setVariantSplitProductId(null)}
+          onSuccess={() => setVariantSplitProductId(null)}
+        />
+      )}
     </div>
   );
 }

@@ -46,7 +46,7 @@ import {
   useRecomputeCosts,
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
-import { useProducts } from "@/lib/api/products";
+import { useProducts, type CostingMethod } from "@/lib/api/products";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -54,6 +54,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { StockCountTab } from "@/components/inventory/StockCountTab";
 import { SetCostModal } from "@/components/SetCostModal";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
@@ -77,6 +78,20 @@ interface StockItem {
   isActive: boolean;
   unitsPerBox?: number | null;
   trackedCategoryId?: string | null;
+  /** Additive: `getStockOverview` already selects this, just not previously
+   *  typed here — needed so a row's "Assign to variants" split (PR-D) can
+   *  hide the cost-override field for STANDARD-costed generics. */
+  costingMethod?: CostingMethod;
+}
+
+/** Parent/variant lookup built off the full product catalog (PR-D) — the
+ *  stock-overview row itself carries neither `parentProductId` nor a variant
+ *  count, so the "Assign to variants" row action is gated off a side
+ *  `useProducts({ includeVariants: true })` fetch instead of widening
+ *  `/inventory/overview`. */
+interface VariantInfo {
+  parentProductId: string | null;
+  hasVariants: boolean;
 }
 
 interface Supplier {
@@ -444,6 +459,8 @@ function StockTable({
   setAdjustPreselectId,
   setShowAdjustModal,
   onSetCost,
+  variantInfoById,
+  onAssignToVariants,
   scrollToId,
   onScrolled,
 }: {
@@ -457,6 +474,11 @@ function StockTable({
   setAdjustPreselectId: (id: string | undefined) => void;
   setShowAdjustModal: (v: boolean) => void;
   onSetCost: (item: StockItem) => void;
+  /** Parent/variant lookup (PR-D) — keyed by product id; a row's "Assign to
+   *  variants" action only renders when the entry exists, has no
+   *  `parentProductId`, and `hasVariants`. */
+  variantInfoById: Map<string, VariantInfo>;
+  onAssignToVariants: (item: StockItem) => void;
   /** Product id to scroll to + briefly highlight (set when a search suggestion
    *  is picked). Left unset while it's not found — e.g. a filter still hides
    *  the row on this render — so the effect retries once `sorted` changes
@@ -692,6 +714,19 @@ function StockTable({
                   >
                     Adjust
                   </button>
+                  {(() => {
+                    const info = variantInfoById.get(item.id);
+                    if (!info || info.parentProductId || !info.hasVariants) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onAssignToVariants(item)}
+                        className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                      >
+                        Assign to variants
+                      </button>
+                    );
+                  })()}
                   <Link
                     href={`/inventory/movements?product=${item.id}`}
                     className="text-xs text-brand-500 hover:underline"
@@ -2204,6 +2239,22 @@ export default function InventoryPage() {
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   const products = productsData?.data ?? [];
+  // Parent/variant lookup for the Stock tab's "Assign to variants" row action
+  // (PR-D) — a separate fetch (not the active-only `products` above, and not
+  // `/inventory/overview`, which selects neither field) since it needs every
+  // product's `parentProductId` plus `includeVariants` to know which rows are
+  // splittable generics.
+  const { data: variantProductsData } = useProducts({ includeVariants: true, limit: 0 });
+  const variantInfoById = React.useMemo(() => {
+    const map = new Map<string, VariantInfo>();
+    for (const p of variantProductsData?.data ?? []) {
+      map.set(p.id, {
+        parentProductId: p.parentProductId ?? null,
+        hasVariants: (p.variants?.length ?? 0) > 0,
+      });
+    }
+    return map;
+  }, [variantProductsData]);
 
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
@@ -2227,6 +2278,8 @@ export default function InventoryPage() {
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
   // Cost-basis tooling
   const [costTarget, setCostTarget] = React.useState<StockItem | null>(null);
+  // Variant-split modal target (PR-D) — the Stock row's "Assign to variants" action
+  const [variantSplitTarget, setVariantSplitTarget] = React.useState<StockItem | null>(null);
   const [showBulkCostModal, setShowBulkCostModal] = React.useState(false);
   const [showRecomputeModal, setShowRecomputeModal] = React.useState(false);
   const [missingCostOnly, setMissingCostOnly] = React.useState(false);
@@ -2722,6 +2775,8 @@ export default function InventoryPage() {
                 setAdjustPreselectId={setAdjustPreselectId}
                 setShowAdjustModal={setShowAdjustModal}
                 onSetCost={setCostTarget}
+                variantInfoById={variantInfoById}
+                onAssignToVariants={setVariantSplitTarget}
                 scrollToId={scrollToProductId}
                 onScrolled={clearScrollTarget}
               />
@@ -2851,6 +2906,23 @@ export default function InventoryPage() {
         onCreated={() => setShowScanModal(false)}
       />
       {costTarget && <SetCostModal item={costTarget} onClose={() => setCostTarget(null)} />}
+      {/* Variant-split modal (PR-D) — same component as the product detail
+          page and the vendor-bill line badge. Pool defaults to the parent's
+          full `currentStock`. */}
+      {variantSplitTarget && (
+        <VariantSplitModal
+          parent={{
+            id: variantSplitTarget.id,
+            name: variantSplitTarget.name,
+            currentStock: variantSplitTarget.currentStock,
+            averageCost: variantSplitTarget.averageCost,
+            unitsPerBox: variantSplitTarget.unitsPerBox ?? null,
+            costingMethod: variantSplitTarget.costingMethod,
+          }}
+          onClose={() => setVariantSplitTarget(null)}
+          onSuccess={() => setVariantSplitTarget(null)}
+        />
+      )}
       {showBulkCostModal && (
         <BulkSetCostModal
           products={valuation?.missingCostProducts ?? []}

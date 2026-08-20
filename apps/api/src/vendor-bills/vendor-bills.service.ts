@@ -1046,7 +1046,27 @@ export class VendorBillsService {
         supplier: true,
         payments: { orderBy: { createdAt: "desc" } },
         items: {
-          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          include: {
+            // Widened ONLY here (not the list endpoint, not other write
+            // sites) so the bill detail page can tell whether a mapped
+            // product has variants and show a "Generic — split into
+            // variants?" affordance. Additive fields only — response shape
+            // stays backward-compatible for every other consumer.
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+                unit: true,
+                parentProductId: true,
+                // ACTIVE children only: the badge invites a split, and stock
+                // can only ever be assigned to an active variant — counting
+                // deactivated ones would offer the affordance on a generic
+                // whose only variant is deleted.
+                _count: { select: { variants: { where: { isActive: true } } } },
+              },
+            },
+          },
         },
       },
     });

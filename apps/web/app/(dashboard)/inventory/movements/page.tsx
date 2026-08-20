@@ -28,6 +28,19 @@ const MOVEMENT_TYPE_VARIANTS: Record<string, "success" | "danger" | "neutral" | 
   WRITE_OFF: "neutral",
 };
 
+/** Reference prefixes that group a batch of movements written by one operation. */
+const REFERENCE_PREFIX_LABELS: Record<string, string> = {
+  "STOCK_COUNT-": "Stock count",
+  "VARIANT_ASSIGN-": "Variant assignment",
+};
+
+function referenceLabel(reference: string) {
+  const match = Object.entries(REFERENCE_PREFIX_LABELS).find(([prefix]) =>
+    reference.startsWith(prefix),
+  );
+  return match ? match[1] : "Reference";
+}
+
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
@@ -49,9 +62,10 @@ export default function MovementsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialProduct = searchParams.get("product") ?? "";
-  // Stock-count history links here with `?reference=STOCK_COUNT-<sessionId>` —
-  // there's no server-side reference filter (out of scope for this PR: the API
-  // isn't touched), so it's applied client-side below over a wider page.
+  // Stock-count history links here with `?reference=STOCK_COUNT-<sessionId>`, and
+  // the variant-split modal with `?reference=VARIANT_ASSIGN-<uuid>` — there's no
+  // server-side reference filter (out of scope for this PR: the API isn't
+  // touched), so it's applied client-side below over a wider page.
   const referenceFilter = searchParams.get("reference") ?? "";
 
   const [filters, setFilters] = React.useState({
@@ -112,7 +126,7 @@ export default function MovementsPage() {
       {referenceFilter && (
         <div className="flex items-center gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
-            Stock count: {referenceFilter}
+            {referenceLabel(referenceFilter)}: {referenceFilter}
           </span>
           <Button size="sm" variant="secondary" onClick={() => router.push("/inventory/movements")}>
             Clear

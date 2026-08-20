@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -31,6 +31,7 @@ import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/prod
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
+import { VariantSplitSheet } from "../../../components/VariantSplitSheet";
 
 function fmtCurrency(n: number | string | undefined | null): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -69,6 +70,7 @@ export default function ProductDetailScreen() {
   const uploadImagesMut = useUploadProductImages();
   const deleteImageMut = useDeleteProductImage();
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
+  const [splitOpen, setSplitOpen] = useState(false);
 
   if (isLoading || !product) {
     return (
@@ -85,6 +87,17 @@ export default function ProductDetailScreen() {
   const threshold = product.reorderPoint ?? 5;
   const low = stock > 0 && stock <= threshold;
   const out = stock <= 0;
+
+  // PR-D: split a generic parent's stock across its variants. Only a
+  // standalone product (never a variant itself) that already has at least
+  // one ACTIVE variant can offer this — mirrors the web entry point's gate
+  // exactly. `GET /products/:id` includes deactivated variants too (it only
+  // sorts `isActive desc`), and the server rejects an inactive target, so
+  // they are filtered out rather than offered as assignable rows.
+  const productVariants: { id: string; name: string; variantName?: string | null }[] = (
+    product.variants ?? []
+  ).filter((v: { isActive?: boolean }) => v.isActive !== false);
+  const canSplitVariants = !product.parentProductId && productVariants.length > 0;
 
   // imageUrls[i] (presigned, display) lines up 1:1 with imageKeys[i] (delete target).
   const imageUrls: string[] = product.imageUrls ?? [];
@@ -313,6 +326,15 @@ export default function ProductDetailScreen() {
             {product.reorderQty != null ? (
               <Row label="Reorder qty" value={`${product.reorderQty}`} />
             ) : null}
+            {canSplitVariants ? (
+              <>
+                <Row label="Unassigned stock" value={`${stock} ${product.unit ?? ""}`.trim()} />
+                <Pressable style={styles.assignVariantsBtn} onPress={() => setSplitOpen(true)}>
+                  <Ionicons name="git-branch-outline" size={16} color={ios.brand} />
+                  <Text style={styles.assignVariantsText}>Assign to variants</Text>
+                </Pressable>
+              </>
+            ) : null}
           </View>
 
           <View style={styles.card}>
@@ -456,6 +478,29 @@ export default function ProductDetailScreen() {
         </View>
         <View style={{ height: 24 }} />
       </ScrollView>
+
+      {canSplitVariants ? (
+        <VariantSplitSheet
+          visible={splitOpen}
+          parent={{
+            id: product.id,
+            name: product.name,
+            currentStock: product.currentStock,
+            averageCost: product.averageCost,
+            unitsPerBox: product.unitsPerBox,
+            costingMethod: product.costingMethod,
+            unit: product.unit,
+          }}
+          variants={productVariants}
+          onClose={() => setSplitOpen(false)}
+          onViewMovements={() =>
+            router.push({
+              pathname: "/(operator)/movements",
+              params: { productId: id, productName: product.name },
+            } as any)
+          }
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -645,6 +690,17 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     fontVariant: ["tabular-nums"],
   },
+  assignVariantsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: ios.brandWash,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginTop: 8,
+  },
+  assignVariantsText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.brand },
   deleteBtn: {
     flexDirection: "row",
     alignItems: "center",

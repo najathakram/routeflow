@@ -22,8 +22,12 @@ export interface BoxedQtyBandProps {
    * Opens the full per-line editor (price override, note, cost/margin) — the
    * ONE progressive-disclosure entry point for exceptions. Quantities are the
    * every-line action and live here on the row.
+   *
+   * OMIT it when the row has nothing to disclose (e.g. a STANDARD-costed
+   * product, whose operator-set cost must not move) — the chip is then not
+   * rendered at all, rather than sitting there doing nothing when tapped.
    */
-  onEdit: () => void;
+  onEdit?: () => void;
 }
 
 /**
@@ -76,15 +80,17 @@ export function BoxedQtyBand({
         <Text style={styles.summary} numberOfLines={1}>
           {boxedLineSummary(line, unitsPerBox, unitPrice)}
         </Text>
-        <Pressable
-          onPress={onEdit}
-          hitSlop={8}
-          style={styles.editBtn}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${productName}`}
-        >
-          <Text style={styles.editText}>Edit</Text>
-        </Pressable>
+        {onEdit ? (
+          <Pressable
+            onPress={onEdit}
+            hitSlop={8}
+            style={styles.editBtn}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${productName}`}
+          >
+            <Text style={styles.editText}>Edit</Text>
+          </Pressable>
+        ) : null}
       </View>
     </>
   );
