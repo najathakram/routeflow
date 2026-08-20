@@ -1,16 +1,24 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-19 (evening) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
+**Written:** 2026-08-20 (night) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through **PR #364 is SHIPPED + LIVE** (post-deploy check green). New today:
-**#362** (D1 boxed-substitution money fixes — the 2 critical silent overcharges + tier
-price on substitution, api+web+mobile, adversarially verified), **#363** (CP-07 spec
-concat artifact + order-builder e2e draft leak; the 43 stale e2e drafts were also
-deleted from prod), **#364** (docs). Earlier: the full 2026-08-17 mobile UX batch
-#351–#361, incl. 2-hourly R2 dumps. Note: the `ebe30eb6` Railway deploys show FAILED —
-that snapshot raced the private flip; its delta was e2e/docs only, and the LIVE build
-`71f44020` carries all runtime code (verified). Nothing to repair; the next apps/\*\*
-push will confirm the GitHub App still clones private fine (fallback: `railway up`).
+Everything through **PR #367 is SHIPPED + LIVE** (post-deploy check green). New tonight:
+**#367 = PR-A of the UX expansion batch** — the two live client-facing bugs (**A4** driver
+edits wiped orders, **A5** buyer password login never reached its sellers) plus **A1**
+mobile send-sheet no-dead-end, **A2** inventory search reach + shared `SetCostModal`,
+**A3** three cross-links. CI green, no migrations. Earlier today: **#362** (D1
+boxed-substitution money fixes), **#363** (CP-07 spec concat artifact + order-builder e2e
+draft leak; 43 stale e2e drafts deleted from prod), **#364**–**#366** (docs). Earlier: the
+full 2026-08-17 mobile UX batch #351–#361, incl. 2-hourly R2 dumps.
+
+> **Railway deploy race recurred on #367 (third time) — this is now the EXPECTED path.**
+> Merge + immediate private flip → both api and web GitHub deploys FAILED at the exact
+> second the merge landed; `railway up --service @routeflow/{api,web} --ci` from clean
+> master fixed it in ~5 min (both SUCCESS, smoke green). The live API kept returning 200
+> throughout — a failed deploy never disturbs the running build — so **green CI + a
+> healthy `/health` do NOT mean your code is live. Always check
+> `railway deployment list` after a merge.** Details in memory
+> `project_railway_deploy_outage_2026-07`.
 
 ---
 
@@ -29,17 +37,20 @@ here is blocked — this is the complete pick-up list.
    mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
    credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
    one review screen (migration).
-   **PR-A status (2026-08-19 night session):** all five items built on
-   `fix/a4-driver-diff-a5-buyer-token` — A4 driver-diff routing + A5 buyer token key
-   (see §1.2/§1.3), **A1** mobile Send sheet gains always-visible Open PDF + "Mark as
-   sent" rows, **A2** inventory search scrolls-and-highlights the row with the full
-   action set (Adjust · Set cost · Movements · Open product) and `SetCostModal` is
-   extracted to a shared component now reachable from the product page, **A3** the three
-   cross-links (web movement→product/supplier, web customer order rows→order, mobile
-   "View orders" `customerId` scoping with a dismissible chip). **PR-B is the next
-   build**; its reader must query through `Invoice` with `REAL_INVOICE_STATUSES` +
+   **PR-A: ✅ SHIPPED + LIVE as #367 (2026-08-20).** All five items — A4 driver-diff
+   routing + A5 buyer token key (see §1.2/§1.3), **A1** mobile Send sheet gains
+   always-visible Open PDF + "Mark as sent" rows, **A2** inventory search
+   scrolls-and-highlights the row with the full action set (Adjust · Set cost ·
+   Movements · Open product) and `SetCostModal` is extracted to a shared component now
+   reachable from the product page, **A3** the three cross-links (web
+   movement→product/supplier, web customer order rows→order, mobile "View orders"
+   `customerId` scoping with a dismissible chip).
+   **▶ PR-B is the next build** (order-search-by-product + per-buyer price history, no
+   migration). Its reader must query through `Invoice` with `REAL_INVOICE_STATUSES` +
    `items: { some: { productId } }`, never `invoiceItem.findMany` (nested-created lines
-   can carry `tenantId = null`) — mirror `analytics.service.ts getProductDemand`.
+   can carry `tenantId = null`) — mirror `analytics.service.ts getProductDemand`
+   (:462). `ListOrdersDto` (apps/api/src/orders/dto/list-orders.dto.ts) gains
+   `productId?`; `OrderItem.productId` is already indexed.
 2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
    FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
    portal's password login/register write only the namespaced `rf:buyer:accessToken`
