@@ -33,6 +33,7 @@ import { AnalyticsModule } from "./analytics/analytics.module";
 import { CreditNotesModule } from "./credit-notes/credit-notes.module";
 import { EstimatesModule } from "./estimates/estimates.module";
 import { VendorBillsModule } from "./vendor-bills/vendor-bills.module";
+import { SupplierStatementsModule } from "./supplier-statements/supplier-statements.module";
 import { ReturnsModule } from "./returns/returns.module";
 import { MessagesModule } from "./messages/messages.module";
 import { MessagingModule } from "./messaging/messaging.module";
@@ -134,6 +135,7 @@ import { AppService } from "./app.service";
     CreditNotesModule,
     EstimatesModule,
     VendorBillsModule,
+    SupplierStatementsModule,
     ReturnsModule,
     MessagesModule,
     MessagingModule,

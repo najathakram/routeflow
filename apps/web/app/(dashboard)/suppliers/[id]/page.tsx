@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
@@ -313,13 +313,28 @@ function BillRow({ bill }: { bill: VendorBill }) {
 
 // ─── Statement row (running-balance timeline) ──────────────────────────────────
 
-function StatementRow({ row }: { row: SupplierStatementRow }) {
+function StatementRow({
+  row,
+  highlighted,
+  rowRef,
+}: {
+  row: SupplierStatementRow;
+  /** Part of the payment group this page was deep-linked to (`?paymentGroup=`). */
+  highlighted?: boolean;
+  rowRef?: React.Ref<HTMLTableRowElement>;
+}) {
   // Signed per lib/api/supplier-payments.ts: BILL increases the balance (+),
   // PAYMENT/CREDIT decreases it (-).
   const signed =
     Number(row.amount) >= 0 ? `+${fmt(Math.abs(row.amount))}` : `-${fmt(Math.abs(row.amount))}`;
   return (
-    <tr className="border-b border-surface-border last:border-0 hover:bg-surface-raised/40 transition-colors">
+    <tr
+      ref={rowRef}
+      className={cn(
+        "border-b border-surface-border last:border-0 transition-colors",
+        highlighted ? "bg-brand-50" : "hover:bg-surface-raised/40",
+      )}
+    >
       <td className="px-5 py-3 text-sm text-navy/70">{fmtDate(row.date)}</td>
       <td className="px-5 py-3">
         <Badge variant={STATEMENT_ROW_VARIANTS[row.type]} label={STATEMENT_ROW_LABELS[row.type]} />
@@ -340,9 +355,10 @@ function StatementRow({ row }: { row: SupplierStatementRow }) {
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
-export default function SupplierDetailPage() {
+function SupplierDetailPageInner() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
   const [showEdit, setShowEdit] = React.useState(false);
@@ -357,6 +373,21 @@ export default function SupplierDetailPage() {
     if (supplier?.name) setTitle(supplier.name);
     else setTitle("Supplier");
   }, [supplier?.name, setTitle]);
+
+  // A statement apply (finance/statements) stamps every payment it writes with
+  // one paymentGroupId and deep-links here with it, so "what did that apply
+  // actually do" is answerable from the supplier's own ledger. Highlight those
+  // rows and bring the first one into view.
+  const highlightGroup = searchParams.get("paymentGroup");
+  const firstHighlightedRow = React.useRef<HTMLTableRowElement | null>(null);
+  const firstHighlightedId = highlightGroup
+    ? (statement?.timeline.find((r) => r.paymentGroupId === highlightGroup)?.id ?? null)
+    : null;
+  React.useEffect(() => {
+    if (firstHighlightedId) {
+      firstHighlightedRow.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [firstHighlightedId]);
 
   if (isLoading) {
     return (
@@ -740,7 +771,12 @@ export default function SupplierDetailPage() {
               </thead>
               <tbody>
                 {statement.timeline.map((row) => (
-                  <StatementRow key={`${row.type}-${row.id}`} row={row} />
+                  <StatementRow
+                    key={`${row.type}-${row.id}`}
+                    row={row}
+                    highlighted={!!highlightGroup && row.paymentGroupId === highlightGroup}
+                    rowRef={row.id === firstHighlightedId ? firstHighlightedRow : undefined}
+                  />
                 ))}
               </tbody>
             </table>
@@ -748,5 +784,21 @@ export default function SupplierDetailPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/** `useSearchParams` (the `?paymentGroup=` deep link) needs a Suspense
+ *  boundary above it — same wrapper the statements page uses. */
+export default function SupplierDetailPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+        </div>
+      }
+    >
+      <SupplierDetailPageInner />
+    </React.Suspense>
   );
 }

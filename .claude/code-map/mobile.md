@@ -554,3 +554,23 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`(operator)/payments/record.tsx`** — seeds its customer state from those optional params so
   the picker step is skipped when the caller already knows the customer; no params = picker as
   before, and "Change" clears back to it either way.
+
+### PR-F 2026-08-20 — supplier-statement capture (capture + read only, by design)
+
+- **`(operator)/statements/index.tsx` (new)** — capture-and-read only. Mobile can photograph or
+  pick a supplier statement and read a scan's status/summary; it deliberately **does NOT host the
+  reconciliation grid** — a dense statement↔bill table earns a desktop, and the plan's design
+  stance is explicit. After a capture it shows "ready to review on the web dashboard" with the
+  parsed summary. Local steps `ListStep` / `ScanningStep` / `ResultStep` / `ErrorStep`;
+  `describeStatementScanError` gives each of the four AI codes its own copy, offering a retry only
+  for `AI_UNAVAILABLE`.
+- **`lib/api/supplier-statements.ts` (new)** — `useSupplierStatements(params)`,
+  `useScanStatement()` (multipart, **field name `files`**, not the invoice scanner's `images`),
+  `getStatementAiError()` + `SupplierStatementScanSummary`/`StatementAiErrorCode` types mirroring
+  web's module. `toScanSummary` flattens the raw scan row for the list.
+- The API module is registered in `app.module.ts`, so these calls are live. See api.md →
+  `supplier-statements/`. No pure-logic module was added (nothing here needs one), so there is no
+  new `__tests__/` entry.
+- **Entry point:** a fourth `QuickLink` ("Statements", `reader-outline`) in the quick-links row of
+  `(operator)/(tabs)/finance.tsx`, alongside All bills / Expenses / Suppliers. Without it the
+  screen is unreachable (file-based routing needs no `Stack.Screen` registration).
