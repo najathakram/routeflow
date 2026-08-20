@@ -31,6 +31,7 @@ import {
   StartStockCountDto,
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
+import { VariantAssignDto } from "./dto/variant-assign.dto";
 
 @Controller("inventory")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -66,6 +67,13 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR)
   commitStockCount(@Body() dto: CommitStockCountDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.commitStockCount(dto, user.id);
+  }
+
+  // ── Variant assignment (PR-D): generic → variants, one transaction ──
+  @Post("variant-assign")
+  @Roles(UserRole.OPERATOR)
+  assignToVariants(@Body() dto: VariantAssignDto, @CurrentUser() user: { id: string }) {
+    return this.inventoryService.assignToVariants(dto, user.id);
   }
 
   // ── Durable stock-count sessions (PR-C) ──

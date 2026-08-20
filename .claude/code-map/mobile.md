@@ -502,3 +502,27 @@ status:"ISSUED"})` never runs unscoped; filters via `isCreditOpenForApply`; full
 - **`(tabs)/invoices/[id].tsx`** — `ApplyAdvanceSheet` (wallet rows balance>0; first client for
   this action — web's `useApplyAdvanceToInvoice` is dead code). **`customers/[id].tsx`** —
   Record-advance modal + "Record advance payment" row in Account standing.
+
+### PR-D 2026-08-20 — generic → variant stock assignment (first mobile variants UI)
+
+- **`lib/variant-split-logic.ts` (new)** — pure sheet math, node-testable: `resolvedRowQty` /
+  `remainingPool` / `clampToAvailable` / `applyRowQtyChange` (a boxed edit is clamped as a TOTAL
+  then re-split via `normalizeBoxesPieces`, so the two fields never disagree) and
+  `buildVariantAssignPayload` → `POST /inventory/variant-assign` (drops 0-qty and unnamed
+  new-variant rows; null when nothing survives). `SplitRow.unitCostText` is **raw text, never a
+  number** — a controlled input backed by a number eats the decimal point on every keystroke
+  ("2." → 2 → "2"), which made a $2.75 override untypable; `parseCostText` parses ONCE at submit
+  (4dp via `roundUnitCost`; blank/non-numeric/negative → inherit the parent's average). Mirrors
+  web's `RowState.cost: string`. Specs: `__tests__/variant-split-logic.test.ts`.
+- **`components/VariantSplitSheet.tsx` (new)** — FormSheet-pattern modal, one row per active
+  variant + one inline new-variant row, live "Remaining: N", in-screen success (mobile has no
+  toast action slot; movements link is by `productId`, never `?reference=`). Boxed parents render
+  `BoxedQtyBand`; **its `unitPrice` must be case-denominated** (`rowUnitCost * unitsPerBox`) —
+  every cost here is per BASE UNIT but `boxedLineSummary`/`computeLineSubtotal` bill per CASE.
+  STANDARD-costed parent ⇒ no cost affordance at all (`onEdit` omitted, plain-row toggle hidden),
+  matching web dropping the whole Cost column.
+- **`components/BoxedQtyBand.tsx`** — `onEdit` is now **optional**; omitting it drops the Edit
+  chip entirely rather than rendering a chip that does nothing. Both sale builders still pass one.
+- **`lib/api/variant-assign.ts` (new)** — `useAssignToVariants()`. Entry point:
+  `app/(operator)/products/[id].tsx` Stock card ("Unassigned stock: N" + "Assign to variants",
+  only when the product has variants and no parent).

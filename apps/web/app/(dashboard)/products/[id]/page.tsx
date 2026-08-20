@@ -55,6 +55,7 @@ import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
 import { SetCostModal } from "@/components/SetCostModal";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -393,6 +394,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   // ── Set-cost modal state ──────────────────────────────────────────────────
   const [showCostModal, setShowCostModal] = React.useState(false);
+
+  // ── Variant-split modal state (PR-D) ──────────────────────────────────────
+  const [showVariantSplit, setShowVariantSplit] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -956,6 +960,24 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           onClose={() => setShowCostModal(false)}
         />
       )}
+      {/* Variant-split modal (PR-D) — moves this product's unassigned stock
+          onto its variants. Same component as the Inventory Stock tab row
+          action and the vendor-bill line badge. */}
+      {showVariantSplit && (
+        <VariantSplitModal
+          parent={{
+            id: product.id,
+            name: product.name,
+            currentStock,
+            averageCost: product.averageCost != null ? Number(product.averageCost) : null,
+            unitsPerBox: product.unitsPerBox ?? null,
+            costingMethod: product.costingMethod,
+          }}
+          pool={currentStock}
+          onClose={() => setShowVariantSplit(false)}
+          onSuccess={() => setShowVariantSplit(false)}
+        />
+      )}
       <div className="space-y-5 p-6">
         {/* Back */}
         <Link
@@ -1338,6 +1360,19 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     {currentStock.toFixed(2)} {product.unit}
                   </span>
                 </div>
+                {!product.parentProductId && (product.variants?.length ?? 0) > 0 && (
+                  <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+                    <span
+                      className="text-navy/70"
+                      title="Stock on this generic not yet attributed to a variant"
+                    >
+                      Unassigned stock
+                    </span>
+                    <span className="font-mono font-medium tabular-nums text-navy">
+                      {currentStock.toFixed(2)} {product.unit}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
                   <span className="text-navy/70">Waitlist</span>
                   <span
@@ -2167,6 +2202,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   </h3>
                   {isOperator && (
                     <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Scissors className="h-3.5 w-3.5" />}
+                        onClick={() => setShowVariantSplit(true)}
+                      >
+                        Assign to variants
+                      </Button>
                       <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
                         Link existing
                       </Button>
