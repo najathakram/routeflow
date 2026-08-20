@@ -1,136 +1,84 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-20 (night) · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
+**Written:** 2026-08-20 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
 
-Everything through **PR #371 is SHIPPED + LIVE** (post-deploy check green; the new
-`/analytics/product-sales/:productId` and `/inventory/stock-counts` routes verified
-against prod, the latter with a real authenticated read on `e2e-routeflow` proving the
-new tables + tenancy work). **#371 = PR-C** — durable stock-count sessions, and **the
-batch's first migration is APPLIED to prod** (`20260820000000_add_stock_count_sessions`,
-purely additive; fresh 9.3 MB pre-migration backup taken and validated first, and the
-migration was proven on a fresh Postgres 16 in CI before it touched prod). New tonight:
-**#367 = PR-A of the UX expansion batch** — the two live client-facing bugs (**A4** driver
-edits wiped orders, **A5** buyer password login never reached its sellers) plus **A1**
-mobile send-sheet no-dead-end, **A2** inventory search reach + shared `SetCostModal`,
-**A3** three cross-links — and **#369 = PR-B** (orders-by-product filter + per-buyer sales
-history, api+web+mobile). Both CI green, neither needed a migration. Earlier today: **#362** (D1
-boxed-substitution money fixes), **#363** (CP-07 spec concat artifact + order-builder e2e
-draft leak; 43 stale e2e drafts deleted from prod), **#364**–**#366** (docs). Earlier: the
-full 2026-08-17 mobile UX batch #351–#361, incl. 2-hourly R2 dumps.
+## ✅ THE UX EXPANSION BATCH IS COMPLETE — all six PRs shipped and live
 
-> **Railway deploy race recurred on #367 (third time) — this is now the EXPECTED path.**
-> Merge + immediate private flip → both api and web GitHub deploys FAILED at the exact
-> second the merge landed; `railway up --service @routeflow/{api,web} --ci` from clean
-> master fixed it in ~5 min (both SUCCESS, smoke green). The live API kept returning 200
-> throughout — a failed deploy never disturbs the running build — so **green CI + a
-> healthy `/health` do NOT mean your code is live. Always check
-> `railway deployment list` after a merge.** Details in memory
-> `project_railway_deploy_outage_2026-07`.
+| PR               | What                                                                                                                                                                   | Migration |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| **#367 PR-A**    | 2 live client bugs (**A4** driver edits wiped orders, **A5** buyer password login never reached its sellers) + mobile send no-dead-end, inventory reach, 3 cross-links | —         |
+| **#369 PR-B**    | orders-by-product filter + per-buyer sales history (api/web/mobile)                                                                                                    | —         |
+| **#371 PR-C**    | durable stock-count sessions (review, history, amend)                                                                                                                  | **#1**    |
+| **#373 backlog** | B4–B14: 2 security holes, 2 money bugs, 3 duplicate-document races, 3 UX                                                                                               | —         |
+| **#374 PR-D**    | generic → variant stock assignment, one mechanism two entry points                                                                                                     | —         |
+| **#375 PR-E**    | supplier payment allocation, on-account credit, bulk mark-paid                                                                                                         | **#2**    |
+| **#376 PR-F**    | AI supplier-statement reconciliation, one review screen                                                                                                                | **#3**    |
+
+All three migrations are **applied to production**, each with a fresh validated `pg_dump` first and each proven by CI against a fresh Postgres beforehand. Every PR: `npm run verify` green, post-deploy smoke green, new routes verified registered in prod.
+
+**B5 from the deep-dive list was already fixed in #352** — excluded deliberately, do not "re-fix" it.
+
+> ### 🚨 The deploy problem is SOLVED — and it was never permissions
+>
+> The Railway GitHub App has **All repositories** access and always did (verified in the GitHub UI, 2026-08-20). The real cause, read from the Railway dashboard **Details** panel (the CLI hides it — `railway logs --build` only prints `scheduling build`): **a GitHub visibility change briefly makes the repo inaccessible.** A clone inside that window gets `repository not found`; a `git push` gets `403 Your repository is disabled` while the repo page looks perfectly normal. Our script flipped private in the same breath as the merge, landing inside Railway's ~2s snapshot.
+>
+> **Fix, now in CLAUDE.md: merge → wait until the deploy reaches `BUILDING` → then flip private.** Four consecutive clean GitHub deploys followed.
+>
+> Two traps learned the hard way: **`INITIALIZING` IS the snapshot window** — flipping there fails identically (proven on #376; recovered with `railway up`). And **`gh repo edit` can fail with a network error and silently leave the repo PUBLIC** (hit on #374) — always read visibility back in a retry loop.
+
+> **Migration ordering CHANGED.** Now that GitHub deploys actually work, merging deploys the app immediately — so a migration must be applied to prod **BEFORE** the merge, not after. (The old merge-then-migrate order only looked safe because the deploy was failing.) Sequence: CI proves the migration → validated backup → apply to prod → merge → deploy into a ready schema.
+
+> **`pg_dump` is NOT installed locally** but IS inside the Railway postgres container. Take the pre-migration backup with `railway ssh --service postgres` running `pg_dump --no-password --format=plain --no-acl --no-owner` against `$POSTGRES_USER` / `$POSTGRES_DB`, redirected to `backups/<file>.sql`. Then VALIDATE it — expect ~112 `CREATE TABLE`, a matching `COPY` count, and the "dump complete" marker. A truncated dump is worse than none.
+
+> **CI now gates migrations.** It previously ran only `prisma db push`, which never exercises the migration files at all — the exact gap that lets a broken migration reach production. It now replays the whole history against a fresh Postgres first. If that step fails, do not touch prod.
 
 ---
 
-## 1. ▶ NEXT UP — the owner drives all of these from the next session
+## 1. ▶ NEXT UP — what actually remains
 
-The owner will decide who implements what (self, Claude, or an external dev). Nothing
-here is blocked — this is the complete pick-up list.
+The batch and the deep-dive backlog are done. What is left is either an owner decision or
+genuinely new work. Nothing below is blocked on code.
 
-1. **UX EXPANSION BATCH (owner-approved 2026-08-19) — ▶ IN PROGRESS: PR-A is BUILT.**
-   Full self-contained plan at
-   [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md)
-   (recon anchors, locked decisions, edge cases, 3 migrations). Owner-locked sequencing:
-   **PR-A** (mobile send never dead-ends + inventory search full toolset + cross-links)
-   → **PR-B** order-search-by-product + per-buyer price history → **PR-C** stock-count
-   mode (single counter, multi-ready; migration) → **PR-D** generic→variant split (one
-   mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
-   credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
-   one review screen (migration).
-   **PR-A: ✅ SHIPPED + LIVE as #367 (2026-08-20).** All five items — A4 driver-diff
-   routing + A5 buyer token key (see §1.2/§1.3), **A1** mobile Send sheet gains
-   always-visible Open PDF + "Mark as sent" rows, **A2** inventory search
-   scrolls-and-highlights the row with the full action set (Adjust · Set cost ·
-   Movements · Open product) and `SetCostModal` is extracted to a shared component now
-   reachable from the product page, **A3** the three cross-links (web
-   movement→product/supplier, web customer order rows→order, mobile "View orders"
-   `customerId` scoping with a dismissible chip).
-   **PR-B: ✅ SHIPPED + LIVE as #369 (2026-08-20).** `ListOrdersDto.productId` +
-   `GET /analytics/product-sales/:productId`; web orders product filter + product Sales
-   card; mobile Sales card (8 inline rows, "View all N") + a second dismissible chip.
-   Two decisions worth knowing before extending it: `avgPrice` is **revenue-weighted**
-   (Σsubtotal ÷ Σqty, NOT a mean of unit prices), and the reader goes **through
-   `Invoice`** with a nested `items` filter — never `invoiceItem.findMany`, whose
-   nested-created rows can carry `tenantId = null`.
-   **PR-C: ✅ SHIPPED + LIVE as #371 (2026-08-20), migration #1 applied.** Durable
-   `StockCountSession`/`StockCountLine` — before this a count lived only in the client
-   (`lib/api/stock-count.ts` said so outright), so it could not resume on another device
-   and left no history. Three money rules a future change must not reverse: a line's
-   `unitCostOverride` writes COST_BASIS **before** its quantity adjustment (else the
-   corrected cost is stamped stale onto the adjustment and any new lot); `expectedQty`
-   snapshots on the FIRST count only; variance is valued at the product's current
-   `averageCost`, never the override. Commit is blocked while autosave is dirty.
-   **▶ PR-D (generic→variant split) is the next build** — no migration. Then PR-E
-   (payment allocation, migration #2) and PR-F (AI statements, migration #3).
+### 1.1 Owner decisions — these are yours, and were deliberately left alone
 
-   **Migration mechanics that worked, reuse them:** `pg_dump` is NOT installed locally,
-   but it IS inside the Railway postgres container — take the pre-migration backup with
-   `railway ssh --service postgres 'pg_dump --no-password --format=plain --no-acl
---no-owner -U $POSTGRES_USER -d $POSTGRES_DB' > backups/<file>.sql`, then VALIDATE it
-   (expect ~109 `CREATE TABLE`, a matching `COPY` count, and the "dump complete" marker —
-   a truncated dump is worse than none). **CI now replays the whole migration history
-   against a fresh Postgres before tests** (it previously only ran `prisma db push`, which
-   never exercises migration files at all) — that step is the real gate; if it fails, do
-   not touch prod.
+1. **Returns §2.1 — "restore to the original credit note" would re-bill the customer.**
+   Still open, still not implemented, and still the right call to leave open. See §2.1 for
+   the worked example. Today's mint-a-new-note behaviour loses no money; it just produces a
+   second note to track.
+2. **Two prod data repairs awaiting sign-off** (§2.2) — costing (14 duplicate received bills,
+   ~$12,829 phantom stock, plus 13 products' case-vs-piece cost) and pack size (812 products).
+   Both scripts are dry-run by default and **neither has been run**. They write to live client
+   data, which the policy reserves for an explicit request.
+3. **What `test-tenant` actually is** — 788 active products and 316 pack-size candidates under
+   a tenant whose name says "test" but whose data looks real. It matches no approved test
+   pattern, so it is currently excluded from everything. Confirm before any bulk write.
+4. **Tell the affected buyer to log in again.** The A5 fix is live; their seller link was
+   always intact server-side. One fresh login and their dashboard works. Nothing was lost.
 
-2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
-   FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
-   portal's password login/register write only the namespaced `rf:buyer:accessToken`
-   key while 7 call sites (auth context ×4, invite-accept, ConnectSellerModal,
-   `useBuyerNotifications`) still read the legacy `"buyerAccessToken"` literal — which
-   ONLY the Google OAuth callback backfills. So a password login (e.g. the buyer's
-   second computer) never fetched the seller list → "no connection with the seller",
-   nothing selectable → dashboard unreachable; invite-accept was a silent no-op. Seller
-   association is server-derived (`buyerAccountId` → `CustomerLink`) and was never
-   broken. Fix: canonical `getBuyerAccessToken()` (namespaced-first, legacy fallback),
-   all readers migrated, admin impersonation writes the namespaced key, dashboard/
-   shelf/templates queries gated on an active seller, e2e BY-14 pins "password login
-   fires the authorized /buyer/sellers fetch". Worth telling the affected buyer to
-   simply log in again once deployed — no data was lost.
-3. ~~CRITICAL: driver edits wipe orders~~ — **FIXED (2026-08-19 night session, A4) +
-   spec-pinned.** Diff-shaped payloads (`replaceAll:false` or entries with
-   `id`/`action`/`substituteProductId`) from a DRIVER now route through the operator
-   merge branch (price fields stripped — fresh adds at catalog price, qty edits keep
-   the stored price incl. operator overrides); diff-shaped CUSTOMER payloads 400
-   instead of wiping; legacy id-less driver full-lists still replace. 7 new specs in
-   `orders.service.spec.ts` ("driver diff routing (A4)").
-4. **Owner questions the batch needs answered** (plan §Open questions): (a) the exact
-   screen/steps where mobile invoice-send blocked you (screenshot ideal); (b) should a
-   committed stock count also export CSV/PDF; (c) do supplier statements arrive as
-   PDFs or on paper (camera path priority); (d) do drivers collect lump-sum customer
-   payments in the field (mobile AR parity sooner)?
-5. **Deep-dive bug backlog remainder (B7–B14)** from
-   `project_deep_dive_findings_2026-08-17` — regulated-tax drop on price adjustment,
-   estimate/recurring/returns races, STANDARD-cost clobber, DRAFT-payment trap, 2
-   security items (uploads cross-tenant prefixes, driver price), ActionTile double-tap,
-   finance-list debounce. Small PRs, independent of the batch, unassigned.
-6. **Wave 5 / Wave 6** of the mobile-first UX program (tasks #23/#24) and in-app pack
-   size (#45) — see §4.
-7. **New chip suggestion from the drafts-cleanup session:** harden the e2e suite's auth
-   setup — full-suite runs >1h expire the operator storage state and mass-fail late
-   projects on the login page (pre-existing, not a regression).
+### 1.2 Known gaps, recorded rather than silently assumed handled
 
-**2026-08-17/18 incident context every future session should know:** production Postgres
-had NO VOLUME and was wiped by a Railway platform incident; restored from the 02:02 UTC
-R2 dump (Sunday 01:40→20:00 UTC trading lost, Railway support ticket = owner). Volume +
-`PGDATA` subdir now attached; Railway volume backups Daily/Weekly/Monthly (Pro) +
-2-hourly R2 dumps. **Read memory `project_prod_data_loss_2026-08-17` before ANY prod DB
-work.**
+- **AP has no VOID concept.** `BillPayment` has no `status` column, so a mistaken supplier
+  payment cannot be voided the way an AR one can. PR-E deliberately did not invent this.
+  A follow-up would need migration #4 plus a void path mirroring `voidPayment`.
+- **PR-F's client-side derivations.** The web review screen computes "unmatched local bills",
+  the implied-paid candidate set, and its closing-balance warning **client-side** from
+  `GET /vendor-bills`, because the API returns matches only. This is safe — the server is the
+  authority on what any Apply may pay, and it re-validates every amount against both the
+  statement line and the bill's real outstanding balance — but moving those derivations
+  server-side would make the review screen cheaper and single-sourced.
+- **`applyAdvancePaymentToInvoice` re-implements the invoice status thresholds inline**
+  instead of calling `recomputeStatus`. Two hand-maintained copies of one rule. Not touched
+  in this batch; worth collapsing before either copy drifts.
 
-**Owner actions still open:** enable **Authenticated SMTP** on the M365 mailbox (the
-test-send now says this itself — owner deferred 2026-08-19, "SMTP can wait"); Railway
-billing auto-top-up; healthchecks.io cadence to 2-hourly; an uptime monitor on
-`/api/v1/health`.
-**DONE 2026-08-19:** MWI supplier renamed + alias backfill complete — 511/511 groups
-migrated (441 MWI), verified in prod. Both 2026-08-19 task chips are RESOLVED (CP-07 =
-spec artifact, fixed on its branch; e2e drafts leak fixed + 43 rows deleted).
+### 1.3 Remaining product work (unchanged, unstarted)
+
+Wave 5 / Wave 6 of the mobile-first UX program (tasks #23/#24), in-app pack size (#45 — see
+§4.1), and the small residuals in §4.4.
+
+### 1.4 Owner actions still open
+
+Enable **Authenticated SMTP** on the M365 mailbox; Railway billing auto-top-up;
+healthchecks.io cadence to 2-hourly; an uptime monitor on `/api/v1/health`.
 
 ---
 

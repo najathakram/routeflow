@@ -1,6 +1,6 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** IN PROGRESS — **PR-A + PR-B SHIPPED + LIVE (#367, #369)**, **PR-C BUILT (migration #1)** (PR-A = all five items, live 2026-08-20; PR-B = orders-by-product filter + per-buyer sales history, api+web+mobile). PR-C (stock-count mode, migration #1) is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
+**Status:** ✅ **COMPLETE — all six PRs (PR-A…PR-F) SHIPPED + LIVE 2026-08-20**, plus the B4–B14 deep-dive backlog. All three migrations applied to production (backup-first, CI-gated). See HANDOFF.md for what remains owner-owned.
 (file:line), locked decisions, edge cases and error handling are all inline. Read
 `CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
 backup-first prod flow, and the test-tenant policy is absolute.
@@ -208,7 +208,7 @@ drafts); duplicate concurrent session (warning with "open it instead"); commit t
 
 ---
 
-## PR-D — Generic → variant assignment (scan-time and later)
+## PR-D — ✅ SHIPPED + LIVE (#374) — Generic → variant assignment (scan-time and later)
 
 Foundation (recon): variants are `parentProductId` + `variantName` (flat, one level,
 schema.prisma:900-945); the scan matcher is already variant-aware via composed
@@ -248,7 +248,7 @@ STANDARD costs stable).
 
 ---
 
-## PR-E — Payment allocation: running balances for suppliers and customers
+## PR-E — ✅ SHIPPED + LIVE (#375, migration #2) — Payment allocation: running balances for suppliers and customers
 
 **Model (migration #2):** `BillPayment.paymentGroupId String?` (mirrors
 `InvoicePayment.paymentGroupId`, which already exists) + new `SupplierCredit` mirroring
@@ -284,7 +284,7 @@ not just themselves — one source of truth.
 
 ---
 
-## PR-F — AI supplier-statement reconciliation (last; builds on PR-E)
+## PR-F — ✅ SHIPPED + LIVE (#376, migration #3) — AI supplier-statement reconciliation (last; builds on PR-E)
 
 **Pipeline (reuse the invoice-scan architecture wholesale):** upload (pdf/images, same
 RENDERABLE*INLINE_MIMES rules) → durable `SupplierStatementScan` row (migration #3; the
