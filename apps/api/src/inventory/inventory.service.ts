@@ -1,12 +1,18 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "../common/pricing";
+import { normalizeBoxesPieces, roundMoney } from "../common/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
 import { RecordPurchaseDto } from "./dto/record-purchase.dto";
 import { RecordAdjustmentDto } from "./dto/record-adjustment.dto";
 import { CommitStockCountDto } from "./dto/commit-stock-count.dto";
+import {
+  CommitStockCountSessionDto,
+  ListStockCountSessionsDto,
+  StartStockCountDto,
+  UpsertStockCountLineDto,
+} from "./dto/stock-count-session.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { CreateSupplierDto } from "./dto/create-supplier.dto";
 import { UpdateSupplierDto } from "./dto/update-supplier.dto";
@@ -335,64 +341,15 @@ export class InventoryService {
         };
       }
 
-      const movementIds: string[] = [];
-      let skipped = 0;
-      // Running stock per product so repeated items in one count session
-      // produce truthful stockAfter snapshots.
-      const runningStock = new Map<string, Prisma.Decimal>();
-
-      for (const item of dto.items) {
-        const product = productMap.get(item.productId)!;
-        const stockBefore = runningStock.get(item.productId) ?? product.currentStock;
-        const counted = new Prisma.Decimal(item.quantity);
-        const delta = item.mode === "REPLACE" ? counted.minus(stockBefore) : counted;
-
-        if (delta.eq(0)) {
-          skipped += 1;
-          continue;
-        }
-        const stockAfter = stockBefore.add(delta);
-        runningStock.set(item.productId, stockAfter);
-
-        const itemNotes = dto.notes
-          ? `${dto.notes} (mode=${item.mode} counted=${counted.toString()})`
-          : `mode=${item.mode} counted=${counted.toString()}`;
-
-        const movement = await tx.stockMovement.create({
-          data: {
-            productId: item.productId,
-            type: MovementType.ADJUSTMENT,
-            quantity: delta,
-            avgCostAfter: product.averageCost ?? null,
-            stockAfter,
-            reference,
-            notes: itemNotes,
-            performedById,
-            createdAt: effectiveDate,
-          },
-        });
-        movementIds.push(movement.id);
-
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { currentStock: { increment: delta } },
-        });
-
-        if (delta.gt(0)) {
-          await tx.stockLot.create({
-            data: {
-              productId: item.productId,
-              purchaseDate: effectiveDate,
-              qty: delta,
-              remainingQty: delta,
-              unitCost: product.averageCost ?? new Prisma.Decimal(0),
-              reference,
-              notes: itemNotes,
-            },
-          });
-          restockedProductIds.push(item.productId);
-        }
-      }
+      const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
+        items: dto.items,
+        productMap,
+        reference,
+        effectiveDate,
+        notes: dto.notes,
+        performedById,
+        restockedProductIds,
+      });
 
       return {
         sessionId: dto.sessionId,
@@ -405,6 +362,106 @@ export class InventoryService {
 
     this.fireStockAlerts(restockedProductIds);
     return result;
+  }
+
+  /**
+   * The shared body of a stock-count commit: one ADJUSTMENT movement per
+   * non-zero delta, the product's stock incremented, and a lot opened for a
+   * positive delta. Extracted so the legacy client-session endpoint and the
+   * durable-session commit (PR-C) apply IDENTICAL stock semantics — there must
+   * never be two commit formulas that can drift apart.
+   *
+   * `restockedProductIds` is appended in place; the caller fires stock alerts
+   * AFTER the transaction commits (never inside it).
+   */
+  private async applyStockCountItemsInTx(
+    tx: Prisma.TransactionClient,
+    args: {
+      items: Array<{ productId: string; quantity: number; mode: "REPLACE" | "ADD" }>;
+      productMap: Map<
+        string,
+        { id: string; currentStock: Prisma.Decimal; averageCost: Prisma.Decimal | null }
+      >;
+      reference: string;
+      effectiveDate: Date;
+      notes?: string;
+      performedById: string;
+      restockedProductIds: string[];
+      /**
+       * Costs corrected earlier in THIS transaction (session commits apply
+       * `unitCostOverride` first). Passed in rather than re-reading each
+       * product: a large count would otherwise add one query per line inside
+       * the interactive transaction, pushing a big session toward its timeout.
+       */
+      correctedCosts?: Map<string, Prisma.Decimal>;
+    },
+  ): Promise<{ movementIds: string[]; skipped: number }> {
+    const { items, productMap, reference, effectiveDate, notes, performedById } = args;
+    const movementIds: string[] = [];
+    let skipped = 0;
+    // Running stock per product so repeated items in one count session
+    // produce truthful stockAfter snapshots.
+    const runningStock = new Map<string, Prisma.Decimal>();
+
+    for (const item of items) {
+      const product = productMap.get(item.productId)!;
+      const stockBefore = runningStock.get(item.productId) ?? product.currentStock;
+      const counted = new Prisma.Decimal(item.quantity);
+      const delta = item.mode === "REPLACE" ? counted.minus(stockBefore) : counted;
+
+      if (delta.eq(0)) {
+        skipped += 1;
+        continue;
+      }
+      const stockAfter = stockBefore.add(delta);
+      runningStock.set(item.productId, stockAfter);
+
+      const itemNotes = notes
+        ? `${notes} (mode=${item.mode} counted=${counted.toString()})`
+        : `mode=${item.mode} counted=${counted.toString()}`;
+
+      // A cost corrected earlier in this transaction must be what the movement
+      // and any new lot are valued at — otherwise the correction is stamped
+      // stale on the very rows it was meant to fix.
+      const avgCost = args.correctedCosts?.get(item.productId) ?? product.averageCost ?? null;
+
+      const movement = await tx.stockMovement.create({
+        data: {
+          productId: item.productId,
+          type: MovementType.ADJUSTMENT,
+          quantity: delta,
+          avgCostAfter: avgCost,
+          stockAfter,
+          reference,
+          notes: itemNotes,
+          performedById,
+          createdAt: effectiveDate,
+        },
+      });
+      movementIds.push(movement.id);
+
+      await tx.product.update({
+        where: { id: item.productId },
+        data: { currentStock: { increment: delta } },
+      });
+
+      if (delta.gt(0)) {
+        await tx.stockLot.create({
+          data: {
+            productId: item.productId,
+            purchaseDate: effectiveDate,
+            qty: delta,
+            remainingQty: delta,
+            unitCost: avgCost ?? new Prisma.Decimal(0),
+            reference,
+            notes: itemNotes,
+          },
+        });
+        args.restockedProductIds.push(item.productId);
+      }
+    }
+
+    return { movementIds, skipped };
   }
 
   /**
@@ -881,6 +938,430 @@ export class InventoryService {
     }
 
     return movement;
+  }
+
+  // ─── Durable stock-count sessions (PR-C) ────────────────────────────────────
+  //
+  // Before this, a count lived only in the counter's browser/app storage: it
+  // could not be resumed on another device, had no attribution, and left no
+  // history. These make the session a first-class server object. The pre-existing
+  // one-shot `commitStockCount` above is untouched and still works.
+
+  /** Shape returned for one line, with everything the review screen needs. */
+  private stockCountLineSelect() {
+    return {
+      id: true,
+      productId: true,
+      mode: true,
+      countedQty: true,
+      boxes: true,
+      pieces: true,
+      expectedQty: true,
+      unitCostOverride: true,
+      countedById: true,
+      updatedAt: true,
+      product: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          unit: true,
+          unitsPerBox: true,
+          currentStock: true,
+          averageCost: true,
+        },
+      },
+    } as const;
+  }
+
+  async startStockCountSession(dto: StartStockCountDto, user: { sub: string }) {
+    // A pre-existing OPEN session is a WARNING, never a lock: two people
+    // counting different aisles must not block each other. The client shows
+    // "you already have a count open — open it instead?" and decides.
+    const openSessions = await this.prisma.forTenant().stockCountSession.findMany({
+      where: { status: { in: ["OPEN", "REVIEW"] } },
+      select: { id: true, name: true, startedAt: true, startedById: true },
+      orderBy: { startedAt: "desc" },
+      take: 5,
+    });
+
+    let seedLines: Array<{
+      productId: string;
+      countedQty: Prisma.Decimal;
+      boxes: number | null;
+      pieces: number | null;
+      mode: "REPLACE" | "ADD";
+    }> = [];
+    if (dto.amendsSessionId) {
+      const source = await this.prisma.forTenant().stockCountSession.findUnique({
+        where: { id: dto.amendsSessionId },
+        include: { lines: true },
+      });
+      if (!source) throw new NotFoundException("Stock count session not found");
+      if (source.status !== "COMMITTED") {
+        throw new BadRequestException("Only a committed count can be amended");
+      }
+      seedLines = source.lines.map((l) => ({
+        productId: l.productId,
+        countedQty: l.countedQty,
+        boxes: l.boxes,
+        pieces: l.pieces,
+        mode: l.mode as "REPLACE" | "ADD",
+      }));
+    }
+
+    const session = await this.prisma.tenantTransaction(async (tx) => {
+      const created = await tx.stockCountSession.create({
+        data: {
+          name: dto.name ?? null,
+          startedById: user.sub,
+          amendsSessionId: dto.amendsSessionId ?? null,
+        },
+      });
+      if (seedLines.length > 0) {
+        // Re-snapshot `expectedQty` from CURRENT stock: an amendment corrects
+        // today's on-hand, so comparing against the original session's stale
+        // expectation would reproduce the old variance instead of the real one.
+        const products = await tx.product.findMany({
+          where: { id: { in: seedLines.map((l) => l.productId) } },
+          select: { id: true, currentStock: true },
+        });
+        const stockById = new Map(products.map((p) => [p.id, p.currentStock]));
+        for (const line of seedLines) {
+          // Written one-by-one, NOT nested under the session create: a nested
+          // write bypasses the tenant extension's tenantId injection and the
+          // row would land with tenantId = null, invisible to forTenant().
+          await tx.stockCountLine.create({
+            data: {
+              sessionId: created.id,
+              productId: line.productId,
+              mode: line.mode,
+              countedQty: line.countedQty,
+              boxes: line.boxes,
+              pieces: line.pieces,
+              expectedQty: stockById.get(line.productId) ?? new Prisma.Decimal(0),
+              countedById: user.sub,
+            },
+          });
+        }
+      }
+      return created;
+    });
+
+    return { ...session, otherOpenSessions: openSessions };
+  }
+
+  async listStockCountSessions(dto: ListStockCountSessionsDto) {
+    const page = dto.page ?? 1;
+    const limit = dto.limit ?? 20;
+    const where: Prisma.StockCountSessionWhereInput = {};
+    if (dto.status) where.status = dto.status;
+
+    const [rows, total] = await Promise.all([
+      this.prisma.forTenant().stockCountSession.findMany({
+        where,
+        include: {
+          startedBy: { select: { id: true, username: true } },
+          committedBy: { select: { id: true, username: true } },
+          _count: { select: { lines: true } },
+          // Net variance $ is a headline column of the history list, so it is
+          // computed HERE rather than left to the client — a list of sessions
+          // would otherwise need one detail fetch per row (N+1) to show it.
+          // Only the four fields the sum needs are selected, and the lines
+          // themselves are dropped from the response below.
+          lines: {
+            select: {
+              mode: true,
+              countedQty: true,
+              expectedQty: true,
+              product: { select: { averageCost: true } },
+            },
+          },
+        },
+        orderBy: { startedAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.forTenant().stockCountSession.count({ where }),
+    ]);
+
+    const data = rows.map(({ lines, ...session }) => {
+      // Same delta rule the commit applies: REPLACE = counted − expected,
+      // ADD = counted. Valued at the product's CURRENT average cost, never a
+      // line's unitCostOverride (that sets the basis going forward; it does
+      // not change what today's variance is worth).
+      const netVarianceMoney = roundMoney(
+        lines.reduce((sum, l) => {
+          const counted = Number(l.countedQty);
+          const delta = l.mode === "ADD" ? counted : counted - Number(l.expectedQty);
+          return sum + delta * Number(l.product?.averageCost ?? 0);
+        }, 0),
+      );
+      return { ...session, netVarianceMoney };
+    });
+
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async getStockCountSession(id: string) {
+    const session = await this.prisma.forTenant().stockCountSession.findUnique({
+      where: { id },
+      include: {
+        startedBy: { select: { id: true, username: true } },
+        committedBy: { select: { id: true, username: true } },
+        lines: { select: this.stockCountLineSelect(), orderBy: { updatedAt: "desc" } },
+      },
+    });
+    if (!session) throw new NotFoundException("Stock count session not found");
+    return session;
+  }
+
+  /** Guard: a count can only be edited while it is still OPEN or in REVIEW. */
+  private async loadEditableSession(id: string) {
+    const session = await this.prisma.forTenant().stockCountSession.findUnique({
+      where: { id },
+      select: { id: true, status: true },
+    });
+    if (!session) throw new NotFoundException("Stock count session not found");
+    if (session.status === "COMMITTED") {
+      throw new BadRequestException(
+        "This count is already committed — amend it to make a correction",
+      );
+    }
+    if (session.status === "DISCARDED") {
+      throw new BadRequestException("This count was discarded");
+    }
+    return session;
+  }
+
+  /**
+   * Autosave one counted line (the scan path calls this per scan, debounced).
+   * Idempotent by `@@unique([sessionId, productId])`, so a retry after a dropped
+   * connection can never create a duplicate line — but note `increment: true`
+   * is by definition NOT idempotent, which is why the client sends the running
+   * total for edits and only uses increment for a live scan.
+   */
+  async upsertStockCountLine(
+    sessionId: string,
+    dto: UpsertStockCountLineDto,
+    user: { sub: string },
+  ) {
+    await this.loadEditableSession(sessionId);
+
+    const product = await this.prisma.forTenant().product.findUnique({
+      where: { id: dto.productId },
+      select: { id: true, currentStock: true, unitsPerBox: true },
+    });
+    if (!product) throw new NotFoundException("Product not found");
+
+    // Boxes/pieces win when present — the server recomputes qty from the split
+    // exactly like the order builders, so a boxed product is never miscounted
+    // as loose pieces.
+    const upb = Number(product.unitsPerBox ?? 0);
+    const fromSplit =
+      dto.boxes != null || dto.pieces != null
+        ? normalizeBoxesPieces({ boxes: dto.boxes, pieces: dto.pieces, unitsPerBox: upb })
+        : null;
+    const incoming = fromSplit ? fromSplit.qty : (dto.countedQty ?? 0);
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      const existing = await tx.stockCountLine.findUnique({
+        where: { sessionId_productId: { sessionId, productId: dto.productId } },
+      });
+
+      const countedQty = dto.increment
+        ? new Prisma.Decimal(existing?.countedQty ?? 0).add(incoming)
+        : new Prisma.Decimal(incoming);
+
+      const data = {
+        mode: dto.mode ?? existing?.mode ?? "REPLACE",
+        countedQty,
+        boxes: fromSplit ? fromSplit.boxes : (dto.boxes ?? existing?.boxes ?? null),
+        pieces: fromSplit ? fromSplit.pieces : (dto.pieces ?? existing?.pieces ?? null),
+        countedById: user.sub,
+        ...(dto.unitCostOverride !== undefined
+          ? {
+              unitCostOverride:
+                dto.unitCostOverride === null ? null : costDecimal(dto.unitCostOverride),
+            }
+          : {}),
+      };
+
+      if (existing) {
+        return tx.stockCountLine.update({
+          where: { id: existing.id },
+          data,
+          select: this.stockCountLineSelect(),
+        });
+      }
+      return tx.stockCountLine.create({
+        data: {
+          sessionId,
+          productId: dto.productId,
+          // Snapshot on FIRST count only: the variance must mean "what changed
+          // since you started counting", not silently track stock moving under
+          // the counter mid-session.
+          expectedQty: product.currentStock,
+          ...data,
+        },
+        select: this.stockCountLineSelect(),
+      });
+    });
+  }
+
+  async removeStockCountLine(sessionId: string, productId: string) {
+    await this.loadEditableSession(sessionId);
+    await this.prisma.forTenant().stockCountLine.deleteMany({ where: { sessionId, productId } });
+    return { removed: true };
+  }
+
+  async discardStockCountSession(id: string) {
+    await this.loadEditableSession(id);
+    return this.prisma.forTenant().stockCountSession.update({
+      where: { id },
+      data: { status: "DISCARDED", discardedAt: new Date() },
+    });
+  }
+
+  /**
+   * Commit a durable session. Uncounted products are NEVER touched — a count
+   * only asserts what it actually saw.
+   *
+   * Ordering is deliberate: a line's `unitCostOverride` is applied BEFORE its
+   * quantity adjustment, so the ADJUSTMENT movement's `avgCostAfter` and any
+   * lot opened for a positive delta are valued at the CORRECTED cost. Applying
+   * it after would stamp the stale cost onto both.
+   */
+  async commitStockCountSession(
+    id: string,
+    dto: CommitStockCountSessionDto,
+    user: { sub: string },
+  ) {
+    const session = await this.prisma.forTenant().stockCountSession.findUnique({
+      where: { id },
+      include: { lines: true },
+    });
+    if (!session) throw new NotFoundException("Stock count session not found");
+    if (session.status === "DISCARDED") {
+      throw new BadRequestException("This count was discarded");
+    }
+    if (session.status === "COMMITTED") {
+      // Idempotent: a client whose response was lost must not double-apply.
+      return {
+        sessionId: id,
+        reference: session.movementReference,
+        applied: 0,
+        skipped: session.lines.length,
+        movementIds: [],
+        alreadyCommitted: true,
+      };
+    }
+    if (session.lines.length === 0) {
+      throw new BadRequestException("Nothing counted yet");
+    }
+
+    const productIds = Array.from(new Set(session.lines.map((l) => l.productId)));
+    const products = await this.prisma
+      .forTenant()
+      .product.findMany({ where: { id: { in: productIds } } });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+    const missingProductIds = productIds.filter((pid) => !productMap.has(pid));
+    if (missingProductIds.length > 0) {
+      throw new NotFoundException({
+        message: "One or more products could not be found",
+        missingProductIds,
+      });
+    }
+
+    const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
+    const reference = `STOCK_COUNT-${id}`;
+    const restockedProductIds: string[] = [];
+
+    const result = await this.prisma.tenantTransaction(
+      async (tx) => {
+        // Same guard as the legacy path: if movements already carry this
+        // reference, the commit landed and only the response was lost.
+        const already = await tx.stockMovement.findMany({
+          where: { reference },
+          select: { id: true },
+        });
+        if (already.length > 0) {
+          return {
+            sessionId: id,
+            reference,
+            applied: already.length,
+            skipped: 0,
+            movementIds: already.map((m) => m.id),
+            costMovementIds: [] as string[],
+            alreadyCommitted: true,
+          };
+        }
+
+        // 1) Cost corrections first — see the ordering note above.
+        const costMovementIds: string[] = [];
+        const correctedCosts = new Map<string, Prisma.Decimal>();
+        for (const line of session.lines) {
+          if (line.unitCostOverride == null) continue;
+          const unitCost = costDecimal(Number(line.unitCostOverride));
+          const movement = await this.setCostBasisInTx(
+            tx,
+            productMap.get(line.productId)!,
+            {
+              unitCost: Number(line.unitCostOverride),
+              notes: `Stock count ${reference}`,
+            } as SetCostBasisDto,
+            user.sub,
+          );
+          costMovementIds.push(movement.id);
+          correctedCosts.set(line.productId, unitCost);
+        }
+
+        // 2) Then the quantity adjustments, through the SHARED routine so the
+        //    durable path can never drift from the legacy one.
+        const { movementIds, skipped } = await this.applyStockCountItemsInTx(tx, {
+          items: session.lines.map((l) => ({
+            productId: l.productId,
+            quantity: Number(l.countedQty),
+            mode: l.mode as "REPLACE" | "ADD",
+          })),
+          productMap,
+          reference,
+          effectiveDate,
+          notes: dto.notes,
+          performedById: user.sub,
+          restockedProductIds,
+          correctedCosts,
+        });
+
+        await tx.stockCountSession.update({
+          where: { id },
+          data: {
+            status: "COMMITTED",
+            committedAt: new Date(),
+            committedById: user.sub,
+            movementReference: reference,
+            ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+          },
+        });
+
+        return {
+          sessionId: id,
+          reference,
+          applied: movementIds.length,
+          skipped,
+          movementIds,
+          costMovementIds,
+        };
+      },
+      // A warehouse-wide count is hundreds of lines, each doing a movement
+      // create + product update (+ a lot on a positive delta). Prisma's 5s
+      // default would abort a real audit part-way; the whole commit must be
+      // all-or-nothing.
+      { timeout: 120_000 },
+    );
+
+    this.fireStockAlerts(restockedProductIds);
+    return result;
   }
 
   // ─── Cost recompute (repair) ────────────────────────────────────────────────

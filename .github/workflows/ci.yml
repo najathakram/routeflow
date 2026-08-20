@@ -155,6 +155,15 @@ jobs:
           rm -f package-lock.json
           npm install --force
 
+      # Replay the migration history against a FRESH Postgres before anything
+      # else. `db push` below applies the schema directly and so has never
+      # exercised the migration files at all — which is exactly how a broken
+      # migration reaches production, where the only way to apply schema is
+      # `prisma migrate deploy`. This step fails the PR instead.
+      - name: Verify migrations apply to a fresh database
+        working-directory: apps/api
+        run: npx prisma migrate deploy
+
       # Generate Prisma client and push schema to the test database
       - name: Setup database
         working-directory: apps/api

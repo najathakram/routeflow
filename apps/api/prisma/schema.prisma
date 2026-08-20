@@ -404,6 +404,8 @@ model Tenant {
   changeRequests         ChangeRequest[]
   replenishmentSnoozes   ReplenishmentSnooze[]
   stockAlerts            StockAlert[]
+  stockCountSessions     StockCountSession[]
+  stockCountLines        StockCountLine[]
 
   @@index([slug])
   @@index([status])
@@ -653,16 +655,19 @@ model User {
   deletedAt           DateTime?
   tenantId            String?
 
-  tenant              Tenant?              @relation(fields: [tenantId], references: [id])
-  customer            Customer?
-  driver              Driver?
-  deviceTokens        DeviceToken[]
-  refreshTokens       RefreshToken[]
-  stockMovements      StockMovement[]
-  expenses            Expense[]
-  messages            Message[]
-  preferences         UserPreference[]
-  passwordResetTokens PasswordResetToken[]
+  tenant               Tenant?              @relation(fields: [tenantId], references: [id])
+  customer             Customer?
+  driver               Driver?
+  deviceTokens         DeviceToken[]
+  refreshTokens        RefreshToken[]
+  stockMovements       StockMovement[]
+  stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
+  stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
+  stockCountLines      StockCountLine[]
+  expenses             Expense[]
+  messages             Message[]
+  preferences          UserPreference[]
+  passwordResetTokens  PasswordResetToken[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, username])
@@ -929,6 +934,7 @@ model Product {
   templateItems         OrderTemplateItem[]
   stockMovements        StockMovement[]
   stockLots             StockLot[]
+  stockCountLines       StockCountLine[]
   invoiceItems          InvoiceItem[]
   estimateItems         EstimateItem[]
   purchaseOrderItems    PurchaseOrderItem[]
@@ -3610,4 +3616,101 @@ model IdempotencyKey {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([createdAt])
+}
+
+/// PR-C: a durable stock-count (audit) session. Before this, a count lived only
+/// in the client's localStorage, so it could not be paused and resumed from
+/// another device, carried no attribution, and left no history. The session is
+/// the unit of work; committing it writes ADJUSTMENT movements referencing
+/// `movementReference` (the same `STOCK_COUNT-<id>` grouping the pre-existing
+/// commit endpoint already used, so its idempotency guard still applies).
+///
+/// Single-counter now, multi-ready later: every LINE carries `countedById`, so
+/// simultaneous multi-person counting can be turned on without a migration. The
+/// OPEN-session guard is a WARNING, not a lock — two people counting different
+/// aisles must never be blocked by each other.
+model StockCountSession {
+  id                String           @id @default(uuid())
+  tenantId          String?
+  name              String?
+  status            StockCountStatus @default(OPEN)
+  startedById       String
+  startedAt         DateTime         @default(now())
+  committedAt       DateTime?
+  committedById     String?
+  discardedAt       DateTime?
+  notes             String?
+  /// "STOCK_COUNT-<id>", set once committed — the movements' `reference`.
+  movementReference String?
+  /// Set when this session was opened as an amendment of an earlier committed
+  /// one. Corrections never rewrite history: amending opens a NEW pre-filled
+  /// session whose commit writes fresh adjustments referencing both.
+  amendsSessionId   String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  tenant        Tenant?             @relation(fields: [tenantId], references: [id])
+  startedBy     User                @relation("StockCountStarted", fields: [startedById], references: [id])
+  committedBy   User?               @relation("StockCountCommitted", fields: [committedById], references: [id])
+  amendsSession StockCountSession?  @relation("StockCountAmends", fields: [amendsSessionId], references: [id])
+  amendedBy     StockCountSession[] @relation("StockCountAmends")
+  lines         StockCountLine[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, startedAt])
+}
+
+/// One counted product within a session. `@@unique([sessionId, productId])` makes
+/// the autosave an idempotent upsert — a retried scan can never double-count.
+///
+/// ⚠️ Rows MUST be written directly (`stockCountLine.create/upsert`), never as a
+/// nested create under the session: nested writes bypass the tenant extension's
+/// `tenantId` injection and would land with `tenantId = null`, which `forTenant()`
+/// then filters out (the invoiced-sales lesson).
+model StockCountLine {
+  id               String             @id @default(uuid())
+  tenantId         String?
+  sessionId        String
+  productId        String
+  /// REPLACE = "on-hand IS this"; ADD = "add this to on-hand". Mirrors the
+  /// pre-existing commit DTO so the durable session cannot regress the
+  /// quick-adjust flow that already shipped.
+  mode             StockCountLineMode @default(REPLACE)
+  /// The number the counter entered, in base units.
+  countedQty       Decimal            @db.Decimal(10, 3)
+  /// The denomination they entered it in, purely for faithful re-display.
+  boxes            Int?
+  pieces           Int?
+  /// On-hand snapshotted when this line was FIRST counted — the "expected" the
+  /// review screen compares against. Snapshotting (rather than reading live
+  /// stock at commit) is what makes the variance mean "what changed since you
+  /// started counting" instead of silently moving under the counter.
+  expectedQty      Decimal            @db.Decimal(10, 3)
+  /// Optional per-line cost correction, 4dp (COST_DP). Set ⇒ commit ALSO writes
+  /// the audited COST_BASIS path for this product, not just the quantity.
+  unitCostOverride Decimal?           @db.Decimal(10, 4)
+  countedById      String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  session   StockCountSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product   Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  countedBy User              @relation(fields: [countedById], references: [id])
+  tenant    Tenant?           @relation(fields: [tenantId], references: [id])
+
+  @@unique([sessionId, productId])
+  @@index([tenantId])
+  @@index([productId])
+}
+
+enum StockCountStatus {
+  OPEN
+  REVIEW
+  COMMITTED
+  DISCARDED
+}
+
+enum StockCountLineMode {
+  REPLACE
+  ADD
 }

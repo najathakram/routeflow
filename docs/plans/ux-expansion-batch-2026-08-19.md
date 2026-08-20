@@ -1,6 +1,6 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** IN PROGRESS — **PR-A SHIPPED + LIVE (#367)**, **PR-B BUILT** (PR-A = all five items, live 2026-08-20; PR-B = orders-by-product filter + per-buyer sales history, api+web+mobile). PR-C (stock-count mode, migration #1) is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
+**Status:** IN PROGRESS — **PR-A + PR-B SHIPPED + LIVE (#367, #369)**, **PR-C BUILT (migration #1)** (PR-A = all five items, live 2026-08-20; PR-B = orders-by-product filter + per-buyer sales history, api+web+mobile). PR-C (stock-count mode, migration #1) is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
 (file:line), locked decisions, edge cases and error handling are all inline. Read
 `CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
 backup-first prod flow, and the test-tenant policy is absolute.
@@ -152,7 +152,7 @@ zero-sales state links to "Create order with this product".
 
 ---
 
-## PR-C — Stock-count (audit) mode
+## PR-C — Stock-count (audit) mode — ✅ BUILT 2026-08-20, branch `feat/pr-c-stock-count-sessions` (migration #1)
 
 **Model (migration #1):**
 

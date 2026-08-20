@@ -3,6 +3,7 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Plus,
   Eye,
@@ -2190,6 +2191,15 @@ export default function InventoryPage() {
     setTitle("Inventory");
   }, [setTitle]);
 
+  // Deep-linkable to the Stock Count tab — `?tab=count` (and `?amend=<id>`,
+  // which implies it) land on "count" instead of the default "stock". Read
+  // once on mount; StockCountTab strips `amend` from the URL itself once it's
+  // consumed the deep link, so this never needs to react to later changes.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = React.useState(() =>
+    searchParams.get("tab") === "count" || searchParams.get("amend") ? "count" : "stock",
+  );
+
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   const { data: productsData } = useProducts({ isActive: true, limit: 0 });
@@ -2417,7 +2427,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      <Tabs.Root defaultValue="stock">
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
         <Tabs.List className="flex gap-1 border-b border-surface-border">
           {tabs.map((tab) => (
             <Tabs.Trigger
