@@ -4283,9 +4283,19 @@ export class InvoicesService {
         .forTenant()
         .invoiceItem.findMany({ where: { invoiceId: inv.id } });
       const subtotal = roundMoney(updatedItems.reduce((s, li) => s + Number(li.subtotal), 0));
-      const taxAmount = roundMoney(
+      const regularTax = roundMoney(
         updatedItems.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
       );
+      // Category (regulated/excise) tax is persisted per line and is NOT part of
+      // taxRate. Every other recompute in this file folds it in; omitting it here
+      // silently under-bills excise and propagates the shortfall to the linked
+      // order via recomputeOrderFromInvoices below. No exemption re-derivation is
+      // needed: categoryTaxAmount is already zeroed at creation for exempt
+      // customers, and a price adjustment never changes exemption.
+      const categoryTaxTotal = roundMoney(
+        updatedItems.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0),
+      );
+      const taxAmount = roundMoney(regularTax + categoryTaxTotal);
       const total = roundMoney(
         subtotal - Number(inv.discount ?? 0) + Number(inv.shippingFee ?? 0) + taxAmount,
       );

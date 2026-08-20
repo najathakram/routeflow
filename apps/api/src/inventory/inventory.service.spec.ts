@@ -151,6 +151,67 @@ describe("InventoryService", () => {
     });
   });
 
+  // ─── receivePurchaseOrder — B11: STANDARD cost guard ───────────────────────
+
+  const purchaseOrder = (overrides: Record<string, unknown> = {}) => ({
+    id: "po-1",
+    poNumber: "PO-1001",
+    supplierId: "sup-1",
+    status: "SENT",
+    items: [
+      {
+        id: "poi-1",
+        productId: "prod-1",
+        qtyOrdered: D(10),
+        qtyReceived: D(0),
+        unitCost: D(3.5),
+      },
+    ],
+    ...overrides,
+  });
+
+  describe("receivePurchaseOrder", () => {
+    it("B11: a STANDARD product keeps its cost — averageCost untouched on receive", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(purchaseOrder());
+      prisma.product.findUnique.mockResolvedValue(
+        product({ costingMethod: "STANDARD", currentStock: D(10), averageCost: D(2) }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", receivedQty: 5 }] },
+        "user-1",
+      );
+
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost).toBeUndefined();
+      expect(productArgs.currentStock.toString()).toBe("15");
+      // Movement snapshot carries the UNCHANGED average forward, not the
+      // would-be weighted average.
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.avgCostAfter.toString()).toBe("2");
+    });
+
+    it("B11: an AVCO product still updates its weighted average on receive", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(purchaseOrder());
+      prisma.product.findUnique.mockResolvedValue(
+        product({ costingMethod: "AVCO", currentStock: D(10), averageCost: D(2) }),
+      );
+
+      await service.receivePurchaseOrder(
+        "po-1",
+        { items: [{ itemId: "poi-1", receivedQty: 5 }] },
+        "user-1",
+      );
+
+      // (10×2 + 5×3.5) / 15 = 2.5
+      const productArgs = prisma.product.update.mock.calls[0][0].data;
+      expect(productArgs.averageCost.toString()).toBe("2.5");
+      const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(movementArgs.avgCostAfter.toString()).toBe("2.5");
+    });
+  });
+
   // ─── recordSale ─────────────────────────────────────────────────────────────
 
   describe("recordSale", () => {

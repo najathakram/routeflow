@@ -705,6 +705,11 @@ export class InventoryService {
           ? nextAverageCost(prod.currentStock, prod.averageCost, qtyReceived, itemUnitCost)
           : itemUnitCost;
         const stockAfter = (prod?.currentStock ?? new Prisma.Decimal(0)).add(qtyReceived);
+        // STANDARD products are valued from their operator-set cost, so a receipt
+        // must not move averageCost. Mirrors recordPurchase and the vendor-bill
+        // receive path, which already guard this (the bill path was fixed for this
+        // exact bug class; PO receive was missed).
+        const updatesAverage = prod ? prod.costingMethod !== CostingMethod.STANDARD : true;
 
         await tx.stockMovement.create({
           data: {
@@ -712,7 +717,7 @@ export class InventoryService {
             type: "PURCHASE",
             quantity: qtyReceived,
             unitCost: itemUnitCost,
-            avgCostAfter: newAvgCost,
+            avgCostAfter: updatesAverage ? newAvgCost : (prod?.averageCost ?? null),
             stockAfter,
             supplierId: po.supplierId,
             reference: po.poNumber,
@@ -735,7 +740,10 @@ export class InventoryService {
         if (prod) {
           await tx.product.update({
             where: { id: item.productId },
-            data: { currentStock: stockAfter, averageCost: newAvgCost },
+            data: {
+              currentStock: stockAfter,
+              ...(updatesAverage ? { averageCost: newAvgCost } : {}),
+            },
           });
         }
       }

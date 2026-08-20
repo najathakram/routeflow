@@ -167,6 +167,20 @@ export class RecurringInvoicesService {
   // ─── Core generation logic ────────────────────────────────────────────────
 
   private async generateInvoiceFromTemplate(ri: any) {
+    // Claim the cycle BEFORE creating anything. Previously the advance was the
+    // last statement, so a crash after create — or runNow racing the cron —
+    // minted a duplicate invoice for the same cycle. Claiming first turns that
+    // failure mode into "one missed cycle", recoverable via runNow.
+    const nextRunAt = this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, ri.nextRunAt);
+    const claimed = await this.prisma.forTenant().recurringInvoice.updateMany({
+      where: { id: ri.id, nextRunAt: ri.nextRunAt },
+      data: { nextRunAt, lastRunAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      this.logger.warn(`Recurring invoice ${ri.id}: cycle already claimed, skipping`);
+      return null;
+    }
+
     const invoice = await this.invoicesService.create({
       customerId: ri.customerId,
       discount: Number(ri.discount),
@@ -203,13 +217,6 @@ export class RecurringInvoicesService {
     await this.prisma.forTenant().invoice.update({
       where: { id: invoice.id },
       data: { recurringInvoiceId: ri.id },
-    });
-
-    // Advance nextRunAt
-    const nextRunAt = this.calcNextRunAt(ri.frequency, ri.dayOfWeek, ri.dayOfMonth, ri.nextRunAt);
-    await this.prisma.forTenant().recurringInvoice.update({
-      where: { id: ri.id },
-      data: { lastRunAt: new Date(), nextRunAt },
     });
 
     return invoice;

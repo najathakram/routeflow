@@ -815,7 +815,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 function InventoryPurchasesTab() {
   const router = useRouter();
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = useUrlSearch();
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
   const [needsMappingOnly, setNeedsMappingOnly] = React.useState(false);
@@ -880,7 +880,7 @@ function InventoryPurchasesTab() {
 
   const { data, isLoading, isError } = useVendorBills({
     status: statusFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     needsMapping: needsMappingOnly || undefined,

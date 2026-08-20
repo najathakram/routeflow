@@ -73,6 +73,13 @@ export default function RecurringInvoicesPage() {
   const handleRunNow = (ri: RecurringInvoice) => {
     runNow.mutate(ri.id, {
       onSuccess: (inv) => {
+        // The server claims the cycle atomically, so a losing racer (a second
+        // tap, or the cron) gets an empty body back — never announce/navigate
+        // to an invoice that this call did not create.
+        if (!(inv as any)?.id) {
+          toast({ title: "This cycle was already generated", variant: "info" });
+          return;
+        }
         toast({
           title: "Invoice generated",
           description: `${(inv as any).invoiceNumber} created.`,

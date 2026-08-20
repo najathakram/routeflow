@@ -98,6 +98,8 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
     service = mod.get(RecurringInvoicesService);
     prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
     prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    // CAS claim (updateMany) must succeed for generation to proceed at all — see B9.
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it("auto-send EMAILS the invoice (sendEmail), not the mark-as-sent-only path", async () => {
@@ -117,7 +119,82 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
     await expect(
       (service as any).generateInvoiceFromTemplate(template(true)),
     ).resolves.toBeDefined();
-    // The invoice is left generated (DRAFT) and the template's nextRunAt still advances.
-    expect(prisma.recurringInvoice.update).toHaveBeenCalled();
+    // The invoice is left generated (DRAFT) and the cycle was still claimed (nextRunAt advanced).
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalled();
+  });
+});
+
+// B9 — the cycle must be claimed (CAS on nextRunAt) BEFORE the invoice is created, not
+// after. Previously the advance was the last statement, so runNow racing the cron (or a
+// crash after create) could mint a duplicate invoice for the same cycle.
+describe("RecurringInvoicesService (cycle claim, B9)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = () => ({
+    id: "ri-1",
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend: false,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: invoices },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+  });
+
+  it("returns null and creates no invoice when the CAS claim matches nothing (already claimed by a racing caller)", async () => {
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    expect(result).toBeNull();
+    expect(invoices.create).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
+
+  it("claims the cycle via updateMany BEFORE creating the invoice, and advances nextRunAt exactly once on the happy path", async () => {
+    const callOrder: string[] = [];
+    prisma.recurringInvoice.updateMany.mockImplementation((args: any) => {
+      callOrder.push("claim");
+      expect(args.where).toEqual({ id: "ri-1", nextRunAt: new Date("2026-07-01") });
+      expect(args.data.nextRunAt).toBeInstanceOf(Date);
+      return Promise.resolve({ count: 1 });
+    });
+    invoices.create.mockImplementation(() => {
+      callOrder.push("create");
+      return Promise.resolve({ id: "inv-1" });
+    });
+
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    expect(result).toEqual({ id: "inv-1" });
+    expect(callOrder).toEqual(["claim", "create"]);
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(1);
+    // No trailing advance — the CAS claim above is the only nextRunAt write.
+    expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
   });
 });

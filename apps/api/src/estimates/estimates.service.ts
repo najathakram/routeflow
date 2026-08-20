@@ -188,8 +188,17 @@ export class EstimatesService {
   async send(id: string) {
     return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "SENT" } });
   }
+  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the
+  // convert path below will mint a second invoice for the same estimate.
   async accept(id: string) {
-    return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "ACCEPTED" } });
+    const { count } = await this.prisma.forTenant().estimate.updateMany({
+      where: { id, status: { not: "CONVERTED" } },
+      data: { status: "ACCEPTED" },
+    });
+    if (count === 0) {
+      throw new BadRequestException("Converted estimates cannot be re-accepted");
+    }
+    return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
     return this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "DECLINED" } });
@@ -203,50 +212,58 @@ export class EstimatesService {
   }
 
   async convertToInvoice(id: string) {
-    const est = await this.prisma
-      .forTenant()
-      .estimate.findUnique({ where: { id }, include: { items: true } });
-    if (!est) throw new NotFoundException("Estimate not found");
-    if (est.status !== "ACCEPTED")
-      throw new BadRequestException("Only ACCEPTED estimates can be converted");
+    return this.prisma.tenantTransaction(async (tx) => {
+      // Claim before creating anything: two concurrent converts both passed the
+      // old read-then-check and both minted an invoice. Claiming inside the tx
+      // means a later failure rolls the claim back too.
+      const claimed = await tx.estimate.updateMany({
+        where: { id, status: "ACCEPTED" },
+        data: { status: "CONVERTED" },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException("Only ACCEPTED estimates can be converted");
+      }
 
-    const year = new Date().getFullYear();
-    const prefix = `INV-${year}-`;
-    const last = await this.prisma.forTenant().invoice.findFirst({
-      where: { invoiceNumber: { startsWith: prefix } },
-      orderBy: { invoiceNumber: "desc" },
-    });
-    const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
-    const invoiceNumber = `${prefix}${String(seq).padStart(4, "0")}`;
+      const est = await tx.estimate.findUnique({ where: { id }, include: { items: true } });
+      if (!est) throw new NotFoundException("Estimate not found");
 
-    const inv = await this.prisma.forTenant().invoice.create({
-      data: {
-        invoiceNumber,
-        customerId: est.customerId,
-        status: "DRAFT",
-        subtotal: est.subtotal,
-        taxAmount: est.taxAmount,
-        discount: est.discount,
-        shippingFee: 0,
-        total: est.total,
-        notes: est.notes,
-        terms: est.terms,
-        items: {
-          create: est.items.map((i) => ({
-            description: i.description,
-            productId: i.productId,
-            qty: i.qty,
-            unitPrice: i.unitPrice,
-            discount: 0,
-            taxRate: 0,
-            subtotal: i.subtotal,
-            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-          })),
+      const year = new Date().getFullYear();
+      const prefix = `INV-${year}-`;
+      const last = await tx.invoice.findFirst({
+        where: { invoiceNumber: { startsWith: prefix } },
+        orderBy: { invoiceNumber: "desc" },
+      });
+      const seq = last ? parseInt(last.invoiceNumber.split("-")[2], 10) + 1 : 1;
+      const invoiceNumber = `${prefix}${String(seq).padStart(4, "0")}`;
+
+      const inv = await tx.invoice.create({
+        data: {
+          invoiceNumber,
+          customerId: est.customerId,
+          status: "DRAFT",
+          subtotal: est.subtotal,
+          taxAmount: est.taxAmount,
+          discount: est.discount,
+          shippingFee: 0,
+          total: est.total,
+          notes: est.notes,
+          terms: est.terms,
+          items: {
+            create: est.items.map((i) => ({
+              description: i.description,
+              productId: i.productId,
+              qty: i.qty,
+              unitPrice: i.unitPrice,
+              discount: 0,
+              taxRate: 0,
+              subtotal: i.subtotal,
+              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+            })),
+          },
         },
-      },
-      include: { customer: { select: { id: true, businessName: true } }, items: true },
+        include: { customer: { select: { id: true, businessName: true } }, items: true },
+      });
+      return inv;
     });
-    await this.prisma.forTenant().estimate.update({ where: { id }, data: { status: "CONVERTED" } });
-    return inv;
   }
 }

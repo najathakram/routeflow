@@ -192,6 +192,7 @@ describe("RF-076/RF-157 — Customer-document MIME allowlist", () => {
 
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
+import { PrismaService } from "../prisma/prisma.service";
 
 describe("RF-078 — GET /uploads/* response headers", () => {
   let app: INestApplication;
@@ -220,7 +221,12 @@ describe("RF-078 — GET /uploads/* response headers", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
-      providers: [{ provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        { provide: ConfigService, useValue: mockConfig },
+        // These suites serve flat keys, so the controller's B12 owner lookups
+        // never fire — but the constructor dependency must still resolve.
+        { provide: PrismaService, useValue: {} },
+      ],
     })
       // Bypass auth (signed URL OR JWT) for this unit test — we're testing
       // response headers, not the auth path itself.
@@ -280,7 +286,12 @@ describe("RF-078 — PDF is inline, non-allowlisted MIME still forces attachment
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
-      providers: [{ provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        { provide: ConfigService, useValue: mockConfig },
+        // These suites serve flat keys, so the controller's B12 owner lookups
+        // never fire — but the constructor dependency must still resolve.
+        { provide: PrismaService, useValue: {} },
+      ],
     })
       .overrideGuard(UploadsAccessGuard)
       .useValue({ canActivate: () => true })

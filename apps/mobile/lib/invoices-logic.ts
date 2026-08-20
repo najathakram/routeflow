@@ -9,6 +9,17 @@ export function canWriteOff(status: string): boolean {
 }
 
 /**
+ * B4: whether "Record payment" can be offered. The server only rejects VOID,
+ * so DRAFT (and WRITTEN_OFF) used to pass a bare `!isPaid && !isVoid` gate
+ * here — the POST succeeds, but `recomputeStatus` treats DRAFT as terminal,
+ * so a fully-paid invoice stays DRAFT and drops out of AR/aging. Mirrors
+ * web's allow-list exactly (invoices/[id]/page.tsx canRecordPayment gate).
+ */
+export function canRecordPayment(status: string): boolean {
+  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+}
+
+/**
  * Whether a recorded payment can be edited/voided: not an Advance/Credit-Note
  * source draw (the server rejects hand-editing those), and not on a terminal
  * payment or invoice state.

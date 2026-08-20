@@ -15,6 +15,7 @@ import type { Request, Response } from "express";
 import * as fs from "fs";
 import * as mime from "mime-types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PrismaService } from "../prisma/prisma.service";
 import { UploadsAccessGuard } from "./uploads-access.guard";
 
 /**
@@ -40,15 +41,67 @@ import { UploadsAccessGuard } from "./uploads-access.guard";
 @Controller("uploads")
 @UseGuards(UploadsAccessGuard)
 export class UploadsController {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private get uploadDir(): string {
     const configured = this.config.get<string>("uploadDir");
     return configured || path.join(os.tmpdir(), "routeflow-uploads");
   }
 
+  // Eight of the eleven storage prefixes embed only the OWNING ROW's id, not a
+  // tenantId, so the regex below cannot gate them — resolve the owner's tenant
+  // and compare. Without this, any authenticated caller in any tenant who knows
+  // a key streams the file (a former employee, a low-priv account, or any IDOR
+  // that leaks an id). SUPER_ADMIN stays exempt, as does a signed URL, which is
+  // itself a per-key capability. Uses the unscoped PrismaService (this endpoint
+  // sits outside the tenant-scoped request path) with select-only queries.
+  private readonly OWNER_LOOKUPS: Record<
+    string,
+    (id: string) => Promise<{ tenantId: string | null } | null>
+  > = {
+    products: (id) => this.prisma.product.findUnique({ where: { id }, select: { tenantId: true } }),
+    customers: (id) =>
+      this.prisma.customer.findUnique({ where: { id }, select: { tenantId: true } }),
+    // Null-tenantId Expense rows are real in prod (nested-create trap), so a
+    // bare comparison would 403 the file for its LEGITIMATE owner. Resolve
+    // through the parent vendor bill first. Expense has no Prisma relation to
+    // VendorBill (`vendorBillId` is a bare scalar), hence the second lookup
+    // rather than a nested select. Still fails closed when neither resolves.
+    expenses: async (id) => {
+      const row = await this.prisma.expense.findUnique({
+        where: { id },
+        select: { tenantId: true, vendorBillId: true },
+      });
+      if (!row) return null;
+      if (row.tenantId || !row.vendorBillId) return { tenantId: row.tenantId ?? null };
+      const bill = await this.prisma.vendorBill.findUnique({
+        where: { id: row.vendorBillId },
+        select: { tenantId: true },
+      });
+      return { tenantId: bill?.tenantId ?? null };
+    },
+    "invoice-scans": (id) =>
+      this.prisma.invoiceScan.findUnique({ where: { id }, select: { tenantId: true } }),
+    "invoice-pdfs": (id) =>
+      this.prisma.invoice.findUnique({ where: { id }, select: { tenantId: true } }),
+    "statement-pdfs": (id) =>
+      this.prisma.customer.findUnique({ where: { id }, select: { tenantId: true } }),
+    // Same null-tenantId trap as expenses above — resolve through the parent
+    // invoice (a payment always has one) before denying.
+    payments: async (id) => {
+      const row = await this.prisma.invoicePayment.findFirst({
+        where: { OR: [{ id }, { paymentGroupId: id }] },
+        select: { tenantId: true, invoice: { select: { tenantId: true } } },
+      });
+      return row ? { tenantId: row.tenantId ?? row.invoice?.tenantId ?? null } : null;
+    },
+  };
+
   @Get("*path")
-  serveFile(
+  async serveFile(
     @Param() params: Record<string, string | string[]>,
     @Req() req: Request & { user?: JwtPayload },
     @Res() res: Response,
@@ -72,6 +125,19 @@ export class UploadsController {
       throw new NotFoundException("Missing file key");
     }
 
+    // Reject dot-segments BEFORE any auth decision. Both tenant gates below key
+    // off the RAW key, but the file is read from `path.join(dir, key)`, which
+    // normalizes `..` — so `products/<my-own-id>/../../tenants/<victim>/doc.pdf`
+    // passes the owner lookup on the attacker's OWN product, then resolves to a
+    // path that is still inside the upload root (so the traversal check below
+    // also passes) and streams another tenant's file. An unknown first segment
+    // (`x/../products/<id>/img.jpg`) skips both gates the same way. Express does
+    // not normalize dot segments and DOES percent-decode wildcard params, so
+    // `%2e%2e` arrives here as `..`. Backslash is a path separator on Windows.
+    if (key.split(/[/\\]/).some((segment) => segment === "." || segment === "..")) {
+      throw new NotFoundException();
+    }
+
     // Tenant scoping for the JWT-auth path. UploadsAccessGuard sets
     // `req.signedUrlAuthorized = true` when the caller authenticated via
     // the HMAC-signed query string — in that case the signature is itself
@@ -89,6 +155,24 @@ export class UploadsController {
       const tenantMatch = key.match(/^(?:tenants|regulated-filings|tobacco-reports)\/([^/]+)\//);
       if (tenantMatch && caller?.role !== "SUPER_ADMIN") {
         if (!caller?.tenantId || tenantMatch[1] !== caller.tenantId) {
+          throw new ForbiddenException("Cross-tenant file access denied");
+        }
+      }
+
+      // The remaining prefixes (products/, customers/, payments/, expenses/,
+      // invoice-scans/, invoice-pdfs/, statement-pdfs/) embed only the OWNING
+      // ROW's id, not a tenantId, so the regex above never matches them and
+      // they fell through unguarded. Resolve the owner's tenantId instead.
+      // Strip a trailing file extension for the flat `invoice-pdfs/<id>.pdf`
+      // case; every other prefix's id segment has no extension to strip.
+      const [prefix, idSegmentRaw] = key.split("/");
+      const idSegment = idSegmentRaw ? idSegmentRaw.replace(/\.[^./]+$/, "") : idSegmentRaw;
+      const ownerLookup = this.OWNER_LOOKUPS[prefix];
+      if (ownerLookup && caller?.role !== "SUPER_ADMIN") {
+        const owner = idSegment ? await ownerLookup(idSegment) : null;
+        // Fail closed: a missing owner row (bad id, deleted row) must deny,
+        // never fall through to allow.
+        if (!owner || !caller?.tenantId || owner.tenantId !== caller.tenantId) {
           throw new ForbiddenException("Cross-tenant file access denied");
         }
       }

@@ -1321,7 +1321,13 @@ export class OrdersService implements OnApplicationBootstrap {
       // Resolve tier: per-product override > customer default tier
       const tierForProduct = cpMap.get(item.productId) ?? defaultTier;
       const listPrice = Number(product.pricePerUnit); // tier 1 = list price
-      const overridePrice = item.unitPrice;
+      // B13: non-staff never set prices. POST /orders is reachable by DRIVER and
+      // CUSTOMER as well as staff, and this DISCOUNTED-branch price had no role
+      // gate — a hand-crafted driver request could bill any below-list price.
+      // Mirrors the isStaffCaller posture already enforced in updateOrderItems;
+      // this function already carries an identical `isStaffRole` flag (used by
+      // the upsell/MANUAL branch below), so reuse it instead of a duplicate.
+      const overridePrice = isStaffRole && item.unitPrice != null ? item.unitPrice : null;
 
       let unitPrice: number;
       let priceType: PriceType;

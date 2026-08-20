@@ -4071,4 +4071,65 @@ describe("InvoicesService", () => {
       );
     });
   });
+
+  // ─── B7: applyPriceAdjustment() must fold categoryTaxAmount (excise/regulated
+  // tax) into the recomputed taxAmount/total, same as every other recompute
+  // site in this file. Before the fix this silently dropped the excise amount
+  // and propagated the shortfall to any linked order. ───────────────────────
+
+  describe("B7 — applyPriceAdjustment() folds category (excise) tax", () => {
+    it("keeps categoryTaxAmount in the recomputed taxAmount/total on a SINGLE-scope adjustment", async () => {
+      const invoiceItem = {
+        id: "li-1",
+        invoiceId: "inv-adj-1",
+        productId: "prod-1",
+        unitPrice: 10,
+        discount: 0,
+        subtotal: 100,
+        qty: 10,
+        taxRate: 0.1,
+        // Regulated/excise tax snapshot on the line — NOT part of taxRate.
+        categoryTaxAmount: 5,
+      };
+      const invoice = {
+        id: "inv-adj-1",
+        customerId: "cust-1",
+        orderId: null,
+        status: InvoiceStatus.SENT,
+        discount: 0,
+        shippingFee: 0,
+        internalNotes: null,
+        items: [invoiceItem],
+      };
+
+      prisma.invoice.findUnique.mockResolvedValue(invoice);
+      prisma.invoiceItem.update.mockResolvedValue({});
+      // Post-update read inside applyToInvoice: the price change lands on
+      // subtotal; categoryTaxAmount is a fixed per-line snapshot untouched by
+      // the price adjustment.
+      prisma.invoiceItem.findMany.mockResolvedValue([
+        { ...invoiceItem, unitPrice: 12, subtotal: 120 },
+      ]);
+      prisma.invoice.update.mockResolvedValue({});
+
+      await service.applyPriceAdjustment("inv-adj-1", {
+        items: [{ itemId: "li-1", newUnitPrice: 12 }],
+        scope: "SINGLE",
+      });
+
+      // regularTax = 120 * 0.1 = 12; categoryTaxTotal = 5 (excise). Before the
+      // fix taxAmount was just regularTax (12) and total was 132 — silently
+      // dropping the $5 excise amount from the bill.
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "inv-adj-1" },
+          data: expect.objectContaining({
+            subtotal: 120,
+            taxAmount: 17,
+            total: 137,
+          }),
+        }),
+      );
+    });
+  });
 });
