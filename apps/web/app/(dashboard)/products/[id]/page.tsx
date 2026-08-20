@@ -54,6 +54,7 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
+import { SetCostModal } from "@/components/SetCostModal";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -388,6 +389,9 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
   const [lightboxIdx, setLightboxIdx] = React.useState(0);
+
+  // ── Set-cost modal state ──────────────────────────────────────────────────
+  const [showCostModal, setShowCostModal] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -937,6 +941,20 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           onClose={() => setLightboxOpen(false)}
         />
       )}
+      {/* Set-cost modal — writes an audited COST_BASIS movement, same component
+          as the Inventory Stock tab (table row + search suggestions). */}
+      {showCostModal && (
+        <SetCostModal
+          item={{
+            id: product.id,
+            name: product.name,
+            unit: product.unit,
+            currentStock,
+            averageCost: product.averageCost != null ? Number(product.averageCost) : null,
+          }}
+          onClose={() => setShowCostModal(false)}
+        />
+      )}
       <div className="space-y-5 p-6">
         {/* Back */}
         <Link
@@ -1290,10 +1308,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             </div>
 
             <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="border-b border-surface-border px-4 py-3">
+              <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Stock &amp; Cost
                 </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCostModal(true)}
+                  className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                >
+                  Set cost
+                </button>
               </div>
               <div className="px-4">
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
@@ -1331,12 +1356,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       ${parseFloat(String(product.averageCost)).toFixed(2)}
                     </span>
                   ) : (
-                    <span
-                      title="No cost basis recorded — set one from Inventory → Set Costs, or receive a purchase"
-                      className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                    <button
+                      type="button"
+                      onClick={() => setShowCostModal(true)}
+                      title="No cost basis recorded — click to set one"
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
                     >
                       No cost set
-                    </span>
+                    </button>
                   )}
                 </div>
                 <Link

@@ -190,7 +190,16 @@ export default function MovementsPage() {
                       {formatDate(m.createdAt)}
                     </td>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-navy">{m.product?.name}</p>
+                      {m.product?.id ? (
+                        <Link
+                          href={`/products/${m.product.id}`}
+                          className="font-medium text-navy hover:text-brand-500 hover:underline"
+                        >
+                          {m.product.name}
+                        </Link>
+                      ) : (
+                        <p className="font-medium text-navy">{m.product?.name ?? "—"}</p>
+                      )}
                       {m.product?.sku && (
                         <p className="font-mono text-xs text-navy/70">{m.product.sku}</p>
                       )}
@@ -213,7 +222,18 @@ export default function MovementsPage() {
                     <td className="px-4 py-3 text-navy/70">
                       {m.unitCost != null ? `$${Number(m.unitCost).toFixed(4)}` : "—"}
                     </td>
-                    <td className="px-4 py-3 text-navy/70">{m.supplier?.name ?? "—"}</td>
+                    <td className="px-4 py-3 text-navy/70">
+                      {m.supplier?.id ? (
+                        <Link
+                          href={`/suppliers/${m.supplier.id}`}
+                          className="hover:text-brand-500 hover:underline"
+                        >
+                          {m.supplier.name}
+                        </Link>
+                      ) : (
+                        (m.supplier?.name ?? "—")
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-mono text-navy/70">{m.reference ?? "—"}</td>
                     <td className="px-4 py-3 text-navy/70">{m.notes ?? "—"}</td>
                     <td className="px-4 py-3 text-navy/70">{m.performedBy?.username ?? "—"}</td>

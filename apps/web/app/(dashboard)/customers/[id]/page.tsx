@@ -138,9 +138,13 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "orderNumber",
     header: "Order #",
     cell: ({ row }) => (
-      <span className="font-mono text-xs font-semibold text-navy">
+      <Link
+        href={`/orders/${row.original.id}`}
+        onClick={(e) => e.stopPropagation()}
+        className="font-mono text-xs font-semibold text-navy hover:text-brand-500 hover:underline"
+      >
         {row.original.orderNumber ?? row.original.id}
-      </span>
+      </Link>
     ),
   },
   {
@@ -2608,6 +2612,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               <Table
                 data={filteredOrders}
                 columns={orderColumns}
+                onRowClick={(row) => router.push(`/orders/${row.original.id}`)}
                 emptyState="No orders match the selected filter."
               />
             </div>

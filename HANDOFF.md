@@ -19,8 +19,8 @@ push will confirm the GitHub App still clones private fine (fallback: `railway u
 The owner will decide who implements what (self, Claude, or an external dev). Nothing
 here is blocked — this is the complete pick-up list.
 
-1. **UX EXPANSION BATCH (owner-approved 2026-08-19, planned, not started).** Full
-   self-contained plan at
+1. **UX EXPANSION BATCH (owner-approved 2026-08-19) — ▶ IN PROGRESS: PR-A is BUILT.**
+   Full self-contained plan at
    [`docs/plans/ux-expansion-batch-2026-08-19.md`](docs/plans/ux-expansion-batch-2026-08-19.md)
    (recon anchors, locked decisions, edge cases, 3 migrations). Owner-locked sequencing:
    **PR-A** (mobile send never dead-ends + inventory search full toolset + cross-links)
@@ -29,6 +29,17 @@ here is blocked — this is the complete pick-up list.
    mechanism, two entry points) → **PR-E** FIFO payment allocation AP+AR, on-account
    credit, bulk mark-paid (migration) → **PR-F** AI supplier-statement reconciliation,
    one review screen (migration).
+   **PR-A status (2026-08-19 night session):** all five items built on
+   `fix/a4-driver-diff-a5-buyer-token` — A4 driver-diff routing + A5 buyer token key
+   (see §1.2/§1.3), **A1** mobile Send sheet gains always-visible Open PDF + "Mark as
+   sent" rows, **A2** inventory search scrolls-and-highlights the row with the full
+   action set (Adjust · Set cost · Movements · Open product) and `SetCostModal` is
+   extracted to a shared component now reachable from the product page, **A3** the three
+   cross-links (web movement→product/supplier, web customer order rows→order, mobile
+   "View orders" `customerId` scoping with a dismissible chip). **PR-B is the next
+   build**; its reader must query through `Invoice` with `REAL_INVOICE_STATUSES` +
+   `items: { some: { productId } }`, never `invoiceItem.findMany` (nested-created lines
+   can carry `tenantId = null`) — mirror `analytics.service.ts getProductDemand`.
 2. ~~NEW client-facing bug: buyer-portal login broken for a new user~~ — **ROOT CAUSE
    FOUND + FIXED (2026-08-19 night session, A5).** NOT the tenant cookie: the web buyer
    portal's password login/register write only the namespaced `rf:buyer:accessToken`

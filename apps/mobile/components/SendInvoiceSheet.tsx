@@ -32,6 +32,26 @@ interface SendInvoiceSheetProps {
   onSms: () => void;
   onEmail: () => void;
   onSharePdf: () => void;
+  /** Opens the PDF directly (window.open on web / Linking on native — see
+   * `share-pdf.ts`'s `openPdfInTab`), independent of whether the OS/browser
+   * share API is available or a share just failed. Always visible — this row
+   * (with Share PDF and Mark as Sent) is the guaranteed floor so the sheet
+   * never dead-ends, even when the share API is unavailable/fails and no
+   * phone or email is on file. */
+  onOpenPdf: () => void;
+  /** True while the "Open PDF" fetch is in flight. */
+  openPdfPending?: boolean;
+  /** Marks the invoice SENT without emailing or sharing it — the SAME
+   * mutation (`useSendInvoice`, called without an email) the invoice-detail
+   * dialog already uses for its "Mark as Sent" action. Always visible: the
+   * operator who delivers the PDF themselves (own phone, printed, etc.) needs
+   * a way to close the loop even when no automated channel applies. */
+  onMarkAsSent: () => void;
+  /** True while the mark-as-sent mutation is in flight. Email rides the same
+   * `useSendInvoice` instance, so the caller must discriminate on the in-flight
+   * variables (`email == null` ⇒ mark-as-sent) rather than passing a bare
+   * `isPending`, which would light up both rows at once. */
+  markingSent?: boolean;
 }
 
 /** Turns a phase into the row's label — shared by the WhatsApp (file-share
@@ -49,6 +69,11 @@ function pdfPhaseLabel(phase: PdfSharePhase | undefined, idleLabel: string): str
  * invoice-send-logic); Email is a real server send; Share PDF pushes the file
  * bytes through the OS share sheet. A bottom sheet so it can auto-open right after
  * an order is marked delivered without leaving the order screen.
+ *
+ * Phone/email rows hide when absent, but Share PDF · Open PDF · Mark as Sent
+ * always render — on a device/browser where the OS share API is unavailable or
+ * a share fails, Open PDF and Mark as Sent are the guaranteed path to
+ * completion (A1, 2026-08-19: the sheet must never dead-end).
  */
 export function SendInvoiceSheet({
   open,
@@ -65,6 +90,10 @@ export function SendInvoiceSheet({
   onSms,
   onEmail,
   onSharePdf,
+  onOpenPdf,
+  openPdfPending,
+  onMarkAsSent,
+  markingSent,
 }: SendInvoiceSheetProps) {
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
@@ -102,8 +131,22 @@ export function SendInvoiceSheet({
             onPress={onSharePdf}
             disabled={pdfPhase === "preparing"}
           />
+          <ChannelRow
+            icon="open-outline"
+            label={openPdfPending ? "Opening…" : "Open PDF"}
+            onPress={onOpenPdf}
+            disabled={openPdfPending}
+          />
+          <ChannelRow
+            icon="checkmark-circle-outline"
+            label={markingSent ? "Marking as sent…" : "Mark as sent — I'll deliver it myself."}
+            onPress={onMarkAsSent}
+            disabled={markingSent}
+          />
           {!phone && !email ? (
-            <Text style={styles.note}>No phone or email on file — share the PDF instead.</Text>
+            <Text style={styles.note}>
+              No phone or email on file — share or download the PDF, then mark it sent.
+            </Text>
           ) : null}
         </View>
         <Pressable style={styles.doneBtn} onPress={onClose}>

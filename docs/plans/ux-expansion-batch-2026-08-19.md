@@ -1,7 +1,6 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** PLANNED, not started — the owner directs next steps (who implements, and when)
-from their next session. This plan is self-contained for any implementer: recon anchors
+**Status:** IN PROGRESS — **PR-A is fully BUILT** (all five items, branch `fix/a4-driver-diff-a5-buyer-token`, 2026-08-19 night session); PR-B is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
 (file:line), locked decisions, edge cases and error handling are all inline. Read
 `CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
 backup-first prod flow, and the test-tenant policy is absolute.
@@ -29,9 +28,9 @@ silently guesses about money — AI and auto-allocation propose, the operator di
 
 ---
 
-## PR-A — Fixes, full-flexibility inventory, cross-links (ship first)
+## PR-A — Fixes, full-flexibility inventory, cross-links (ship first) — ✅ ALL FIVE ITEMS BUILT 2026-08-19, branch `fix/a4-driver-diff-a5-buyer-token`
 
-### A1. Mobile invoice send must never dead-end (owner-reported)
+### A1. ✅ BUILT (2026-08-19 night session) — Mobile invoice send must never dead-end
 
 Recon found **no hard contact-info block in the current tree** — `canSendInvoiceNow`
 (apps/mobile/lib/invoices-logic.ts:92-94) gates on status/mirror-lock only, and the Share-PDF
@@ -56,7 +55,7 @@ Build, regardless of exact repro:
   else (e.g. an API-side guard), fix that too. Sentinel emails (`*@placeholder.local`,
   `*@imported.local`) stay unmailable and unsurfaced — that guard is correct and untouched.
 
-### A2. Web inventory: search-and-open gets the full toolset (owner-reported)
+### A2. ✅ BUILT (2026-08-19 night session) — Web inventory: search-and-open gets the full toolset
 
 Root cause (recon): the inventory search box's Enter/click handlers hard-code
 `AdjustStockModal` (apps/web/app/(dashboard)/inventory/page.tsx:2499-2506, 2557-2563), while
@@ -74,7 +73,7 @@ the table row already offers Set cost / Adjust / Movements (:638-663). The searc
   editable field would bypass the audit trail. The modal, not the discipline, becomes
   reachable from everywhere.
 
-### A3. Cross-links (owner-reported, both surfaces)
+### A3. ✅ BUILT (2026-08-19 night session) — Cross-links (both surfaces)
 
 | Link                                                                | State                                                                                                                                       | Fix                                                                                       |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -83,7 +82,7 @@ the table row already offers Set cost / Adjust / Movements (:638-663). The searc
 | Mobile customer "View orders"                                       | BROKEN scoping — pushes `customerId` param but orders index drops it ((tabs)/orders/index.tsx:69-81; hook accepts it, lib/api/admin.ts:226) | Read the param, forward to `useAdminOrders`, show a dismissible "Customer: X" filter chip |
 | Mobile movement → product, order→customer (both), product→movements | EXIST (#360)                                                                                                                                | —                                                                                         |
 
-### A4. ✅ SHIPPED STANDALONE (2026-08-19 night session) — driver edits wipe orders
+### A4. ✅ BUILT + committed (2026-08-19 night session), ships with PR-A — driver edits wipe orders
 
 `apps/mobile/app/(driver)/route/stop/[stopId]/edit-items.tsx` mounts the shared editor, which
 sends an incremental diff (`{id, action}` entries, `replaceAll:false`) — but the server routes
@@ -94,7 +93,7 @@ the diff branch regardless of role (keeping the driver re-pricing + no-price-con
 or reject diff-shaped payloads on the replace path with a 400 instead of destroying lines.
 Spec-pin both. This ships in PR-A because it is live data loss.
 
-### A5. ✅ SHIPPED STANDALONE (2026-08-19 night session) — buyer-portal login: root cause was the legacy `"buyerAccessToken"` localStorage key (see HANDOFF §1.2 for the full mechanism; `getBuyerAccessToken()` is now the only sanctioned read). Original investigation brief kept below for context.
+### A5. ✅ BUILT + committed (2026-08-19 night session), ships with PR-A — buyer-portal login: root cause was the legacy `"buyerAccessToken"` localStorage key (see HANDOFF §1.2 for the full mechanism; `getBuyerAccessToken()` is now the only sanctioned read). Original investigation brief kept below for context.
 
 Two symptoms from one buyer account: (a) after logging in, the dashboard and its fields
 never load; (b) logging in from a different computer, the buyer cannot see their
