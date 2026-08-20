@@ -375,6 +375,7 @@ model Tenant {
   returns                Return[]
   returnItems            ReturnItem[]
   advancePayments        AdvancePayment[]
+  supplierCredits        SupplierCredit[]
   recurringInvoices      RecurringInvoice[]
   recurringInvoiceItems  RecurringInvoiceItem[]
   messages               Message[]
@@ -1657,12 +1658,13 @@ model Supplier {
   updatedAt        DateTime @updatedAt
   tenantId         String?
 
-  tenant         Tenant?         @relation(fields: [tenantId], references: [id])
-  stockMovements StockMovement[]
-  purchaseOrders PurchaseOrder[]
-  vendorBills    VendorBill[]
-  invoiceScans   InvoiceScan[]
-  expenses       Expense[]
+  tenant          Tenant?          @relation(fields: [tenantId], references: [id])
+  stockMovements  StockMovement[]
+  purchaseOrders  PurchaseOrder[]
+  vendorBills     VendorBill[]
+  invoiceScans    InvoiceScan[]
+  expenses        Expense[]
+  supplierCredits SupplierCredit[]
 
   @@index([isActive])
   @@index([tenantId])
@@ -2387,20 +2389,34 @@ model VendorBillItem {
 }
 
 model BillPayment {
-  id           String        @id @default(uuid())
-  vendorBillId String
-  amount       Decimal       @db.Decimal(10, 2)
-  method       PaymentMethod
-  reference    String?
-  notes        String?
-  paidAt       DateTime      @default(now())
-  createdAt    DateTime      @default(now())
-  tenantId     String?
+  id             String        @id @default(uuid())
+  vendorBillId   String
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  reference      String?
+  notes          String?
+  paidAt         DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  // Stamped once per supplier-level allocation event, so N BillPayment rows created
+  // from one lump-sum supplier payment (recordSupplierPayment) are recognisable as
+  // one group. Mirrors InvoicePayment.paymentGroupId on the AR side. Null on every
+  // pre-existing row and on payments made through the single-bill recordPayment route.
+  paymentGroupId String?
+  // Set ONLY when this row is a draw-down of on-account SupplierCredit
+  // (auto-applied when a bill is created). This link — not the free-text
+  // `reference`, which any caller can type — is what identifies a draw, so a
+  // statement can exclude it and a void/delete can hand the money back.
+  // Mirrors InvoicePayment.advancePaymentId on the AR side.
+  supplierCreditId String?
+  tenantId         String?
 
-  vendorBill VendorBill @relation(fields: [vendorBillId], references: [id])
-  tenant     Tenant?    @relation(fields: [tenantId], references: [id])
+  vendorBill     VendorBill      @relation(fields: [vendorBillId], references: [id])
+  tenant         Tenant?         @relation(fields: [tenantId], references: [id])
+  supplierCredit SupplierCredit? @relation(fields: [supplierCreditId], references: [id])
 
   @@index([vendorBillId])
+  @@index([paymentGroupId])
+  @@index([supplierCreditId])
   @@index([tenantId])
 }
 
@@ -2496,6 +2512,33 @@ model AdvancePayment {
   applications InvoicePayment[]
 
   @@index([customerId])
+  @@index([tenantId])
+}
+
+// ─── Supplier Credits ─────────────────────────────────────────────────────────
+
+/// On-account credit held for a supplier — the AP mirror of AdvancePayment.
+/// Created when a supplier payment exceeds everything currently owed; drawn
+/// down automatically against the next bill. No status machine: fully drawn
+/// is simply balance = 0.
+model SupplierCredit {
+  id         String   @id @default(uuid())
+  supplierId String
+  amount     Decimal  @db.Decimal(10, 2) // original, immutable
+  balance    Decimal  @db.Decimal(10, 2) // remaining drawable
+  method     PaymentMethod
+  reference  String?
+  notes      String?
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenantId   String?
+
+  supplier     Supplier      @relation(fields: [supplierId], references: [id])
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id])
+  applications BillPayment[]
+
+  @@index([supplierId])
   @@index([tenantId])
 }
 

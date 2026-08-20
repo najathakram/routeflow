@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Eye,
@@ -78,6 +79,11 @@ function isOverdue(bill: VendorBill) {
     bill.status !== "VOID" &&
     new Date(bill.dueDate) < new Date(new Date().toDateString())
   );
+}
+
+/** Remaining balance on a bill — arithmetic, never status (PARTIAL is overloaded). */
+function billBalance(bill: VendorBill) {
+  return Math.max(0, Number(bill.totalOwed ?? 0) - Number(bill.totalPaid ?? 0));
 }
 
 function dueThisWeek(bill: VendorBill) {
@@ -824,8 +830,29 @@ function InventoryPurchasesTab() {
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const [scanOpen, setScanOpen] = React.useState(false);
-  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  // Selected bills as id → remaining balance captured at selection time. A Map rather
+  // than a Set because the selection survives paging: the mark-paid preview has to cover
+  // every selected id, including ones whose row is no longer on the visible page.
+  const [selectedBills, setSelectedBills] = React.useState<Map<string, number>>(new Map());
+  const [markPaidMethod, setMarkPaidMethod] = React.useState("ACH");
+  const [markPaidDate, setMarkPaidDate] = React.useState(todayIso());
   const bulkDelete = useBulkDeleteVendorBills();
+  const qc = useQueryClient();
+  const bulkMarkPaid = useMutation<
+    {
+      paid: number;
+      totalAmount: number;
+      skipped: { id: string; billNumber?: string; reason: string }[];
+    },
+    Error,
+    { ids: string[]; method: string; paidAt?: string }
+  >({
+    mutationFn: (body) =>
+      apiClient.post("/bookkeeping/bills/bulk-mark-paid", body).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["vendor-bills"] });
+    },
+  });
   const { toast } = useToast();
   const LIMIT = 20;
 
@@ -846,35 +873,62 @@ function InventoryPurchasesTab() {
     );
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const toggleSelect = (bill: VendorBill) => {
+    setSelectedBills((prev) => {
+      const next = new Map(prev);
+      if (next.has(bill.id)) next.delete(bill.id);
+      else next.set(bill.id, billBalance(bill));
       return next;
     });
   };
   const toggleSelectAll = () => {
-    if (selectedIds.size === sortedBills.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(sortedBills.map((b: VendorBill) => b.id)));
+    const deselect = allOnPageSelected;
+    setSelectedBills((prev) => {
+      const next = new Map(prev);
+      for (const b of sortedBills as VendorBill[]) {
+        if (deselect) next.delete(b.id);
+        else next.set(b.id, billBalance(b));
+      }
+      return next;
+    });
   };
   const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedBills.size === 0) return;
     if (
       !confirm(
-        `Delete ${selectedIds.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`,
+        `Delete ${selectedBills.size} selected bill(s)? Only DRAFT and VOID bills can be deleted.`,
       )
     )
       return;
     try {
-      const result = await bulkDelete.mutateAsync(Array.from(selectedIds));
+      const result = await bulkDelete.mutateAsync(Array.from(selectedBills.keys()));
       toast({
         title: `${result.deleted} bill(s) deleted${result.skipped.length > 0 ? `, ${result.skipped.length} skipped (received/paid)` : ""}`,
         variant: result.deleted > 0 ? "success" : "error",
       });
-      setSelectedIds(new Set());
+      setSelectedBills(new Map());
     } catch {
       toast({ title: "Failed to delete bills", variant: "error" });
+    }
+  };
+
+  const handleBulkMarkPaid = async () => {
+    if (selectedBills.size === 0) return;
+    try {
+      const result = await bulkMarkPaid.mutateAsync({
+        ids: Array.from(selectedBills.keys()),
+        method: markPaidMethod,
+        paidAt: markPaidDate || undefined,
+      });
+      toast({
+        title: `${result.paid} bill(s) marked paid — ${fmt(result.totalAmount)}${
+          result.skipped.length > 0 ? `, ${result.skipped.length} skipped` : ""
+        }`,
+        variant: result.paid > 0 ? "success" : "error",
+      });
+      setSelectedBills(new Map());
+    } catch {
+      toast({ title: "Failed to mark bills paid", variant: "error" });
     }
   };
 
@@ -937,6 +991,28 @@ function InventoryPurchasesTab() {
     });
   }, [bills, sortCol, sortDir]);
 
+  const allOnPageSelected =
+    sortedBills.length > 0 && sortedBills.every((b: VendorBill) => selectedBills.has(b.id));
+
+  // Preview total for bulk mark-paid: computed from totalOwed − totalPaid per selected
+  // bill, never from status (VendorBillStatus.PARTIAL is overloaded — short-received
+  // and part-paid both write it). Iterates the SELECTION, not the visible page, so it
+  // still matches what the request pays after the operator has paged around; rows still
+  // on screen use their live balance, off-page ones the balance captured at selection.
+  const markPaidPreview = React.useMemo(() => {
+    const onPage = new Map(sortedBills.map((b: VendorBill) => [b.id, billBalance(b)] as const));
+    let count = 0;
+    let total = 0;
+    for (const [id, captured] of Array.from(selectedBills.entries())) {
+      const bal = onPage.get(id) ?? captured;
+      if (bal > 0.001) {
+        count++;
+        total += bal;
+      }
+    }
+    return { count, total };
+  }, [sortedBills, selectedBills]);
+
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
@@ -946,15 +1022,6 @@ function InventoryPurchasesTab() {
 
       {/* Actions row */}
       <div className="flex items-center justify-end gap-2">
-        {selectedIds.size > 0 && (
-          <Button
-            variant="danger"
-            onClick={() => void handleBulkDelete()}
-            disabled={bulkDelete.isPending}
-          >
-            <Trash2 className="mr-1 h-4 w-4" /> Delete {selectedIds.size} selected
-          </Button>
-        )}
         <Button variant="secondary" onClick={() => setScanOpen(true)}>
           <Sparkles className="mr-1 h-4 w-4" /> Scan Invoice
         </Button>
@@ -962,6 +1029,57 @@ function InventoryPurchasesTab() {
           New Purchase
         </Button>
       </div>
+
+      {/* Bulk action bar */}
+      {selectedBills.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-300 bg-brand-50 px-4 py-3">
+          <span className="text-sm font-medium text-navy">
+            {selectedBills.size} bill{selectedBills.size !== 1 ? "s" : ""} selected
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setSelectedBills(new Map())}
+              className="text-sm text-navy/70 hover:text-navy transition-colors"
+            >
+              Deselect all
+            </button>
+            <select
+              value={markPaidMethod}
+              onChange={(e) => setMarkPaidMethod(e.target.value)}
+              title="Payment method"
+              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="CASH">Cash</option>
+              <option value="CHECK">Check</option>
+              <option value="ACH">ACH</option>
+              <option value="OTHER">Other</option>
+            </select>
+            <input
+              type="date"
+              value={markPaidDate}
+              onChange={(e) => setMarkPaidDate(e.target.value)}
+              title="Payment date"
+              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              loading={bulkDelete.isPending}
+              onClick={() => void handleBulkDelete()}
+            >
+              Delete
+            </Button>
+            <Button
+              leftIcon={<CheckCircle2 className="h-4 w-4" />}
+              loading={bulkMarkPaid.isPending}
+              disabled={markPaidPreview.count === 0}
+              onClick={() => void handleBulkMarkPaid()}
+            >
+              Mark {markPaidPreview.count} paid — {fmt(markPaidPreview.total)}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* KPI row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1088,7 +1206,7 @@ function InventoryPurchasesTab() {
               <th className="w-10 px-4 py-3">
                 <input
                   type="checkbox"
-                  checked={sortedBills.length > 0 && selectedIds.size === sortedBills.length}
+                  checked={allOnPageSelected}
                   onChange={toggleSelectAll}
                   className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
                 />
@@ -1191,14 +1309,14 @@ function InventoryPurchasesTab() {
                     className={cn(
                       "cursor-pointer transition-colors hover:bg-surface-raised",
                       overdue && "border-l-4 border-l-red-400",
-                      selectedIds.has(bill.id) && "bg-brand-50",
+                      selectedBills.has(bill.id) && "bg-brand-50",
                     )}
                   >
                     <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={selectedIds.has(bill.id)}
-                        onChange={() => toggleSelect(bill.id)}
+                        checked={selectedBills.has(bill.id)}
+                        onChange={() => toggleSelect(bill)}
                         className="h-4 w-4 rounded border-surface-border text-brand-500 accent-brand-500"
                       />
                     </td>

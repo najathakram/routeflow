@@ -8,9 +8,10 @@ import {
   UnprocessableEntityException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { Prisma, MovementType } from "@prisma/client";
+import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
 import { roundMoney } from "../common/pricing";
 import Anthropic from "@anthropic-ai/sdk";
@@ -30,6 +31,7 @@ import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
+import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -233,53 +235,176 @@ export class VendorBillsService {
       await this.assertNoPostedLineMatch(dto, totalOwed, supplierId ?? null);
     }
 
-    const bill = await this.prisma.forTenant().vendorBill.create({
-      data: {
-        billNumber: await this.nextBillNumber(),
-        ...(supplierId ? { supplierId } : {}),
-        status: "DRAFT",
-        totalOwed,
-        ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
-        // Kept alongside totalOwed (which already includes the tax) so an edit
-        // recomputing totals from line items can no longer silently drop them.
-        taxAmount: this.moneyOrNull(dto.taxAmount),
-        subtotal: this.moneyOrNull(dto.subtotal),
-        billDate,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-        notes: dto.notes,
-        items:
-          dto.items && dto.items.length > 0
-            ? {
-                createMany: {
-                  data: dto.items.map((item: any) => ({
-                    productId: item.productId || null,
-                    description: item.description || item.name || "",
-                    qty: new Prisma.Decimal(item.qty || 1),
-                    unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
-                    // Read off the invoice and previously discarded here. `sku`
-                    // is what matches this line to a product on the next scan
-                    // from the same supplier.
-                    sku: item.sku || null,
-                    packSize: Number.isFinite(Number(item.packSize))
-                      ? Math.trunc(Number(item.packSize))
-                      : null,
-                    lineTotal: this.moneyOrNull(item.lineTotal),
-                  })),
-                },
-              }
-            : undefined,
+    const billNumber = await this.nextBillNumber();
+    const billInclude = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
       },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        items: {
-          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+    };
+
+    // Wrapped in a transaction (not the plain forTenant() write this used to
+    // be) so a fresh bill can auto-apply the supplier's available on-account
+    // credit in the same atomic step — see applySupplierCreditToBill.
+    const bill = await this.prisma.tenantTransaction(async (tx) => {
+      const created = await tx.vendorBill.create({
+        data: {
+          billNumber,
+          ...(supplierId ? { supplierId } : {}),
+          status: "DRAFT",
+          totalOwed,
+          ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
+          // Kept alongside totalOwed (which already includes the tax) so an edit
+          // recomputing totals from line items can no longer silently drop them.
+          taxAmount: this.moneyOrNull(dto.taxAmount),
+          subtotal: this.moneyOrNull(dto.subtotal),
+          billDate,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          notes: dto.notes,
+          items:
+            dto.items && dto.items.length > 0
+              ? {
+                  createMany: {
+                    data: dto.items.map((item: any) => ({
+                      productId: item.productId || null,
+                      description: item.description || item.name || "",
+                      qty: new Prisma.Decimal(item.qty || 1),
+                      unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                      // Read off the invoice and previously discarded here. `sku`
+                      // is what matches this line to a product on the next scan
+                      // from the same supplier.
+                      sku: item.sku || null,
+                      packSize: Number.isFinite(Number(item.packSize))
+                        ? Math.trunc(Number(item.packSize))
+                        : null,
+                      lineTotal: this.moneyOrNull(item.lineTotal),
+                    })),
+                  },
+                }
+              : undefined,
         },
-      },
+        include: billInclude,
+      });
+
+      if (!supplierId) return created;
+      return this.applySupplierCreditToBill(tx, created, billInclude);
     });
 
     await this.markScanPosted(dto.scanId, bill.id);
 
     return bill;
+  }
+
+  /**
+   * Auto-apply a supplier's available on-account credit (`SupplierCredit`,
+   * created by `recordSupplierPayment` when a payment overshoots what was
+   * owed) to a bill the moment it's created — and again when a DRAFT bill is
+   * edited, after `update()` has handed the previous draws back — oldest credit
+   * first, never drawing more than the bill still owes. Each draw is its own
+   * `BillPayment`
+   * carrying `supplierCreditId` (method CREDIT_NOTE, `reference` tagged
+   * `SUPPLIER_CREDIT-<id8>` for humans; the ID column is what code matches on)
+   * inside the SAME transaction the bill was created in, so the bill can never
+   * be observed with unapplied credit sitting next to it. A bill with no
+   * supplier, no owed amount, or a supplier with no credit is returned
+   * untouched.
+   *
+   * Only `totalPaid` moves — the bill STAYS DRAFT. Flipping a never-received
+   * bill to PAID/PARTIAL here would lock it out of its whole draft lifecycle:
+   * `update()` refuses a non-DRAFT bill, `revertToDraft()` refuses PAID (and
+   * refuses PARTIAL with no `receivedDate`), `delete()`/`bulkDelete()` refuse
+   * anything but DRAFT/VOID, and `findAll`'s needsMapping queue is scoped to
+   * DRAFT — so a mis-scanned bill for a supplier holding any credit would be
+   * uneditable, undeletable and invisible to product mapping. Paid-ness is
+   * arithmetic (`totalOwed − totalPaid`) everywhere that matters (landmine 1);
+   * status is the receipt lifecycle and stays that.
+   */
+  private async applySupplierCreditToBill(tx: any, bill: any, include: Record<string, unknown>) {
+    // Credit is held per supplier, and `supplierId` is optional on a bill —
+    // querying it as null would be a Prisma validation error, not an empty set.
+    if (!bill.supplierId) return bill;
+    // Arithmetic, never status (landmine 1) — and against what the bill STILL
+    // owes, not its gross total: on the edit path the row can already carry
+    // payments, and credit must never be drawn past the outstanding balance.
+    const alreadyPaid = Number(bill.totalPaid ?? 0);
+    const owedRemaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
+    if (!(owedRemaining > 0.001)) return bill;
+
+    const credits = await tx.supplierCredit.findMany({
+      where: { supplierId: bill.supplierId, balance: { gt: 0 } },
+      orderBy: { receivedAt: "asc" },
+    });
+    if (credits.length === 0) return bill;
+
+    let remaining = owedRemaining;
+    let applied = 0;
+    for (const credit of credits) {
+      if (remaining <= 0.001) break;
+      const creditBalance = Number(credit.balance);
+      const draw = roundMoney(Math.min(creditBalance, remaining));
+      if (draw <= 0.001) continue;
+
+      await tx.billPayment.create({
+        data: {
+          vendorBillId: bill.id,
+          amount: draw,
+          method: PaymentMethod.CREDIT_NOTE,
+          supplierCreditId: credit.id,
+          reference: `SUPPLIER_CREDIT-${credit.id.slice(0, 8)}`,
+          notes: `Paid ${draw.toFixed(2)} from account credit`,
+        },
+      });
+      await tx.supplierCredit.update({
+        where: { id: credit.id },
+        data: { balance: roundMoney(creditBalance - draw) },
+      });
+
+      remaining = roundMoney(remaining - draw);
+      applied = roundMoney(applied + draw);
+    }
+
+    if (applied <= 0.001) return bill;
+
+    // totalPaid only — status is deliberately untouched (see the note above).
+    return tx.vendorBill.update({
+      where: { id: bill.id },
+      data: { totalPaid: roundMoney(alreadyPaid + applied) },
+      include,
+    });
+  }
+
+  /**
+   * Hand back on-account credit a bill drew, when that bill is voided or
+   * deleted. A draw is a `BillPayment` carrying `supplierCreditId`; voiding or
+   * deleting the bill makes the draw meaningless, and without this the
+   * supplier's prepaid money would simply vanish — `getSupplierStatement`
+   * excludes VOID bills entirely, so neither the bill, the draw, nor the
+   * credit balance would show it any more.
+   *
+   * Idempotent by construction: each refunded draw row is deleted as it is
+   * refunded, so voiding a bill and later deleting it cannot refund twice. A
+   * credit is never pushed above the `amount` that created it. Returns the
+   * total handed back so the caller can correct the bill's `totalPaid`.
+   */
+  private async refundDrawnSupplierCredits(tx: any, vendorBillId: string): Promise<number> {
+    const draws = await tx.billPayment.findMany({
+      where: { vendorBillId, supplierCreditId: { not: null } },
+    });
+    if (!draws || draws.length === 0) return 0;
+
+    let refunded = 0;
+    for (const draw of draws) {
+      const credit = await tx.supplierCredit.findUnique({ where: { id: draw.supplierCreditId } });
+      if (!credit) continue;
+      const restored = roundMoney(
+        Math.min(Number(credit.amount), Number(credit.balance) + Number(draw.amount)),
+      );
+      await tx.supplierCredit.update({ where: { id: credit.id }, data: { balance: restored } });
+      refunded = roundMoney(refunded + Number(draw.amount));
+    }
+
+    await tx.billPayment.deleteMany({ where: { id: { in: draws.map((d: any) => d.id) } } });
+    return refunded;
   }
 
   /** Round every monetary write; absent stays absent rather than becoming 0. */
@@ -510,15 +635,34 @@ export class VendorBillsService {
       totalOwed = roundMoney(itemsTotal + tax);
     }
 
+    const billInclude = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+      },
+      payments: { orderBy: { createdAt: "desc" as const } },
+    };
+
     return this.prisma.tenantTransaction(async (tx) => {
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
         await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
       }
 
-      return tx.vendorBill.update({
+      // A DRAFT bill can already be carrying auto-applied supplier credit —
+      // applySupplierCreditToBill leaves the bill DRAFT precisely so it stays
+      // editable — and an edit moves both of the things that draw was sized and
+      // addressed by. Hand every draw back BEFORE the write, then re-apply
+      // against the edited bill. Without this, correcting the total downwards
+      // strands the difference on a bill that no longer owes it (the supplier
+      // statement's `outstanding` goes negative), and re-pointing `supplierId`
+      // pays the new supplier's bill out of the old supplier's account.
+      const refunded = await this.refundDrawnSupplierCredits(tx, id);
+
+      const updated = await tx.vendorBill.update({
         where: { id },
         data: {
+          ...this.totalPaidAfterRefund(bill, refunded),
           ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
           ...(dto.billDate !== undefined && {
             billDate: dto.billDate ? new Date(dto.billDate) : null,
@@ -552,14 +696,10 @@ export class VendorBillsService {
               }
             : {}),
         },
-        include: {
-          supplier: { select: { id: true, name: true } },
-          items: {
-            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
-          },
-          payments: { orderBy: { createdAt: "desc" } },
-        },
+        include: billInclude,
       });
+
+      return this.applySupplierCreditToBill(tx, updated, billInclude);
     });
   }
 
@@ -973,13 +1113,30 @@ export class VendorBillsService {
         // Reverse the lots this bill created
         await this.reverseBillLots(tx, bill.billNumber);
 
-        return tx.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+        const refunded = await this.refundDrawnSupplierCredits(tx, id);
+        return tx.vendorBill.update({
+          where: { id },
+          data: { status: "VOID" as any, ...this.totalPaidAfterRefund(bill, refunded) },
+        });
       });
     }
 
-    return this.prisma
-      .forTenant()
-      .vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+    // Transactional (it used to be a bare update) so the credit refund and the
+    // void land together — a void that took the credit back but failed to void
+    // would be worse than either alone.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const refunded = await this.refundDrawnSupplierCredits(tx, id);
+      return tx.vendorBill.update({
+        where: { id },
+        data: { status: "VOID" as any, ...this.totalPaidAfterRefund(bill, refunded) },
+      });
+    });
+  }
+
+  /** Keep the denormalised `totalPaid` in step with draws handed back to credit. */
+  private totalPaidAfterRefund(bill: { totalPaid: unknown }, refunded: number) {
+    if (refunded <= 0.001) return {};
+    return { totalPaid: Math.max(0, roundMoney(Number(bill.totalPaid ?? 0) - refunded)) };
   }
 
   async findAll(
@@ -1669,7 +1826,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     return { ...scan, fileUrl };
   }
 
-  async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
+  async recordPayment(
+    id: string,
+    dto: { amount: number; method: string; reference?: string; notes?: string },
+  ) {
     // F10-004: reject non-positive amounts. A negative/zero payment would reduce
     // totalPaid and could flip the bill's status, corrupting AP balances. The
     // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
@@ -1693,6 +1853,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           amount: dto.amount,
           method: dto.method as any,
           reference: dto.reference,
+          // Was silently discarded here — the DTO accepted it but this create()
+          // never read it back off dto, so every note an operator typed vanished.
+          notes: dto.notes ?? null,
         },
       });
       const newPaid = roundMoney(alreadyPaid + Number(dto.amount));
@@ -1711,6 +1874,250 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     });
   }
 
+  /**
+   * The AP mirror of `InvoicesService.recordStandalonePayment`: one lump-sum
+   * supplier payment allocated across N of that supplier's bills, all sharing
+   * one `paymentGroupId` so the group reads as a single event. Any amount left
+   * unallocated becomes a `SupplierCredit` rather than a rejection — the
+   * operator paid what they paid.
+   *
+   * Landmine 1: eligibility per bill is `totalOwed − totalPaid > 0.001`,
+   * ALWAYS arithmetic against the ledger (this bill's own `BillPayment` rows),
+   * never `VendorBillStatus` — PARTIAL is written both for a short receipt and
+   * for a part payment, so it cannot tell you what's actually owed.
+   *
+   * Everything happens in one transaction: an allocation to a bill belonging
+   * to a different supplier, or exceeding what a bill can still take, or the
+   * allocations summing past `totalAmount`, throws and rolls back the whole
+   * group — nothing is half-written.
+   */
+  async recordSupplierPayment(dto: RecordSupplierPaymentDto) {
+    // Resolve the supplier through the tenant-scoped client first, exactly as
+    // getSupplierStatement does. Without it an unknown id surfaces as a raw
+    // Prisma FK error (500) from the SupplierCredit write below, and another
+    // tenant's id would mint a credit row nobody can ever see or spend.
+    const supplier = await this.prisma.forTenant().supplier.findUnique({
+      where: { id: dto.supplierId },
+    });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+
+    const requestedTotal = roundMoney(dto.allocations.reduce((s, a) => s + Number(a.amount), 0));
+    if (requestedTotal > dto.totalAmount + 0.001) {
+      throw new BadRequestException(
+        `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
+      );
+    }
+
+    const paymentGroupId = randomUUID();
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      const payments: any[] = [];
+      const bills: { id: string; status: string; totalPaid: number }[] = [];
+      let allocatedTotal = 0;
+
+      for (const alloc of dto.allocations) {
+        const amount = roundMoney(Number(alloc.amount));
+        if (amount <= 0.001) continue;
+
+        const bill = await tx.vendorBill.findUnique({
+          where: { id: alloc.vendorBillId },
+          include: { payments: true },
+        });
+        if (!bill) throw new NotFoundException(`Bill ${alloc.vendorBillId} not found`);
+        // Highest-risk guard in this method: money must never land on another
+        // supplier's bill. Checked per allocation, not once for the group.
+        if (bill.supplierId !== dto.supplierId) {
+          throw new BadRequestException(
+            `Bill ${bill.billNumber} does not belong to the selected supplier.`,
+          );
+        }
+        // The ONE status comparison this method makes, and the only one it may:
+        // VOID is unambiguous. A voided bill keeps its totalOwed and gets no
+        // offsetting payment rows, so the arithmetic below still reports a
+        // balance — and the update further down would overwrite VOID with
+        // PAID/PARTIAL, resurrecting a cancelled bill (whose stock was already
+        // reversed) into AP with real cash on it. Reachable as a race: another
+        // operator voids the bill between the modal loading it and submitting.
+        // Mirrors bookkeeping.payBillFully and invoices' recordStandalonePayment.
+        if (bill.status === "VOID") {
+          throw new BadRequestException(`Bill ${bill.billNumber} is void and cannot be paid.`);
+        }
+
+        // The ledger, exactly as recordPayment does — never the denormalised
+        // totalPaid column, and never bill.status (landmine 1).
+        const alreadyPaid = roundMoney(
+          bill.payments.reduce((s: number, p: any) => s + Number(p.amount), 0),
+        );
+        const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
+        if (amount > remaining + 0.001) {
+          throw new BadRequestException(
+            `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
+          );
+        }
+
+        const payment = await tx.billPayment.create({
+          data: {
+            vendorBillId: bill.id,
+            amount,
+            method: dto.method,
+            paidAt,
+            reference: dto.reference ?? null,
+            notes: dto.notes ?? null,
+            paymentGroupId,
+          },
+        });
+        payments.push(payment);
+        allocatedTotal = roundMoney(allocatedTotal + amount);
+
+        const newPaid = roundMoney(alreadyPaid + amount);
+        // Same rule as recordPayment — arithmetic, never a status precondition.
+        const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
+        const updated = await tx.vendorBill.update({
+          where: { id: bill.id },
+          data: { totalPaid: newPaid, status: newStatus as any },
+        });
+        bills.push({
+          id: updated.id,
+          status: updated.status,
+          totalPaid: Number(updated.totalPaid),
+        });
+      }
+
+      // Overpayment is on-account credit, not a rejection: the operator paid
+      // what they paid. Mirrors recordStandalonePayment's excess -> AdvancePayment.
+      const excess = roundMoney(dto.totalAmount - allocatedTotal);
+      if (excess > 0.001) {
+        await tx.supplierCredit.create({
+          data: {
+            supplierId: dto.supplierId,
+            amount: excess,
+            balance: excess,
+            method: dto.method,
+            reference: dto.reference ?? null,
+            notes: dto.notes ?? null,
+            receivedAt: paidAt,
+          },
+        });
+      }
+
+      return { paymentGroupId, payments, excess: Math.max(0, excess), bills };
+    });
+  }
+
+  /**
+   * Pure read: a running-balance timeline for one supplier — bills (up) and
+   * real cash movements (down) merged and sorted by date. `outstanding` is
+   * `Σ(totalOwed − totalPaid)` over non-VOID bills — arithmetic, never status
+   * (landmine 1); VOID itself is unambiguous so it's the one status this file
+   * ever filters on.
+   *
+   * A `SupplierCredit`'s ORIGINAL amount is counted as a "down" movement the
+   * moment it is created (that cash genuinely left the operator's hand then).
+   * When it is later drawn against a bill (auto-apply), the resulting
+   * `BillPayment` carries `supplierCreditId` and is deliberately EXCLUDED from
+   * the timeline's payment rows — it is not new money, just the same dollars
+   * already counted being matched to a bill, and counting both would
+   * double-subtract it. The test is the FK, never the `reference` text: that
+   * field is operator-typed on both money paths, so matching a
+   * `"SUPPLIER_CREDIT-"` prefix would let a real cash payment disappear from
+   * the timeline while still counting toward `totalPaid`. The bill's own
+   * `totalPaid` still reflects the draw (via the normal per-bill payments
+   * relation), so `outstanding` stays correct either way.
+   */
+  async getSupplierStatement(supplierId: string) {
+    const supplier = await this.prisma.forTenant().supplier.findUnique({
+      where: { id: supplierId },
+    });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+
+    const [bills, credits] = await Promise.all([
+      this.prisma.forTenant().vendorBill.findMany({
+        where: { supplierId, status: { not: "VOID" as any } },
+        include: { payments: true },
+        orderBy: [{ billDate: "asc" }, { createdAt: "asc" }],
+      }),
+      this.prisma.forTenant().supplierCredit.findMany({
+        where: { supplierId },
+        orderBy: { receivedAt: "asc" },
+      }),
+    ]);
+
+    type Row = {
+      id: string;
+      date: Date;
+      type: "BILL" | "PAYMENT" | "CREDIT";
+      description: string;
+      amount: number; // signed: bills +, payments/credits -
+      billId?: string;
+      billNumber?: string;
+      paymentGroupId?: string | null;
+    };
+    const rows: Row[] = [];
+
+    let totalOwed = 0;
+    let totalPaid = 0;
+    for (const b of bills) {
+      const owed = Number(b.totalOwed);
+      const paid = roundMoney(b.payments.reduce((s: number, p: any) => s + Number(p.amount), 0));
+      totalOwed = roundMoney(totalOwed + owed);
+      totalPaid = roundMoney(totalPaid + paid);
+
+      rows.push({
+        id: b.id,
+        date: b.billDate ?? b.createdAt,
+        type: "BILL",
+        description: `Bill ${b.billNumber}`,
+        amount: owed,
+        billId: b.id,
+        billNumber: b.billNumber,
+      });
+
+      for (const payment of b.payments as any[]) {
+        if (payment.supplierCreditId) continue;
+        rows.push({
+          id: payment.id,
+          date: payment.paidAt,
+          type: "PAYMENT",
+          description: `Payment on ${b.billNumber}`,
+          amount: -Number(payment.amount),
+          billId: b.id,
+          billNumber: b.billNumber,
+          paymentGroupId: payment.paymentGroupId ?? null,
+        });
+      }
+    }
+
+    let creditBalance = 0;
+    for (const credit of credits) {
+      creditBalance = roundMoney(creditBalance + Number(credit.balance));
+      rows.push({
+        id: credit.id,
+        date: credit.receivedAt,
+        type: "CREDIT",
+        description: credit.notes || "Overpayment held as account credit",
+        amount: -Number(credit.amount),
+      });
+    }
+
+    rows.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    let running = 0;
+    const timeline = rows.map((row) => {
+      running = roundMoney(running + row.amount);
+      return { ...row, balance: running };
+    });
+
+    return {
+      supplierId,
+      timeline,
+      totalOwed,
+      totalPaid,
+      outstanding: roundMoney(totalOwed - totalPaid),
+      creditBalance,
+    };
+  }
+
   async delete(id: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
@@ -1719,11 +2126,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         "Cannot delete a bill that has been received or paid. Void it instead.",
       );
     }
-    await this.prisma.$transaction([
-      this.prisma.forTenant().billPayment.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.forTenant().vendorBill.delete({ where: { id } }),
-    ]);
+    await this.prisma.tenantTransaction(async (tx) => {
+      // A DRAFT bill can legitimately carry auto-applied credit draws — give
+      // that money back before its payment rows are destroyed with the bill.
+      await this.refundDrawnSupplierCredits(tx, id);
+      await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
+      await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      await tx.vendorBill.delete({ where: { id } });
+    });
     return { success: true };
   }
 
@@ -1738,15 +2148,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
     if (deletable.length > 0) {
       const deletableIds = deletable.map((b) => b.id);
-      await this.prisma.$transaction([
-        this.prisma
-          .forTenant()
-          .billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma
-          .forTenant()
-          .vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.forTenant().vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
-      ]);
+      await this.prisma.tenantTransaction(async (tx) => {
+        // Same reason as delete(): auto-applied credit goes back before the
+        // draw rows are destroyed. Already-VOID bills refunded nothing left.
+        for (const billId of deletableIds) {
+          await this.refundDrawnSupplierCredits(tx, billId);
+        }
+        await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
+      });
     }
     return {
       deleted: deletable.length,

@@ -81,6 +81,7 @@ export function createMockPrisma(): jest.Mocked<PrismaService> {
     paymentCounter: modelProxy(),
     creditNote: modelProxy(),
     advancePayment: modelProxy(),
+    supplierCredit: modelProxy(),
     estimate: modelProxy(),
     estimateItem: modelProxy(),
     vendorBill: modelProxy(),

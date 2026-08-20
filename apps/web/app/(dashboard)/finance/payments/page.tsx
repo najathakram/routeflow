@@ -16,6 +16,7 @@ import {
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
 import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
+import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -102,30 +103,37 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       );
   }, [customerId, invoicesData]);
 
-  // When customer changes, reset allocations and pre-fill greedily
+  // When customer changes, reset allocations and pre-fill greedily. The
+  // waterfall/clamp/remainder arithmetic lives in ONE place
+  // (`@/lib/api/supplier-payments`) shared with CustomerRecordPaymentModal and
+  // RecordSupplierPaymentModal — don't re-derive it here.
   React.useEffect(() => {
     if (!customerId || !customerInvoices.length) {
       setAllocations([]);
       return;
     }
-    let remaining = parseFloat(totalAmount) || 0;
-    const allocs: Allocation[] = customerInvoices.map((inv) => {
-      const due = inv.balanceDue ?? 0;
-      const apply = Math.min(remaining, due);
-      remaining -= apply;
-      return {
+    const { allocations: prefill } = waterfallAllocations(
+      parseFloat(totalAmount) || 0,
+      customerInvoices.map((inv) => ({ id: inv.id, amountDue: inv.balanceDue ?? 0 })),
+    );
+    const byId = new Map(prefill.map((a) => [a.id, a.amount]));
+    setAllocations(
+      customerInvoices.map((inv) => ({
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
-        amountDue: due,
-        amount: apply > 0 ? apply.toFixed(2) : "",
-      };
-    });
-    setAllocations(allocs);
+        amountDue: inv.balanceDue ?? 0,
+        amount: byId.has(inv.id) ? byId.get(inv.id)!.toFixed(2) : "",
+      })),
+    );
   }, [customerId, customerInvoices.length, totalAmount]);
 
-  const allocatedTotal = allocations.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
   const total = parseFloat(totalAmount) || 0;
-  const excess = Math.max(0, total - allocatedTotal);
+  const { allocated: allocatedTotal, excess } = allocationTotals(
+    total,
+    // `|| null` also swallows a NaN from a half-typed value, as the old
+    // `parseFloat(a.amount) || 0` did.
+    allocations.map((a) => ({ amount: parseFloat(a.amount) || null })),
+  );
 
   const updateAlloc = (idx: number, val: string) =>
     setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));

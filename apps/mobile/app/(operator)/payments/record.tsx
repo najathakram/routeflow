@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
@@ -55,8 +55,13 @@ const OPEN_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 export default function RecordStandalonePaymentScreen() {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState<string | null>(null);
-  const [customerName, setCustomerName] = useState<string | null>(null);
+  // Optionally pre-filled by the customer detail screen's "Record payment"
+  // link so the picker step is skipped for an operator who already knows whose
+  // payment this is. Opened from the payments hub there are no params and the
+  // picker shows exactly as before; "Change" clears back to it either way.
+  const params = useLocalSearchParams<{ customerId?: string; customerName?: string }>();
+  const [customerId, setCustomerId] = useState<string | null>(params.customerId || null);
+  const [customerName, setCustomerName] = useState<string | null>(params.customerName || null);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
