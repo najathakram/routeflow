@@ -56,6 +56,7 @@ import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
 import { SetCostModal } from "@/components/SetCostModal";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { CropModal } from "./CropModal";
@@ -918,9 +919,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   // Display-only per-unit hint for a case-packed product's price fields (Tier 1 row + tier
   // grid). NEVER enters a payload — perUnitPrice is a display derivation, not line math.
+  // Reads `activeUnitsPerBox` (the in-progress edit draft while editing, the saved value
+  // otherwise) — NOT `product.unitsPerBox` directly — so accepting a pack-size suggestion
+  // shows the resulting per-piece price immediately, live, before the operator ever saves.
   const perUnitHint = (v: number) => {
-    if (!(Number(product.unitsPerBox) > 1)) return null;
-    const pu = perUnitPrice(v, product.unitsPerBox);
+    if (!(activeUnitsPerBox > 1)) return null;
+    const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
       <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
     ) : null;
@@ -1828,6 +1832,48 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     />
                   )}
                 </div>
+
+                {/* Pack-size prompt — suggested from the name/unit while the
+                    pack-size field itself is unset. Never guesses: it only
+                    pre-fills for HIGH/MEDIUM confidence, states the conflict
+                    and leaves the input empty for AMBIGUOUS, and renders
+                    nothing at all for a piece-priced unit. */}
+                {isEditing &&
+                  (() => {
+                    const editParent = (editDraft.parentProductId as string)
+                      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                      : null;
+                    // A variant's own stored `name` is just the flavour (e.g.
+                    // "Strawberry") — a count that lives in the PARENT's name
+                    // (e.g. "Acme Widgets 24ct") would never reach the parser
+                    // from the bare name alone. Compose the same
+                    // parent + flavor string the name-field preview above
+                    // shows so a parent-borne count is still offered — the
+                    // AMBIGUOUS refusal below still fires untouched if the
+                    // two names disagree on the count.
+                    const trimmedVariantName = ((editDraft.variantName as string) ?? "").trim();
+                    const classifyName = editParent
+                      ? trimmedVariantName
+                        ? `${(editParent as any).name} - ${trimmedVariantName}`
+                        : (editParent as any).name
+                      : ((editDraft.name as string) ?? product.name);
+                    return (
+                      <PackSizePrompt
+                        className="mt-3"
+                        name={classifyName}
+                        unit={(editDraft.unit as string) ?? product.unit}
+                        unitSku={(editDraft.unitSku as string) ?? product.unitSku}
+                        unitPrice={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                        unitsPerBox={editDraft.unitsPerBox as string}
+                        // Existing product: warn that a pack size re-denominates
+                        // the stored on-hand and cost rather than converting them.
+                        currentStock={Number(product.currentStock ?? 0)}
+                        onAccept={(value) =>
+                          setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
+                        }
+                      />
+                    );
+                  })()}
 
                 {/* Tier Prices */}
                 <div className="mt-5 border-t border-surface-border pt-4">
