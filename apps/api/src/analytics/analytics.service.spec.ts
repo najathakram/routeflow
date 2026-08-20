@@ -470,6 +470,157 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     });
   });
 
+  // ─── PR-B: per-buyer sales history behind the product Sales tab ───────────
+  describe("getProductSales", () => {
+    const inv = (over: Record<string, any> = {}) => ({
+      id: "inv-1",
+      invoiceNumber: "INV-1",
+      orderId: "ord-1",
+      order: { orderNumber: "ORD-1042" },
+      issueDate: new Date("2026-06-05"),
+      customerId: "cust-1",
+      customer: { id: "cust-1", businessName: "Acme Grocers" },
+      items: [
+        {
+          qty: D(24),
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: D(30),
+          subtotal: D(60),
+          originalPrice: null,
+          priceType: "STANDARD",
+        },
+      ],
+      ...over,
+    });
+
+    it("reads THROUGH Invoice (never invoiceItem) and filters to real sales", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      await service.getProductSales("p1");
+
+      // Nested-created invoice lines can carry tenantId = null, so a direct
+      // invoiceItem query under forTenant() would silently drop most history.
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.items).toEqual({ some: { productId: "p1" } });
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // Only this product's lines come back, not every line on the invoice.
+      expect(args.select.items.where).toEqual({ productId: "p1" });
+    });
+
+    it("keeps the stored subtotal for a boxed line instead of qty × unitPrice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      const res = await service.getProductSales("p1");
+
+      // 2 boxes at a $30 BOX price = $60. Re-deriving 24 × 30 = $720 would
+      // over-charge by unitsPerBox — the money-discipline trap.
+      expect(res.lines[0]).toMatchObject({
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitPrice: 30,
+        lineTotal: 60,
+        customerName: "Acme Grocers",
+        invoiceNumber: "INV-1",
+        orderId: "ord-1",
+        orderNumber: "ORD-1042",
+      });
+      expect(res.summary.totalRevenue).toBe(60);
+    });
+
+    it("a directly-raised invoice reports no order, never a sliced uuid", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv({ orderId: null, order: null })]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.lines[0].orderId).toBeNull();
+      expect(res.lines[0].orderNumber).toBeNull();
+    });
+
+    it("flags a re-priced line and carries its struck-through original", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({
+          items: [
+            {
+              qty: D(3),
+              boxes: null,
+              pieces: null,
+              unitsPerBox: null,
+              unitPrice: D(8),
+              subtotal: D(24),
+              originalPrice: D(10),
+              priceType: "DISCOUNTED",
+            },
+          ],
+        }),
+      ]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.lines[0]).toMatchObject({ unitPrice: 8, originalPrice: 10, overridden: true });
+    });
+
+    it("averages by revenue per unit, counts distinct buyers, and spans invoices", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv(),
+        inv({
+          id: "inv-2",
+          invoiceNumber: "INV-2",
+          customerId: "cust-2",
+          customer: { id: "cust-2", businessName: "Bodega Two" },
+          items: [
+            {
+              qty: D(6),
+              boxes: null,
+              pieces: null,
+              unitsPerBox: null,
+              unitPrice: D(4),
+              subtotal: D(24),
+              originalPrice: null,
+              priceType: "STANDARD",
+            },
+          ],
+        }),
+      ]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.summary).toMatchObject({
+        count: 2,
+        buyers: 2,
+        totalQty: 30,
+        totalRevenue: 84,
+        minPrice: 4,
+        maxPrice: 30,
+        // Weighted: 84 / 30 units — NOT the (30+4)/2 = 17 mean of unit prices.
+        avgPrice: 2.8,
+      });
+    });
+
+    it("renders a deleted customer without crashing, and empties cleanly", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv({ customer: null })]);
+      const res = await service.getProductSales("p1");
+      expect(res.lines[0].customerName).toBe("—");
+
+      prisma.invoice.findMany.mockResolvedValue([]);
+      const empty = await service.getProductSales("p1");
+      expect(empty.lines).toEqual([]);
+      expect(empty.summary).toMatchObject({
+        count: 0,
+        buyers: 0,
+        totalQty: 0,
+        totalRevenue: 0,
+        minPrice: null,
+        maxPrice: null,
+        avgPrice: null,
+      });
+    });
+  });
+
   describe("getProductDemand", () => {
     const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
     /** The "YYYY-MM-DD" bucket key a date lands in, for locating points by value. */

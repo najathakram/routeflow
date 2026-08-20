@@ -1,6 +1,6 @@
 # UX Expansion Batch — 2026-08-19
 
-**Status:** IN PROGRESS — **PR-A is fully BUILT** (all five items, branch `fix/a4-driver-diff-a5-buyer-token`, 2026-08-19 night session); PR-B is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
+**Status:** IN PROGRESS — **PR-A SHIPPED + LIVE (#367)**, **PR-B BUILT** (PR-A = all five items, live 2026-08-20; PR-B = orders-by-product filter + per-buyer sales history, api+web+mobile). PR-C (stock-count mode, migration #1) is next in the locked sequence. This plan is self-contained for any implementer: recon anchors
 (file:line), locked decisions, edge cases and error handling are all inline. Read
 `CLAUDE.md` + `CLAUDE_SESSION_PREAMBLE.md` before starting; migrations follow the manual
 backup-first prod flow, and the test-tenant policy is absolute.
@@ -124,7 +124,7 @@ failure outranks everything else in this PR).
 
 ---
 
-## PR-B — Find orders by product, and see what we sold it for
+## PR-B — Find orders by product, and see what we sold it for — ✅ BUILT 2026-08-20, branch `feat/pr-b-order-search-by-product`
 
 **API:** `ListOrdersDto` gains `productId?` (orders.service.ts findAll adds
 `where.lineItems = { some: { productId } }` — `OrderItem.productId` is already indexed,

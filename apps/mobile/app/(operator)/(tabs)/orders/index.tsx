@@ -14,10 +14,13 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomer, useAdminOrders, type AdminOrder } from "../../../../lib/api/admin";
+import { useProduct } from "../../../../lib/api/products";
 import { DraftStrip } from "../../../../components/DraftStrip";
 import {
   customerFilterChipLabel,
+  productFilterChipLabel,
   resolveCustomerIdParam,
+  resolveProductIdParam,
 } from "../../../../lib/customer-order-filter";
 
 // Default filter is "All" so operators land on the full picture rather than
@@ -70,7 +73,11 @@ function formatCurrency(n: number | string | undefined): string {
 
 export default function OrdersListScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ status?: string; customerId?: string }>();
+  const params = useLocalSearchParams<{
+    status?: string;
+    customerId?: string;
+    productId?: string;
+  }>();
   const initialFilter: StatusFilter =
     STATUS_FILTERS.find((f) => f.id === params.status)?.id ?? "ALL";
 
@@ -83,19 +90,32 @@ export default function OrdersListScreen() {
   const [customerFilter, setCustomerFilter] = useState<string | null>(() =>
     resolveCustomerIdParam(params.customerId),
   );
+  // PR-B: same pattern for the product detail Sales card's "View orders" link
+  // (?productId=). Independent of the customer filter — both can be seeded and
+  // dismissed on their own; neither clearing the other.
+  const [productFilter, setProductFilter] = useState<string | null>(() =>
+    resolveProductIdParam(params.productId),
+  );
 
   const statusParam = filter === "ALL" ? undefined : filter;
   const { data, isLoading, isFetching, refetch } = useAdminOrders({
     status: statusParam,
     search: search.trim() || undefined,
     customerId: customerFilter ?? undefined,
+    productId: productFilter ?? undefined,
     limit: 50,
   });
   const { data: filteredCustomer } = useAdminCustomer(customerFilter ?? "");
+  const { data: filteredProduct } = useProduct(productFilter ?? "");
 
   const clearCustomerFilter = () => {
     setCustomerFilter(null);
     router.setParams({ customerId: undefined });
+  };
+
+  const clearProductFilter = () => {
+    setProductFilter(null);
+    router.setParams({ productId: undefined });
   };
 
   const orders = data?.data ?? [];
@@ -128,6 +148,18 @@ export default function OrdersListScreen() {
           <Ionicons name="person-outline" size={14} color={ios.brand} />
           <Text style={styles.activeFilterText} numberOfLines={1}>
             {customerFilterChipLabel(filteredCustomer?.businessName)}
+          </Text>
+          <Ionicons name="close" size={14} color={ios.brand} />
+        </Pressable>
+      ) : null}
+
+      {/* PR-B: independent of the customer chip above — both can show at once,
+          each dismissing only its own filter. */}
+      {productFilter ? (
+        <Pressable style={styles.activeFilterBanner} onPress={clearProductFilter}>
+          <Ionicons name="cube-outline" size={14} color={ios.brand} />
+          <Text style={styles.activeFilterText} numberOfLines={1}>
+            {productFilterChipLabel(filteredProduct?.name)}
           </Text>
           <Ionicons name="close" size={14} color={ios.brand} />
         </Pressable>

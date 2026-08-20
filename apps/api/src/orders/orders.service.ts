@@ -236,6 +236,7 @@ export class OrdersService implements OnApplicationBootstrap {
   async findAll(query: ListOrdersDto, user: JwtPayload) {
     const {
       customerId,
+      productId,
       search,
       status,
       urgent,
@@ -258,6 +259,12 @@ export class OrdersService implements OnApplicationBootstrap {
     } else if (search) {
       where.customer = { businessName: { contains: search, mode: "insensitive" } };
     }
+
+    // PR-B: "which orders had this item?" — an AND-ed relation filter, so it
+    // narrows whatever customer/status/date filters are already set instead of
+    // replacing them. Equality can never match NULL, so ad-hoc unlisted lines
+    // (productId = null) are excluded for free.
+    if (productId) where.lineItems = { some: { productId } };
 
     if (status) where.status = status;
     if (urgent !== undefined) where.urgent = urgent;

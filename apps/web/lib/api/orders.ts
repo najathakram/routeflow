@@ -162,6 +162,8 @@ interface PaginatedResponse<T> {
 export function useOrders(
   params?: {
     customerId?: string;
+    /** PR-B: only orders containing at least one line for this product. */
+    productId?: string;
     status?: string;
     urgent?: boolean;
     page?: number;

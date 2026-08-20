@@ -32,6 +32,56 @@ export interface ProductDemandBucket {
   revenue: number;
 }
 
+/** One invoiced sale of a product to one buyer — a row of the Sales tab. */
+export interface ProductSaleLine {
+  /** The sale's business date (parent invoice `issueDate`), ISO. */
+  date: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  /** Null when the invoice was raised directly rather than from an order. */
+  orderId: string | null;
+  /** The human order number for `orderId`. Null alongside a null orderId — the
+   *  UI must never fall back to slicing the uuid, which reads as noise. */
+  orderNumber: string | null;
+  customerId: string;
+  customerName: string;
+  /** Base units (pieces) — `Number(item.qty)`, the same basis demand uses. */
+  qty: number;
+  /** Sale-time box split, for rendering "N boxes + M pcs". Null when not boxed. */
+  boxes: number | null;
+  pieces: number | null;
+  unitsPerBox: number | null;
+  /** Net price actually charged per selling unit. */
+  unitPrice: number;
+  /** Authoritative line total — never re-derived from qty × unitPrice. */
+  lineTotal: number;
+  /** The struck-through list price when this line was re-priced, else null. */
+  originalPrice: number | null;
+  /** True when the line carries a non-STANDARD price (override/promo/tier). */
+  overridden: boolean;
+}
+
+export interface ProductSalesHistory {
+  productId: string;
+  lines: ProductSaleLine[];
+  summary: {
+    /** Number of invoiced lines. */
+    count: number;
+    /** Distinct buyers who bought it. */
+    buyers: number;
+    /** Σ base units. */
+    totalQty: number;
+    /** Σ line subtotals. */
+    totalRevenue: number;
+    /** Per-unit price extremes/average across the returned lines; null when empty. */
+    minPrice: number | null;
+    maxPrice: number | null;
+    /** Revenue-weighted, not a mean of unit prices — a 100-unit sale should
+     *  move the average more than a 1-unit sale. Null when no units sold. */
+    avgPrice: number | null;
+  };
+}
+
 export interface ProductDemandSeries {
   productId: string;
   range: DemandRange;
@@ -437,6 +487,102 @@ export class AnalyticsService {
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
       type: m.type,
     }));
+  }
+
+  /**
+   * PR-B: "who bought this, when, and at what price" — the per-buyer sales history
+   * behind the product Sales tab. One row per invoiced line, newest first.
+   *
+   * ⚠️ Same tenancy trap as `getProductDemand` below: queried THROUGH `Invoice`, never
+   * `invoiceItem.findMany`. Invoice lines are created as NESTED writes, which bypass the
+   * tenant extension's `data.tenantId` injection, so historical/imported lines can carry
+   * `tenantId = null` — and `forTenant()` injects `where.tenantId`, which would silently
+   * drop the large majority of the history this tab exists to show.
+   *
+   * Source is invoiced sales (`REAL_INVOICE_STATUSES` — DRAFT/VOID/WRITTEN_OFF are not
+   * sales), not orders: an order can be edited or cancelled after the fact, whereas the
+   * invoice is what the buyer was actually charged. `subtotal` is authoritative and is
+   * never re-derived from qty × unitPrice — that would over-charge boxed lines by
+   * `unitsPerBox` (see the money discipline in CLAUDE.md).
+   *
+   * Like price/cost history and demand, the tobacco-exclusion toggle deliberately does
+   * NOT apply: the operator reached this by opening that exact product.
+   */
+  async getProductSales(productId: string, limit = 200): Promise<ProductSalesHistory> {
+    const invoices = await this.prisma.forTenant().invoice.findMany({
+      where: {
+        status: REAL_INVOICE_STATUSES,
+        // Equality can never match NULL, so ad-hoc unlisted lines are excluded free.
+        items: { some: { productId } },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        orderId: true,
+        order: { select: { orderNumber: true } },
+        issueDate: true,
+        customerId: true,
+        customer: { select: { id: true, businessName: true } },
+        items: {
+          where: { productId },
+          select: {
+            qty: true,
+            boxes: true,
+            pieces: true,
+            unitsPerBox: true,
+            unitPrice: true,
+            subtotal: true,
+            originalPrice: true,
+            priceType: true,
+          },
+        },
+      },
+      orderBy: { issueDate: "desc" },
+      take: limit,
+    });
+
+    const lines: ProductSaleLine[] = [];
+    for (const inv of invoices) {
+      for (const item of inv.items ?? []) {
+        lines.push({
+          date: inv.issueDate.toISOString(),
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          orderId: inv.orderId ?? null,
+          orderNumber: inv.order?.orderNumber ?? null,
+          customerId: inv.customerId,
+          // A deleted/renamed customer still renders the name stored on the row.
+          customerName: inv.customer?.businessName ?? "—",
+          qty: roundQty(Number(item.qty)),
+          boxes: item.boxes ?? null,
+          pieces: item.pieces ?? null,
+          unitsPerBox: item.unitsPerBox ?? null,
+          unitPrice: roundMoney(Number(item.unitPrice)),
+          lineTotal: roundMoney(Number(item.subtotal)),
+          originalPrice: item.originalPrice != null ? roundMoney(Number(item.originalPrice)) : null,
+          overridden: item.priceType !== "STANDARD",
+        });
+      }
+    }
+
+    const totalQty = roundQty(lines.reduce((s, l) => s + l.qty, 0));
+    const totalRevenue = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
+    const prices = lines.map((l) => l.unitPrice);
+    return {
+      productId,
+      lines,
+      summary: {
+        count: lines.length,
+        buyers: new Set(lines.map((l) => l.customerId)).size,
+        totalQty,
+        totalRevenue,
+        minPrice: prices.length ? Math.min(...prices) : null,
+        maxPrice: prices.length ? Math.max(...prices) : null,
+        // Revenue-weighted: Σsubtotal / Σqty, so volume moves it more than a
+        // one-off. Guarded on totalQty — a fully-credited history can sum to 0.
+        avgPrice: totalQty > 0 ? roundMoney(totalRevenue / totalQty) : null,
+      },
+    };
   }
 
   /**

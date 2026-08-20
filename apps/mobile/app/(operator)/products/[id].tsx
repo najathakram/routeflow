@@ -24,11 +24,18 @@ import {
   useDeleteProductImage,
 } from "../../../lib/api/products";
 import { productImageFile } from "../../../lib/product-image";
-import { costPerSellingUnit } from "../../../lib/pricing";
+import { costPerSellingUnit, formatQtySplit } from "../../../lib/pricing";
 import { useInventoryMovements } from "../../../lib/api/inventory";
+import { useProductSales, type ProductSaleLine } from "../../../lib/api/product-sales";
+import { productSalesSummaryLine, productSaleRowTarget } from "../../../lib/product-sales-logic";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import { showToast } from "../../../lib/toast";
 import { confirm, chooseAction } from "../../../lib/confirm";
+
+function fmtCurrency(n: number | string | undefined | null): string {
+  const v = typeof n === "string" ? Number(n) : (n ?? 0);
+  return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
+}
 
 function toNumber(v: number | string | null | undefined): number {
   if (typeof v === "number") return v;
@@ -56,6 +63,7 @@ export default function ProductDetailScreen() {
     productId: isCreateAlias ? undefined : id,
     limit: 20,
   });
+  const { data: sales } = useProductSales(isCreateAlias ? null : id);
   const deleteMut = useDeleteProduct();
   const updateMut = useUpdateProduct();
   const uploadImagesMut = useUploadProductImages();
@@ -307,6 +315,68 @@ export default function ProductDetailScreen() {
             ) : null}
           </View>
 
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Sales</Text>
+              {/* PR-B: mirrors the customer detail "View orders" cross-link —
+                  same `?productId=` param the orders list chip reads. */}
+              <Pressable onPress={() => router.push(`/(operator)/orders?productId=${id}`)}>
+                <Text style={styles.linkText}>View orders</Text>
+              </Pressable>
+            </View>
+            {!sales ? (
+              <View style={styles.salesEmpty}>
+                <ActivityIndicator color={ios.brand} />
+              </View>
+            ) : sales.lines.length > 0 ? (
+              <>
+                <Text style={styles.salesSummary}>{productSalesSummaryLine(sales.summary)}</Text>
+                <View style={{ marginTop: 6 }}>
+                  {/* Only the most recent few render inline — the reader wants
+                      "what did we last sell it for", and a long-lived product
+                      returns up to 200 lines, which would bury the rest of this
+                      screen. The summary strip above still covers ALL of them.
+                      "View orders" (header + footer) is the full list. */}
+                  {sales.lines.slice(0, SALES_ROWS_INLINE).map((line, i) => (
+                    <SaleRow
+                      key={`${line.invoiceId}-${line.customerId}-${i}`}
+                      line={line}
+                      unitLabel={product.unit}
+                      bordered={i > 0}
+                      onPress={() => {
+                        const target = productSaleRowTarget(line);
+                        router.push(
+                          target.screen === "order"
+                            ? `/(operator)/orders/${target.id}`
+                            : `/(operator)/invoices/${target.id}`,
+                        );
+                      }}
+                    />
+                  ))}
+                </View>
+                {sales.lines.length > SALES_ROWS_INLINE ? (
+                  <Pressable
+                    style={styles.salesMoreBtn}
+                    onPress={() => router.push(`/(operator)/orders?productId=${id}`)}
+                  >
+                    <Text style={styles.linkText}>View all {sales.summary.count} sales</Text>
+                  </Pressable>
+                ) : null}
+              </>
+            ) : (
+              <View style={styles.salesEmpty}>
+                <Text style={styles.salesEmptyText}>No sales yet for this product.</Text>
+                <Pressable
+                  style={styles.salesEmptyBtn}
+                  onPress={() => router.push("/(operator)/new-order")}
+                >
+                  <Ionicons name="add" size={14} color="#fff" />
+                  <Text style={styles.salesEmptyBtnText}>New order</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+
           {movements?.data && movements.data.length > 0 ? (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
@@ -399,6 +469,61 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** One card row on the product detail "Sales" card. Card layout (not a wide
+ *  table) — this is a phone. Tapping opens the order when `orderId` is set,
+ *  else the invoice (`lib/product-sales-logic.ts` `productSaleRowTarget`). */
+function SaleRow({
+  line,
+  unitLabel,
+  bordered,
+  onPress,
+}: {
+  line: ProductSaleLine;
+  unitLabel?: string | null;
+  bordered?: boolean;
+  onPress: () => void;
+}) {
+  const date = new Date(line.date).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  // Never re-derive money — qty/unitPrice/lineTotal render exactly as the
+  // server sent them; only the boxes+pieces split goes through the shared
+  // formatter (mobile mirror of computeLineSubtotal's proration).
+  const qtyLabel = formatQtySplit({
+    qty: line.qty,
+    boxes: line.boxes,
+    pieces: line.pieces,
+    unitLabel,
+  });
+  return (
+    <Pressable style={[styles.saleRow, bordered ? styles.saleRowBordered : null]} onPress={onPress}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.saleCustomer} numberOfLines={1}>
+          {line.customerName}
+        </Text>
+        <Text style={styles.saleMeta} numberOfLines={1}>
+          {date} · {qtyLabel}
+        </Text>
+      </View>
+      <View style={{ alignItems: "flex-end" }}>
+        <View style={{ flexDirection: "row", gap: 6, alignItems: "baseline" }}>
+          {line.overridden && line.originalPrice != null ? (
+            <Text style={styles.saleOriginalPrice}>{fmtCurrency(line.originalPrice)}</Text>
+          ) : null}
+          <Text style={styles.salePrice}>{fmtCurrency(line.unitPrice)}</Text>
+        </View>
+        <Text style={styles.saleTotal}>{fmtCurrency(line.lineTotal)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Sales rows rendered inline on the product card before deferring to the
+ *  product-filtered orders list. The API returns up to 200. */
+const SALES_ROWS_INLINE = 8;
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center" },
@@ -406,6 +531,52 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label, marginBottom: 8 },
   linkText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.brand },
+  salesSummary: { fontSize: 12, fontFamily: "Inter_500Medium", color: ios.label2 },
+  salesMoreBtn: { paddingTop: 10, alignItems: "center" },
+  saleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingVertical: 10,
+  },
+  saleRowBordered: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: ios.separator,
+  },
+  saleCustomer: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
+  saleMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  saleOriginalPrice: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label3,
+    textDecorationLine: "line-through",
+  },
+  salePrice: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+  },
+  saleTotal: {
+    fontSize: 14,
+    fontFamily: "Inter_700Bold",
+    color: ios.label,
+    fontVariant: ["tabular-nums"],
+    marginTop: 2,
+  },
+  salesEmpty: { alignItems: "center", gap: 10, paddingVertical: 8 },
+  salesEmptyText: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },
+  salesEmptyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: ios.brand,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  salesEmptyBtnText: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
   photoEmpty: {
     flexDirection: "row",
     alignItems: "center",
