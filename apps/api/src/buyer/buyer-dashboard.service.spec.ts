@@ -34,7 +34,13 @@ describe("BuyerDashboardService — W7 gate", () => {
     for (const [args] of productCalls) {
       // the category-name lookup (select:category, no product display) is exempt
       if (args?.select?.category) continue;
-      expect(args.where.trackedCategoryId).toEqual({ notIn: ["cat-alc"] });
+      // NULL-SAFE gate shape: the bare `{ notIn }` this used to pin excludes
+      // NULL rows in Prisma, hiding every untracked product from the rails.
+      expect(args.where.trackedCategoryId).toBeUndefined();
+      expect(args.where.OR).toEqual([
+        { trackedCategoryId: null },
+        { trackedCategoryId: { notIn: ["cat-alc"] } },
+      ]);
     }
   });
 

@@ -180,9 +180,11 @@ export default function BuyerInvitePage() {
         <div className="rounded-xl bg-white p-6 shadow-card">
           <div className="mb-6 flex flex-col items-center gap-3 text-center">
             {invite?.logoKey ? (
+              /* Guarded /uploads needs auth an <img> can't send — use the
+                 public streaming endpoint (same fix as the portal SellerCard). */
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`${apiUrl}/uploads/${invite.logoKey}`}
+                src={`${apiUrl}/public/tenants/${encodeURIComponent(invite.slug)}/logo`}
                 alt={invite.name}
                 className="h-16 w-16 rounded-xl object-contain border border-surface-border"
               />

@@ -50,9 +50,12 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
       {/* Logo */}
       <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
         {seller.tenant.logoKey ? (
+          /* /uploads/<key> requires a JWT (RF-075) that an <img> tag can never
+             send — broken since 2026-05-01. The public logo endpoint streams the
+             same file inline with no auth, and exists for exactly this. */
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`${apiUrl}/uploads/${seller.tenant.logoKey}`}
+            src={`${apiUrl}/public/tenants/${encodeURIComponent(seller.tenant.slug)}/logo`}
             alt={seller.tenant.name}
             className="h-full w-full object-contain"
           />
@@ -104,6 +107,7 @@ function ConnectSellerModal({
 }) {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
+  const [resultMessage, setResultMessage] = React.useState<string | null>(null);
 
   const {
     register,
@@ -120,6 +124,7 @@ function ConnectSellerModal({
       reset();
       setApiError(null);
       setSubmitted(false);
+      setResultMessage(null);
     }
   }, [open, reset]);
 
@@ -131,7 +136,14 @@ function ConnectSellerModal({
       return;
     }
     try {
-      await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      const res = await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      // Show the server's ACTUAL outcome. The backend auto-approves an exact
+      // email match straight to an ACTIVE link (no seller review since
+      // 0a245e89), but this screen kept hardcoded "your seller will review"
+      // copy from the pre-auto-approve era — so a buyer who was connected
+      // instantly was told they were pending, and the owner heard "it sent a
+      // request without connecting" about a link that was already live.
+      setResultMessage(res.message ?? null);
       setSubmitted(true);
       onSuccess();
     } catch (err: unknown) {
@@ -179,10 +191,12 @@ function ConnectSellerModal({
                 <CheckCircle className="h-6 w-6 text-success" />
               </div>
               <div>
-                <p className="font-semibold text-navy">Request sent!</p>
+                <p className="font-semibold text-navy">
+                  {resultMessage?.startsWith("Connected") ? "Connected!" : "Request sent"}
+                </p>
                 <p className="mt-1 text-sm text-navy/70">
-                  Your seller will review and approve your connection. You&apos;ll see them in your
-                  seller list once approved.
+                  {resultMessage ??
+                    "Your seller will review and approve your connection. You'll see them in your seller list once approved."}
                 </p>
               </div>
               <Button onClick={onClose} variant="secondary" className="w-full mt-2">

@@ -32,7 +32,13 @@ export class BuyerDashboardService {
     // visibility service the catalog uses — so the dashboard can't drift and re-expose
     // a product the buyer would be blocked from buying at checkout.
     const { hiddenIds } = await this.visibility.computeGate(customerId, now);
-    const gateWhere = hiddenIds.size > 0 ? { trackedCategoryId: { notIn: [...hiddenIds] } } : {};
+    // NULL-safe form: `notIn` never matches NULL, so the old shape hid every
+    // UNTRACKED product from the dashboard rails once a license-gated
+    // category existed (see products.service.findAll for the full account).
+    const gateWhere =
+      hiddenIds.size > 0
+        ? { OR: [{ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } }] }
+        : {};
 
     // Run all queries in parallel
     const [

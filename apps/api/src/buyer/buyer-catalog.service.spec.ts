@@ -324,14 +324,25 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
 
         const res = await service.getCatalogCounts("c1", "ba1");
 
-        // Every count/groupBy where carries the regulated-gate exclusion.
+        // Every count/groupBy where carries the regulated-gate exclusion — in
+        // its NULL-SAFE form. This assertion previously pinned the bare
+        // `{ notIn: [...] }` shape, which Prisma evaluates as excluding NULL
+        // rows too: with one license-gated category, every UNTRACKED product
+        // dropped out of all rail counts (and the catalog itself). The gate
+        // must always be (trackedCategoryId IS NULL OR notIn hidden).
+        const NULL_SAFE_GATE = [
+          { trackedCategoryId: null },
+          { trackedCategoryId: { notIn: ["cat-x"] } },
+        ];
         for (const call of productCount.mock.calls as any[]) {
           const where = call[0].where;
-          const gate = where.AND ? where.AND[0].trackedCategoryId : where.trackedCategoryId;
-          expect(gate).toEqual({ notIn: ["cat-x"] });
+          const gate = where.OR ?? where.AND?.[0]?.OR;
+          expect(gate).toEqual(NULL_SAFE_GATE);
+          expect(where.trackedCategoryId).toBeUndefined();
         }
         const groupByWhere = (productGroupBy.mock.calls[0] as any[])[0].where;
-        expect(groupByWhere.trackedCategoryId).toEqual({ notIn: ["cat-x"] });
+        expect(groupByWhere.OR).toEqual(NULL_SAFE_GATE);
+        expect(groupByWhere.trackedCategoryId).toBeUndefined();
 
         expect(res.lockedCategories).toEqual([{ id: "cat-x", name: "Tobacco", status: "NONE" }]);
         expect(res.categories).toEqual([
