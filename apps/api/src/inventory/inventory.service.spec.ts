@@ -1,5 +1,5 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { NotFoundException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { InventoryService } from "./inventory.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -524,6 +524,282 @@ describe("InventoryService", () => {
       expect(result).toMatchObject({ applied: 2, skipped: 0, alreadyCommitted: true });
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
       expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── PR-C: durable stock-count sessions ──────────────────────────────────────
+
+  describe("stock-count sessions", () => {
+    const line = (over: Record<string, unknown> = {}) => ({
+      id: "line-1",
+      sessionId: "sess-1",
+      productId: "prod-1",
+      mode: "REPLACE",
+      countedQty: D(7),
+      boxes: null,
+      pieces: null,
+      expectedQty: D(10),
+      unitCostOverride: null,
+      countedById: "user-1",
+      ...over,
+    });
+    const session = (over: Record<string, unknown> = {}) => ({
+      id: "sess-1",
+      status: "OPEN",
+      movementReference: null,
+      lines: [line()],
+      ...over,
+    });
+
+    it("a committed session short-circuits instead of re-applying its deltas", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({ status: "COMMITTED", movementReference: "STOCK_COUNT-sess-1" }),
+      );
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      expect(res).toMatchObject({ alreadyCommitted: true, applied: 0 });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("existing movements for the reference short-circuit a lost-response retry", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(session());
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockMovement.findMany.mockResolvedValue([{ id: "m-existing" }]);
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      expect(res).toMatchObject({ alreadyCommitted: true, applied: 1 });
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("REPLACE commits the counted-minus-expected delta and never touches uncounted products", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(session());
+      prisma.product.findMany.mockResolvedValue([product()]); // currentStock 10
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+      prisma.product.findUnique.mockResolvedValue(product());
+
+      await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      // Counted 7 against on-hand 10 ⇒ a −3 ADJUSTMENT, not an absolute write.
+      expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      const mv = prisma.stockMovement.create.mock.calls[0][0].data;
+      expect(mv.type).toBe("ADJUSTMENT");
+      expect(Number(mv.quantity)).toBe(-3);
+      expect(mv.reference).toBe("STOCK_COUNT-sess-1");
+      // Only the counted product is updated — a count asserts only what it saw.
+      expect(prisma.product.update).toHaveBeenCalledTimes(1);
+      expect(prisma.product.update.mock.calls[0][0].where).toEqual({ id: "prod-1" });
+    });
+
+    it("a zero-variance line is skipped, writing no movement at all", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(
+        session({ lines: [line({ countedQty: D(10) })] }), // equals on-hand
+      );
+      prisma.product.findMany.mockResolvedValue([product()]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      expect(res.applied).toBe(0);
+      expect(res.skipped).toBe(1);
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+    });
+
+    it("a unitCostOverride writes COST_BASIS BEFORE the adjustment, so the lot is valued at the corrected cost", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(
+        // Counted 15 vs on-hand 10 ⇒ +5, so a lot is opened.
+        session({ lines: [line({ countedQty: D(15), unitCostOverride: D(3.5) })] }),
+      );
+      prisma.product.findMany.mockResolvedValue([product()]); // averageCost 2
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+      // After the COST_BASIS write the product re-reads at the corrected cost.
+      prisma.product.findUnique.mockResolvedValue(product({ averageCost: D(3.5) }));
+      prisma.stockMovement.create.mockImplementation((args: any) =>
+        Promise.resolve({ id: `mv-${args.data.type}` }),
+      );
+
+      const res = await service.commitStockCountSession("sess-1", {}, { sub: "user-1" });
+
+      const types = prisma.stockMovement.create.mock.calls.map((c: any) => c[0].data.type);
+      expect(types).toEqual(["COST_BASIS", "ADJUSTMENT"]); // order is load-bearing
+      expect(res.costMovementIds).toHaveLength(1);
+      // The lot opened for the +5 must use the CORRECTED 3.5, not the stale 2.
+      const lot = prisma.stockLot.create.mock.calls[0][0].data;
+      expect(Number(lot.qty)).toBe(5);
+      expect(Number(lot.unitCost)).toBe(3.5);
+    });
+
+    it("refuses to commit an empty count and a discarded one", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue(session({ lines: [] }));
+      await expect(
+        service.commitStockCountSession("sess-1", {}, { sub: "user-1" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      prisma.stockCountSession.findUnique.mockResolvedValue(session({ status: "DISCARDED" }));
+      await expect(
+        service.commitStockCountSession("sess-1", {}, { sub: "user-1" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("snapshots expectedQty on FIRST count only, so later stock drift can't move the baseline", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-1",
+        currentStock: D(10),
+        unitsPerBox: null,
+      });
+      prisma.stockCountLine.findUnique.mockResolvedValue(null); // first count
+
+      await service.upsertStockCountLine(
+        "sess-1",
+        { productId: "prod-1", countedQty: 4 },
+        { sub: "user-1" },
+      );
+
+      expect(Number(prisma.stockCountLine.create.mock.calls[0][0].data.expectedQty)).toBe(10);
+
+      // Second touch updates the count but must NOT re-snapshot the expectation.
+      prisma.stockCountLine.findUnique.mockResolvedValue(line({ countedQty: D(4) }));
+      await service.upsertStockCountLine(
+        "sess-1",
+        { productId: "prod-1", countedQty: 6 },
+        { sub: "user-1" },
+      );
+      expect(prisma.stockCountLine.update).toHaveBeenCalled();
+      expect(prisma.stockCountLine.update.mock.calls[0][0].data.expectedQty).toBeUndefined();
+    });
+
+    it("increment adds to the running count; without it the value replaces", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-1",
+        currentStock: D(10),
+        unitsPerBox: null,
+      });
+      prisma.stockCountLine.findUnique.mockResolvedValue(line({ countedQty: D(4) }));
+
+      await service.upsertStockCountLine(
+        "sess-1",
+        { productId: "prod-1", countedQty: 1, increment: true },
+        { sub: "user-1" },
+      );
+      expect(Number(prisma.stockCountLine.update.mock.calls[0][0].data.countedQty)).toBe(5);
+
+      await service.upsertStockCountLine(
+        "sess-1",
+        { productId: "prod-1", countedQty: 1 },
+        { sub: "user-1" },
+      );
+      expect(Number(prisma.stockCountLine.update.mock.calls[1][0].data.countedQty)).toBe(1);
+    });
+
+    it("recomputes qty from a boxes/pieces split instead of trusting a loose count", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue({ id: "sess-1", status: "OPEN" });
+      prisma.product.findUnique.mockResolvedValue({
+        id: "prod-1",
+        currentStock: D(0),
+        unitsPerBox: 12,
+      });
+      prisma.stockCountLine.findUnique.mockResolvedValue(null);
+
+      await service.upsertStockCountLine(
+        "sess-1",
+        { productId: "prod-1", boxes: 2, pieces: 3 },
+        { sub: "user-1" },
+      );
+
+      const data = prisma.stockCountLine.create.mock.calls[0][0].data;
+      expect(Number(data.countedQty)).toBe(27); // 2*12 + 3
+      expect(data.boxes).toBe(2);
+      expect(data.pieces).toBe(3);
+    });
+
+    it("a committed session is not editable — it must be amended instead", async () => {
+      prisma.stockCountSession.findUnique.mockResolvedValue({
+        id: "sess-1",
+        status: "COMMITTED",
+      });
+
+      await expect(
+        service.upsertStockCountLine(
+          "sess-1",
+          { productId: "prod-1", countedQty: 1 },
+          {
+            sub: "user-1",
+          },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("amending re-snapshots expectedQty from CURRENT stock, not the old session's", async () => {
+      prisma.stockCountSession.findMany.mockResolvedValue([]);
+      prisma.stockCountSession.findUnique.mockResolvedValue({
+        id: "old",
+        status: "COMMITTED",
+        lines: [line({ countedQty: D(7), expectedQty: D(10) })],
+      });
+      prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
+      // Stock has since moved to 6.
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-1", currentStock: D(6) }]);
+
+      await service.startStockCountSession({ amendsSessionId: "old" }, { sub: "user-1" });
+
+      const seeded = prisma.stockCountLine.create.mock.calls[0][0].data;
+      expect(Number(seeded.expectedQty)).toBe(6); // today's on-hand, not the stale 10
+      expect(Number(seeded.countedQty)).toBe(7); // the prior count is pre-filled
+    });
+
+    it("the history list computes net variance $ server-side and drops the raw lines", async () => {
+      prisma.stockCountSession.findMany.mockResolvedValue([
+        {
+          id: "sess-1",
+          status: "COMMITTED",
+          lines: [
+            // REPLACE: counted 7 vs expected 10 ⇒ −3 @ $2 = −$6
+            {
+              mode: "REPLACE",
+              countedQty: D(7),
+              expectedQty: D(10),
+              product: { averageCost: D(2) },
+            },
+            // ADD: +5 @ $1.50 = +$7.50
+            { mode: "ADD", countedQty: D(5), expectedQty: D(0), product: { averageCost: D(1.5) } },
+          ],
+        },
+      ]);
+      prisma.stockCountSession.count.mockResolvedValue(1);
+
+      const res = await service.listStockCountSessions({});
+
+      expect(res.data[0].netVarianceMoney).toBe(1.5); // −6 + 7.5
+      // The rows exist only to compute the number — shipping them would make
+      // the list payload unbounded.
+      expect((res.data[0] as Record<string, unknown>).lines).toBeUndefined();
+    });
+
+    it("an existing open session is reported as a warning, never a block", async () => {
+      prisma.stockCountSession.findMany.mockResolvedValue([{ id: "other", name: "Aisle 3" }]);
+      prisma.stockCountSession.create.mockResolvedValue({ id: "new-sess" });
+
+      const res = await service.startStockCountSession({}, { sub: "user-1" });
+
+      expect(res.id).toBe("new-sess"); // created anyway
+      expect(res.otherOpenSessions).toEqual([{ id: "other", name: "Aisle 3" }]);
+    });
+
+    it("refuses to amend a session that was never committed", async () => {
+      prisma.stockCountSession.findMany.mockResolvedValue([]);
+      prisma.stockCountSession.findUnique.mockResolvedValue({
+        id: "old",
+        status: "OPEN",
+        lines: [],
+      });
+
+      await expect(
+        service.startStockCountSession({ amendsSessionId: "old" }, { sub: "user-1" }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

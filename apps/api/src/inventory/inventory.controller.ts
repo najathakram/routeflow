@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -14,6 +25,12 @@ import { UpdateSupplierDto } from "./dto/update-supplier.dto";
 import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
+import {
+  CommitStockCountSessionDto,
+  ListStockCountSessionsDto,
+  StartStockCountDto,
+  UpsertStockCountLineDto,
+} from "./dto/stock-count-session.dto";
 
 @Controller("inventory")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -49,6 +66,54 @@ export class InventoryController {
   @Roles(UserRole.OPERATOR)
   commitStockCount(@Body() dto: CommitStockCountDto, @CurrentUser() user: { id: string }) {
     return this.inventoryService.commitStockCount(dto, user.id);
+  }
+
+  // ── Durable stock-count sessions (PR-C) ──
+  // The one-shot `stock-count/commit` above is unchanged; these add the
+  // paused/resumable server-side session so a count survives a device change.
+
+  @Post("stock-counts")
+  startStockCountSession(@Body() dto: StartStockCountDto, @CurrentUser() user: { sub: string }) {
+    return this.inventoryService.startStockCountSession(dto, user);
+  }
+
+  @Get("stock-counts")
+  listStockCountSessions(@Query() query: ListStockCountSessionsDto) {
+    return this.inventoryService.listStockCountSessions(query);
+  }
+
+  @Get("stock-counts/:id")
+  getStockCountSession(@Param("id") id: string) {
+    return this.inventoryService.getStockCountSession(id);
+  }
+
+  /** Autosave one counted line. Idempotent per (session, product). */
+  @Put("stock-counts/:id/lines")
+  upsertStockCountLine(
+    @Param("id") id: string,
+    @Body() dto: UpsertStockCountLineDto,
+    @CurrentUser() user: { sub: string },
+  ) {
+    return this.inventoryService.upsertStockCountLine(id, dto, user);
+  }
+
+  @Delete("stock-counts/:id/lines/:productId")
+  removeStockCountLine(@Param("id") id: string, @Param("productId") productId: string) {
+    return this.inventoryService.removeStockCountLine(id, productId);
+  }
+
+  @Post("stock-counts/:id/commit")
+  commitStockCountSession(
+    @Param("id") id: string,
+    @Body() dto: CommitStockCountSessionDto,
+    @CurrentUser() user: { sub: string },
+  ) {
+    return this.inventoryService.commitStockCountSession(id, dto, user);
+  }
+
+  @Post("stock-counts/:id/discard")
+  discardStockCountSession(@Param("id") id: string) {
+    return this.inventoryService.discardStockCountSession(id);
   }
 
   // ── Cost basis & valuation ──

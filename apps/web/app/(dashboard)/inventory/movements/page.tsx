@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -46,8 +46,13 @@ export default function MovementsPage() {
     setTitle("Stock Movements");
   }, [setTitle]);
 
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialProduct = searchParams.get("product") ?? "";
+  // Stock-count history links here with `?reference=STOCK_COUNT-<sessionId>` —
+  // there's no server-side reference filter (out of scope for this PR: the API
+  // isn't touched), so it's applied client-side below over a wider page.
+  const referenceFilter = searchParams.get("reference") ?? "";
 
   const [filters, setFilters] = React.useState({
     productId: initialProduct,
@@ -65,12 +70,15 @@ export default function MovementsPage() {
     type: filters.type || undefined,
     from: filters.from || undefined,
     to: filters.to || undefined,
-    page,
-    limit: 50,
+    page: referenceFilter ? 1 : page,
+    limit: referenceFilter ? 500 : 50,
   });
 
-  const movements = data?.data ?? [];
-  const meta = data?.meta;
+  const allMovements = data?.data ?? [];
+  const movements = referenceFilter
+    ? allMovements.filter((m: any) => m.reference === referenceFilter)
+    : allMovements;
+  const meta = referenceFilter ? undefined : data?.meta;
   useClampPage(setPage, page, meta?.totalPages);
 
   const handleFilterChange = (key: string, value: string) => {
@@ -90,12 +98,27 @@ export default function MovementsPage() {
 
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-navy">Stock Movements</h1>
-        {meta && (
+        {meta ? (
           <p className="text-sm text-navy/70">
             {meta.total} record{meta.total !== 1 ? "s" : ""}
           </p>
-        )}
+        ) : referenceFilter ? (
+          <p className="text-sm text-navy/70">
+            {movements.length} record{movements.length !== 1 ? "s" : ""}
+          </p>
+        ) : null}
       </div>
+
+      {referenceFilter && (
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+            Stock count: {referenceFilter}
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => router.push("/inventory/movements")}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">

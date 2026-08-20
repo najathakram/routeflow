@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Button } from "@routeflow/ui/web";
-import type { StockCountMode } from "@/lib/stock-count-storage";
+import type { StockCountMode } from "@/lib/api/stock-count";
 
 interface StockCountBulkBarProps {
   selectedCount: number;
