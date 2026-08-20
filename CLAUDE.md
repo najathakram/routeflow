@@ -142,10 +142,24 @@ window exists ONLY to run CI, so keep it to minutes.
 > webhook starts snapshotting ~2s after the merge, and the back-to-back private flip lands inside
 > that window, invalidating the installation token mid-clone.
 >
-> **So: merge → WAIT for the deploy to leave `Initialization › Snapshot code` (~60s is ample, watch
-> with `railway deployment list --service @routeflow/api`) → THEN flip private.** That costs about
-> a minute of extra public window and removes the failed-deploy + `railway up` recovery cycle
+> **So: merge → WAIT until the deploy reaches `BUILDING` → THEN flip private.** That costs about a
+> minute of extra public window and removes the failed-deploy + `railway up` recovery cycle
 > entirely. The private flip is still a `finally` — it must happen even if the deploy fails.
+>
+> ⚠️ **Wait for `BUILDING` specifically. `INITIALIZING` IS the snapshot window** — flipping during
+> it fails exactly as before (verified the hard way on #376: flipped at `INITIALIZING`, both
+> services FAILED, recovered with `railway up`). Use:
+>
+> ```bash
+> until railway deployment list --service @routeflow/api | sed -n '2p' | grep -qE 'BUILDING|DEPLOYING|SUCCESS'; do sleep 10; done
+> ```
+>
+> Do NOT include `FAILED` in that pattern — a failure is precisely the case where you must not
+> conclude the snapshot succeeded.
+>
+> **Also verify the flip landed.** `gh repo edit` can fail with a network error and leave the repo
+> PUBLIC while printing nothing useful (seen on #374). Always read visibility back in a retry loop
+> and confirm `PRIVATE` before moving on.
 
 1. **(schema change only)** apply the prod migration FIRST — fresh backup, then
    `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
