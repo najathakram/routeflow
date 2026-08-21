@@ -40,9 +40,9 @@ chargesEnabled, detailsSubmitted, livemode, connectedAt }`
 - `DELETE /settings/stripe-connect` → `{ disconnected: true }`
 - `GET  /payment-requests?status=PENDING` → array of
   `{ id, kind: "CARD"|"CASH", status, amount, note, reference, customerId,
-   customerName, contactName, createdAt, decidedAt, decidedByName,
-   allocationPreview?: Array<{ invoiceId, invoiceNumber, issueDate, total,
-   balanceDue, applied }> }`
+ customerName, contactName, createdAt, decidedAt, decidedByName,
+ allocationPreview?: Array<{ invoiceId, invoiceNumber, issueDate, total,
+ balanceDue, applied }> }`
 - `POST /payment-requests/:id/approve` → `{ approved, paymentGroupId, excess }`
 - `POST /payment-requests/:id/reject` body `{ reason?: string }`
 
