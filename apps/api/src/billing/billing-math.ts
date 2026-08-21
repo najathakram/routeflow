@@ -7,10 +7,12 @@ import { roundMoney } from "../common/pricing";
  * `pricing.ts`, which the three app mirrors keep in sync). Every result is routed
  * through {@link roundMoney} for cent discipline.
  *
- * Anchors (docs/design-package/project/unified/pricing.html):
- *   Starter  $59/mo  → $590/yr  → "$49/mo billed annually"
- *   Team     $149/mo → $1490/yr → "$124/mo billed annually"
- *   Business $349/mo → $3490/yr → "$291/mo billed annually"
+ * Anchors (catalog v8 — plan-catalog.constants.ts PLAN_KEYS; the live prices live
+ * in the database PlanDefinition rows, these are documentation only):
+ *   Starter $99/mo  → $990/yr  → "$83/mo billed annually"
+ *   Growth  $249/mo → $2490/yr → "$208/mo billed annually"
+ *   Scale   $499/mo → $4990/yr → "$416/mo billed annually"
+ *   Enterprise: custom (no anchor)
  */
 
 export type Cycle = "MONTHLY" | "ANNUAL";

@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
-import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { roundMoney } from "../common/pricing";
@@ -8,7 +7,13 @@ import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
 import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
-import { BILLING_EVENTS, planRank, addonSkuCode } from "./plan-catalog.constants";
+import {
+  BILLING_EVENTS,
+  findPlanDefinition,
+  planRank,
+  planKeyToEnum,
+  addonSkuCode,
+} from "./plan-catalog.constants";
 import { annualPrice, Cycle } from "./billing-math";
 
 export interface SubscribeInput {
@@ -66,7 +71,7 @@ export class SubscriptionMutationService {
 
   private planMonthly(version: PlanVersionWithCatalog, planKey: string | null | undefined): number {
     if (!planKey) return 0;
-    const d = version.definitions.find((x) => x.planKey === planKey);
+    const d = findPlanDefinition(version.definitions, planKey);
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
   }
 
@@ -125,7 +130,7 @@ export class SubscriptionMutationService {
           tenantId,
           planVersionId: version.id,
           planKey: input.planKey,
-          currentPlan: input.planKey as TenantPlan,
+          currentPlan: planKeyToEnum(input.planKey),
           cycle: input.cycle,
           periodStart: now,
           periodEnd,
@@ -135,7 +140,7 @@ export class SubscriptionMutationService {
         update: {
           planVersionId: version.id,
           planKey: input.planKey,
-          currentPlan: input.planKey as TenantPlan,
+          currentPlan: planKeyToEnum(input.planKey),
           cycle: input.cycle,
           periodStart: now,
           periodEnd,
@@ -148,7 +153,7 @@ export class SubscriptionMutationService {
       });
       await tx.tenant.update({
         where: { id: tenantId },
-        data: { status: "ACTIVE", planVersionId: version.id, plan: input.planKey as TenantPlan },
+        data: { status: "ACTIVE", planVersionId: version.id, plan: planKeyToEnum(input.planKey) },
       });
       for (const [code, qty] of desired) {
         const meta = skuByCode.get(code)!;
@@ -255,7 +260,7 @@ export class SubscriptionMutationService {
         where: { tenantId, planKey: sub.planKey },
         data: {
           planKey,
-          currentPlan: planKey as TenantPlan,
+          currentPlan: planKeyToEnum(planKey),
           planVersionId: version.id,
           basePriceSnapshot: def.monthlyPrice,
         },
@@ -265,7 +270,7 @@ export class SubscriptionMutationService {
       }
       await tx.tenant.update({
         where: { id: tenantId },
-        data: { plan: planKey as TenantPlan, planVersionId: version.id },
+        data: { plan: planKeyToEnum(planKey), planVersionId: version.id },
       });
       await this.events.emit(
         tenantId,

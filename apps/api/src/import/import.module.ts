@@ -17,9 +17,12 @@ import { SourceConnectorRegistry } from "./connectors/source-connectors";
 import { PrismaModule } from "../prisma/prisma.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
 import { ProductsModule } from "../products/products.module";
+// ImportService.importContacts() reuses CustomersService's CUSTOMERS soft-cap
+// gate so bulk import obeys the same plan cap as the single-create path.
+import { CustomersModule } from "../customers/customers.module";
 
 @Module({
-  imports: [PrismaModule, VendorBillsModule, ProductsModule, DuplicateMatchModule],
+  imports: [PrismaModule, VendorBillsModule, ProductsModule, DuplicateMatchModule, CustomersModule],
   controllers: [
     ImportController,
     NumberingController,

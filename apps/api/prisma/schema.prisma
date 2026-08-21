@@ -56,6 +56,7 @@ enum MeterKey {
   ROUTES
   SCANS
   MSGS
+  CUSTOMERS
 }
 
 enum AddonUnit {
@@ -562,6 +563,7 @@ model PlanDefinition {
   routesConcurrent Int? // null = unlimited
   scansIncluded    Int? // null = unlimited (Enterprise)
   msgsIncluded     Int      @default(200)
+  customersIncluded Int? // null = unlimited (Enterprise)
   featureFlags     String[] // subset of the 16 flag keys granted at this plan
   sortOrder        Int      @default(0)
 
