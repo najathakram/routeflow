@@ -40,6 +40,9 @@ export interface BuyerProductDetail extends BuyerProduct {
     sku: string | null;
     buyerPrice: number;
     unit: string;
+    /** Promo inputs — a variant row prices through `deriveTilePrice` like any tile. */
+    category: string | null;
+    unitsPerBox: number | null;
   }>;
   /** P5-03: whether the caller has a PENDING restock alert on this product. */
   alertSubscribed?: boolean;

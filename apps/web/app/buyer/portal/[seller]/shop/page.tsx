@@ -41,6 +41,24 @@ import { RunningLowStrip } from "./_components/RunningLowStrip";
 import { ShopSearch } from "./_components/ShopSearch";
 import { deriveTilePrice } from "./_components/tile-pricing";
 
+// ─── Grid density ─────────────────────────────────────────────────────────────
+// Persisted density control — default "md" is one notch denser than the
+// original hardcoded grid ("lg" preserves that original size). ProductTile
+// imports this type to type its `size` prop.
+
+export type ShopDensity = "sm" | "md" | "lg";
+
+const DENSITY_STORAGE_KEY = "rf:buyer:shop:density";
+const VIEW_STORAGE_KEY = "rf:buyer:shop:view";
+
+// Static full class strings only — Tailwind's scanner cannot see interpolated
+// class names, so this map is looked up by key, never built from a template.
+const GRID_CLASS_BY_DENSITY: Record<ShopDensity, string> = {
+  lg: "grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+  md: "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5",
+  sm: "grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7",
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(n: number) {
@@ -132,7 +150,30 @@ export default function BuyerShopPage() {
   const [sort, setSort] = React.useState("best");
   const [page, setPage] = React.useState(1);
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const [density, setDensity] = React.useState<ShopDensity>("md");
   const limit = 20;
+
+  // Hydration-safe: state initializes to the default above; only after mount
+  // do we read the persisted choices, so server- and first-client-render HTML
+  // always match.
+  React.useEffect(() => {
+    const storedView = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    if (storedView === "grid" || storedView === "list") setViewMode(storedView);
+    const storedDensity = window.localStorage.getItem(DENSITY_STORAGE_KEY);
+    if (storedDensity === "sm" || storedDensity === "md" || storedDensity === "lg") {
+      setDensity(storedDensity);
+    }
+  }, []);
+
+  const handleSetViewMode = (mode: "grid" | "list") => {
+    setViewMode(mode);
+    window.localStorage.setItem(VIEW_STORAGE_KEY, mode);
+  };
+
+  const handleSetDensity = (next: ShopDensity) => {
+    setDensity(next);
+    window.localStorage.setItem(DENSITY_STORAGE_KEY, next);
+  };
 
   // The product query tracks the last NON-locked selection. Selecting a
   // locked rail/pill entry only opens the info panel below — it must never
@@ -306,18 +347,54 @@ export default function BuyerShopPage() {
             {/* View toggle */}
             <div className="flex items-center rounded-lg border border-surface-border bg-white">
               <button
-                onClick={() => setViewMode("grid")}
+                onClick={() => handleSetViewMode("grid")}
                 className={`rounded-l-lg p-2.5 transition-colors ${viewMode === "grid" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
               >
                 <Grid3X3 className="h-4 w-4" />
               </button>
               <button
-                onClick={() => setViewMode("list")}
+                onClick={() => handleSetViewMode("list")}
                 className={`rounded-r-lg p-2.5 transition-colors ${viewMode === "list" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
               >
                 <List className="h-4 w-4" />
               </button>
             </div>
+
+            {/* Density control — grid mode only */}
+            {viewMode === "grid" && (
+              <div
+                className="flex items-center rounded-lg border border-surface-border bg-white"
+                data-testid="density-toggle"
+              >
+                <button
+                  onClick={() => handleSetDensity("sm")}
+                  title="Compact"
+                  aria-label="Compact"
+                  data-testid="density-sm"
+                  className={`rounded-l-lg px-2.5 py-2 text-xs font-semibold transition-colors ${density === "sm" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
+                >
+                  S
+                </button>
+                <button
+                  onClick={() => handleSetDensity("md")}
+                  title="Standard"
+                  aria-label="Standard"
+                  data-testid="density-md"
+                  className={`px-2.5 py-2 text-xs font-semibold transition-colors ${density === "md" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
+                >
+                  M
+                </button>
+                <button
+                  onClick={() => handleSetDensity("lg")}
+                  title="Large"
+                  aria-label="Large"
+                  data-testid="density-lg"
+                  className={`rounded-r-lg px-2.5 py-2 text-xs font-semibold transition-colors ${density === "lg" ? "bg-buyer-50 text-buyer-600" : "text-navy/70 hover:text-navy"}`}
+                >
+                  L
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -456,11 +533,13 @@ export default function BuyerShopPage() {
                     )}
                   </div>
                 ) : viewMode === "grid" ? (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className={GRID_CLASS_BY_DENSITY[density]} data-testid="product-grid">
                     {products.map((p) => (
                       <ProductTile
                         key={p.id}
                         product={p}
+                        sellerSlug={sellerSlug}
+                        size={density}
                         cartItem={cart.items.find((i) => i.productId === p.id)}
                         promoRules={promoRules}
                         estimate={estimateByProduct.get(p.id)}
@@ -503,9 +582,17 @@ export default function BuyerShopPage() {
                           const cartItem = cart.items.find((i) => i.productId === p.id);
                           const priced = deriveTilePrice(p, promoRules, cartItem);
                           return (
-                            <tr key={p.id} className="hover:bg-surface-raised/50">
+                            <tr
+                              key={p.id}
+                              className="hover:bg-surface-raised/50"
+                              data-testid="product-tile"
+                            >
                               <td className="px-4 py-3">
-                                <div className="flex items-center gap-3">
+                                <Link
+                                  href={`/buyer/portal/${sellerSlug}/shop/${p.id}`}
+                                  data-testid="product-tile-link"
+                                  className="flex items-center gap-3"
+                                >
                                   <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                                     {p.thumbnailUrl ? (
                                       <img
@@ -524,7 +611,7 @@ export default function BuyerShopPage() {
                                     <p className="text-sm font-medium text-navy">{p.name}</p>
                                     <p className="text-xs text-navy/70">per {p.unit}</p>
                                   </div>
-                                </div>
+                                </Link>
                               </td>
                               <td className="px-4 py-3 text-xs text-navy/70">
                                 {p.category ?? "N/A"}

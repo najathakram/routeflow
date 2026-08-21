@@ -244,5 +244,14 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Buyer shop density + product detail (WP3-17) ───────────────────────────
+    // No pre-auth needed — self-contained register→invite→accept dance, same as
+    // the "buyer" project. A spec without its own project entry never runs.
+    {
+      name: "buyer-shop",
+      testMatch: /17-buyer-shop-density-detail\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
   ],
 });

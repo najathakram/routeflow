@@ -77,6 +77,28 @@ export class BuyerCatalogService {
   }
 
   /**
+   * The availability triple every buyer-facing product carries. Shared by the
+   * catalog listing and the single-product detail so a tile and its detail page
+   * can never disagree about stock (an OOS tile must stay OOS when opened).
+   */
+  private deriveStock(p: {
+    currentStock?: unknown;
+    lowStockThreshold?: unknown;
+  }): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft"> {
+    const stock = Number(p.currentStock ?? 0);
+    const lowThreshold = Number(p.lowStockThreshold ?? 5);
+    const stockStatus: BuyerProduct["stockStatus"] =
+      stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
+    return {
+      inStock: stock > 0,
+      stockStatus,
+      // Whole units only, floor >= 1 so a fractional Decimal never renders
+      // "Only 0 left" while status is LOW (stock > 0 by definition here).
+      stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+    };
+  }
+
+  /**
    * Get paginated product catalog with buyer-specific pricing.
    * Strips all seller-internal fields (stock, cost, raw tier prices).
    *
@@ -174,11 +196,6 @@ export class BuyerCatalogService {
           priceHist[p.id]?.lastPrice ?? null,
         );
 
-        const stock = Number(p.currentStock ?? 0);
-        const lowThreshold = Number(p.lowStockThreshold ?? 5);
-        const stockStatus: BuyerProduct["stockStatus"] =
-          stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
-
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
         // First entry corresponds to thumbnailUrl (same key, first image).
         const imageUrls =
@@ -202,11 +219,7 @@ export class BuyerCatalogService {
           thumbnailUrl: p.thumbnailUrl ?? null,
           imageKeys: p.imageKeys ?? [],
           imageUrls,
-          inStock: stock > 0,
-          stockStatus,
-          // Whole units only, floor >= 1 so a fractional Decimal never renders
-          // "Only 0 left" while status is LOW (stock > 0 by definition here).
-          stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+          ...this.deriveStock(p),
         };
       }),
     );
@@ -340,16 +353,32 @@ export class BuyerCatalogService {
       .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
-    const cpOverride = await this.prisma.forTenant().customerPrice.findFirst({
-      where: { customerId, productId },
+    // Deactivated variants must never reach a buyer: findOne includes them (it
+    // only sorts isActive desc), every other buyer surface lists active products
+    // only, and such a row would quote a price whose link dead-ends on this
+    // endpoint's own isActive 404.
+    const activeVariants: any[] = ((product as any).variants ?? []).filter(
+      (v: any) => v.isActive !== false,
+    );
+    // Tier overrides for the parent AND every variant row in one query: a variant
+    // carrying its own CustomerPrice must price identically here and on its own
+    // tile/detail page (getCatalog resolves the tier per product the same way).
+    const variantIds: string[] = activeVariants.map((v: any) => v.id);
+    const cpOverrides = await this.prisma.forTenant().customerPrice.findMany({
+      where: { customerId, productId: { in: [product.id, ...variantIds] } },
     });
-    const effectiveTier = cpOverride?.pricingTier ?? defaultTier;
+    const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const effectiveTier = cpMap.get(product.id) ?? defaultTier;
     const priceHist = await this.getRememberedPrices(customerId);
     const buyerPrice = effectiveBuyerPrice(
       getTierPrice(product, effectiveTier),
       Number(product.pricePerUnit),
       priceHist[product.id]?.lastPrice ?? null,
     );
+
+    // First entry corresponds to thumbnailUrl (same key, first image) — findOne
+    // presigns every image, the listing only the first MAX_TILE_IMAGES.
+    const imageUrls: string[] = (product as any).imageUrls ?? [];
 
     return {
       id: product.id,
@@ -360,18 +389,31 @@ export class BuyerCatalogService {
       unit: product.unit,
       category: product.category,
       buyerPrice,
-      imageUrls: (product as any).imageUrls ?? [],
+      // The merch/box/stock fields the listing returns must be here too: the
+      // detail page shares the tile's add-to-cart semantics (boxed => 1 box)
+      // and its stock/badge rendering.
+      unitsPerBox: product.unitsPerBox ?? null,
+      isFeatured: product.isFeatured ?? false,
+      isNew: product.isNew ?? false,
+      isDeal: product.isDeal ?? false,
+      thumbnailUrl: imageUrls[0] ?? null,
+      imageUrls,
       imageKeys: product.imageKeys ?? [],
-      variants: ((product as any).variants ?? []).map((v: any) => ({
+      ...this.deriveStock(product),
+      variants: activeVariants.map((v: any) => ({
         id: v.id,
         name: v.variantName,
         sku: v.sku,
         buyerPrice: effectiveBuyerPrice(
-          getTierPrice(v, effectiveTier),
+          getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
           Number(v.pricePerUnit),
           priceHist[v.id]?.lastPrice ?? null,
         ),
         unit: v.unit,
+        // Promo inputs — a variant row's price must go through the same
+        // deriveTilePrice the variant's own tile/detail page uses.
+        category: v.category ?? null,
+        unitsPerBox: v.unitsPerBox ?? null,
       })),
     };
   }
