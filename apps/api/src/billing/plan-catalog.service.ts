@@ -19,6 +19,7 @@ export interface PlanDefinitionPatch {
   routesConcurrent?: number | null;
   scansIncluded?: number | null;
   msgsIncluded?: number;
+  customersIncluded?: number | null;
   featureFlags?: string[];
   sortOrder?: number;
 }
@@ -116,6 +117,7 @@ export class PlanCatalogService {
         routesConcurrent: d.routesConcurrent,
         scansIncluded: d.scansIncluded,
         msgsIncluded: d.msgsIncluded,
+        customersIncluded: d.customersIncluded,
         featureFlags: d.featureFlags,
         sortOrder: d.sortOrder,
       })),
@@ -212,6 +214,7 @@ export class PlanCatalogService {
               routesConcurrent: d.routesConcurrent,
               scansIncluded: d.scansIncluded,
               msgsIncluded: d.msgsIncluded,
+              customersIncluded: d.customersIncluded,
               featureFlags: d.featureFlags,
               sortOrder: d.sortOrder,
             })),
@@ -256,6 +259,7 @@ export class PlanCatalogService {
     if (patch.routesConcurrent !== undefined) data.routesConcurrent = patch.routesConcurrent;
     if (patch.scansIncluded !== undefined) data.scansIncluded = patch.scansIncluded;
     if (patch.msgsIncluded !== undefined) data.msgsIncluded = patch.msgsIncluded;
+    if (patch.customersIncluded !== undefined) data.customersIncluded = patch.customersIncluded;
     if (patch.featureFlags !== undefined) data.featureFlags = patch.featureFlags;
     if (patch.sortOrder !== undefined) data.sortOrder = patch.sortOrder;
     if (patch.monthlyPrice !== undefined) {

@@ -3,10 +3,17 @@ import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
 import { roundMoney } from "../common/pricing";
 import { annualSaving, cyclePrice, daysBetween, prorateDaily, Cycle } from "./billing-math";
-import { PLAN_KEYS } from "./plan-catalog.constants";
+import { planRank } from "./plan-catalog.constants";
 
-/** Plan ordering for "included at plan and above" checks. */
-const PLAN_RANK: Record<string, number> = Object.fromEntries(PLAN_KEYS.map((k, i) => [k, i]));
+/**
+ * Plan ordering for "included at plan and above" checks. Goes through `planRank`
+ * so historical keys stored on superseded catalog versions (TEAM/BUSINESS) rank
+ * alongside their current equivalents instead of falling off the ladder.
+ */
+function rankOrDefault(planKey: string, fallback: number): number {
+  const rank = planRank(planKey);
+  return rank < 0 ? fallback : rank;
+}
 
 export interface QuoteRequest {
   planKey: string;
@@ -92,7 +99,7 @@ export class ProrationService {
       const qty = Math.max(1, Math.trunc(a.quantity ?? 1));
       const includedFree =
         !!sku.includedAtPlan &&
-        (PLAN_RANK[req.planKey] ?? 0) >= (PLAN_RANK[sku.includedAtPlan] ?? Number.MAX_SAFE_INTEGER);
+        rankOrDefault(req.planKey, 0) >= rankOrDefault(sku.includedAtPlan, Number.MAX_SAFE_INTEGER);
       const unitMonthly = Number(sku.monthlyPrice);
       const lineMonthly = unitMonthly * qty;
       lines.push({

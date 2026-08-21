@@ -4,6 +4,8 @@ import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { MeterService } from "../billing/meter.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const MOCK_CUSTOMER = {
@@ -37,9 +39,32 @@ const customerPayload = {
 describe("CustomersService", () => {
   let service: CustomersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let meter: { read: jest.Mock };
+  let catalog: { getPublishedVersion: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // createMockPrisma()'s model list predates the CUSTOMERS soft-cap (WP3) and
+    // doesn't carry tenantSubscription; attach it here rather than editing the
+    // shared mock (out of this package's file scope).
+    (prisma as any).tenantSubscription = {
+      findUnique: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn().mockResolvedValue({}),
+    };
+
+    // Defaults to "unlimited" so the pre-existing create() tests (which predate
+    // the CUSTOMERS soft-cap) are unaffected — the cap gate is a no-op unless a
+    // test below explicitly narrows it.
+    meter = {
+      read: jest.fn().mockResolvedValue({
+        meter: "CUSTOMERS",
+        used: 0,
+        included: null,
+        remaining: null,
+        resetsAt: null,
+      }),
+    };
+    catalog = { getPublishedVersion: jest.fn().mockResolvedValue(null) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -54,6 +79,8 @@ describe("CustomersService", () => {
             presignedUrl: jest.fn().mockResolvedValue("https://mock-url"),
           },
         },
+        { provide: MeterService, useValue: meter },
+        { provide: PlanCatalogService, useValue: catalog },
       ],
     }).compile();
 
@@ -222,6 +249,140 @@ describe("CustomersService", () => {
         { username: "acme" },
       ]);
       expect(res.user.email).toBe("a@b.com");
+    });
+  });
+
+  // ─── create: CUSTOMERS soft cap (WP3) ──────────────────────────────────────
+
+  describe("create — CUSTOMERS soft cap", () => {
+    const softCapDto = { username: "acme2", businessName: "Acme 2", contactName: "Jo" } as any;
+
+    beforeEach(() => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue({ id: "u2", username: "acme2", email: "e" });
+      prisma.customer.create.mockResolvedValue({ id: "c2" });
+    });
+
+    it("a create that pushes the tenant over cap still succeeds and opens a grace window (upserting the subscription row a tenant may not have)", async () => {
+      // Pre-check (before this create): exactly at cap — not yet over, so it is
+      // allowed through (this create is the one that tips it over).
+      meter.read
+        .mockResolvedValueOnce({
+          meter: "CUSTOMERS",
+          used: 100,
+          included: 100,
+          remaining: 0,
+          resetsAt: null,
+        })
+        // Post-check (after this create): now over cap.
+        .mockResolvedValueOnce({
+          meter: "CUSTOMERS",
+          used: 101,
+          included: 100,
+          remaining: 0,
+          resetsAt: null,
+        });
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue(null); // no grace open yet
+      prisma.tenant.findUnique.mockResolvedValue({ plan: "BUSINESS" });
+
+      const res: any = await service.create({ ...softCapDto });
+
+      expect(res.customer).toEqual({ id: "c2" });
+      // upsert, not update: `update` throws P2025 for the many tenants with no
+      // TenantSubscription row, so the window would never be recorded for them.
+      // `currentPlan` is stamped from the tenant: its column default is STARTER, and
+      // platform-admin reads `currentPlan` out of this table, so a defaulted row would
+      // report this BUSINESS tenant as Starter from the moment it went over cap.
+      expect((prisma as any).tenantSubscription.upsert).toHaveBeenCalledWith({
+        where: { tenantId: "test-tenant" },
+        create: {
+          tenantId: "test-tenant",
+          currentPlan: "BUSINESS",
+          graceStartedAt: expect.any(Date),
+          graceMeter: "CUSTOMERS",
+        },
+        update: { graceStartedAt: expect.any(Date), graceMeter: "CUSTOMERS" },
+      });
+    });
+
+    it("does not re-open a grace window that is already open", async () => {
+      meter.read.mockResolvedValue({
+        meter: "CUSTOMERS",
+        used: 101,
+        included: 100,
+        remaining: 0,
+        resetsAt: null,
+      });
+      // A grace window opened yesterday — well within the 7-day window, so the
+      // pre-check also lets this create through.
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        graceStartedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+      });
+
+      const res: any = await service.create({ ...softCapDto });
+
+      expect(res.customer).toEqual({ id: "c2" });
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("blocks a new create with the structured PLAN_GATE 403 once the grace window has expired while still over cap", async () => {
+      meter.read.mockResolvedValue({
+        meter: "CUSTOMERS",
+        used: 101,
+        included: 100,
+        remaining: 0,
+        resetsAt: null,
+      });
+      // Grace window opened 8 days ago — past the 7-day grace period.
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        graceStartedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
+      });
+      catalog.getPublishedVersion.mockResolvedValue({
+        addonSkus: [{ sku: "CUSTOMER_PACK_100", monthlyPrice: 50 }],
+      });
+
+      let caught: any;
+      try {
+        await service.create({ ...softCapDto });
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(ForbiddenException);
+      expect(caught.getResponse()).toMatchObject({
+        code: "PLAN_GATE",
+        state: "INLINE_RESOLVE",
+        upgrade: expect.objectContaining({
+          addonSku: "CUSTOMER_PACK_100",
+          addonMonthlyPrice: "50",
+        }),
+      });
+      // Blocked before the transaction ever ran — no user/customer row created.
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("fails open (create succeeds) when the plan/cap lookup is unresolvable", async () => {
+      meter.read.mockRejectedValue(new Error("catalog unseeded"));
+
+      const res: any = await service.create({ ...softCapDto });
+
+      expect(res.customer).toEqual({ id: "c2" });
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+    });
+
+    it("fails open when the grace-window lookup itself throws", async () => {
+      meter.read.mockResolvedValueOnce({
+        meter: "CUSTOMERS",
+        used: 101,
+        included: 100,
+        remaining: 0,
+        resetsAt: null,
+      });
+      (prisma as any).tenantSubscription.findUnique.mockRejectedValueOnce(new Error("db down"));
+
+      const res: any = await service.create({ ...softCapDto });
+      expect(res.customer).toEqual({ id: "c2" });
     });
   });
 

@@ -24,6 +24,14 @@ import { ListCustomersDto } from "./dto/list-customers.dto";
 import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
+import { MeterService, MeterReading } from "../billing/meter.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
+// Same grace window BillingCronService.expireGrace() clears hourly — the create()
+// gate applies it synchronously rather than waiting for the cron to run.
+import { GRACE_DAYS } from "../billing/plan-catalog.constants";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class CustomersService {
@@ -33,6 +41,8 @@ export class CustomersService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly storage: StorageService,
+    private readonly meter: MeterService,
+    private readonly catalog: PlanCatalogService,
   ) {}
 
   /** Geocode an address string using Google Maps API. Returns null if key missing or call fails. */
@@ -365,6 +375,10 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
+    // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
+    // over-cap grace window has expired. Never blocks anything else.
+    await this.assertCustomerCapNotExceeded();
+
     const email = dto.email?.trim() || undefined;
     // Only treat email as a uniqueness key when one was actually provided —
     // `{ email: undefined }` inside the OR would match every user.
@@ -381,7 +395,7 @@ export class CustomersService {
     const tempPassword = this.generateTempPassword();
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
-    return this.prisma.tenantTransaction(async (tx) => {
+    const result = await this.prisma.tenantTransaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           email: userEmail,
@@ -438,6 +452,147 @@ export class CustomersService {
         tempPassword,
       };
     });
+
+    // The create ALWAYS succeeds — this only opens a grace window when the new
+    // count pushes the tenant over cap; it never undoes or gates the create above.
+    await this.maybeStartCustomerGrace();
+
+    return result;
+  }
+
+  // ─── Plan cap: CUSTOMERS soft-cap + grace ─────────────────────────────────
+
+  /**
+   * Soft-cap guard for CUSTOMERS, run BEFORE a create. While under cap, or
+   * within an open grace window, this is a no-op — the create always proceeds.
+   * It blocks ONLY a brand-new customer create, and only once a prior over-cap
+   * grace window is older than {@link GRACE_DAYS} while the tenant
+   * is still over cap. FAILS OPEN: any billing/catalog lookup failure (no
+   * catalog, DB error) is treated as unlimited so a billing outage never blocks
+   * customer creation.
+   *
+   * The aged window this reads is what makes the block durable:
+   * `BillingCronService.expireGrace()` deliberately does NOT clear a CUSTOMERS window
+   * while the tenant is over cap, because a cleared window reads here as "no grace yet"
+   * and {@link maybeStartCustomerGrace} would simply open a fresh one.
+   *
+   * Public so the CSV/bulk contact import (`ImportService.importContacts`) gates on
+   * the same rule as the single-create path instead of re-implementing it.
+   */
+  async assertCustomerCapNotExceeded(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
+
+    let reading: MeterReading;
+    try {
+      reading = await this.meter.read(tenantId, "CUSTOMERS");
+    } catch (err) {
+      this.logger.warn(
+        `Customer cap lookup failed for tenant ${tenantId}; failing open.`,
+        err as Error,
+      );
+      return;
+    }
+    // Unlimited, or at/under cap — the create that would breach the cap is the
+    // one that is always allowed to succeed (it's what starts the grace window).
+    if (reading.included == null || reading.used <= reading.included) return;
+
+    let sub: { graceStartedAt: Date | null } | null;
+    try {
+      sub = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { graceStartedAt: true },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Customer cap grace lookup failed for tenant ${tenantId}; failing open.`,
+        err as Error,
+      );
+      return;
+    }
+    if (!sub?.graceStartedAt) return; // over cap but no grace window yet — allow (post-create hook opens one)
+
+    const graceAgeMs = Date.now() - sub.graceStartedAt.getTime();
+    if (graceAgeMs <= GRACE_DAYS * MS_PER_DAY) return; // still within grace
+
+    // Grace window expired and still over cap — block only this NEW create.
+    const upgrade = await this.customerPackUpgrade();
+    throw new ForbiddenException(buildPlanGateBody("meter.customers", upgrade));
+  }
+
+  /**
+   * Post-create hook: if the tenant is now over the CUSTOMERS cap and no grace
+   * window is open, start one. Never throws — a failure here must never appear
+   * to undo a customer that was already created successfully.
+   *
+   * Public for the same reason as {@link assertCustomerCapNotExceeded}: the CSV
+   * import calls it once after its run instead of duplicating the grace logic.
+   */
+  async maybeStartCustomerGrace(): Promise<void> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return;
+    try {
+      const reading = await this.meter.read(tenantId, "CUSTOMERS");
+      if (reading.included == null || reading.used <= reading.included) return; // unlimited or still within cap
+
+      const sub = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { graceStartedAt: true },
+      });
+      if (sub?.graceStartedAt) return; // a grace window is already open
+
+      // upsert, not update: most tenants have NO TenantSubscription row (caps still
+      // resolve for them — EntitlementsService falls back to the tenant `plan` enum), and
+      // `update` would throw P2025 on every over-cap create, logging an error and never
+      // recording the window. `planKey` stays null — a grace window pins nothing, so
+      // snapshot-based MRR (`mrr.service.ts`, which filters `planKey != null`) ignores the
+      // row. `currentPlan` must still be stamped from the tenant: its Prisma default is
+      // STARTER, and platform-admin reads `currentPlan` straight out of this table (billing
+      // overview + tenant detail), so a defaulted row would report a Scale tenant as Starter.
+      // Same write billing.service.ts makes when it mints a row for a Stripe customer.
+      const tenant = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { plan: true },
+      });
+      const startedAt = new Date();
+      await this.prisma.tenantSubscription.upsert({
+        where: { tenantId },
+        create: {
+          tenantId,
+          currentPlan: tenant?.plan ?? "STARTER",
+          graceStartedAt: startedAt,
+          graceMeter: "CUSTOMERS",
+        },
+        update: { graceStartedAt: startedAt, graceMeter: "CUSTOMERS" },
+      });
+    } catch (err) {
+      // Best-effort: opening the grace window must never affect the (already
+      // successful) customer creation.
+      this.logger.error(
+        `Failed to open customer-cap grace window for tenant ${tenantId}`,
+        err as Error,
+      );
+    }
+  }
+
+  /** À-la-carte upsell target for the customer soft-cap gate (INLINE_RESOLVE). */
+  private async customerPackUpgrade(): Promise<PlanGateUpgrade> {
+    const empty: PlanGateUpgrade = {
+      planKey: null,
+      planMonthlyPrice: null,
+      addonSku: "CUSTOMER_PACK_100",
+      addonMonthlyPrice: null,
+    };
+    try {
+      const version = await this.catalog.getPublishedVersion();
+      const addon = version?.addonSkus.find((s) => s.sku === "CUSTOMER_PACK_100");
+      return {
+        ...empty,
+        addonMonthlyPrice: addon?.monthlyPrice != null ? addon.monthlyPrice.toString() : null,
+      };
+    } catch {
+      return empty; // catalog unresolvable — still name the SKU, just without a price
+    }
   }
 
   async update(id: string, dto: UpdateCustomerDto) {

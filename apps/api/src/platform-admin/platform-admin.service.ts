@@ -7,12 +7,17 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
-import { TenantStatus, TenantPlan } from "@prisma/client";
+import { TenantStatus, TenantPlan, Prisma } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { MeterService } from "../billing/meter.service";
+import { normalizePlanKey, planKeyFromEnum } from "../billing/plan-catalog.constants";
+import { roundMoney } from "../common/pricing";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -30,7 +35,6 @@ import {
   adminAuditActionLabel,
   type AdminAuditActionCode,
 } from "./audit-actions.constant";
-import { STOPGAP_PLAN_MONTHLY_USD, estimatePlatformMrrUsd } from "./plan-pricing.constant";
 
 @Injectable()
 export class PlatformAdminService {
@@ -42,6 +46,9 @@ export class PlatformAdminService {
     private readonly config: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
     private readonly billingService: BillingService,
+    private readonly planCatalogService: PlanCatalogService,
+    private readonly entitlementsService: EntitlementsService,
+    private readonly meterService: MeterService,
     private readonly tenantStatusGuard: TenantStatusGuard,
     private readonly auditService: AuditService,
   ) {}
@@ -154,7 +161,7 @@ export class PlatformAdminService {
 
   async getTenant(id: string) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const [tenant, orders30d] = await Promise.all([
+    const [tenant, orders30d, catalogPriceByPlanKey] = await Promise.all([
       this.prisma.tenant.findUnique({
         where: { id },
         include: {
@@ -175,13 +182,17 @@ export class PlatformAdminService {
       // Read-only order count (orders module untouched); raw client is correct
       // here since a super-admin request carries no tenant scope.
       this.prisma.order.count({ where: { tenantId: id, createdAt: { gte: thirtyDaysAgo } } }),
+      this._catalogPriceByPlanKey(),
     ]);
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return {
       ...this._formatTenant(tenant),
       orders30d,
       // Only an ACTIVE tenant is paying; trials/suspended/cancelled contribute $0.
-      estMrrUsd: tenant.status === "ACTIVE" ? (STOPGAP_PLAN_MONTHLY_USD[tenant.plan] ?? 0) : 0,
+      estMrrUsd:
+        tenant.status === "ACTIVE"
+          ? roundMoney(this._monthlyPriceUsd(tenant, catalogPriceByPlanKey))
+          : 0,
     };
   }
 
@@ -519,8 +530,8 @@ ${paymentSection}
       totalUsers,
       superAdminCount,
       newTenantsThisMonth,
-      planBreakdown,
-      activePlanBreakdown,
+      planScanRows,
+      catalogPriceByPlanKey,
       recentTenants,
       trialsExpiringSoon,
       atRiskTenants,
@@ -532,18 +543,19 @@ ${paymentSection}
       this.prisma.user.count({ where: { tenantId: { not: null } } }),
       this.prisma.user.count({ where: { role: "SUPER_ADMIN" } }),
       this.prisma.tenant.count({ where: { createdAt: { gte: startOfMonth } } }),
-      // Plan distribution excludes cancelled/soft-deleted tenants (hidden everywhere else).
-      this.prisma.tenant.groupBy({
-        by: ["plan"],
+      // Plan distribution + Est. MRR share one scan: excludes cancelled/soft-deleted
+      // tenants (hidden everywhere else). Keyed on the tenant's normalized planKey
+      // (subscription.planKey, else the legacy `plan` enum mapped forward) below —
+      // ACTIVE-only filtering for MRR happens in the reduce, not the query.
+      this.prisma.tenant.findMany({
         where: { deletedAt: null, status: { not: TenantStatus.CANCELLED } },
-        _count: { plan: true },
+        select: {
+          status: true,
+          plan: true,
+          subscription: { select: { planKey: true, basePriceSnapshot: true } },
+        },
       }),
-      // Est. MRR counts only ACTIVE (paying) tenants — trials/suspended/cancelled pay $0.
-      this.prisma.tenant.groupBy({
-        by: ["plan"],
-        where: { status: TenantStatus.ACTIVE, deletedAt: null },
-        _count: { plan: true },
-      }),
+      this._catalogPriceByPlanKey(),
       this.prisma.tenant.findMany({
         take: 5,
         orderBy: { createdAt: "desc" },
@@ -580,12 +592,20 @@ ${paymentSection}
       }),
     ]);
 
-    const planCounts = Object.fromEntries(
-      planBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
-    );
-    const activePlanCounts = Object.fromEntries(
-      activePlanBreakdown.map(({ plan, _count }) => [plan, _count.plan]),
-    );
+    // Plan distribution keyed on the current catalog's planKey (STARTER/GROWTH/
+    // SCALE/ENTERPRISE), not the legacy `plan` enum shadow. Est. MRR sums only
+    // ACTIVE tenants' real price: the subscription's pinned basePriceSnapshot
+    // (grandfathered) when set, else the published catalog's monthlyPrice for the
+    // tenant's normalized planKey, else $0.
+    const planCounts: Record<string, number> = {};
+    let mrrTotal = 0;
+    for (const t of planScanRows) {
+      const planKey = normalizePlanKey(t.subscription?.planKey) ?? planKeyFromEnum(t.plan);
+      planCounts[planKey] = (planCounts[planKey] ?? 0) + 1;
+      if (t.status === TenantStatus.ACTIVE) {
+        mrrTotal += this._monthlyPriceUsd(t, catalogPriceByPlanKey);
+      }
+    }
 
     return {
       tenants: {
@@ -597,9 +617,7 @@ ${paymentSection}
       totalUsers,
       superAdminCount,
       newTenantsThisMonth,
-      // Display-only stopgap MRR (see plan-pricing.constant.ts) — ACTIVE tenants
-      // only — until the billing-plans catalog owns the real rollup.
-      estMrrUsd: estimatePlatformMrrUsd(activePlanCounts),
+      estMrrUsd: roundMoney(mrrTotal),
       planBreakdown: planCounts,
       recentTenants,
       trialsExpiringSoon: trialsExpiringSoon.map((t) => ({
@@ -809,6 +827,28 @@ ${paymentSection}
     return { actions: ADMIN_AUDIT_ACTION_FACETS };
   }
 
+  // ─── Entitlements ─────────────────────────────────────────────────────────────
+
+  /**
+   * What a tenant actually has, server-authoritative: resolved flags/addons/caps
+   * + planKey (from {@link EntitlementsService}) plus live meter usage. The first
+   * admin-facing way to see this without querying the DB directly.
+   */
+  async getTenantEntitlements(tenantId: string) {
+    await this._findOrThrow(tenantId);
+    const [entitlements, usage] = await Promise.all([
+      this.entitlementsService.resolve(tenantId),
+      this.meterService.readAll(tenantId),
+    ]);
+    return {
+      planKey: entitlements.planKey,
+      flags: entitlements.flags,
+      addons: entitlements.addons,
+      caps: entitlements.caps,
+      usage,
+    };
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
   private async _findOrThrow(id: string) {
@@ -818,6 +858,42 @@ ${paymentSection}
     });
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return tenant;
+  }
+
+  /** Monthly USD price per current-catalog planKey, from the published PlanVersion.
+   *  Keys are normalized so a still-published legacy catalog (rows keyed TEAM/
+   *  BUSINESS) answers the GROWTH/SCALE lookups callers make — otherwise every
+   *  tenant on those plans would price at $0 until the new catalog is published.
+   *  Empty map when the catalog is unseeded — callers treat a missing key as $0. */
+  private async _catalogPriceByPlanKey(): Promise<Map<string, number>> {
+    const version = await this.planCatalogService.getPublishedVersion();
+    return new Map(
+      (version?.definitions ?? []).map((d) => [
+        normalizePlanKey(d.planKey) ?? d.planKey,
+        d.monthlyPrice != null ? Number(d.monthlyPrice) : 0,
+      ]),
+    );
+  }
+
+  /**
+   * Real monthly USD price for a tenant's subscription: the pinned
+   * `basePriceSnapshot` (grandfathered price) when set, else the published
+   * catalog's monthlyPrice for the tenant's normalized planKey, else $0 (unseeded
+   * catalog, or a planKey the current catalog doesn't carry). Replaces the retired
+   * STOPGAP_PLAN_MONTHLY_USD constant, which knew only STARTER/PROFESSIONAL/
+   * ENTERPRISE and silently priced everything else — including GROWTH/SCALE — at $0.
+   */
+  private _monthlyPriceUsd(
+    tenant: {
+      plan: string;
+      subscription: { planKey: string | null; basePriceSnapshot: Prisma.Decimal | null } | null;
+    },
+    catalogPriceByPlanKey: Map<string, number>,
+  ): number {
+    const snapshot = tenant.subscription?.basePriceSnapshot;
+    if (snapshot != null) return Number(snapshot);
+    const planKey = normalizePlanKey(tenant.subscription?.planKey) ?? planKeyFromEnum(tenant.plan);
+    return catalogPriceByPlanKey.get(planKey) ?? 0;
   }
 
   private _formatTenant(t: any) {
