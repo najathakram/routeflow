@@ -70,6 +70,14 @@ const nextConfig = {
       // Dev: the local API/socket run on plain http/ws (localhost:3000), which
       // `https: wss:` alone blocks — every API call fails CSP. Prod unchanged.
       `connect-src 'self' https: wss:${isDev ? " http://localhost:* ws://localhost:*" : ""}`,
+      // PDF previews render in an <iframe> from a blob: URL (invoice scanning,
+      // the invoice builder) or from a signed API/storage URL (customer
+      // documents). Without an explicit frame-src these fall back to
+      // default-src 'self' and render blank — images were unaffected because
+      // img-src already allows blob:, which is why PNGs previewed but PDFs did
+      // not. `data:` is deliberately excluded: data: URIs in frames are an XSS
+      // vector, and nothing here needs them.
+      "frame-src 'self' blob: https:",
       "frame-ancestors 'none'",
       "object-src 'none'",
       "base-uri 'self'",
