@@ -171,31 +171,48 @@ function CashForm({
 
 // ─── Pending request status ───────────────────────────────────────────────────
 
-/** Cancelling a CARD request is destructive in a way the buyer can't see: the
- *  API flips the row to CANCELLED, so the later `checkout.session.completed`
- *  webhook finds no PENDING row to claim, treats itself as a replay and records
- *  nothing — a card that DID charge would never reach an invoice. Cancel still
- *  has to exist (nothing server-side expires a stuck PENDING card row, and one
- *  blocks every later request), so instead it is hidden while the webhook is
- *  still expected and confirmed the rest of the time. */
+/** Cancelling a CARD request used to be able to strand a charge: the API
+ *  flipped the row straight to CANCELLED, so a webhook that landed afterward
+ *  found no PENDING row to claim, read itself as a replay and recorded
+ *  nothing — a card that DID charge would never reach an invoice. That hole
+ *  is closed server-side (not just hidden here): cancel always tries to
+ *  expire the Stripe Checkout session first, and if the session turns out to
+ *  already be paid, the cancel is REFUSED and the request stays PENDING for
+ *  the webhook to settle normally — only a genuinely-still-open (now
+ *  expired) or already-expired session can flip the row to
+ *  CANCELLED/EXPIRED. The Cancel button below is still hidden while a
+ *  webhook is expected (and always for SETTLING, which means the money is
+ *  actively being written) purely so the buyer is never invited to click
+ *  something that a moment ago would have been refused anyway. */
 function PendingRequestStatus({
   request,
   sellerName,
   awaitingWebhook,
+  onStartAgain,
 }: {
   request: BuyerPaymentRequestRow;
   sellerName: string;
   /** True for the first minute after Stripe redirected the buyer back. */
   awaitingWebhook: boolean;
+  /** EXPIRED rows don't block a new request (server excludes them from the
+   *  open-request check) — this just clears the row from view so the amount
+   *  form comes back. */
+  onStartAgain: () => void;
 }) {
   const cancel = useCancelPaymentRequest();
   const { toast } = useToast();
   const [error, setError] = React.useState<string | null>(null);
 
   const isCard = request.kind === "CARD";
-  const label = isCard
-    ? "Card payment in progress"
-    : `Waiting for ${sellerName} to confirm your cash payment`;
+  const isSettling = request.status === "SETTLING";
+  const isExpired = request.status === "EXPIRED";
+  const label = isExpired
+    ? "Your payment link expired"
+    : isSettling
+      ? "Processing your payment…"
+      : isCard
+        ? "Card payment in progress"
+        : `Waiting for ${sellerName} to confirm your cash payment`;
 
   const onCancel = () => {
     if (
@@ -218,15 +235,25 @@ function PendingRequestStatus({
     <div className="rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Clock className="h-4 w-4 flex-shrink-0 text-warning" />
+          {isSettling ? (
+            <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin text-buyer-500" />
+          ) : (
+            <Clock className="h-4 w-4 flex-shrink-0 text-warning" />
+          )}
           <div>
             <p className="text-sm font-medium text-navy">{label}</p>
             <p className="text-xs text-navy/60">
-              {fmt(request.amount)} · requested {fmtDate(request.createdAt)}
+              {isExpired
+                ? "No charge was made — you can try again."
+                : `${fmt(request.amount)} · requested ${fmtDate(request.createdAt)}`}
             </p>
           </div>
         </div>
-        {isCard && awaitingWebhook ? (
+        {isExpired ? (
+          <Button size="sm" variant="secondary" onClick={onStartAgain}>
+            Start again
+          </Button>
+        ) : isSettling || (isCard && awaitingWebhook) ? (
           <p className="text-xs text-navy/60">Confirming your payment…</p>
         ) : (
           <Button size="sm" variant="secondary" onClick={onCancel} loading={cancel.isPending}>
@@ -263,6 +290,11 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
   const [cashFormOpen, setCashFormOpen] = React.useState(false);
   const [cardError, setCardError] = React.useState<string | null>(null);
   const [awaitingWebhook, setAwaitingWebhook] = React.useState(returnedFromCheckout);
+  /** An EXPIRED request isn't blocking (server excludes it from the
+   *  open-request check) — "Start again" just dismisses it locally by id so
+   *  the amount form reappears without waiting for it to drop out of the
+   *  context query. */
+  const [dismissedRequestId, setDismissedRequestId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!touched && context) setAmount(context.balanceDue);
@@ -279,7 +311,13 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
 
   const startCard = useStartCardPayment();
 
-  const pendingRequest = context?.pendingRequests[0] ?? null;
+  const rawPendingRequest = context?.pendingRequests[0] ?? null;
+  const pendingRequest =
+    rawPendingRequest &&
+    rawPendingRequest.status === "EXPIRED" &&
+    rawPendingRequest.id === dismissedRequestId
+      ? null
+      : rawPendingRequest;
   const balanceDue = context?.balanceDue ?? 0;
   const cardEnabled = context?.cardEnabled ?? false;
   const nothingOwed = balanceDue <= 0.001;
@@ -290,7 +328,12 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
   // PENDING card row disappears the money is on the invoices, so refresh the rest
   // of the page too (wallet tiles, payment history) — those queries have no
   // polling of their own, and the redirect banner promised the balance updates.
-  const settlingCard = awaitingWebhook && pendingRequest?.kind === "CARD";
+  // Only a PENDING card row is still waiting on a webhook — an EXPIRED one (the
+  // notice the API hands back when nothing is open) never settles, so polling on
+  // it would just spin for the full minute and never invalidate anything.
+  const settlingCard =
+    pendingRequest?.status === "SETTLING" ||
+    (awaitingWebhook && pendingRequest?.kind === "CARD" && pendingRequest.status === "PENDING");
   React.useEffect(() => {
     if (!settlingCard) return;
     const t = setInterval(() => {
@@ -366,6 +409,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
               request={pendingRequest}
               sellerName={sellerName}
               awaitingWebhook={awaitingWebhook}
+              onStartAgain={() => setDismissedRequestId(pendingRequest.id)}
             />
           ) : (
             <>

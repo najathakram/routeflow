@@ -2963,24 +2963,55 @@ model CustomerLink {
 /// and re-established without touching the tenant row, and so `account.updated`
 /// webhooks have an obvious landing place. `chargesEnabled` gates the buyer's
 /// card button — a linked-but-unverified account must not accept payments.
+/// `stripeAccountId` is nullable because the row now exists BEFORE the OAuth
+/// callback completes: `buildAuthorizeUrl` upserts a "link started" shell to
+/// stash `pendingJti` (invariant 12's single-use OAuth state) — reads that
+/// treat the row as "connected" (`getStatus`, `chargeableAccount`) require
+/// `stripeAccountId` to be set, not just row-existence.
 model TenantStripeConnect {
-  id               String    @id @default(uuid())
-  tenantId         String    @unique
-  stripeAccountId  String
-  livemode         Boolean   @default(false)
-  chargesEnabled   Boolean   @default(false)
-  detailsSubmitted Boolean   @default(false)
-  connectedAt      DateTime  @default(now())
-  disconnectedAt   DateTime?
-  connectedByName  String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  id                 String    @id @default(uuid())
+  tenantId           String    @unique
+  stripeAccountId    String?
+  livemode           Boolean   @default(false)
+  chargesEnabled     Boolean   @default(false)
+  detailsSubmitted   Boolean   @default(false)
+  connectedAt        DateTime  @default(now())
+  disconnectedAt     DateTime?
+  connectedByName    String?
+  /// Single-use OAuth `state` jti (invariant 12): set when the authorize URL
+  /// is built, cleared atomically the moment `completeOAuth` consumes it. A
+  /// second exchange of the same `state` token finds no match and is
+  /// rejected — closes the OAuth-state replay window.
+  pendingJti         String?
+  pendingJtiIssuedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Non-unique on purpose: one business may run two tenants off one Stripe
   // account. Payment webhooks resolve by session id, never by account id.
   @@index([stripeAccountId])
+}
+
+/// Insert-first ledger for every Stripe Connect webhook delivery (invariant
+/// 3). The controller writes this row — raw client, before any tenant
+/// resolution or anti-spoof check — BEFORE doing anything else with the
+/// event; `id` is the Stripe event id, so a redelivery collides on the unique
+/// constraint and is a no-op ack. `accountRef` + `type` + `createdAt` (Stripe's
+/// `event.created`, NOT when we received it) let `account.updated` handling
+/// find the last-APPLIED delivery for an account and ignore a stale one that
+/// arrives out of order. `outcome` is filled in after routing (e.g. "settled",
+/// "duplicate", "account_mismatch", "stale", "ignored:<type>").
+model StripeConnectEvent {
+  id          String   @id
+  accountRef  String
+  type        String
+  createdAt   DateTime
+  processedAt DateTime @default(now())
+  outcome     String?
+
+  @@index([accountRef, type, createdAt])
 }
 
 enum BuyerPaymentRequestKind {
@@ -2990,6 +3021,13 @@ enum BuyerPaymentRequestKind {
 
 enum BuyerPaymentRequestStatus {
   PENDING
+  /// Claimed by a webhook delivery that is writing the InvoicePayment right
+  /// now (invariant 7) — the non-reopening intermediate state between PENDING
+  /// and SETTLED that makes a crash-then-redeliver safe.
+  SETTLING
+  /// Card payment settled (money written). Cash approvals stay on APPROVED —
+  /// SETTLED is specific to the webhook-driven card lifecycle.
+  SETTLED
   APPROVED
   REJECTED
   FAILED
@@ -3004,6 +3042,16 @@ enum BuyerPaymentRequestStatus {
 /// rows are written only on approval (cash) or a verified webhook (card), via
 /// recordStandalonePayment with an oldest-first allocation; `paymentGroupId`
 /// then joins this request to the rows it produced.
+///
+/// RACE-PROOF OPEN-REQUEST RULE (invariant 8): migration
+/// `20260826000000_stripe_connect_event_ledger` adds a PARTIAL unique index
+/// — `CREATE UNIQUE INDEX ... ON "BuyerPaymentRequest"("tenantId","customerId")
+/// WHERE status IN ('PENDING','SETTLING')` — that Prisma's schema language
+/// cannot express (no `WHERE` on `@@index`/`@@unique`), so it exists ONLY in
+/// that migration file; `prisma migrate dev` will not see it as drift because
+/// nothing here declares a conflicting full unique constraint on the same
+/// columns. EXPIRED is deliberately excluded so an abandoned request doesn't
+/// block the buyer from starting a new one.
 model BuyerPaymentRequest {
   id                    String                    @id @default(uuid())
   tenantId              String
@@ -3019,6 +3067,15 @@ model BuyerPaymentRequest {
   reference             String?
   stripeSessionId       String?                   @unique
   stripePaymentIntentId String?
+  /// The settled PaymentIntent id (invariant 7/9) — provider-agnostic name,
+  /// set once `settleByPaymentIntent` claims/completes the row. Distinct from
+  /// the legacy `stripePaymentIntentId` column above.
+  providerPaymentId     String?
+  /// Free-text note for an anomalous settle (e.g. money arrived for a row
+  /// that was CANCELLED/REJECTED/FAILED/EXPIRED, or the charged amount
+  /// disagreed with the requested amount) — never blocks the write, just
+  /// flags it for operator review.
+  outcome               String?
   paymentGroupId        String?
   failureReason         String?
   decidedById           String?
