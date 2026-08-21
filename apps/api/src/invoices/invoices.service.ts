@@ -200,12 +200,16 @@ export class InvoicesService {
           qty = split.qty;
         }
       }
+      // BUY_N_GET_M: free whole selling units come off the subtotal BEFORE pricing
+      // (never a rounded net unit price). 0 for every other line.
+      const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
       const beforeDiscount = computeLineSubtotal({
         unitPrice: item.unitPrice,
         qty,
         boxes,
         pieces,
         unitsPerBox,
+        freeUnits,
       });
       const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
       subtotal += lineSub;
@@ -239,6 +243,8 @@ export class InvoicesService {
         // Snapshot the box size when this line was priced as a box split, so a later
         // edit/PDF recompute uses the sale-time size (mirrors order-derived lines).
         unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+        // BUY_N_GET_M snapshot — stored so the next edit re-prices off it.
+        promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         // Snapshot the regulated category/subcategory AT SALE TIME (never re-read the
         // live product later — it may drift), so the ledger and filings attribute this
         // line even if the product is re-classified afterward.
@@ -483,6 +489,28 @@ export class InvoicesService {
   }
 
   /**
+   * BUY_N_GET_M free units for a CLIENT-SUBMITTED invoice line (create + the
+   * DRAFT edit, which delete-and-recreates every line). The snapshot travels on
+   * the payload like `boxes`/`pieces`/`notes` do — without it an order-derived
+   * BOGO line silently re-prices to full on save.
+   *
+   * Only WHOLE selling units count (boxes on a box-split line; qty otherwise) and
+   * the result is capped at `units - 1`: the buyer always pays the N in every
+   * (N + M), so no edit can hand over an entirely free line — the same ceiling the
+   * order engine applies in `rescaleBogoFreeUnits`.
+   */
+  private clampLineFreeUnits(
+    freeUnits: number | undefined,
+    boxes: number | null,
+    qty: number,
+  ): number {
+    const free = Math.max(0, Math.trunc(Number(freeUnits ?? 0) || 0));
+    if (free <= 0) return 0;
+    const wholeUnits = Math.trunc(Number(boxes != null ? boxes : qty) || 0);
+    return Math.min(free, Math.max(0, wholeUnits - 1));
+  }
+
+  /**
    * Shared per-line invoice-item shape built from an order line, billing `billQty`
    * pieces of it. Reused by createInvoiceFromOrder, reconcileOrderDraftInvoice and
    * createPartialFromOrder so the invoice line NEVER drifts from the order line.
@@ -503,7 +531,10 @@ export class InvoicesService {
    * `opts.priorBilledQty` (the qty already billed by surviving invoices): each
    * bill's subtotal = round(S · (prior+bill)/Q) − round(S · prior/Q). This sums to
    * exactly `S` once the line is fully billed (no per-partial cent drift) and, for
-   * a full bill from scratch (prior 0, bill = qty), copies `S` verbatim.
+   * a full bill from scratch (prior 0, bill = qty), copies `S` verbatim. On a
+   * BUY_N_GET_M line the cumulative key is the PAID qty (raw minus the free units'
+   * worth) so the prorated money agrees with the partial's whole-unit free
+   * allocation — see the comment at the proration itself.
    */
   private buildInvoiceItemData(
     li: any,
@@ -527,6 +558,36 @@ export class InvoicesService {
       : { qty: billQty, boxes: null as number | null, pieces: null as number | null };
 
     const prior = Math.max(0, Number(opts?.priorBilledQty ?? 0));
+
+    // BUY_N_GET_M: the order line's free-unit snapshot travels onto the invoice
+    // line, allocated across partials by a CUMULATIVE floor (so Σ(partials) == the
+    // order line's free units and a full bill copies it verbatim). The snapshot is
+    // what keeps a later DRAFT edit from re-pricing the line to full.
+    const storedFreeUnits = Math.max(0, Math.trunc(Number(li.promoFreeUnits ?? 0) || 0));
+    const hasFreeUnits = storedFreeUnits > 0 && orderQty > 0;
+    // A free unit is a whole SELLING unit: `unitsPerBox` pieces on a box-split line,
+    // one qty unit on a selling-unit line.
+    const freeUnitSize = isBoxSplit && unitsPerBox > 0 ? unitsPerBox : 1;
+    const freeUnitsThrough = (cumQty: number) =>
+      Math.min(storedFreeUnits, Math.floor((storedFreeUnits * Math.max(0, cumQty)) / orderQty));
+    const promoFreeUnits = !hasFreeUnits
+      ? storedFreeUnits
+      : freeUnitsThrough(prior + billQty) - freeUnitsThrough(prior);
+
+    // Free units are WHOLE units while the qty axis is pieces, so a subtotal prorated
+    // over the raw qty disagrees with the floored free-unit allocation by up to one
+    // unit price on a partial — and `update()` re-prices a DRAFT from the stored
+    // `promoFreeUnits`, so a no-op re-save would move the money. Prorate over the PAID
+    // quantity instead (raw minus the free units' worth): the stored subtotal then
+    // equals `computeLineSubtotal(split, promoFreeUnits)` and the round-trip is
+    // money-preserving, while Σ(partials) is still exactly the stored subtotal
+    // (paid(0) = 0, paid(orderQty) = paidQty). Non-BOGO lines are untouched.
+    const paidQty = orderQty - storedFreeUnits * freeUnitSize;
+    const onPaidBasis = hasFreeUnits && paidQty > 0;
+    const basisQty = onPaidBasis ? paidQty : orderQty;
+    const billedThrough = (cumQty: number) =>
+      onPaidBasis ? cumQty - freeUnitsThrough(cumQty) * freeUnitSize : cumQty;
+
     let subtotal: number;
     if (storedSubtotal == null || orderQty <= 0) {
       // Legacy/degenerate line with no stored money: fall back to the shared helper
@@ -537,12 +598,13 @@ export class InvoicesService {
         boxes: split.boxes,
         pieces: split.pieces,
         unitsPerBox,
+        freeUnits: promoFreeUnits,
       });
     } else {
       // Telescoping cumulative rounding — exact and drift-free across partials.
       subtotal = roundMoney(
-        roundMoney((storedSubtotal * (prior + billQty)) / orderQty) -
-          roundMoney((storedSubtotal * prior) / orderQty),
+        roundMoney((storedSubtotal * billedThrough(prior + billQty)) / basisQty) -
+          roundMoney((storedSubtotal * billedThrough(prior)) / basisQty),
       );
     }
 
@@ -569,6 +631,7 @@ export class InvoicesService {
       boxes: split.boxes,
       pieces: split.pieces,
       unitsPerBox: unitsPerBox > 0 ? unitsPerBox : null,
+      promoFreeUnits: promoFreeUnits > 0 ? promoFreeUnits : null,
       // Per-line note travels verbatim from the order line (buyer-visible).
       notes: li.notes ?? null,
       unitPrice,
@@ -1591,6 +1654,7 @@ export class InvoicesService {
       qty: number;
       subtotal: number;
       categoryTax: number; // RF-4: Σ billed category tax for this source line
+      freeUnits: number; // BUY_N_GET_M: Σ billed free selling units for this source line
       unitPrice: number;
       sample: any; // an invoice item, for the box/piece + upb snapshot
     };
@@ -1609,12 +1673,14 @@ export class InvoicesService {
           qty: 0,
           subtotal: 0,
           categoryTax: 0,
+          freeUnits: 0,
           unitPrice: Number(it.unitPrice),
           sample: it,
         };
         prev.qty += Number(it.qty);
         prev.subtotal += Number(it.subtotal);
         prev.categoryTax += Number(it.categoryTaxAmount ?? 0);
+        prev.freeUnits += Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
         prev.unitPrice = Number(it.unitPrice); // most-recent line wins for display
         prev.sample = it;
         byTarget.set(key, prev);
@@ -1627,6 +1693,9 @@ export class InvoicesService {
       const existing = agg.line;
       const lineSubtotal = roundMoney(agg.subtotal);
       const lineCategoryTax = roundMoney(agg.categoryTax);
+      // BUY_N_GET_M: mirror the BILLED free units back too, so the order line's
+      // snapshot can never contradict the subtotal it just took from the invoice.
+      const lineFreeUnits = Math.max(0, Math.trunc(agg.freeUnits) || 0);
       subtotal += lineSubtotal;
       categoryTaxSum += lineCategoryTax;
       // Preserve the denomination. For an existing line use ITS stored box/piece
@@ -1653,6 +1722,7 @@ export class InvoicesService {
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the order line.
             categoryTaxAmount: lineCategoryTax,
+            promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             invoicedQty: split.qty,
             status: "PENDING",
           },
@@ -1671,6 +1741,7 @@ export class InvoicesService {
             subtotal: lineSubtotal,
             // RF-4: mirror the billed category tax back onto the new order line.
             categoryTaxAmount: lineCategoryTax,
+            promoFreeUnits: lineFreeUnits > 0 ? lineFreeUnits : null,
             invoicedQty: split.qty,
             status: "PENDING",
             ...(tenantId ? { tenantId } : {}),
@@ -2256,12 +2327,17 @@ export class InvoicesService {
             qty = split.qty;
           }
         }
+        // BUY_N_GET_M: the line's free-unit snapshot round-trips on the payload
+        // (this path REPLACES every line). Dropping it re-prices an agreed
+        // 12-boxes-2-free line from $350 to 12 × $35 = $420 on a plain re-save.
+        const freeUnits = this.clampLineFreeUnits(item.promoFreeUnits, boxes, qty);
         const beforeDiscount = computeLineSubtotal({
           unitPrice: item.unitPrice,
           qty,
           boxes,
           pieces,
           unitsPerBox,
+          freeUnits,
         });
         const lineSub = roundMoney(beforeDiscount - (item.discount ?? 0));
         subtotal += lineSub;
@@ -2292,6 +2368,8 @@ export class InvoicesService {
           pieces,
           // Snapshot the box size for a box-split line so later recompute is stable.
           unitsPerBox: boxes != null && unitsPerBox ? unitsPerBox : null,
+          // BUY_N_GET_M snapshot — preserved across the delete-and-recreate.
+          promoFreeUnits: freeUnits > 0 ? freeUnits : null,
           // Re-snapshot the regulated category/subcategory from the (current) product,
           // consistent with create(); the ledger re-sync below reconciles the change.
           trackedCategoryId: product?.trackedCategoryId ?? null,
@@ -3092,6 +3170,9 @@ export class InvoicesService {
       taxRate: i.taxRate,
       boxes: (i as any).boxes ?? null,
       pieces: (i as any).pieces ?? null,
+      // BUY_N_GET_M snapshot travels with the copy — the subtotal is verbatim, and
+      // without the snapshot the copy's first edit would re-price the line to full.
+      promoFreeUnits: (i as any).promoFreeUnits ?? null,
       subtotal: roundMoney(Number(i.subtotal)),
       // RF-4: carry each line's category tax + regulated snapshots onto the copy.
       trackedCategoryId: (i as any).trackedCategoryId ?? null,

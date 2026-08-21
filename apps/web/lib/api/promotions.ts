@@ -3,7 +3,7 @@ import { apiClient } from "../api-client";
 
 // ─── Types (mirror apps/api/src/promotions DTOs + Prisma enums) ─────────────────
 
-export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK";
+export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK" | "BUY_N_GET_M";
 export type PromotionScope = "ALL" | "CATEGORY" | "PRODUCTS";
 
 export interface Promotion {
@@ -11,7 +11,11 @@ export interface Promotion {
   name: string;
   bannerText?: string | null;
   type: PromotionType;
-  /** PERCENT: 0–100. FIXED: $ off per unit. QTY_BREAK: percent off at/over minQty. */
+  /**
+   * PERCENT: 0–100. FIXED: $ off per unit. QTY_BREAK: percent off at/over minQty.
+   * BUY_N_GET_M reuses the same two columns — `minQty` = N (buy quantity),
+   * `value` = M (free quantity); both integers ≥ 1. No dedicated N/M columns.
+   */
   value: string | number;
   minQty?: number | null;
   scope: PromotionScope;
@@ -37,6 +41,12 @@ export interface PromotionInput {
   startsAt: string;
   endsAt: string;
   isActive?: boolean;
+  /**
+   * Confirmation flag (never persisted): the operator has seen how many in-scope
+   * products this rule would sell for $0.00 and means it. Without it the API
+   * refuses such a rule with a 400 (`code: "PROMOTION_ZERO_PRICE"`).
+   */
+  allowZeroPrice?: boolean;
 }
 
 // ─── Reads ──────────────────────────────────────────────────────────────────────
@@ -125,6 +135,10 @@ export function promotionRuleLabel(p: Pick<Promotion, "type" | "value" | "minQty
       return `$${value.toFixed(2)} off / unit`;
     case "QTY_BREAK":
       return `${value}% off at ${p.minQty ?? 1}+ units`;
+    case "BUY_N_GET_M":
+      // Field reuse: minQty = N (buy), value = M (free). Never a percent — this
+      // type gives whole free units and never changes the unit price.
+      return `Buy ${p.minQty ?? 0}, get ${value} free`;
     default:
       return `${value}`;
   }

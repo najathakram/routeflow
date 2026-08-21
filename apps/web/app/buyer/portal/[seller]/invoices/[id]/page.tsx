@@ -223,7 +223,16 @@ export default function BuyerInvoiceDetailPage() {
             {(invoice.items ?? []).map((item) => (
               <tr key={item.id} className="hover:bg-surface-raised/50">
                 <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
-                <td className="px-4 py-3 text-right text-sm text-navy">{Number(item.qty)}</td>
+                <td className="px-4 py-3 text-right text-sm text-navy">
+                  {Number(item.qty)}
+                  {/* BUY_N_GET_M: name the free units, or the reduced subtotal
+                      reads as a pricing error. */}
+                  {Number(item.promoFreeUnits ?? 0) > 0 && (
+                    <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                      {Number(item.promoFreeUnits)} free
+                    </p>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right text-sm text-navy/70">
                   {fmt(Number(item.unitPrice))}
                 </td>

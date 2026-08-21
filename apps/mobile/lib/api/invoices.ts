@@ -146,6 +146,9 @@ export interface CreateInvoiceItem {
   /** Optional box/piece split for boxed products. Server prorates the line. */
   boxes?: number;
   pieces?: number;
+  /** BUY_N_GET_M: whole free SELLING units on this line (boxes for a boxed line).
+   *  Server subtracts them before pricing — MUST round-trip on an items PATCH. */
+  promoFreeUnits?: number;
   /** Flat dollars off this line — server: lineSub = roundMoney(subtotal − discount). */
   discount?: number;
   /** Tax FRACTION (0.08 = 8%), charged on the POST-discount line subtotal. */

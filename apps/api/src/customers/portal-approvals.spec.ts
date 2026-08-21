@@ -4,6 +4,8 @@ import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { MeterService } from "../billing/meter.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 // Buyer-connect approval flow, WP2: decline endpoint + richer pending payloads.
@@ -56,6 +58,10 @@ describe("Portal approvals — decline endpoint + richer pending payloads", () =
             presignedUrl: jest.fn().mockResolvedValue("https://mock-url"),
           },
         },
+        // Customer soft-cap collaborators — unused by the approval tests, but
+        // CustomersService now depends on them.
+        { provide: MeterService, useValue: { read: jest.fn() } },
+        { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
       ],
     }).compile();
 

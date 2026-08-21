@@ -2,7 +2,12 @@ import { Injectable, Logger } from "@nestjs/common";
 import { TenantStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { addonSkuCode, planKeyFromEnum, PlanKey } from "./plan-catalog.constants";
+import {
+  addonSkuCode,
+  findPlanDefinition,
+  planKeyFromEnum,
+  PlanKey,
+} from "./plan-catalog.constants";
 
 /** Per-meter capacity caps; `null` means unlimited. */
 export interface EntitlementCaps {
@@ -10,6 +15,7 @@ export interface EntitlementCaps {
   routes: number | null;
   scans: number | null;
   msgs: number | null;
+  customers: number | null;
 }
 
 /** The fully-resolved entitlement snapshot for a tenant. */
@@ -132,7 +138,10 @@ export class EntitlementsService {
     // plan a subscription still names), fall back conservatively AND report the
     // effective plan so planKey/flags/caps stay internally consistent — never a
     // BUSINESS claim backed by STARTER caps.
-    const exactDef = version.definitions.find((d) => d.planKey === planKey);
+    // Compare NORMALIZED keys: a tenant pinned to a pre-rename version still finds
+    // its own definition when the key it carries (or the one the legacy TenantPlan
+    // enum maps to) is the renamed twin of the row — e.g. SCALE ↔ BUSINESS.
+    const exactDef = findPlanDefinition(version.definitions, planKey);
     const def =
       exactDef ??
       version.definitions.find((d) => d.planKey === "STARTER") ??
@@ -154,7 +163,13 @@ export class EntitlementsService {
     // Resolve active add-ons → canonical SKU codes → catalog metadata.
     const activeCodes: string[] = [];
     const flags = new Set<string>(def.featureFlags);
-    const capacity: Record<string, number> = { SEATS: 0, ROUTES: 0, SCANS: 0, MSGS: 0 };
+    const capacity: Record<string, number> = {
+      SEATS: 0,
+      ROUTES: 0,
+      SCANS: 0,
+      MSGS: 0,
+      CUSTOMERS: 0,
+    };
 
     for (const addon of tenant.addons) {
       const code = addonSkuCode(addon);
@@ -184,6 +199,7 @@ export class EntitlementsService {
         routes: cap(def.routesConcurrent ?? null, "ROUTES"),
         scans: cap(def.scansIncluded ?? null, "SCANS"),
         msgs: cap(def.msgsIncluded ?? null, "MSGS"),
+        customers: cap(def.customersIncluded ?? null, "CUSTOMERS"),
       },
       trialEndsAt: tenant.trialEndsAt,
     };

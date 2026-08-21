@@ -189,6 +189,7 @@ export default function BuyerProductDetailPage() {
             product={product}
             cartItem={cartItem}
             promoRules={promoRules}
+            promotions={promotions}
             onAdd={() =>
               cart.addItem({
                 productId: product.id,

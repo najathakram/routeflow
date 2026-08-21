@@ -89,10 +89,18 @@ export interface LineSubtotalInput {
   pieces?: number | null;
   /** Box size; null/1 means the product is sold as individual pieces. */
   unitsPerBox?: number | null;
+  /**
+   * Whole SELLING units made free by a BUY_N_GET_M promo (boxes for a boxed
+   * line, pieces otherwise) — subtracted before pricing so the saving is
+   * EXACT, never a rounded net-unit-price. Clamped so the line can never go
+   * negative. Default 0: every existing call site is unaffected.
+   */
+  freeUnits?: number;
 }
 
 export function computeLineSubtotal(input: LineSubtotalInput): number {
-  const { unitPrice, qty, boxes, pieces, unitsPerBox } = input;
+  const { unitPrice, qty, boxes, pieces, unitsPerBox, freeUnits = 0 } = input;
+  const free = Math.max(0, Math.trunc(Number(freeUnits) || 0));
   const upb = Number(unitsPerBox ?? 0);
   const hasBoxPackaging = upb > 1;
   const boxesPiecesProvided = boxes != null || pieces != null;
@@ -101,12 +109,12 @@ export function computeLineSubtotal(input: LineSubtotalInput): number {
     // unitPrice is the BOX price. One box = unitPrice; loose pieces are prorated.
     const b = Number(boxes ?? 0);
     const p = Number(pieces ?? 0);
-    const boxEquivalent = b + p / upb;
+    const boxEquivalent = Math.max(0, b - free) + p / upb;
     return roundMoney(unitPrice * boxEquivalent);
   }
 
   // Non-boxed product (or caller didn't split): unitPrice is per piece, qty in pieces.
-  return roundMoney(unitPrice * qty);
+  return roundMoney(unitPrice * Math.max(0, qty - free));
 }
 
 /**
@@ -241,7 +249,7 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
   }
 }
 
-// ─── Promotions (P5-04) ───────────────────────────────────────────────────────
+// ─── Promotions (P5-04, + BUY_N_GET_M) ────────────────────────────────────────
 // A promotion adjusts the per-SELLING-UNIT price of a matching line. It composes
 // with computeLineSubtotal exactly like any other unitPrice: resolve the NET
 // selling-unit price here, then feed it (with boxes/pieces/unitsPerBox) through
@@ -251,18 +259,35 @@ export function computeCategoryTax(input: CategoryTaxInput): number {
 // Discount convention (mirrors the operator override): a promoted line stores the
 // NET unitPrice + the pre-promo price as originalPrice (strikethrough); the saving
 // is (originalPrice − unitPrice), never a separate discount amount (no double-count).
+//
+// BUY_N_GET_M ("buy N get M free") is a DIFFERENT mechanic: it never touches the
+// per-unit price. It carries unitPrice = base, originalPrice = null, and a
+// freeUnits count of whole SELLING units (boxes for a boxed line — loose pieces
+// NEVER count) made free; the caller feeds freeUnits straight into
+// computeLineSubtotal, which subtracts whole units before pricing. This keeps the
+// saving EXACT — never a rounded net-unit-price (e.g. $35 × 5/6 = $29.1667 would
+// drift cents when multiplied back).
+//
 // This block is byte-identical in the web + mobile mirrors — change all three.
 
-export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK";
+export type PromotionType = "PERCENT" | "FIXED" | "QTY_BREAK" | "BUY_N_GET_M";
 export type PromotionScope = "ALL" | "CATEGORY" | "PRODUCTS";
 
 /** A promotion's typed rule — already tenant- and window-filtered by the caller. */
 export interface PromotionRule {
   id: string;
   type: PromotionType;
-  /** PERCENT / QTY_BREAK: percent off (0–100). FIXED: $ off per SELLING UNIT (the box price when boxed). */
+  /**
+   * PERCENT / QTY_BREAK: percent off (0–100). FIXED: $ off per SELLING UNIT (the
+   * box price when boxed). BUY_N_GET_M: free quantity M — an integer ≥ 1.
+   */
   value: number;
-  /** QTY_BREAK threshold in PIECES; the break applies only when qtyPieces ≥ minQty. */
+  /**
+   * QTY_BREAK threshold in PIECES; the break applies only when qtyPieces ≥ minQty.
+   * BUY_N_GET_M: buy quantity N — an integer ≥ 1, in whole SELLING units. Every
+   * (N + M) whole selling units of the same product on a line makes M free (field
+   * reuse: no dedicated Promotion columns for N/M).
+   */
   minQty?: number | null;
   scope: PromotionScope;
   /** scope=CATEGORY: matched (exact string) against the product's category. */
@@ -277,6 +302,14 @@ export interface PromoContext {
   category?: string | null;
   /** Total line quantity in PIECES (post-normalizeBoxesPieces) — for the QTY_BREAK gate. */
   qtyPieces: number;
+  /**
+   * Total line quantity in whole SELLING units — boxes for a boxed line (mixed
+   * lines count ONLY full boxes; loose pieces NEVER count), qty for a piece
+   * line. Drives BUY_N_GET_M's free-unit math and the savings comparison in
+   * `applyBestPromotion`. Callers use the would-be-added quantity (1 unit) when
+   * pricing outside a cart, mirroring how `qtyPieces` is sourced today.
+   */
+  qtyUnits: number;
 }
 
 export interface PromoResult {
@@ -286,6 +319,12 @@ export interface PromoResult {
   originalPrice: number | null;
   /** The winning promotion id, or null when none applied. */
   appliedPromoId: string | null;
+  /**
+   * Whole selling units made free by a BUY_N_GET_M promo. 0 for every other
+   * type and when no promo applied — feed straight into `computeLineSubtotal`'s
+   * `freeUnits` param; NEVER re-derive a discounted unit price for this type.
+   */
+  freeUnits: number;
 }
 
 /** Does a promotion's scope cover this product? */
@@ -307,6 +346,7 @@ export function promotionMatchesProduct(promo: PromotionRule, ctx: PromoContext)
  * (wrong scope, qty-break threshold not met) or doesn't actually lower the price.
  * `basePrice` is the customer's pre-promo selling-unit price (their tier price).
  * Rounded to cents; a promo may never raise the price and never go below 0.
+ * BUY_N_GET_M never has a net price — see `promoBogoFreeUnits` below.
  */
 function promoNetPrice(basePrice: number, promo: PromotionRule, ctx: PromoContext): number | null {
   if (!promotionMatchesProduct(promo, ctx)) return null;
@@ -327,16 +367,45 @@ function promoNetPrice(basePrice: number, promo: PromotionRule, ctx: PromoContex
       net = basePrice - value; // $ off per selling unit (never per piece — see header)
       break;
     default:
-      return null;
+      return null; // BUY_N_GET_M (and anything unrecognized) has no net-price form
   }
   net = roundMoney(Math.max(0, net));
   return net < basePrice ? net : null; // only apply when it genuinely lowers the price
 }
 
 /**
- * Apply the best (lowest-net) applicable promotion to a base selling-unit price.
- * Single, non-stacking: the promo yielding the lowest net price wins (ties broken
- * by promo id for determinism). Returns the base unchanged when none apply.
+ * Free-units count for a BUY_N_GET_M ("buy N get M free") promo, or null if it
+ * doesn't apply — wrong type/scope, a non-integer or `< 1` N or M (ignored, never
+ * a crash), or fewer than one full (N + M) block of whole selling units on the
+ * line yet. `minQty` stores N (buy qty), `value` stores M (free qty).
+ * PIECES NEVER COUNT: `ctx.qtyUnits` must already be whole selling units only
+ * (the caller's job — boxes for a boxed line, pieces for a piece line).
+ * `freeUnits = floor(qtyUnits / (N + M)) * M` — the owner's exact table for
+ * N=5, M=1: 5 units → 0 free, 6 → 1, 11 → 1, 12 → 2, 18 → 3.
+ */
+function promoBogoFreeUnits(promo: PromotionRule, ctx: PromoContext): number | null {
+  if (promo.type !== "BUY_N_GET_M") return null;
+  if (!promotionMatchesProduct(promo, ctx)) return null;
+  const n = Number(promo.minQty);
+  const m = Number(promo.value);
+  if (!Number.isInteger(n) || n < 1 || !Number.isInteger(m) || m < 1) return null;
+  const qtyUnits = Number(ctx.qtyUnits) || 0;
+  const freeUnits = Math.floor(qtyUnits / (n + m)) * m;
+  return freeUnits > 0 ? freeUnits : null;
+}
+
+/**
+ * Apply the best (largest-saving) applicable promotion to a base selling-unit
+ * price. Single, non-stacking: the promo yielding the largest total dollar
+ * saving for the line's current quantity wins; equal savings fall back to the
+ * LOWEST net unit price and then to promo id (determinism, as today) — so a
+ * line with no whole selling units yet, where every price promo saves $0, still
+ * picks the deepest discount exactly as it did before. Price promos
+ * (PERCENT/FIXED/QTY_BREAK) save `(base - net) × qtyUnits`; BUY_N_GET_M saves
+ * `freeUnits × base` and returns `unitPrice = base` unchanged — the free units
+ * reduce the SUBTOTAL via `computeLineSubtotal`'s `freeUnits` param, never a
+ * rounded net unit price (see the header). Returns the base unchanged,
+ * `freeUnits: 0`, when none apply.
  */
 export function applyBestPromotion(
   basePrice: number,
@@ -344,24 +413,165 @@ export function applyBestPromotion(
   ctx: PromoContext,
 ): PromoResult {
   const base = roundMoney(basePrice);
-  let bestNet: number | null = null;
+  const qtyUnits = Number(ctx.qtyUnits) || 0;
+  let bestSaving: number | null = null;
   let bestId: string | null = null;
+  let bestNet = base;
+  let bestFreeUnits = 0;
   for (const promo of promos) {
-    const net = promoNetPrice(base, promo, ctx);
-    if (net == null) continue;
+    let saving: number;
+    let net = base;
+    let freeUnits = 0;
+    if (promo.type === "BUY_N_GET_M") {
+      const free = promoBogoFreeUnits(promo, ctx);
+      if (free == null) continue;
+      freeUnits = free;
+      saving = roundMoney(freeUnits * base);
+    } else {
+      const promoNet = promoNetPrice(base, promo, ctx);
+      if (promoNet == null) continue;
+      net = promoNet;
+      saving = roundMoney((base - net) * qtyUnits);
+    }
     if (
-      bestNet == null ||
-      net < bestNet ||
-      (net === bestNet && bestId != null && promo.id < bestId)
+      bestSaving == null ||
+      saving > bestSaving ||
+      (saving === bestSaving &&
+        (net < bestNet || (net === bestNet && bestId != null && promo.id < bestId)))
     ) {
-      bestNet = net;
+      bestSaving = saving;
       bestId = promo.id;
+      bestNet = net;
+      bestFreeUnits = freeUnits;
     }
   }
-  if (bestNet == null || bestId == null) {
-    return { unitPrice: base, originalPrice: null, appliedPromoId: null };
+  if (bestSaving == null || bestId == null) {
+    return { unitPrice: base, originalPrice: null, appliedPromoId: null, freeUnits: 0 };
   }
-  return { unitPrice: bestNet, originalPrice: base, appliedPromoId: bestId };
+  if (bestFreeUnits > 0) {
+    return {
+      unitPrice: base,
+      originalPrice: null,
+      appliedPromoId: bestId,
+      freeUnits: bestFreeUnits,
+    };
+  }
+  return { unitPrice: bestNet, originalPrice: base, appliedPromoId: bestId, freeUnits: 0 };
+}
+
+// ─── Zero-price guard: a rule that clamps in-scope products to $0.00 ──────────
+// promoNetPrice floors the net at 0, so a FIXED "$35 off" rule prices EVERY
+// in-scope product at or below $35 at exactly $0.00 — in the buyer catalog AND
+// on the invoice the order bills. The rule is legal; the operator just cannot
+// see its blast radius while typing it (2026-08-20: one ALL-scoped $35-off promo
+// put 699 of a tenant's 1,767 products on the portal at $0.00 with a -100% chip).
+// These pure helpers compute that blast radius from the catalog so the promotion
+// editor can warn and the API can refuse the write unless it is confirmed.
+// Keep all three mirrors in sync.
+
+/** How many product names a scan carries back for the operator-facing warning. */
+export const ZERO_PRICE_EXAMPLE_LIMIT = 5;
+
+/** The catalog facts the zero-price scan needs — a product row from any surface. */
+export interface PromoScopeProduct {
+  id: string;
+  name?: string | null;
+  category?: string | null;
+  /** Canonical SELLING-UNIT price (`Product.pricePerUnit` — the BOX price when boxed). */
+  price: number | string | null | undefined;
+}
+
+export interface ZeroPriceImpact {
+  /** In-scope products the rule would clamp to $0.00. */
+  count: number;
+  /** How many products the rule's scope covers at all — the denominator. */
+  inScope: number;
+  /** Up to {@link ZERO_PRICE_EXAMPLE_LIMIT} names of the clamped products. */
+  examples: string[];
+}
+
+/**
+ * Cheap shape check: can this rule zero ANY price at all? A FIXED amount always
+ * can (some product is always cheap enough); PERCENT/QTY_BREAK only at a full
+ * 100% off. Callers use it to skip the catalog scan for ordinary rules.
+ *
+ * Only the mechanics with a NET-PRICE form can reach $0.00, so the switch is
+ * explicit rather than a `!== "FIXED"` fallthrough — `value` does not mean
+ * "percent" for every type. BUY_N_GET_M stores M (free units) in `value`, and a
+ * bare `value >= 100` would send "buy 1 get 100 free" on a pointless full-catalogue
+ * scan. It could never be flagged anyway: `promoBogoFreeUnits` requires N >= 1, so
+ * `floor(qtyUnits / (N + M)) * M` is strictly less than `qtyUnits` — a free-unit
+ * rule can discount a line steeply but can never make one free.
+ */
+export function ruleCanZeroPrice(promo: Pick<PromotionRule, "type" | "value">): boolean {
+  const value = Number(promo.value) || 0;
+  if (value <= 0) return false;
+  switch (promo.type) {
+    case "FIXED":
+      return true;
+    case "PERCENT":
+    case "QTY_BREAK":
+      return value >= 100;
+    default:
+      return false; // no net-price form ⇒ nothing for the scan to find
+  }
+}
+
+/** The qty a rule is judged at — a QTY_BREAK bites at its own threshold. */
+function zeroScanQtyPieces(promo: PromotionRule): number {
+  return Math.max(1, Math.trunc(Number(promo.minQty ?? 0)) || 1);
+}
+
+/**
+ * Would this rule price ONE product at exactly $0.00? A product already priced at
+ * $0 is never counted — the promotion is not what makes that one free.
+ */
+export function promotionZeroesProduct(product: PromoScopeProduct, promo: PromotionRule): boolean {
+  const base = roundMoney(Number(product.price) || 0);
+  if (!(base > 0)) return false;
+  const net = promoNetPrice(base, promo, {
+    productId: product.id,
+    category: product.category ?? null,
+    qtyPieces: zeroScanQtyPieces(promo),
+    // One selling unit: the question is what a single unit would ring up at.
+    qtyUnits: 1,
+  });
+  return net === 0;
+}
+
+/**
+ * Scan a catalog for the products a rule would sell for $0.00. Callers may
+ * pre-filter to the rule's scope in SQL; the scope is re-checked here either way,
+ * so an unfiltered catalog is equally correct (just more work).
+ */
+export function scanPromotionZeroPrice(
+  products: PromoScopeProduct[],
+  promo: PromotionRule,
+): ZeroPriceImpact {
+  const impact: ZeroPriceImpact = { count: 0, inScope: 0, examples: [] };
+  const qtyPieces = zeroScanQtyPieces(promo);
+  for (const product of products) {
+    const inScope = promotionMatchesProduct(promo, {
+      productId: product.id,
+      category: product.category ?? null,
+      qtyPieces,
+      qtyUnits: 1,
+    });
+    if (!inScope) continue;
+    impact.inScope += 1;
+    if (!promotionZeroesProduct(product, promo)) continue;
+    impact.count += 1;
+    if (impact.examples.length < ZERO_PRICE_EXAMPLE_LIMIT) {
+      impact.examples.push(product.name || product.id);
+    }
+  }
+  return impact;
+}
+
+/** The one operator-facing sentence for a zero-price warning or refusal. */
+export function zeroPriceWarning(impact: ZeroPriceImpact): string {
+  const noun = impact.count === 1 ? "product" : "products";
+  return `This discount is larger than the price of ${impact.count} ${noun} in scope — they would sell for $0.00.`;
 }
 
 // ─── Price-override direction: upsell vs discount ─────────────────────────────

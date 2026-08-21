@@ -186,11 +186,17 @@ describe("deriveTilePrice", () => {
 });
 
 describe("computeTileChip", () => {
-  const noPromo: PromoResult = { unitPrice: 10, originalPrice: null, appliedPromoId: null };
+  const noPromo: PromoResult = {
+    unitPrice: 10,
+    originalPrice: null,
+    appliedPromoId: null,
+    freeUnits: 0,
+  };
   const promoted = (unitPrice: number, originalPrice: number): PromoResult => ({
     unitPrice,
     originalPrice,
     appliedPromoId: "p1",
+    freeUnits: 0,
   });
 
   it("Deal (from a promo) takes priority over New and Featured, with a percent label", () => {

@@ -165,6 +165,13 @@ interface LineItemState {
   /** Per-line note (buyer-visible) — MUST round-trip: the update endpoint
    *  delete-and-recreates items, so dropping this wipes order-carried notes. */
   notes?: string;
+  /** BUY_N_GET_M snapshot carried from the order line: whole free selling units.
+   *  MUST round-trip for the same reason as `notes` — but this one is MONEY: drop
+   *  it and an agreed 12-boxes-2-free line re-prices from $350 to $420 on save. */
+  promoFreeUnits?: number;
+  /** Whole selling units the snapshot above was earned at, so a qty edit rescales
+   *  it instead of handing over free units the new quantity never earned. */
+  promoBaseUnits?: number;
 }
 
 /**
@@ -185,6 +192,24 @@ function lineSplit(it: { qty: number; unitsPerBox?: number }): {
   return { boxes: null, pieces: null };
 }
 
+/**
+ * BUY_N_GET_M free units for this line, rescaled when the operator edits the qty.
+ * The snapshot was earned at `promoBaseUnits` whole selling units, so a shrunk line
+ * earns proportionally fewer and a grown one never earns MORE than was agreed
+ * (mirrors the order engine's `rescaleBogoFreeUnits` fallback). Capped at
+ * units − 1: the buyer always pays the N in every (N + M), so no line is all free.
+ */
+function lineFreeUnits(it: LineItemState): number {
+  const stored = Math.max(0, Math.trunc(it.promoFreeUnits ?? 0));
+  if (stored <= 0) return 0;
+  const { boxes } = lineSplit(it);
+  const units = Math.trunc(Number(boxes != null ? boxes : it.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(it.promoBaseUnits ?? units));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
+}
+
 /** Post-discount line total, boxed-aware, rounded — same basis the server stores. */
 function lineTotal(it: LineItemState): number {
   const { boxes, pieces } = lineSplit(it);
@@ -194,6 +219,8 @@ function lineTotal(it: LineItemState): number {
     boxes,
     pieces,
     unitsPerBox: it.unitsPerBox ?? null,
+    // BUY_N_GET_M: free whole units come off before pricing, exactly like the server.
+    freeUnits: lineFreeUnits(it),
   });
   return roundMoney(beforeDiscount - Number(it.discount));
 }
@@ -270,6 +297,11 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
                 discount: Number(it.discount ?? 0),
                 unitsPerBox: isBoxSplit && upb > 1 ? upb : undefined,
                 notes: it.notes ?? undefined,
+                // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
+                promoFreeUnits: it.promoFreeUnits ?? undefined,
+                promoBaseUnits: it.promoFreeUnits
+                  ? Math.trunc(Number(isBoxSplit ? (it.boxes ?? 0) : it.qty) || 0)
+                  : undefined,
               };
             })
           : [createEmptyItem()],
@@ -341,6 +373,7 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
         // Send the boxed split so the server prorates (unitPrice is the BOX price).
         // Without boxes/pieces the server falls back to unitPrice*qty and over-charges.
         const { boxes, pieces } = lineSplit(it);
+        const freeUnits = lineFreeUnits(it);
         return {
           productId: it.productId,
           description: it.description,
@@ -350,6 +383,8 @@ export default function EditInvoicePage({ params }: { params: { id: string } }) 
           discount:
             it.discount != null && Number(it.discount) !== 0 ? Number(it.discount) : undefined,
           ...(it.unitsPerBox && it.productId ? { boxes: boxes ?? 0, pieces: pieces ?? 0 } : {}),
+          // Round-trip the BUY_N_GET_M snapshot — the server replaces every line.
+          ...(freeUnits > 0 ? { promoFreeUnits: freeUnits } : {}),
           // Round-trip the per-line note — the server recreates all items on update.
           ...(it.notes?.trim() ? { notes: it.notes.trim() } : {}),
         };

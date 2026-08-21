@@ -505,11 +505,21 @@ export class GoogleOAuthService {
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
 
+      // Google attests the mailbox it authenticated — when that's the account's own
+      // email, it satisfies the registration verification gate (requestSeller's
+      // emailVerified check) exactly like clicking the emailed link would. NOT when
+      // the account was found via a previously-linked googleId and the emails
+      // differ: Google proved profile.email, not the account email.
+      const googleAttestsMailbox = buyer.email.toLowerCase() === profile.email;
+
       // Auto-link googleId and send a security notification (fire-and-forget)
       if (!buyer.googleId) {
         await this.prisma.buyerAccount.update({
           where: { id: buyer.id },
-          data: { googleId: profile.googleId },
+          data: {
+            googleId: profile.googleId,
+            ...(googleAttestsMailbox ? { emailVerified: true } : {}),
+          },
         });
         void this.emailService
           .send({
@@ -518,6 +528,13 @@ export class GoogleOAuthService {
             html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
           })
           .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+      } else if (googleAttestsMailbox && !buyer.emailVerified) {
+        // Already-linked account whose mailbox was never verified (e.g. password
+        // registration followed by Google linking before this gate existed).
+        await this.prisma.buyerAccount.update({
+          where: { id: buyer.id },
+          data: { emailVerified: true },
+        });
       }
     } else {
       // Auto-create portal account with an unguessable password hash (Google-only).

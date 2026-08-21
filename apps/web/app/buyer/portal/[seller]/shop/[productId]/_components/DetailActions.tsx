@@ -2,9 +2,9 @@
 
 import { Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@/lib/pricing";
-import type { BuyerProductDetail } from "@/lib/api/buyer";
+import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
-import { deriveTilePrice } from "../../_components/tile-pricing";
+import { bogoChipLabel, deriveTilePrice } from "../../_components/tile-pricing";
 import { QtyStepper } from "../../_components/QtyStepper";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -22,7 +22,11 @@ function fmt(n: number) {
 function computeChip(
   product: Pick<BuyerProductDetail, "isDeal" | "isNew" | "isFeatured">,
   priced: PromoResult,
+  bogoLabel: string | null,
 ): { label: string; cls: string } | null {
+  // BUY_N_GET_M first: it leaves `originalPrice` null (no fake unit price), so
+  // its chip is the promo's banner text — never a derived "-N%".
+  if (bogoLabel) return { label: bogoLabel, cls: "bg-success text-white" };
   if (priced.originalPrice != null || product.isDeal) {
     let label = "Deal";
     // Display-only percent derived from the already-rounded priced result — never fed back into money math.
@@ -44,6 +48,8 @@ export interface DetailActionsProps {
   /** undefined when the product is not in the cart. */
   cartItem: CartItem | undefined;
   promoRules: PromotionRule[];
+  /** Raw promo list — only for the BUY_N_GET_M chip's `bannerText` (not pricing). */
+  promotions?: BuyerPromotion[];
   onAdd: () => void;
   onUpdateQty: (qty: number) => void;
   isAlertSubscribed: boolean;
@@ -54,6 +60,7 @@ export function DetailActions({
   product,
   cartItem,
   promoRules,
+  promotions,
   onAdd,
   onUpdateQty,
   isAlertSubscribed,
@@ -61,7 +68,7 @@ export function DetailActions({
 }: DetailActionsProps) {
   // Cent-parity anchor — MUST equal the tile's and cart's number for this product+qty.
   const priced = deriveTilePrice(product, promoRules, cartItem);
-  const chip = computeChip(product, priced);
+  const chip = computeChip(product, priced, bogoChipLabel(product, promotions));
   const outOfStock = (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";
 
   return (

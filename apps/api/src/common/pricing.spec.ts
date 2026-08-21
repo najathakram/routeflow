@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -10,10 +12,16 @@ import {
   computeCategoryTax,
   applyBestPromotion,
   promotionMatchesProduct,
+  ruleCanZeroPrice,
+  promotionZeroesProduct,
+  scanPromotionZeroPrice,
+  zeroPriceWarning,
+  ZERO_PRICE_EXAMPLE_LIMIT,
   isUpsellLine,
   effectiveBuyerPrice,
   formatQtySplit,
   type PromotionRule,
+  type PromoScopeProduct,
 } from "./pricing";
 
 /**
@@ -410,7 +418,7 @@ const promo = (
 });
 
 describe("promotionMatchesProduct — scope matching", () => {
-  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1 };
+  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1, qtyUnits: 1 };
   it("ALL matches every product", () => {
     expect(promotionMatchesProduct(promo({ id: "a", type: "PERCENT", scope: "ALL" }), ctx)).toBe(
       true,
@@ -455,11 +463,17 @@ describe("promotionMatchesProduct — scope matching", () => {
 
 describe("applyBestPromotion", () => {
   const ctx = (
-    over: Partial<{ productId: string; category: string | null; qtyPieces: number }> = {},
+    over: Partial<{
+      productId: string;
+      category: string | null;
+      qtyPieces: number;
+      qtyUnits: number;
+    }> = {},
   ) => ({
     productId: "p1",
     category: "Beverages",
     qtyPieces: 1,
+    qtyUnits: 1,
     ...over,
   });
 
@@ -517,6 +531,7 @@ describe("applyBestPromotion", () => {
       unitPrice: 50,
       originalPrice: null,
       appliedPromoId: null,
+      freeUnits: 0,
     });
     // Scope mismatch.
     const scoped = applyBestPromotion(
@@ -530,6 +545,7 @@ describe("applyBestPromotion", () => {
       unitPrice: 50,
       originalPrice: null,
       appliedPromoId: null,
+      freeUnits: 0,
     });
   });
 
@@ -542,6 +558,7 @@ describe("applyBestPromotion", () => {
       productId: "p1",
       category: "Beverages",
       qtyPieces: norm.qty,
+      qtyUnits: norm.boxes ?? norm.qty,
     });
     expect(r.unitPrice).toBe(35);
     const subtotal = computeLineSubtotal({
@@ -554,6 +571,433 @@ describe("applyBestPromotion", () => {
     expect(subtotal).toBe(70); // 2 boxes × $35.00
     // Guard the classic over-charge: net-per-piece × 12 pieces.
     expect(subtotal).not.toBe(420); // $35 × 12
+  });
+
+  it("REGRESSION PIN: an existing PERCENT scenario is bit-for-bit unchanged after adding BUY_N_GET_M", () => {
+    // Re-runs the exact scenario from "picks the promo that yields the lowest net
+    // price" above — locks that the savings-based comparison never perturbs
+    // legacy PERCENT/FIXED/QTY_BREAK output.
+    const promos = [
+      promo({ id: "a", type: "PERCENT", value: 10 }),
+      promo({ id: "b", type: "FIXED", value: 25 }),
+      promo({ id: "c", type: "PERCENT", value: 5 }),
+    ];
+    expect(applyBestPromotion(100, promos, ctx({ qtyUnits: 7 }))).toEqual({
+      unitPrice: 75,
+      originalPrice: 100,
+      appliedPromoId: "b",
+      freeUnits: 0,
+    });
+  });
+
+  it("REGRESSION PIN: with zero whole selling units the deepest discount still wins", () => {
+    // A boxed line holding only loose pieces normalizes to boxes = 0, so every
+    // price promo's dollar saving is $0. The winner must still be the LOWEST net
+    // price — never whichever promo id happens to sort first.
+    const promos = [
+      promo({ id: "aaa", type: "PERCENT", value: 5 }), // → 95
+      promo({ id: "zzz", type: "PERCENT", value: 50 }), // → 50
+    ];
+    expect(applyBestPromotion(100, promos, ctx({ qtyPieces: 5, qtyUnits: 0 }))).toEqual({
+      unitPrice: 50,
+      originalPrice: 100,
+      appliedPromoId: "zzz",
+      freeUnits: 0,
+    });
+  });
+});
+
+// ─── BUY_N_GET_M ("buy N get M free") ─────────────────────────────────────────
+
+describe("promoBogoFreeUnits (via applyBestPromotion) — the owner's exact table", () => {
+  const bogo = (id: string, n: number, m: number) =>
+    promo({ id, type: "BUY_N_GET_M", minQty: n, value: m });
+  const ctxUnits = (qtyUnits: number) => ({
+    productId: "p1",
+    category: "Beverages",
+    qtyPieces: qtyUnits,
+    qtyUnits,
+  });
+
+  it.each([
+    [5, 0],
+    [6, 1],
+    [11, 1],
+    [12, 2],
+    [18, 3],
+  ])("N=5,M=1: %i whole units → %i free", (qtyUnits, expectedFree) => {
+    const r = applyBestPromotion(35, [bogo("a", 5, 1)], ctxUnits(qtyUnits));
+    expect(r.freeUnits).toBe(expectedFree);
+    if (expectedFree > 0) {
+      expect(r.appliedPromoId).toBe("a");
+      expect(r.unitPrice).toBe(35); // unit price is NEVER faked for this type
+      expect(r.originalPrice).toBeNull(); // no strikethrough — it's not a net-price promo
+    } else {
+      expect(r.appliedPromoId).toBeNull();
+    }
+  });
+
+  it("PIECES NEVER COUNT: a boxed line's loose pieces never earn or receive free units", () => {
+    // 5 whole boxes + 40 loose pieces (way more than a 6th box) — still 0 free,
+    // because ctx.qtyUnits is whole SELLING units only (boxes), never pieces.
+    const r5 = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 5 * 24 + 40, // pieces the caller would compute — irrelevant here
+      qtyUnits: 5, // 5 whole boxes; the 40 loose pieces never count
+    });
+    expect(r5.freeUnits).toBe(0);
+    expect(r5.appliedPromoId).toBeNull();
+
+    // The 6th WHOLE box (not more loose pieces) is what earns the free unit.
+    const r6 = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 6 * 24,
+      qtyUnits: 6,
+    });
+    expect(r6.freeUnits).toBe(1);
+    expect(r6.appliedPromoId).toBe("a");
+  });
+
+  it("EXACTNESS: $35 base × 12 boxes, 2 free, is exactly $350.00 — never a rounded net-unit-price", () => {
+    // The naive (and WRONG) approach nets 35 × 5/6 = 29.1667 → rounds to 29.17,
+    // then 29.17 × 12 = 350.04 — a 4-cent drift. The correct mechanic keeps the
+    // true unitPrice and subtracts whole free units from the SUBTOTAL instead.
+    const r = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 12,
+      qtyUnits: 12,
+    });
+    expect(r.freeUnits).toBe(2);
+    expect(r.unitPrice).toBe(35); // base, unrounded-down, never a fake net price
+    const naiveDriftedNet = roundMoney((35 * 5) / 6); // 29.17 — the impossible drift value
+    expect(r.unitPrice).not.toBe(naiveDriftedNet);
+
+    const subtotal = computeLineSubtotal({
+      unitPrice: r.unitPrice,
+      qty: 12,
+      boxes: 12,
+      pieces: 0,
+      unitsPerBox: 6,
+      freeUnits: r.freeUnits,
+    });
+    expect(subtotal).toBe(350);
+    expect(subtotal).not.toBe(roundMoney(naiveDriftedNet * 12)); // 350.04 — guard the drift bug
+  });
+
+  it("computeLineSubtotal(freeUnits) clamps to the available whole units — never negative", () => {
+    // Only 3 boxes on the line; freeUnits (a stale/over-generous snapshot) can
+    // never take the subtotal below 0.
+    expect(
+      computeLineSubtotal({
+        unitPrice: 35,
+        qty: 18,
+        boxes: 3,
+        pieces: 0,
+        unitsPerBox: 6,
+        freeUnits: 9,
+      }),
+    ).toBe(0);
+  });
+
+  it("computeLineSubtotal defaults freeUnits to 0 — every existing call site is unaffected", () => {
+    expect(computeLineSubtotal({ unitPrice: 220, qty: 2 })).toBe(440);
+    expect(
+      computeLineSubtotal({ unitPrice: 220, qty: 22, boxes: 2, pieces: 0, unitsPerBox: 11 }),
+    ).toBe(440);
+  });
+
+  it("computeLineSubtotal(freeUnits) on a non-boxed (piece-priced) line subtracts whole pieces", () => {
+    // Piece product: 6 pieces @ $2, N=5 M=1 → 1 free piece → 5 × $2 = $10.
+    expect(computeLineSubtotal({ unitPrice: 2, qty: 6, freeUnits: 1 })).toBe(10);
+  });
+
+  it("best-of vs a PERCENT promo — BOTH directions, savings-based (not net-price-based)", () => {
+    const ctxUnits12 = { productId: "p1", category: "Beverages", qtyPieces: 12, qtyUnits: 12 };
+    // Direction 1: BOGO (saves $70 = 2 × $35) beats a modest 10% PERCENT (saves $42 = $3.50 × 12).
+    const beatsPercent = applyBestPromotion(
+      35,
+      [bogo("bogo", 5, 1), promo({ id: "pct", type: "PERCENT", value: 10 })],
+      ctxUnits12,
+    );
+    expect(beatsPercent.appliedPromoId).toBe("bogo");
+    expect(beatsPercent.freeUnits).toBe(2);
+    expect(beatsPercent.unitPrice).toBe(35);
+
+    // Direction 2: a steep 50% PERCENT (saves $210 = $17.50 × 12) beats the same BOGO ($70).
+    const percentWins = applyBestPromotion(
+      35,
+      [bogo("bogo", 5, 1), promo({ id: "pct", type: "PERCENT", value: 50 })],
+      ctxUnits12,
+    );
+    expect(percentWins.appliedPromoId).toBe("pct");
+    expect(percentWins.freeUnits).toBe(0);
+    expect(percentWins.unitPrice).toBe(17.5);
+    expect(percentWins.originalPrice).toBe(35);
+  });
+
+  it("value/minQty validation guards: non-integer or < 1 N/M is ignored, never a crash", () => {
+    const cases: PromotionRule[] = [
+      bogo("a", 0, 1), // N < 1
+      bogo("a", 5, 0), // M < 1
+      bogo("a", 5.5, 1), // N non-integer
+      bogo("a", 5, 1.5), // M non-integer
+      bogo("a", -5, 1), // N negative
+      promo({ id: "a", type: "BUY_N_GET_M", minQty: null, value: 1 }), // N missing
+    ];
+    for (const rule of cases) {
+      expect(() => applyBestPromotion(35, [rule], ctxUnits(12))).not.toThrow();
+      const r = applyBestPromotion(35, [rule], ctxUnits(12));
+      expect(r.appliedPromoId).toBeNull();
+      expect(r.freeUnits).toBe(0);
+      expect(r.unitPrice).toBe(35);
+    }
+  });
+
+  it("respects scope — a BUY_N_GET_M promo scoped to another product never applies", () => {
+    const scoped = promo({
+      id: "a",
+      type: "BUY_N_GET_M",
+      minQty: 5,
+      value: 1,
+      scope: "PRODUCTS",
+      productIds: ["other"],
+    });
+    const r = applyBestPromotion(35, [scoped], ctxUnits(12));
+    expect(r.appliedPromoId).toBeNull();
+    expect(r.freeUnits).toBe(0);
+  });
+});
+
+// ─── Mirror parity — the marked Promotions block stays byte-identical ─────────
+
+describe("mirror parity — the Promotions block is byte-identical across api/web/mobile", () => {
+  const START = "// ─── Promotions (P5-04, + BUY_N_GET_M)";
+  const END = "// ─── Price-override direction:";
+
+  function extractPromotionsBlock(filePath: string): string {
+    const src = fs.readFileSync(filePath, "utf8");
+    const start = src.indexOf(START);
+    const end = src.indexOf(END, start);
+    if (start === -1 || end === -1) {
+      throw new Error(`Promotions marker block not found in ${filePath}`);
+    }
+    return src.slice(start, end);
+  }
+
+  const apiBlock = extractPromotionsBlock(path.join(__dirname, "pricing.ts"));
+
+  it("apps/web/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
+    const webBlock = extractPromotionsBlock(path.join(__dirname, "../../../web/lib/pricing.ts"));
+    expect(webBlock).toBe(apiBlock);
+  });
+
+  it("apps/mobile/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
+    const mobileBlock = extractPromotionsBlock(
+      path.join(__dirname, "../../../mobile/lib/pricing.ts"),
+    );
+    expect(mobileBlock).toBe(apiBlock);
+  });
+});
+
+describe("promotion zero-price guard (2026-08-20 $0.00 incident)", () => {
+  // A miniature catalogue in the shape the operator's promotion editor and the
+  // API both scan: `price` is the SELLING-UNIT price (the box price when boxed).
+  const catalog: PromoScopeProduct[] = [
+    { id: "p1", name: "Lighter 5-pack", category: "Novelty", price: 4.5 },
+    { id: "p2", name: "Soda 24-case", category: "Beverages", price: 35 },
+    { id: "p3", name: "Energy drink case", category: "Beverages", price: 35.01 },
+    { id: "p4", name: "Cigar box", category: "Tobacco", price: 120 },
+    { id: "p5", name: "Free sample", category: "Novelty", price: 0 },
+    { id: "p6", name: "Chips box", category: "Snacks", price: "18.75" }, // Decimal-as-string
+  ];
+
+  describe("ruleCanZeroPrice — the cheap shape check that skips the scan", () => {
+    it("is true for every FIXED amount (some product is always cheap enough)", () => {
+      expect(ruleCanZeroPrice({ type: "FIXED", value: 0.5 })).toBe(true);
+      expect(ruleCanZeroPrice({ type: "FIXED", value: 35 })).toBe(true);
+    });
+
+    it("is false for an ordinary percentage — those can never reach $0.00", () => {
+      expect(ruleCanZeroPrice({ type: "PERCENT", value: 99.99 })).toBe(false);
+      expect(ruleCanZeroPrice({ type: "QTY_BREAK", value: 40 })).toBe(false);
+    });
+
+    it("is true only at a FULL 100% off", () => {
+      expect(ruleCanZeroPrice({ type: "PERCENT", value: 100 })).toBe(true);
+      expect(ruleCanZeroPrice({ type: "QTY_BREAK", value: 100 })).toBe(true);
+    });
+
+    it("is false for a non-positive value (such a promo never applies at all)", () => {
+      expect(ruleCanZeroPrice({ type: "FIXED", value: 0 })).toBe(false);
+      expect(ruleCanZeroPrice({ type: "PERCENT", value: -5 })).toBe(false);
+    });
+  });
+
+  describe("promotionZeroesProduct", () => {
+    it("CRITICAL: FIXED at or above the selling-unit price zeroes the product", () => {
+      // The incident: "$35 off" against a $35.00 case → exactly $0.00.
+      const rule = promo({ id: "a", type: "FIXED", value: 35 });
+      expect(promotionZeroesProduct({ id: "p2", price: 35 }, rule)).toBe(true);
+      expect(promotionZeroesProduct({ id: "p1", price: 4.5 }, rule)).toBe(true);
+      // One cent above the discount survives — $0.01, not $0.00.
+      expect(promotionZeroesProduct({ id: "p3", price: 35.01 }, rule)).toBe(false);
+    });
+
+    it("never counts a product already priced at $0 (the promo is not why)", () => {
+      expect(
+        promotionZeroesProduct(
+          { id: "p5", price: 0 },
+          promo({ id: "a", type: "FIXED", value: 35 }),
+        ),
+      ).toBe(false);
+    });
+
+    it("respects scope — an out-of-scope product is never zeroed", () => {
+      const scoped = promo({
+        id: "a",
+        type: "FIXED",
+        value: 35,
+        scope: "PRODUCTS",
+        productIds: ["p2"],
+      });
+      expect(promotionZeroesProduct({ id: "p2", price: 35 }, scoped)).toBe(true);
+      expect(promotionZeroesProduct({ id: "p1", price: 4.5 }, scoped)).toBe(false);
+    });
+
+    it("judges a QTY_BREAK AT its own threshold — where the rule actually bites", () => {
+      const rule = promo({ id: "a", type: "QTY_BREAK", value: 100, minQty: 12 });
+      expect(promotionZeroesProduct({ id: "p2", price: 35 }, rule)).toBe(true);
+      // Anything short of a full 100% never reaches $0.00.
+      expect(
+        promotionZeroesProduct(
+          { id: "p2", price: 35 },
+          promo({ id: "b", type: "QTY_BREAK", value: 99, minQty: 12 }),
+        ),
+      ).toBe(false);
+    });
+
+    it("accepts a Decimal-as-string price (Prisma rows come back that way)", () => {
+      expect(
+        promotionZeroesProduct(
+          { id: "p6", price: "18.75" },
+          promo({ id: "a", type: "FIXED", value: 20 }),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("scanPromotionZeroPrice", () => {
+    it("CRITICAL: counts every ALL-scoped product the FIXED amount would zero", () => {
+      const impact = scanPromotionZeroPrice(catalog, promo({ id: "a", type: "FIXED", value: 35 }));
+      // p1 ($4.50), p2 ($35.00) and p6 ($18.75) go to $0.00; p3 ($35.01) and p4
+      // ($120) survive; p5 is already free so the promo is not what zeroes it.
+      expect(impact.count).toBe(3);
+      expect(impact.inScope).toBe(catalog.length);
+      expect(impact.examples).toEqual(["Lighter 5-pack", "Soda 24-case", "Chips box"]);
+    });
+
+    it("narrows to the promotion scope — the count AND the denominator", () => {
+      const byCategory = scanPromotionZeroPrice(
+        catalog,
+        promo({ id: "a", type: "FIXED", value: 35, scope: "CATEGORY", category: "Beverages" }),
+      );
+      expect(byCategory).toMatchObject({ count: 1, inScope: 2, examples: ["Soda 24-case"] });
+
+      const byProducts = scanPromotionZeroPrice(
+        catalog,
+        promo({ id: "a", type: "FIXED", value: 35, scope: "PRODUCTS", productIds: ["p3", "p4"] }),
+      );
+      expect(byProducts).toMatchObject({ count: 0, inScope: 2, examples: [] });
+    });
+
+    it("reports a clean scan for an ordinary percentage rule", () => {
+      const impact = scanPromotionZeroPrice(
+        catalog,
+        promo({ id: "a", type: "PERCENT", value: 40 }),
+      );
+      expect(impact.count).toBe(0);
+      expect(impact.inScope).toBe(catalog.length);
+    });
+
+    it("catches a 100%-off rule too — the other way to reach $0.00", () => {
+      const impact = scanPromotionZeroPrice(
+        catalog,
+        promo({ id: "a", type: "PERCENT", value: 100 }),
+      );
+      expect(impact.count).toBe(5); // every priced product; the already-free one is excluded
+    });
+
+    it("caps the example names but never the count", () => {
+      const many: PromoScopeProduct[] = Array.from({ length: 12 }, (_, i) => ({
+        id: `x${i}`,
+        name: `Cheap item ${i}`,
+        price: 1,
+      }));
+      const impact = scanPromotionZeroPrice(many, promo({ id: "a", type: "FIXED", value: 35 }));
+      expect(impact.count).toBe(12);
+      expect(impact.examples).toHaveLength(ZERO_PRICE_EXAMPLE_LIMIT);
+    });
+
+    it("agrees with applyBestPromotion — the count is what buyers would be charged", () => {
+      const rule = promo({ id: "a", type: "FIXED", value: 35 });
+      const zeroed = catalog.filter(
+        (p) =>
+          Number(p.price) > 0 &&
+          applyBestPromotion(Number(p.price), [rule], {
+            productId: p.id,
+            category: p.category ?? null,
+            qtyPieces: 1,
+            qtyUnits: 1,
+          }).unitPrice === 0,
+      );
+      expect(scanPromotionZeroPrice(catalog, rule).count).toBe(zeroed.length);
+    });
+  });
+
+  // BUY_N_GET_M (#393) reaches its discount through FREE UNITS, not a net unit
+  // price, and `promoBogoFreeUnits` requires N >= 1 — so floor(q/(N+M))*M is
+  // strictly less than q and a free-unit rule can never make a line free. The
+  // guard therefore ignores the mechanic entirely; these lock that reasoning so
+  // nobody "fixes" the guard by scanning for something that cannot happen.
+  describe("BUY_N_GET_M is out of scope by construction", () => {
+    it("is never scanned — value is M (free units), not a percentage", () => {
+      expect(ruleCanZeroPrice({ type: "BUY_N_GET_M", value: 1 })).toBe(false);
+      // A bare `value >= 100` fallthrough would send this one on a pointless
+      // full-catalogue scan.
+      expect(ruleCanZeroPrice({ type: "BUY_N_GET_M", value: 100 })).toBe(false);
+    });
+
+    it("is never counted, however lopsided N and M are", () => {
+      const lopsided = promo({ id: "a", type: "BUY_N_GET_M", minQty: 1, value: 500 });
+      expect(promotionZeroesProduct({ id: "p2", price: 35 }, lopsided)).toBe(false);
+      expect(scanPromotionZeroPrice(catalog, lopsided).count).toBe(0);
+    });
+
+    it("CRITICAL: free units never consume the whole line (N >= 1 bounds them)", () => {
+      const rule = promo({ id: "a", type: "BUY_N_GET_M", minQty: 1, value: 500 });
+      for (const qtyUnits of [1, 2, 6, 12, 501, 1000]) {
+        const r = applyBestPromotion(35, [rule], {
+          productId: "p2",
+          category: "Beverages",
+          qtyPieces: qtyUnits,
+          qtyUnits,
+        });
+        expect(r.freeUnits).toBeLessThan(qtyUnits);
+        expect(r.unitPrice).toBe(35); // BOGO never rewrites the unit price
+      }
+    });
+  });
+
+  it("zeroPriceWarning names the count and pluralises", () => {
+    expect(zeroPriceWarning({ count: 699, inScope: 1767, examples: [] })).toBe(
+      "This discount is larger than the price of 699 products in scope — they would sell for $0.00.",
+    );
+    expect(zeroPriceWarning({ count: 1, inScope: 4, examples: [] })).toBe(
+      "This discount is larger than the price of 1 product in scope — they would sell for $0.00.",
+    );
   });
 });
 

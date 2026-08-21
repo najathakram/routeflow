@@ -26,6 +26,12 @@ Shared DTO/enum definitions. Entry: `index.ts` (no `src/`).
   `FulfillPath`, `DriverStatus`.
 - **Interfaces**: `User`, `Order`, `PaginatedResponse<T>` (data + meta: total/page/limit/totalPages),
   `ApiResponse<T>`.
+- **Constants**: `DEVELOPER_MODE_ADDON = "developer_mode"` (2026-08-20) — the legacy
+  `TenantAddon.addonKey` for the hidden platform-admin flag that unhides the in-development
+  dispatch/driver/route UI. Lives here so web (`apps/web/lib/api/addons.ts`, the admin tenant
+  page), mobile (`apps/mobile/lib/api/addons.ts`) and api (`plan-catalog.constants.ts`'s pending
+  bridge note) share one string; the only inlined copies are in plain-node scripts that can't
+  import TS (`scripts/enable-developer-mode.mjs`, `apps/api/scripts/e2e-seed.js`).
 
 - **`pack-size.ts` (2026-08-20) — the ONE shared pack-size name parser.** Exports `parsePackSizeDetailed(name)`, `suggestPackSize({name, unit, unitSku, unitsPerBox})` → `{packSize, counts, confidence, reason}`, and `formatCountList(counts)` (`"5 or 12"`, `"4, 8 or 16"` — shared so no surface hardcodes "two"; a name can state three counts) with `confidence: HIGH | MEDIUM | LOW | AMBIGUOUS | PIECE_UNIT | null`. Lives here — **NOT** mirrored into `apps/*/lib` — precisely because all three apps already consume `@routeflow/types`, and a parser whose value is its refusal rules is the worst possible thing to keep hand-synced copies of (contrast `pricing.ts`, which IS a deliberate triple mirror).
   - ⚠️ **It must keep REFUSING to guess.** `packSize` is returned only when exactly ONE distinct count survives; two or more ⇒ `null` + `AMBIGUOUS` ("…5CT - 12Pack" is 12 packs of 5 — guessing mis-prices every loose sale of that product forever, which is far worse than asking). A `PIECE_UNIT` unit (`pcs`/`each`/`bottle`/`can`/`stick`…) NEVER gets a proposal: the count in such a name describes the case the row was broken out of, and setting a pack size there divides a piece price by the pack and undercharges by that factor.

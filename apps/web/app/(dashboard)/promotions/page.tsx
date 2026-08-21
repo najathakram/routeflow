@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Pencil, Trash2, X as XIcon, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, X as XIcon, Search, AlertTriangle } from "lucide-react";
 import {
   PageHeader,
   Button,
@@ -13,7 +13,15 @@ import {
   useToast,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useProducts } from "@/lib/api/products";
+import { useProducts, type ApiProduct } from "@/lib/api/products";
+import {
+  ruleCanZeroPrice,
+  scanPromotionZeroPrice,
+  zeroPriceWarning,
+  type PromoScopeProduct,
+  type PromotionRule,
+  type ZeroPriceImpact,
+} from "@/lib/pricing";
 import {
   usePromotions,
   useCreatePromotion,
@@ -53,6 +61,16 @@ function fmtWindow(startsAt: string, endsAt: string): string {
   return `${s} → ${e}`;
 }
 
+/** "6th" from 6, "21st" from 21, etc. — for the BUY_N_GET_M live preview sentence. */
+function ordinalSuffix(n: number): string {
+  const j = n % 10;
+  const k = n % 100;
+  if (j === 1 && k !== 11) return `${n}st`;
+  if (j === 2 && k !== 12) return `${n}nd`;
+  if (j === 3 && k !== 13) return `${n}rd`;
+  return `${n}th`;
+}
+
 const STATUS_BADGE: Record<
   PromotionStatus,
   { variant: "success" | "warning" | "neutral" | "info"; label: string }
@@ -67,6 +85,7 @@ const TYPE_OPTIONS: { value: PromotionType; label: string }[] = [
   { value: "PERCENT", label: "Percent off" },
   { value: "FIXED", label: "Fixed $ off / unit" },
   { value: "QTY_BREAK", label: "Quantity break (% at threshold)" },
+  { value: "BUY_N_GET_M", label: "Buy N get M free" },
 ];
 
 const SCOPE_OPTIONS: { value: PromotionScope; label: string }[] = [
@@ -74,6 +93,70 @@ const SCOPE_OPTIONS: { value: PromotionScope; label: string }[] = [
   { value: "CATEGORY", label: "A category" },
   { value: "PRODUCTS", label: "Specific products" },
 ];
+
+// ─── Zero-price blast radius ────────────────────────────────────────────────────
+// A promoted net price is floored at $0.00, so a FIXED "$X off" rule sells EVERY
+// in-scope product priced at or below $X for nothing — on the portal and on the
+// invoice the order bills (2026-08-20: one ALL-scoped $35-off rule zeroed 699 of
+// 1,767 products). The catalog is already loaded on this page, so the count is
+// computed live from the form and the operator has to confirm it before saving.
+// The scan itself lives in pricing.ts — the same helper the API refuses with.
+
+/** Catalog rows in the shape the pricing scan wants (list price, active only). */
+function toScopeProducts(products: ApiProduct[]): PromoScopeProduct[] {
+  return products
+    .filter((p) => p.isActive !== false)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      category: p.category ?? null,
+      price: p.pricePerUnit,
+    }));
+}
+
+/** The rule as currently typed, or null while the value is not yet a number. */
+function draftRule(form: FormState): PromotionRule | null {
+  const value = parseFloat(form.value);
+  if (Number.isNaN(value)) return null;
+  return {
+    id: "draft",
+    type: form.type,
+    value,
+    // Both QTY_BREAK (threshold) and BUY_N_GET_M (N) live in minQty — carry it for
+    // either so the draft rule always mirrors what would be saved. The zero-price
+    // scan ignores BUY_N_GET_M regardless (it has no net-price form).
+    minQty:
+      form.type === "QTY_BREAK" || form.type === "BUY_N_GET_M"
+        ? parseInt(form.minQty, 10) || null
+        : null,
+    scope: form.scope,
+    category: form.scope === "CATEGORY" ? form.category.trim() : null,
+    productIds: form.scope === "PRODUCTS" ? form.productIds : [],
+  };
+}
+
+/** The impact of a promotion (saved or in-progress) on a catalog — null when clean. */
+function zeroPriceImpact(
+  rule: PromotionRule | null,
+  scopeProducts: PromoScopeProduct[],
+): ZeroPriceImpact | null {
+  if (!rule || !ruleCanZeroPrice(rule)) return null; // ordinary rules never scan
+  const impact = scanPromotionZeroPrice(scopeProducts, rule);
+  return impact.count > 0 ? impact : null;
+}
+
+/** A saved promotion in the pricing engine's rule shape. */
+function promoToRule(p: Promotion): PromotionRule {
+  return {
+    id: p.id,
+    type: p.type,
+    value: Number(p.value),
+    minQty: p.minQty ?? null,
+    scope: p.scope,
+    category: p.category ?? null,
+    productIds: p.products?.map((pp) => pp.productId) ?? [],
+  };
+}
 
 // ─── Multi-product picker ───────────────────────────────────────────────────────
 
@@ -211,6 +294,7 @@ function PromotionFormModal({
   open,
   editing,
   categories,
+  scopeProducts,
   onClose,
   onSubmit,
   isSaving,
@@ -218,22 +302,41 @@ function PromotionFormModal({
   open: boolean;
   editing: Promotion | null;
   categories: string[];
+  /** The active catalog, for the live $0.00 blast-radius count. */
+  scopeProducts: PromoScopeProduct[];
   onClose: () => void;
   onSubmit: (input: PromotionInput) => Promise<void>;
   isSaving: boolean;
 }) {
   const [form, setForm] = React.useState<FormState>(emptyForm());
   const [error, setError] = React.useState<string | null>(null);
+  const [confirmZeroPrice, setConfirmZeroPrice] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
       setForm(editing ? promoToForm(editing) : emptyForm());
       setError(null);
+      setConfirmZeroPrice(false);
     }
   }, [open, editing]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  // How many in-scope products this rule would sell for $0.00, recomputed as the
+  // operator types. Null = the rule cannot zero anything (the common case).
+  const productIdsKey = form.productIds.join(",");
+  const zeroImpact = React.useMemo(
+    () => zeroPriceImpact(draftRule(form), scopeProducts),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scopeProducts, form.type, form.value, form.minQty, form.scope, form.category, productIdsKey],
+  );
+
+  // Any edit to the rule invalidates a prior confirmation — the count it was
+  // given for no longer holds.
+  React.useEffect(() => {
+    setConfirmZeroPrice(false);
+  }, [form.type, form.value, form.minQty, form.scope, form.category, productIdsKey]);
 
   const handleSubmit = async () => {
     setError(null);
@@ -248,6 +351,16 @@ function PromotionFormModal({
     if (form.type === "QTY_BREAK" && !(parseInt(form.minQty, 10) > 0)) {
       return setError("Quantity-break promotions need a minimum quantity ≥ 1.");
     }
+    if (form.type === "BUY_N_GET_M") {
+      const n = form.minQty.trim();
+      const m = form.value.trim();
+      if (!/^\d+$/.test(n) || parseInt(n, 10) < 1) {
+        return setError("Buy quantity (N) must be a whole number ≥ 1.");
+      }
+      if (!/^\d+$/.test(m) || parseInt(m, 10) < 1) {
+        return setError("Free quantity (M) must be a whole number ≥ 1.");
+      }
+    }
     if (form.scope === "CATEGORY" && !form.category.trim()) {
       return setError("Pick a category for a category-scoped promotion.");
     }
@@ -258,13 +371,22 @@ function PromotionFormModal({
     if (new Date(form.endsAt) <= new Date(form.startsAt)) {
       return setError("End must be after start.");
     }
+    // Blocking $0.00 confirmation — the API refuses the same rule without the flag.
+    if (zeroImpact && !confirmZeroPrice) {
+      return setError(
+        `${zeroPriceWarning(zeroImpact)} Lower the amount, narrow the scope, or tick the confirmation to run it anyway.`,
+      );
+    }
 
     const input: PromotionInput = {
       name: form.name.trim(),
       bannerText: form.bannerText.trim() || undefined,
       type: form.type,
       value,
-      minQty: form.type === "QTY_BREAK" ? parseInt(form.minQty, 10) : undefined,
+      minQty:
+        form.type === "QTY_BREAK" || form.type === "BUY_N_GET_M"
+          ? parseInt(form.minQty, 10)
+          : undefined,
       scope: form.scope,
       category: form.scope === "CATEGORY" ? form.category.trim() : undefined,
       // Always send the array so switching scope away from PRODUCTS clears the
@@ -273,6 +395,8 @@ function PromotionFormModal({
       startsAt: fromLocalInput(form.startsAt),
       endsAt: fromLocalInput(form.endsAt),
       isActive: form.isActive,
+      // Only ever sent alongside a count the operator was actually shown.
+      allowZeroPrice: zeroImpact && confirmZeroPrice ? true : undefined,
     };
     try {
       await onSubmit(input);
@@ -282,6 +406,13 @@ function PromotionFormModal({
   };
 
   const isPercentLike = form.type === "PERCENT" || form.type === "QTY_BREAK";
+  const isBogo = form.type === "BUY_N_GET_M";
+  const bogoN = parseInt(form.minQty, 10);
+  const bogoM = parseInt(form.value, 10);
+  const bogoPreview =
+    Number.isInteger(bogoN) && bogoN >= 1 && Number.isInteger(bogoM) && bogoM >= 1
+      ? `Buy ${bogoN}, get ${bogoM} free — every ${ordinalSuffix(bogoN + bogoM)} unit is free.`
+      : "Enter a whole-number buy quantity and free quantity to preview the deal.";
 
   return (
     <Modal
@@ -331,7 +462,7 @@ function PromotionFormModal({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className={cn("grid gap-4", isBogo ? "grid-cols-1" : "grid-cols-2")}>
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">Type *</label>
             <Select
@@ -340,32 +471,59 @@ function PromotionFormModal({
               onChange={(e) => set("type", e.target.value as PromotionType)}
             />
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-navy">
-              {isPercentLike ? "Percent off *" : "Amount off / unit *"}
-            </label>
-            <div className="flex items-center">
-              {!isPercentLike && (
-                <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
-                  $
-                </span>
-              )}
-              <input
-                type="number"
-                min="0"
-                step={isPercentLike ? "1" : "0.01"}
-                max={isPercentLike ? "100" : undefined}
-                value={form.value}
-                onChange={(e) => set("value", e.target.value)}
-                className={cn(
-                  "w-full border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 border-surface-border",
-                  isPercentLike ? "rounded" : "rounded-r",
+          {!isBogo && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                {isPercentLike ? "Percent off *" : "Amount off / unit *"}
+              </label>
+              <div className="flex items-center">
+                {!isPercentLike && (
+                  <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                    $
+                  </span>
                 )}
-              />
-              {isPercentLike && <span className="ml-2 text-sm text-navy/60">%</span>}
+                <input
+                  type="number"
+                  min="0"
+                  step={isPercentLike ? "1" : "0.01"}
+                  max={isPercentLike ? "100" : undefined}
+                  value={form.value}
+                  onChange={(e) => set("value", e.target.value)}
+                  className={cn(
+                    "w-full border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 border-surface-border",
+                    isPercentLike ? "rounded" : "rounded-r",
+                  )}
+                />
+                {isPercentLike && <span className="ml-2 text-sm text-navy/60">%</span>}
+              </div>
             </div>
-          </div>
+          )}
         </div>
+
+        {zeroImpact && (
+          <div className="rounded-lg border border-warning/40 bg-warning-bg px-3 py-2.5">
+            <p className="text-sm font-semibold text-navy">{zeroPriceWarning(zeroImpact)}</p>
+            <p className="mt-1 text-xs text-navy/70">
+              Buyers would see $0.00 with a “100% off” chip, and any order placed on those lines
+              bills $0.00 on the invoice. {zeroImpact.count} of the {zeroImpact.inScope} product
+              {zeroImpact.inScope === 1 ? "" : "s"} this promotion covers are priced at or below the
+              discount — e.g. {zeroImpact.examples.join(", ")}
+              {zeroImpact.count > zeroImpact.examples.length ? ", …" : ""}. Prices shown are
+              catalogue list prices; a customer on a lower tier can be affected even when their
+              product is not counted here.
+            </p>
+            <label className="mt-2 flex items-start gap-2 text-xs font-medium text-navy">
+              <input
+                type="checkbox"
+                checked={confirmZeroPrice}
+                onChange={(e) => setConfirmZeroPrice(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-navy/30 accent-warning"
+              />
+              I understand — sell {zeroImpact.count === 1 ? "this product" : "these products"} for
+              $0.00.
+            </label>
+          </div>
+        )}
 
         {form.type === "QTY_BREAK" && (
           <div>
@@ -381,6 +539,44 @@ function PromotionFormModal({
             />
             <p className="mt-0.5 text-xs text-navy/60">
               Discount applies only to lines at or above this piece count.
+            </p>
+          </div>
+        )}
+
+        {isBogo && (
+          <div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Buy quantity (N) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.minQty}
+                  onChange={(e) => set("minQty", e.target.value)}
+                  placeholder="e.g. 5"
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Free quantity (M) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.value}
+                  onChange={(e) => set("value", e.target.value)}
+                  placeholder="e.g. 1"
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            </div>
+            <p className="mt-2 rounded-lg border border-brand-100 bg-brand-50/60 px-3 py-2 text-xs text-navy/80">
+              {bogoPreview}
             </p>
           </div>
         )}
@@ -488,19 +684,30 @@ export default function PromotionsPage() {
   const [statusFilter, setStatusFilter] = React.useState<"" | PromotionStatus>("");
   const [confirmDelete, setConfirmDelete] = React.useState<Promotion | null>(null);
 
+  const catalog = React.useMemo(() => (allProducts?.data ?? []) as ApiProduct[], [allProducts]);
+
   const categories = React.useMemo(
-    () =>
-      Array.from(
-        new Set(
-          ((allProducts?.data ?? []) as Array<{ category?: string }>)
-            .map((p) => p.category)
-            .filter(Boolean),
-        ),
-      ) as string[],
-    [allProducts],
+    () => Array.from(new Set(catalog.map((p) => p.category).filter(Boolean))) as string[],
+    [catalog],
   );
 
-  const list = promotions ?? [];
+  /** The active catalog in the pricing scan's shape — the $0.00 guard's input. */
+  const scopeProducts = React.useMemo(() => toScopeProducts(catalog), [catalog]);
+
+  const list = React.useMemo(() => promotions ?? [], [promotions]);
+
+  // Saved promotions that are ALREADY zeroing prices (rules created before this
+  // guard existed, or confirmed deliberately) — surfaced on the row so a live
+  // $0.00 promo cannot sit unnoticed the way the 2026-08-20 one did.
+  const zeroByPromoId = React.useMemo(() => {
+    const out = new Map<string, ZeroPriceImpact>();
+    for (const p of list) {
+      const impact = zeroPriceImpact(promoToRule(p), scopeProducts);
+      if (impact) out.set(p.id, impact);
+    }
+    return out;
+  }, [list, scopeProducts]);
+
   const filtered = statusFilter ? list.filter((p) => promotionStatus(p) === statusFilter) : list;
 
   const openCreate = () => {
@@ -646,7 +853,18 @@ export default function PromotionsPage() {
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-navy/80">{promotionRuleLabel(p)}</td>
+                    <td className="px-4 py-3 text-navy/80">
+                      {promotionRuleLabel(p)}
+                      {zeroByPromoId.has(p.id) && (
+                        <span
+                          className="mt-1 flex items-center gap-1 text-xs font-semibold text-danger"
+                          title={zeroPriceWarning(zeroByPromoId.get(p.id)!)}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          {zeroByPromoId.get(p.id)!.count} sell for $0.00
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-navy/80">{scopeLabel(p)}</td>
                     <td className="px-4 py-3 text-xs text-navy/70">
                       {fmtWindow(p.startsAt, p.endsAt)}
@@ -692,6 +910,7 @@ export default function PromotionsPage() {
         open={modalOpen}
         editing={editing}
         categories={categories}
+        scopeProducts={scopeProducts}
         onClose={() => {
           setModalOpen(false);
           setEditing(null);

@@ -11,6 +11,8 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
+  scanPromotionZeroPrice,
+  ruleCanZeroPrice,
   formatQtySplit,
   type PromotionRule,
 } from "../lib/pricing";
@@ -159,11 +161,12 @@ describe("applyBestPromotion (mobile mirror — must match the server to the cen
     productIds: null,
     ...o,
   });
-  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1 };
+  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1, qtyUnits: 1 };
 
   it("PERCENT nets the price + records the strikethrough original", () => {
     const r = applyBestPromotion(100, [p({ id: "a", type: "PERCENT", value: 10 })], ctx);
-    expect(r).toEqual({ unitPrice: 90, originalPrice: 100, appliedPromoId: "a" });
+    // Price promos carry freeUnits: 0 — only BUY_N_GET_M ever gives units away.
+    expect(r).toEqual({ unitPrice: 90, originalPrice: 100, appliedPromoId: "a", freeUnits: 0 });
   });
 
   it("QTY_BREAK gates on the piece threshold", () => {
@@ -188,6 +191,36 @@ describe("applyBestPromotion (mobile mirror — must match the server to the cen
     });
     expect(subtotal).toBe(70);
     expect(subtotal).not.toBe(420);
+  });
+});
+
+describe("promotion zero-price scan (mobile mirror — must match the server exactly)", () => {
+  const p = (o: Partial<PromotionRule> & Pick<PromotionRule, "id" | "type">): PromotionRule => ({
+    value: 0,
+    scope: "ALL",
+    minQty: null,
+    category: null,
+    productIds: null,
+    ...o,
+  });
+  const catalog = [
+    { id: "p1", name: "Lighter 5-pack", category: "Novelty", price: 4.5 },
+    { id: "p2", name: "Soda 24-case", category: "Beverages", price: 35 },
+    { id: "p3", name: "Cigar box", category: "Tobacco", price: 120 },
+  ];
+
+  it("counts the in-scope products a FIXED amount would sell for $0.00", () => {
+    const impact = scanPromotionZeroPrice(catalog, p({ id: "a", type: "FIXED", value: 35 }));
+    expect(impact).toMatchObject({
+      count: 2,
+      inScope: 3,
+      examples: ["Lighter 5-pack", "Soda 24-case"],
+    });
+  });
+
+  it("skips the scan for an ordinary percentage rule", () => {
+    expect(ruleCanZeroPrice({ type: "PERCENT", value: 40 })).toBe(false);
+    expect(ruleCanZeroPrice({ type: "FIXED", value: 35 })).toBe(true);
   });
 });
 

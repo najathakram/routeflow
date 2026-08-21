@@ -33,6 +33,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { CheckStatus, InvoiceStatus, NotificationEvent } from "@prisma/client";
+import { computeLineSubtotal, roundMoney } from "../common/pricing";
 
 const mockCompressDocument = compressDocument as jest.Mock;
 
@@ -322,6 +323,108 @@ describe("InvoicesService", () => {
       expect(created.subtotal).toBeCloseTo(17.5, 2); // 3.5 * 5
       expect(created.boxes).toBeNull();
       expect(created.pieces).toBeNull();
+    });
+
+    // ─── BUY_N_GET_M: the free-unit snapshot is MONEY and must survive the edit ──
+    // The edit path delete-and-recreates every line from the payload, so a plain
+    // re-save of an order-derived BOGO invoice used to re-price it at full price
+    // (12 x $35 = $420 instead of the agreed $350). The snapshot now travels on
+    // the payload like boxes/pieces/notes do, and is fed to computeLineSubtotal.
+
+    it("re-prices a BOGO line off promoFreeUnits, never qty*unitPrice, on a plain re-save", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      // The owner's example: buy 5 get 1 free, 12 units of a $35 product -> 2 free.
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-plain",
+            description: "Sparkling water",
+            qty: 12,
+            unitPrice: 35,
+            promoFreeUnits: 2,
+          },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.subtotal).toBe(350); // exact — 10 paid units x $35
+      expect(created.subtotal).not.toBe(420); // the reverted-to-full-price bug
+      expect(created.unitPrice).toBe(35); // the unit price is NEVER faked
+      expect(created.discount).toBe(0); // the saving lives in the subtotal only
+      expect(created.promoFreeUnits).toBe(2); // and survives the NEXT edit too
+      expect(prisma.invoice.update.mock.calls[0][0].data.subtotal).toBe(350);
+    });
+
+    it("boxed BOGO line: free CASES come off the case price, loose pieces never do", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 12 }]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      // 12 cases + 4 loose of a 12-per-case product at $35 per CASE, 2 cases free:
+      // 35 * ((12 - 2) + 4/12) = 350 + 11.6667 = 361.67. The loose pieces are still
+      // billed — only whole selling units are ever given away.
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-box",
+            description: "Boxed chips",
+            qty: 148,
+            unitPrice: 35,
+            boxes: 12,
+            pieces: 4,
+            promoFreeUnits: 2,
+          },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.subtotal).toBeCloseTo(361.67, 2);
+      expect(created.promoFreeUnits).toBe(2);
+      expect(created.unitsPerBox).toBe(12);
+    });
+
+    it("clamps a stale snapshot so a shrunk line can never be entirely free", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      // 2 units left but a 2-free snapshot: the buyer always pays the N in (N + M).
+      await service.update("inv-box", {
+        items: [
+          {
+            productId: "prod-plain",
+            description: "Sparkling water",
+            qty: 2,
+            unitPrice: 35,
+            promoFreeUnits: 2,
+          },
+        ],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.subtotal).toBe(35);
+      expect(created.promoFreeUnits).toBe(1);
+    });
+
+    it("leaves a non-BOGO line's money bit-for-bit unchanged (promoFreeUnits null)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+      prisma.product.findMany.mockResolvedValue([]);
+      prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+      prisma.invoice.update.mockResolvedValue(draftInvoice);
+
+      await service.update("inv-box", {
+        items: [{ productId: "prod-plain", description: "Loose", qty: 12, unitPrice: 35 }],
+      });
+
+      const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
+      expect(created.subtotal).toBe(420);
+      expect(created.promoFreeUnits).toBeNull();
     });
 
     it("round-trips per-line notes through the delete-and-recreate edit (no silent wipe)", async () => {
@@ -1850,6 +1953,69 @@ describe("InvoicesService", () => {
       };
       // billing all 12 pieces → 2 boxes @ $40 = $80 via computeLineSubtotal.
       expect(build(li, 12).subtotal).toBe(80);
+    });
+
+    // BUY_N_GET_M partials: free units are WHOLE units, so prorating the money over
+    // the raw piece count while flooring the free units over the same count made the
+    // two disagree by up to one unit price — and `update()` re-prices a DRAFT from
+    // the stored promoFreeUnits, so a no-op re-save moved the money ($145.83 → $175).
+    // The proration now keys on the PAID qty, keeping both in step.
+    it("keeps a BOGO partial's stored money and free-unit snapshot in agreement", () => {
+      // 12 boxes of 100 @ $35/box with 2 free = $350.00 agreed. Billed 5 boxes then 7.
+      const li = {
+        id: "oi-6",
+        productId: "p-6",
+        qty: 1200,
+        boxes: 12,
+        pieces: 0,
+        unitsPerBox: 100,
+        unitPrice: 35,
+        subtotal: 350,
+        promoFreeUnits: 2,
+        product: { name: "BOGO Boxed", unitsPerBox: 100 },
+      };
+      const partials: Array<[any, number]> = [
+        [build(li, 500, { priorBilledQty: 0 }), 5],
+        [build(li, 700, { priorBilledQty: 500 }), 7],
+      ];
+
+      // Σ(partials) is still exactly the order line's money AND its free units.
+      expect(roundMoney(partials.reduce((s, [p]) => s + p.subtotal, 0))).toBe(350);
+      expect(partials.reduce((s, [p]) => s + (p.promoFreeUnits ?? 0), 0)).toBe(2);
+
+      // Each partial's stored subtotal is exactly what a DRAFT re-save recomputes
+      // from the stored snapshot (what the edit form previews and update() writes).
+      for (const [line, boxes] of partials) {
+        expect(line.boxes).toBe(boxes);
+        expect(
+          computeLineSubtotal({
+            unitPrice: 35,
+            qty: line.qty,
+            boxes: line.boxes,
+            pieces: line.pieces,
+            unitsPerBox: 100,
+            freeUnits: line.promoFreeUnits ?? 0,
+          }),
+        ).toBe(line.subtotal);
+      }
+    });
+
+    it("copies a BOGO line verbatim on a full bill (free units and money both)", () => {
+      const li = {
+        id: "oi-7",
+        productId: "p-7",
+        qty: 1200,
+        boxes: 12,
+        pieces: 0,
+        unitsPerBox: 100,
+        unitPrice: 35,
+        subtotal: 350,
+        promoFreeUnits: 2,
+        product: { name: "BOGO Boxed", unitsPerBox: 100 },
+      };
+      const line = build(li, 1200);
+      expect(line.subtotal).toBe(350);
+      expect(line.promoFreeUnits).toBe(2);
     });
   });
 

@@ -6,7 +6,7 @@
  * per-line rounding, tax-exempt zeroing. Also locks invoiceLineDto's wire
  * shape — the API's forbidNonWhitelisted pipe 400s on any stray key.
  */
-import { computeInvoiceTotals, invoiceLineDto } from "../lib/invoice-totals";
+import { computeInvoiceTotals, editedLineFreeUnits, invoiceLineDto } from "../lib/invoice-totals";
 import { computeLineSubtotal, roundMoney } from "../lib/pricing";
 
 describe("computeInvoiceTotals", () => {
@@ -175,5 +175,45 @@ describe("invoiceLineDto", () => {
         TAX,
       ),
     ).toMatchObject({ discount: 1.5, notes: "keep" });
+  });
+});
+
+// ─── BUY_N_GET_M on the edit screen ──────────────────────────────────────────
+// The PATCH replaces every invoice line, so the snapshot has to survive the
+// round trip or an agreed $350 line re-prices to 12 × $35 = $420 on save.
+
+describe("editedLineFreeUnits + the BOGO wire shape", () => {
+  it("keeps the agreed free units while the quantity is unchanged", () => {
+    expect(editedLineFreeUnits({ promoFreeUnits: 2, promoBaseUnits: 12, qty: 12 })).toBe(2);
+    const t = computeInvoiceTotals({ lines: [{ unitPrice: 35, qty: 12, freeUnits: 2 }] });
+    expect(t.subtotal).toBe(350); // exact — never 29.17 × 12 drift, never $420
+  });
+
+  it("counts BOXES on a boxed line — loose pieces never earn or receive free units", () => {
+    // 12 cases + 4 loose at $35/case, 2 cases free: 35 × (10 + 4/12) = 361.67.
+    const line = { unitPrice: 35, qty: 148, boxes: 12, pieces: 4, unitsPerBox: 12 };
+    const freeUnits = editedLineFreeUnits({ ...line, promoFreeUnits: 2, promoBaseUnits: 12 });
+    expect(freeUnits).toBe(2);
+    expect(computeInvoiceTotals({ lines: [{ ...line, freeUnits }] }).subtotal).toBeCloseTo(
+      361.67,
+      2,
+    );
+  });
+
+  it("rescales down on a shrunk line and never above the agreed snapshot", () => {
+    expect(editedLineFreeUnits({ promoFreeUnits: 2, promoBaseUnits: 12, qty: 6 })).toBe(1);
+    expect(editedLineFreeUnits({ promoFreeUnits: 2, promoBaseUnits: 12, qty: 24 })).toBe(2);
+    // A line is never entirely free — the buyer always pays the N in every (N + M).
+    expect(editedLineFreeUnits({ promoFreeUnits: 2, promoBaseUnits: 12, qty: 1 })).toBe(0);
+    expect(editedLineFreeUnits({ qty: 12 })).toBe(0); // non-BOGO line untouched
+  });
+
+  it("serialises promoFreeUnits only when the line has some", () => {
+    expect(
+      invoiceLineDto({ description: "X", qty: 12, unitPrice: 35, promoFreeUnits: 2 }, 0),
+    ).toMatchObject({ promoFreeUnits: 2 });
+    expect(invoiceLineDto({ description: "X", qty: 12, unitPrice: 35 }, 0)).not.toHaveProperty(
+      "promoFreeUnits",
+    );
   });
 });

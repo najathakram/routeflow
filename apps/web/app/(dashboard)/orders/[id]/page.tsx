@@ -347,6 +347,11 @@ interface EditItemState {
   /** True when the loaded line was stored with a box/piece split (qty is in
    *  pieces). Gates boxed proration so selling-unit lines aren't misread. */
   boxSplit?: boolean;
+  /** BUY_N_GET_M snapshot on the loaded line + the whole selling-unit count it
+   *  was earned at. The preview MUST net these off or a BOGO line shows at full
+   *  price and disagrees with both the stored subtotal and the server on save. */
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -425,12 +430,43 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
   };
 }
 
+/**
+ * BUY_N_GET_M free units for the edit preview, rescaled when the operator edits
+ * the qty: the snapshot was earned at `promoBaseUnits` whole selling units, so a
+ * shrunk line earns proportionally fewer and a grown one never earns MORE than
+ * was agreed (mirrors the order engine's `rescaleBogoFreeUnits` fallback and the
+ * invoice edit form). Capped at units − 1 — the buyer always pays the N in every
+ * (N + M). A pending SUBSTITUTION earns nothing: the snapshot belongs to the
+ * product being replaced, and undoing the substitution restores it.
+ */
+function editLineFreeUnits(it: {
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+  substituteProductId?: string;
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+}): number {
+  if (it.substituteProductId) return 0;
+  const stored = Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
+  if (stored <= 0) return 0;
+  const { boxes } = editBoxedSplit(it);
+  const units = Math.trunc(Number(boxes != null ? boxes : it.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(Number(it.promoBaseUnits ?? units) || 0));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
+}
+
 /** Boxed-aware line subtotal for the edit preview (matches server pricing). */
 function editLineSubtotal(it: {
   unitPrice: number;
   qty: number;
   unitsPerBox?: number | null;
   boxSplit?: boolean;
+  substituteProductId?: string;
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
 }): number {
   const { boxes, pieces } = editBoxedSplit(it);
   return computeLineSubtotal({
@@ -439,6 +475,9 @@ function editLineSubtotal(it: {
     boxes,
     pieces,
     unitsPerBox: it.unitsPerBox ?? null,
+    // BUY_N_GET_M: free whole units come off before pricing, exactly like the
+    // server — a plain qty*unitPrice previews a BOGO line at full price.
+    freeUnits: editLineFreeUnits(it),
   });
 }
 
@@ -991,6 +1030,13 @@ function EditableLineItems({
               </label>
             )}
 
+            {/* BUY_N_GET_M: name the units the live total below nets off. */}
+            {!item.cancelled && editLineFreeUnits(item) > 0 && (
+              <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                {editLineFreeUnits(item)} free
+              </span>
+            )}
+
             {/* Live line total */}
             {!item.cancelled && (
               <span className="money w-20 shrink-0 text-right text-sm font-semibold text-navy">
@@ -1481,6 +1527,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 category: li.product?.category ?? null,
                 boxSplit: li.boxes != null || li.pieces != null,
                 originalBoxSplit: li.boxes != null || li.pieces != null,
+                // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
+                promoFreeUnits: li.promoFreeUnits ?? null,
+                promoBaseUnits: li.promoFreeUnits
+                  ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+                  : null,
               };
             }),
         );
@@ -1624,6 +1675,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
             originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
             boxSplit: li.boxes != null || li.pieces != null,
             originalBoxSplit: li.boxes != null || li.pieces != null,
+            // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
+            promoFreeUnits: li.promoFreeUnits ?? null,
+            promoBaseUnits: li.promoFreeUnits
+              ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+              : null,
           };
         }),
     );
@@ -2137,29 +2193,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Out for Delivery
               </Button>
+              {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
+                  reason, so the ONLY path is the DemoteReasonModal. A second
+                  "Unconfirm" button used to submit directly (predating the
+                  reason rule) and guaranteed a 400 with nowhere to type one. */}
               <Button
                 size="sm"
                 variant="secondary"
                 leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Unconfirm this order? It will return to Pending status.")) {
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" },
-                      { onSuccess: () => setLocalStatus("PENDING") },
-                    );
-                  }
-                }}
+                onClick={() => setDemoteTarget("PENDING")}
                 loading={updateStatus.isPending}
               >
                 Unconfirm
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("PENDING")}
-              >
-                Return to Pending
               </Button>
               <Button
                 size="sm"
@@ -2522,6 +2567,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           ) : (
                             <span className="mono">{formatQtySplit({ qty: li.qty })}</span>
                           )}
+                          {/* BUY_N_GET_M: name the free units, or the reduced line
+                              total reads as a pricing error. */}
+                          {Number(li.promoFreeUnits ?? 0) > 0 && (
+                            <p className="mt-0.5 text-[10px] font-medium text-amber-700">
+                              {Number(li.promoFreeUnits)} free
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex flex-col items-end gap-0.5">
@@ -2592,6 +2644,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                     pieces: li.pieces ?? null,
                                     // Snapshot upb, never the live product.
                                     unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+                                    // BUY_N_GET_M snapshot, or the fallback bills
+                                    // a free-units line at full price.
+                                    freeUnits: Math.max(
+                                      0,
+                                      Math.trunc(Number(li.promoFreeUnits ?? 0) || 0),
+                                    ),
                                   })
                               ).toFixed(2)}
                             </span>

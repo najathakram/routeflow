@@ -28,6 +28,7 @@ import {
   useUnsubscribeStockAlert,
   useBuyerReplenishment,
   type BuyerProduct,
+  type BuyerPromotion,
   type LockedCategory,
   type ReplenishmentEstimate,
 } from "../../../lib/api/buyer";
@@ -38,6 +39,7 @@ import type { PromotionRule } from "../../../lib/pricing";
 import {
   alertIdSet,
   behaviorLabel,
+  bogoTileChip,
   computeTileChip,
   deriveTilePrice,
   stockLabel,
@@ -199,6 +201,7 @@ export default function CustomerCatalogScreen() {
               })
             }
             promoRules={promoRules}
+            promotions={promotions}
             estimate={estimateByProduct.get(item.id)}
             isAlertSubscribed={alertIds.has(item.id)}
             onToggleStockAlert={() => toggleStockAlert(item.id)}
@@ -267,6 +270,7 @@ function ProductCard({
   isFavorite,
   onToggleFavorite,
   promoRules,
+  promotions,
   estimate,
   isAlertSubscribed,
   onToggleStockAlert,
@@ -275,6 +279,7 @@ function ProductCard({
   isFavorite: boolean;
   onToggleFavorite: () => void;
   promoRules: PromotionRule[];
+  promotions: BuyerPromotion[] | undefined;
   estimate?: ReplenishmentEstimate;
   isAlertSubscribed: boolean;
   onToggleStockAlert: () => void;
@@ -289,7 +294,10 @@ function ProductCard({
   const units = cartItem ? (boxed ? (cartItem.boxes ?? 0) : cartItem.qty) : 0;
 
   const priced = deriveTilePrice(product, promoRules, cartItem);
-  const chip = computeTileChip(product, priced, estimate);
+  // A matching BUY_N_GET_M promo always wins the chip slot — it's qty-agnostic
+  // (shown even before the buyer has added enough to earn a free unit) and
+  // never a fake percent, unlike the Deal/New/Low/Featured chip below it.
+  const chip = bogoTileChip(product, promotions) ?? computeTileChip(product, priced, estimate);
   const behavior = behaviorLabel(estimate);
   const stock = stockLabel(product);
   const cta = tileCta(product, units);

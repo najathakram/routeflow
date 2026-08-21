@@ -12,6 +12,7 @@ function catalogVersion() {
         routesConcurrent: 1,
         scansIncluded: 20,
         msgsIncluded: 200,
+        customersIncluded: 100,
         featureFlags: ["addon.ocr"],
       },
       {
@@ -21,6 +22,7 @@ function catalogVersion() {
         routesConcurrent: 3,
         scansIncluded: 100,
         msgsIncluded: 200,
+        customersIncluded: 250,
         featureFlags: ["flag.dispatch_live", "flag.returns", "addon.ocr"],
       },
       {
@@ -30,6 +32,7 @@ function catalogVersion() {
         routesConcurrent: null,
         scansIncluded: 300,
         msgsIncluded: 200,
+        customersIncluded: 500,
         featureFlags: ["flag.analytics", "addon.buyer_portal", "addon.ocr"],
       },
       {
@@ -39,12 +42,19 @@ function catalogVersion() {
         routesConcurrent: null,
         scansIncluded: null,
         msgsIncluded: 200,
+        customersIncluded: null,
         featureFlags: ["addon.regulated_items", "flag.api_sso", "addon.ocr"],
       },
     ],
     addonSkus: [
       { sku: "SEAT_EXTRA", meteredKey: "SEATS", capacityPerUnit: 1, grantsFlags: [] },
       { sku: "OCR_PACK_250", meteredKey: "SCANS", capacityPerUnit: 250, grantsFlags: [] },
+      {
+        sku: "CUSTOMER_PACK_100",
+        meteredKey: "CUSTOMERS",
+        capacityPerUnit: 100,
+        grantsFlags: [],
+      },
       {
         sku: "BUYER_PORTAL",
         meteredKey: null,
@@ -98,7 +108,7 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     expect(e.planKey).toBe("STARTER");
     expect(e.flags).toEqual(["addon.ocr"]);
-    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200 });
+    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200, customers: 100 });
     expect(e.addons).toEqual([]);
   });
 
@@ -141,6 +151,18 @@ describe("EntitlementsService.resolve", () => {
     expect(e.caps.scans).toBe(520); // 20 + 2×250
   });
 
+  it("stacks CUSTOMER_PACK_100 onto the customers cap (100 each)", async () => {
+    const { svc } = makeService(
+      tenantFixture({
+        plan: "STARTER",
+        addons: [{ addonKey: "customer_pack", sku: "CUSTOMER_PACK_100", quantity: 2 }],
+      }),
+    );
+    const e = await svc.resolve("t1");
+    expect(e.caps.customers).toBe(300); // 100 included + 2×100
+    expect(e.addons).toEqual(["CUSTOMER_PACK_100"]);
+  });
+
   it("grants a flag from an active add-on SKU", async () => {
     const { svc } = makeService(
       tenantFixture({
@@ -169,7 +191,13 @@ describe("EntitlementsService.resolve", () => {
       }),
     );
     const e = await svc.resolve("t1");
-    expect(e.caps).toEqual({ seats: null, routes: null, scans: null, msgs: 200 });
+    expect(e.caps).toEqual({
+      seats: null,
+      routes: null,
+      scans: null,
+      msgs: 200,
+      customers: null,
+    });
   });
 
   it("hasFlag reflects resolved flags", async () => {
@@ -220,6 +248,7 @@ describe("EntitlementsService.resolve", () => {
           routesConcurrent: 1,
           scansIncluded: 20,
           msgsIncluded: 200,
+          customersIncluded: 100,
           featureFlags: ["addon.ocr"],
         },
       ],
@@ -228,8 +257,44 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     // planKey/caps/flags stay internally consistent — never a BUSINESS claim on STARTER caps.
     expect(e.planKey).toBe("STARTER");
-    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200 });
+    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200, customers: 100 });
     expect(e.flags).toEqual(["addon.ocr"]);
+  });
+
+  it("resolves a legacy stored planKey against a post-rename version (TEAM → GROWTH)", async () => {
+    const { svc, catalog } = makeService(tenantFixture({ plan: "STARTER", planKey: "TEAM" }));
+    // v8 renamed the middle plans; the subscription still carries the historical key.
+    catalog.getVersionForTenant.mockResolvedValueOnce({
+      id: "planver_v8",
+      definitions: [
+        {
+          planKey: "STARTER",
+          name: "Starter",
+          seatsIncluded: 3,
+          routesConcurrent: 1,
+          scansIncluded: 20,
+          msgsIncluded: 200,
+          customersIncluded: 100,
+          featureFlags: ["flag.returns"],
+        },
+        {
+          planKey: "GROWTH",
+          name: "Growth",
+          seatsIncluded: 10,
+          routesConcurrent: 3,
+          scansIncluded: 100,
+          msgsIncluded: 200,
+          customersIncluded: 250,
+          featureFlags: ["flag.returns", "flag.analytics"],
+        },
+      ],
+      addonSkus: [],
+    });
+    const e = await svc.resolve("t1");
+    // NOT a silent downgrade to STARTER — the renamed twin is the tenant's own row.
+    expect(e.planKey).toBe("GROWTH");
+    expect(e.caps).toEqual({ seats: 10, routes: 3, scans: 100, msgs: 200, customers: 250 });
+    expect(e.flags).toContain("flag.analytics");
   });
 
   it("claimsFor swallows resolution errors (never blocks login)", async () => {

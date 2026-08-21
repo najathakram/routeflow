@@ -135,7 +135,11 @@ export class OrdersController {
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
     if (!isStaff && created.customerId) {
-      const merged = await this.ordersService.mergeAllPendingForCustomer(created.customerId);
+      // Only the CUSTOMER's own consolidation may earn NEW BUY_N_GET_M free units
+      // for the combined quantity — a driver's order is priced like staff's.
+      const merged = await this.ordersService.mergeAllPendingForCustomer(created.customerId, {
+        buyerInitiated: user.role === UserRole.CUSTOMER,
+      });
       if (merged) return merged;
     }
     return created;

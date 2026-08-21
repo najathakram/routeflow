@@ -28,6 +28,8 @@ import {
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
 import { computeLineSubtotal, normalizeBoxesPieces } from "../../../../../lib/pricing";
+import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
+import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
 import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
@@ -76,6 +78,31 @@ interface AddedLineDraft {
   pieces: number;
   /** Total pieces — always the piece-equivalent, never a bare box count (see lib/at-door-diff.ts). */
   qty: number;
+}
+
+/**
+ * BUY_N_GET_M free units for the at-door ESTIMATE, rescaled to the quantity the
+ * driver has dialled in. Same rule as the order/invoice edit forms (and the
+ * server's `rescaleBogoFreeUnits` fallback): the snapshot was earned at the
+ * line's stored selling-unit count, so a shrunk line earns proportionally fewer
+ * and a grown one never earns more than was already agreed. Loose pieces never
+ * count — a boxed line's selling units are its BOXES.
+ */
+function adjustLineFreeUnits(li: OrderItem, qty: number): number {
+  const upb = Number(li.product?.unitsPerBox ?? 0);
+  const stored = normalizeBoxesPieces({
+    boxes: li.boxes,
+    pieces: li.pieces,
+    qty: li.qty,
+    unitsPerBox: upb,
+  });
+  const now = normalizeBoxesPieces({ qty, unitsPerBox: upb });
+  return editedLineFreeUnits({
+    promoFreeUnits: li.promoFreeUnits,
+    promoBaseUnits: upb > 1 ? stored.boxes : stored.qty,
+    boxes: upb > 1 ? now.boxes : null,
+    qty: now.qty,
+  });
 }
 
 export default function AdjustOrderScreen() {
@@ -142,6 +169,9 @@ export default function AdjustOrderScreen() {
       const qty = qtyById[li.id] ?? li.qty;
       if (qty <= 0) continue;
       const upb = Number(li.product?.unitsPerBox ?? 0);
+      // BUY_N_GET_M: the agreed line already has free units off — bill them off
+      // the estimate too, or the door total over-states what the buyer owes.
+      const freeUnits = adjustLineFreeUnits(li, qty);
       if (upb > 1) {
         const split = normalizeBoxesPieces({ qty, unitsPerBox: upb });
         sum += computeLineSubtotal({
@@ -150,9 +180,10 @@ export default function AdjustOrderScreen() {
           boxes: split.boxes,
           pieces: split.pieces,
           unitsPerBox: upb,
+          freeUnits,
         });
       } else {
-        sum += computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty });
+        sum += computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, freeUnits });
       }
     }
     return sum;
@@ -538,9 +569,18 @@ function AdjustLineRow({
   const applyQty = (n: number) => onChangeQty(Math.max(0, Math.trunc(n)));
 
   const removed = qty <= 0;
+  const freeUnits = adjustLineFreeUnits(li, qty);
+  const freeLabel = freeUnitsLabel(freeUnits);
   const lineTotal = isBoxed
-    ? computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, boxes, pieces, unitsPerBox: upb })
-    : computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty });
+    ? computeLineSubtotal({
+        unitPrice: Number(li.unitPrice),
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox: upb,
+        freeUnits,
+      })
+    : computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, freeUnits });
 
   return (
     <View style={[styles.card, removed && styles.cardRemoved]}>
@@ -553,6 +593,9 @@ function AdjustLineRow({
             ${Number(li.unitPrice).toFixed(2)}
             {isBoxed ? ` / box of ${upb}` : ""}
           </Text>
+          {/* BUY_N_GET_M: name the free units, or the reduced line total reads
+              as a pricing error at the door. */}
+          {freeLabel ? <Text style={styles.cardFreeLabel}>{freeLabel}</Text> : null}
         </View>
         <Text style={[styles.cardTotal, removed && styles.cardTotalRemoved]}>
           {removed ? "Removed" : `$${lineTotal.toFixed(2)}`}
@@ -725,6 +768,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   cardName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  cardFreeLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.brand, marginTop: 2 },
   cardTotal: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",

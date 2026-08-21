@@ -4,10 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { Package, Heart, Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@/lib/pricing";
-import type { BuyerProduct, ReplenishmentEstimate } from "@/lib/api/buyer";
+import type { BuyerProduct, BuyerPromotion, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
-import { deriveTilePrice } from "./tile-pricing";
+import { bogoChipLabel, deriveTilePrice } from "./tile-pricing";
 import { QtyStepper } from "./QtyStepper";
 import type { ShopDensity } from "../page";
 
@@ -21,8 +21,12 @@ function fmt(n: number) {
 function computeChip(
   product: BuyerProduct,
   priced: PromoResult,
+  bogoLabel: string | null,
   estimate?: ReplenishmentEstimate,
 ): { label: string; cls: string } | null {
+  // BUY_N_GET_M first: it leaves `originalPrice` null (no fake unit price), so
+  // its chip is the promo's banner text — never a derived "-N%".
+  if (bogoLabel) return { label: bogoLabel, cls: "bg-success text-white" };
   if (priced.originalPrice != null || product.isDeal) {
     let label = "Deal";
     // Display-only percent derived from the already-rounded priced result — never fed back into money math.
@@ -70,6 +74,8 @@ export interface ProductTileProps {
   /** undefined when the product is not in the cart. */
   cartItem: CartItem | undefined;
   promoRules: PromotionRule[];
+  /** Raw promo list — only for the BUY_N_GET_M chip's `bannerText` (not pricing). */
+  promotions?: BuyerPromotion[];
   /** Behavioral chip source (replenishment frequency). */
   estimate?: ReplenishmentEstimate;
   isFavorite: boolean;
@@ -88,6 +94,7 @@ export function ProductTile({
   sellerSlug,
   cartItem,
   promoRules,
+  promotions,
   estimate,
   isFavorite,
   onAdd,
@@ -107,7 +114,7 @@ export function ProductTile({
 
   // Cent-parity anchor — MUST equal the cart's number for this product+qty.
   const priced = deriveTilePrice(product, promoRules, cartItem);
-  const chip = computeChip(product, priced, estimate);
+  const chip = computeChip(product, priced, bogoChipLabel(product, promotions), estimate);
   const behavior = behaviorLabel(estimate);
   const stock = stockText(product);
   const outOfStock = (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";

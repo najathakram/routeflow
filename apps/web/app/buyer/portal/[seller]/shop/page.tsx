@@ -542,6 +542,7 @@ export default function BuyerShopPage() {
                         size={density}
                         cartItem={cart.items.find((i) => i.productId === p.id)}
                         promoRules={promoRules}
+                        promotions={promotions}
                         estimate={estimateByProduct.get(p.id)}
                         isFavorite={favoriteIds.has(p.id)}
                         onAdd={() =>

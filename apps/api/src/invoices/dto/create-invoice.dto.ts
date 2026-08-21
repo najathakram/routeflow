@@ -27,6 +27,14 @@ export class CreateInvoiceItemDto {
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
   @IsOptional() @IsInt() @Min(0) boxes?: number;
   @IsOptional() @IsInt() @Min(0) pieces?: number;
+  /**
+   * BUY_N_GET_M snapshot: whole free SELLING units on this line (boxes for a
+   * boxed line), carried from the source order line. The PATCH items path
+   * delete-and-recreates every line, so a client editing a DRAFT MUST round-trip
+   * it — omitting it re-prices an agreed $350 BOGO line to 12 × $35 = $420.
+   * Clamped server-side to the line's own whole units − 1 (never a free line).
+   */
+  @IsOptional() @IsInt() @Min(0) promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints under the description on the PDF). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
 }

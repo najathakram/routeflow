@@ -23,6 +23,7 @@ import { alertInfo } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
+  editedLineFreeUnits,
   invoiceLineDto,
   type InvoiceTotalsLine,
 } from "../../../../../lib/invoice-totals";
@@ -60,6 +61,12 @@ type EditLine = {
   taxable: boolean;
   note: string;
   noteOpen?: boolean;
+  /** BUY_N_GET_M snapshot carried from the order line — MONEY, not decoration:
+   *  the PATCH replaces every line, so dropping it re-prices an agreed
+   *  12-cases-2-free line from $350 to $420 on save. */
+  promoFreeUnits: number | null;
+  /** Whole selling units the snapshot was earned at, so a qty edit rescales it. */
+  promoBaseUnits: number | null;
 };
 
 let lineSeq = 0;
@@ -109,6 +116,10 @@ export default function EditInvoiceScreen() {
         taxRate: Number(it.taxRate ?? 0),
         taxable: Number(it.taxRate ?? 0) > 0,
         note: it.notes ?? "",
+        promoFreeUnits: it.promoFreeUnits ?? null,
+        promoBaseUnits: it.promoFreeUnits
+          ? Math.trunc(Number(it.boxes != null ? it.boxes : it.qty) || 0)
+          : null,
       })),
     );
     setIssueDate(invoice.issueDate ? invoice.issueDate.slice(0, 10) : "");
@@ -154,6 +165,8 @@ export default function EditInvoiceScreen() {
         taxRate: 0,
         taxable: false,
         note: "",
+        promoFreeUnits: null,
+        promoBaseUnits: null,
       },
     ]);
   };
@@ -176,6 +189,8 @@ export default function EditInvoiceScreen() {
         taxRate: 0,
         taxable: false,
         note: "",
+        promoFreeUnits: null,
+        promoBaseUnits: null,
       },
     ]);
 
@@ -191,6 +206,7 @@ export default function EditInvoiceScreen() {
       unitsPerBox: l.unitsPerBox,
       discount: l.discount ?? 0,
       taxRate: l.taxable ? rateFor(l) : 0,
+      freeUnits: editedLineFreeUnits(l),
     }));
     return computeInvoiceTotals({
       lines: tLines,
@@ -267,6 +283,7 @@ export default function EditInvoiceScreen() {
               discount: l.discount ?? undefined,
               taxable: l.taxable,
               notes: l.note,
+              promoFreeUnits: editedLineFreeUnits(l),
             },
             rateFor(l),
           ),
@@ -488,6 +505,7 @@ function LineCard({
 }) {
   const upb = Number(line.unitsPerBox ?? 0);
   const isSplit = line.boxes != null && upb > 1;
+  const freeUnits = editedLineFreeUnits(line);
   const lineTotal = Math.max(
     0,
     computeLineSubtotal({
@@ -496,6 +514,7 @@ function LineCard({
       boxes: line.boxes,
       pieces: line.pieces,
       unitsPerBox: line.unitsPerBox,
+      freeUnits,
     }) - (line.discount ?? 0),
   );
 

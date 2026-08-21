@@ -52,6 +52,7 @@ import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
+import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import {
   nextPdfSharePhase,
@@ -788,6 +789,11 @@ export default function InvoiceDetailScreen() {
                           `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
                         : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                     </Text>
+                    {/* BUY_N_GET_M: name the free units, or the reduced line
+                        subtotal reads as a pricing error (web parity). */}
+                    {freeUnitsLabel(it.promoFreeUnits) ? (
+                      <Text style={styles.itemFreeLabel}>{freeUnitsLabel(it.promoFreeUnits)}</Text>
+                    ) : null}
                     {Number(it.discount ?? 0) > 0 ? (
                       // The shown subtotal is already post-discount; this line
                       // explains why it's less than qty × price.
@@ -1374,6 +1380,12 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

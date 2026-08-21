@@ -489,8 +489,12 @@ export class BuyerController {
           makePseudoUser(ctx),
         );
 
-        // Sweep any other PENDING orders for this customer into the winner.
-        await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+        // Sweep any other PENDING orders for this customer into the winner. The
+        // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
+        // combined quantity qualifies for (split carts keep the promo).
+        await this.ordersService.mergeAllPendingForCustomer(ctx.customerId, {
+          buyerInitiated: true,
+        });
 
         // Return the updated order
         return this.ordersService.findOne(activeOrder.id, makePseudoUser(ctx));
@@ -513,8 +517,11 @@ export class BuyerController {
     };
     const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
     // Newly-created order may share a customer with pre-existing PENDINGs —
-    // consolidate them so the customer ends up with a single PENDING.
-    const merged = await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+    // consolidate them so the customer ends up with a single PENDING (buyer-driven,
+    // so the merged quantity earns its own BUY_N_GET_M free units).
+    const merged = await this.ordersService.mergeAllPendingForCustomer(ctx.customerId, {
+      buyerInitiated: true,
+    });
     return merged ?? created;
   }
 

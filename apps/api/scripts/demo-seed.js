@@ -391,6 +391,24 @@ async function ensureTenant(existing) {
     update: { businessName: DEMO_NAME, taxRate: TAX_RATE },
   });
 
+  // Dispatch/driver/route UI is hidden for every tenant WITHOUT the
+  // developer_mode addon (#380). The demo's driver walkthrough depends on it,
+  // so a from-scratch reseed must re-create the row or the demo silently loses
+  // its driver screens. Row shape matches AddonService.hasAddon (see
+  // apps/api/scripts/e2e-seed.js ensureDeveloperMode).
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId: DEMO_TENANT_ID, addonKey: "developer_mode" } },
+    create: {
+      tenantId: DEMO_TENANT_ID,
+      addonKey: "developer_mode",
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+  console.log("   ✓ Developer mode addon active (driver/dispatch demo screens)");
+
   for (const cat of IRS_SYSTEM_CATEGORIES) {
     await prisma.expenseCategory.upsert({
       where: { tenantId_code: { tenantId: DEMO_TENANT_ID, code: cat.code } },
