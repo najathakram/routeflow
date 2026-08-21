@@ -15,7 +15,10 @@
  * named-export interop keeps working for the .mjs consumers.
  */
 
-const TEST_TENANT_SLUGS = new Set(["test", "e2e-routeflow"]);
+// `routeflow-demo` is the sales-demo tenant: fictional customers and synthetic
+// orders/invoices, reseeded on demand by apps/api/scripts/demo-seed.ts. It holds
+// no real client data, so it is an approved write target like any test tenant.
+const TEST_TENANT_SLUGS = new Set(["test", "e2e-routeflow", "routeflow-demo"]);
 
 // Throwaway tenants created for QA/e2e runs. Lowercase only — tenant slugs are
 // lowercased at login/creation time.

@@ -99,6 +99,27 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   parked SaleDrafts from the operator's dock (kind ORDER + device "Desktop web" + title
   `Order…` — residue web e2e 08-create-order-escape parked before it cleaned up after itself,
   2026-08-19).
+- **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
+  (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
+  operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant
+  named by **`DEMO_SOURCE_TENANT`** (env, never hardcoded — CLAUDE.md forbids a live slug in
+  code) READ-ONLY, driven by `DEMO_ASSETS_DIR/manifest.json` (`uploaded:true` entries only) +
+  `descriptions.json`, then generates 5 customers, 3 suppliers, 2 routes, opening PURCHASE
+  stock, ~64 orders over 60 days and their invoices/payments/credit notes. Dry-run by default,
+  `--live` to write. Every row id is `stableId(ns, key)` (SHA-1 → UUIDv5 shape, `lib/demo-ids.js`)
+  so a re-run addresses the same rows: foundation rows are upserted, transactional rows are
+  deleted and rebuilt, and because product ids are stable **already-uploaded images survive a
+  refresh**. Mirrors production money math exactly — `computeLineSubtotal`/`computeCategoryTax`
+  imported from `src/common/pricing.ts` via a transpile-only ts-node hook (never re-implemented),
+  `Order.tax` = REGULAR tax only with category tax folded into the total, and invoices split by
+  `invoiceTreatment: SEPARATE_INVOICE` into `-R1` siblings sharing an `invoiceGroupId` with the
+  tax remainder + whole shipping fee on the largest group. A `scoped()` helper stamps and asserts
+  the demo `tenantId` on **every** row (parent and nested child) so a nested create can never
+  leave a NULL tenantId. `demo-seed-images.js` uploads the staged photos through the audited
+  `POST /products/:id/images` route (one `GET /products?limit=0` up front to skip products that
+  already have an image, so a resumed run never double-uploads). `demo-verify.js` is READ-ONLY:
+  money identities, NULL-tenantId children **reached via their parent** (a database-wide count
+  would just surface unrelated legacy rows), stock, and source-tenant isolation.
 - **`prisma/migrations/`** (2026-08-15, baselined) — two migrations only. `0_init` is
   generated to equal PRODUCTION exactly, replacing 75 partial migrations that could not build
   a database from scratch (40 of 106 models were never created; deploy died at
