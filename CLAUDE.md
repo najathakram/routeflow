@@ -77,11 +77,15 @@ Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` be
 Live client tenants (and their users, products, orders, and documents) are **real businesses'
 production data**. They are never test targets and never examples.
 
-- **Approved test tenants**: `test`, `e2e-routeflow`, and throwaway slugs matching `qa-*`,
-  `e2e-*`, or `ux-audit-*`. ALL testing, seeding, QA, and cleanup — local **or production** —
-  happens ONLY on these, with dummy retailers/buyers. Enforced in code by
+- **Approved test tenants**: `test`, `e2e-routeflow`, `routeflow-demo`, and throwaway slugs
+  matching `qa-*`, `e2e-*`, or `ux-audit-*`. ALL testing, seeding, QA, and cleanup — local
+  **or production** — happens ONLY on these, with dummy retailers/buyers. Enforced in code by
   [`scripts/lib/test-tenants.cjs`](scripts/lib/test-tenants.cjs) (`assertTestTenant`); every
   tenant-scoped script/test entry point must call it before any write.
+- **`routeflow-demo`** is the standing sales-demo tenant (fictional customers, synthetic
+  orders/invoices; catalog copied from a real tenant but written only to the demo). Reseed with
+  [`apps/api/scripts/demo-seed.js`](apps/api/scripts/demo-seed.js) — see its header for the
+  refresh routine. Never demo on a live client tenant.
 - **Never reference a live client** (slug, business name, product names, order/invoice numbers,
   tenant UUIDs) in code, tests, fixtures, UI placeholders, examples, docs, or the code map — use
   `acme`-style placeholders instead.
