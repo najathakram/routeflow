@@ -56,7 +56,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`app/layout.tsx`** — root metadata, fonts (Spline Sans + Spline Sans Mono + Instrument Serif +
   Inter fallback), `<Providers>` + `<TenantProvider>` + SW registry.
 - **`app/providers.tsx`** — QueryClient/TanStack Query, Zustand, toast container.
-- **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
+- **`next.config.mjs`** — standalone output (Docker), CSP headers, X-Frame-Options DENY, image domains. **CSP `frame-src 'self' blob: https:`** (2026-08-21) — without it iframes fell back to `default-src 'self'` and every blob:/API-origin PDF preview (invoice scan, invoice builder, customer docs) rendered blank while `<img>` previews worked; `data:` deliberately excluded from frames. **`Permissions-Policy: camera=(self), geolocation=(self)`** — `camera=()` previously disabled the in-browser barcode/invoice scanner on Android Chrome ("access denied"; iOS Safari ignored it).
 - **`lib/api-client.ts`** — axios instance, `getTenantSlugFromCookie()`, token+tenant interceptors, refresh queue.
 - **`lib/auth.ts`** — operator auth types + `migrateLegacyOpToken()`.
 - **`lib/tenant-cookie.ts`** — shared cookie util (non-httpOnly — JS-readable required).
@@ -76,7 +76,10 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **Promotions pricing (P5-04):** `lib/api/buyer.ts` `useBuyerPromotions()` + `BuyerPromotion`; the buyer cart
   `buyer/portal/[seller]/cart/page.tsx` evaluates each line's best promo via the SAME `applyBestPromotion`
   (base = the catalog `buyerPrice`) → per-line strikethrough + a "Promotion savings" summary line (net line
-  subtotals reconcile to the total). Operator order-detail, buyer order-detail, and invoice-detail render the
+  subtotals reconcile to the total). **Cart pricing fetch MUST use `useBuyerProducts({ ids: cartProductIds })`**
+  (2026-08-21, #382) — a plain catalog page silently omits products outside it and the `?? 0` fallback priced
+  those lines at $0; unresolvable lines now render "Price unavailable" and are EXCLUDED from the estimate,
+  never counted as $0. Operator order-detail, buyer order-detail, and invoice-detail render the
   `PriceType.PROMO` strikethrough/badge (web `PriceType` unions in `lib/api/{orders,invoices}.ts` += `PROMO`).
 - **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
   margin floors via `/settings/margin`) + `floorForCategory()`. Shared **`components/MarginHint.tsx`**
@@ -238,6 +241,27 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 ### `(dashboard)/` — operator dashboard (middleware-guarded)
 
 - `dashboard/page.tsx` — KPI cards (pending orders, routes, drivers, receivables), tables.
+- **Developer-mode gate (2026-08-20) — dispatch/routes/drivers hidden behind an addon.** Those
+  surfaces aren't customer-ready, so every entry point to them is gated on
+  `useDeveloperMode()` (`lib/api/addons.ts`; the hidden legacy `developer_mode` `TenantAddon`).
+  **UI-only — no controller gained `@RequireAddon`** (a leftover surface degrades to an empty
+  state, never a 403 toast) and `lib/drive-mode.tsx` is untouched; only its entry points are gated.
+  **Launch reversal = grep `useDeveloperMode`** and delete the conditions.
+  - `layout.tsx`: `getNavForRole(role, canActAsDriver, devMode)` filters the **"Dispatch" group**
+    out of `OPERATOR_NAV`, drops `/routes` from `DRIVER_NAV` (a non-dev pure DRIVER sees Dashboard
+    - Settings only) and skips the `canActAsDriver` "My Routes" splice; `devMode` joins the
+      `navStructure` useMemo deps beside the Tobacco/Regulated splices. `RouteGuard` adds
+      `DEV_MODE_PREFIXES = ["/dispatch","/routes","/drivers"]` and redirects to `/dashboard` — keyed
+      on **`devResolved`, not `!isLoading`**, so it fails OPEN both in flight and on an errored fetch
+      (a dev tenant deep-linking `/routes` is never bounced on an unknown answer). `g r`/`g d` chords
+      no-op and their two `SHORTCUTS` rows are filtered out (the list became a `useMemo(…, [devMode])`);
+      `Header` gates the topbar drive-mode pill and ANDs `devMode` onto the avatar-menu "Drive mode".
+  - `dashboard/page.tsx`: `canActAsDriver` ANDs in `devMode` (which hides the ModeSwitcher and the
+    driver viewMode branch), and the New-Route quick action, Scheduled-Routes + Active-Drivers
+    StatCards, Scheduled-Route-Runs card and Driver-Status card are each `devMode &&` — the
+    LowStockPanel after them stays.
+  - `components/CommandPalette.tsx`: `useStaticCommands` filters `DEV_MODE_COMMAND_IDS`
+    (`nav-routes`, `nav-drivers`, `act-new-route`) and takes `enabled` in its memo deps.
 - **Settings HUB redesign (full-hub):** `settings/page.tsx` is now a **grouped-card hub landing** instead of a tab strip. `SettingsPageInner` reads `?tab=` via **`useSearchParams`** (page-default wraps it in `<React.Suspense>` for the Next-14 prerender rule); **no tab → `settings/_components/SettingsHub.tsx`** (data-driven groups **Business profile / Team / Finance / Data & import / Integrations / Compliance** + a My-account footer, search filter + "frequently used" chips, app tokens navy/brand not raw mockup teal; **masonry columns** so each card is content-height [no empty stretch], single-purpose groups render as ONE clickable card [no redundant repeated link], multi-item groups = header + link list, subtle hover lift; role/addon gating — Regulated item `show:"admin"`, Tobacco `show:"tobacco"` via `useHasAddon(TOBACCO_ADDON)` — with empty groups auto-hidden); **a tab → that ONE screen** from a `SECTIONS` map (`profile/notifications/users/email/invoicing/costing/remittance/integrations/account` + admin-only `regulated`) rendered under a `← All settings` `NextLink` back link. The old `<Tabs.Root>`/`TabTrigger` strip + Radix `@radix-ui/react-tabs` import were removed; the **in-tab Zoho importer (`ImportTab`/`ProductsImportCard`/`ImportCard`/`IMPORT_SECTIONS`/`splitCsvRows`/`parseCSVLine`) was deleted** in favor of the richer standalone `/settings/import` (the `?tab=import` deep-link now `router.replace`s there). Existing deep-links (`?tab=email` from invoices, `?tab=regulated` from compliance) still land directly on their screen; every tab CONTENT component is reused unchanged. The four formerly-orphaned sub-pages (`/settings/billing`, `/settings/import`, `/settings/migration`, `/settings/batch-import`) are now surfaced as hub links. Verified in-browser (hub renders all groups/links/gating) + verify 18/18; local `next build` still hits the pre-existing react-dom hoisting quirk (Dockerfile-handled in prod, not this change).
 - `settings/page.tsx` — branding, invoice numbering, delivery defaults. `settings/import/page.tsx` — bulk import. **Remittance / how-to-pay (P5-14):** local `RemittanceTab()` (mirrors `CostingTab`'s shape — `useToast`, `useAuth` isAdmin gate on `TENANT_ADMIN`, one `form` state hydrated from `useRemittanceConfig()` via `useEffect`, save via `useUpdateRemittanceConfig()` sending the whole form [server merges, `""` clears a field], inputs `disabled={!isAdmin}`) registered as `<TabTrigger value="remittance" icon={<Landmark/>}>How to Pay</TabTrigger>` + `<Tabs.Content value="remittance">` after the costing tab/content; consumes new `lib/api/remittance.ts`.
 - **Buyer shop — Catalogue v2 (P5-02):** `buyer/portal/[seller]/shop/page.tsx` rebuilt into a category-rail + rich-tile catalog composing `shop/_components/*` (`CategoryRail`, `ProductTile`, `ShopSearch`, `QtyStepper`, `tile-pricing.ts`). Rail = All + smart collections (Your usuals/Favorites/New/Deals, server-filtered via `?collection=`) + per-category counts + **locked regulated categories** (rail affordance + info panel only, never product data; clicking a locked cat issues NO product request — query inputs held byte-identical so React Query serves cache). Tiles: multi-image 4:5 focal dot-pager (`objectPositionForUrl`), **struck promo price with cent-parity to the cart** (`tile-pricing.ts` `deriveTilePrice` mirrors the cart's derivation exactly — both consume the shared `toPromotionRules` from `lib/api/buyer.ts` → `applyBestPromotion`), stock-state text, Deal/New/Running-low/Featured chip (one, priority order), inline qty stepper. Default sort **"Best for you"** (replenishment frequency). Search dropdown (name/SKU/barcode). `lib/api/buyer.ts` += `useBuyerCatalogCounts`/`useBuyerReplenishment` hooks, additive optional `BuyerProduct` fields (isNew/isDeal/imageUrls/stockStatus/stockLeft), `toPromotionRules` (the ONE shared promo-rule mapping — cart `page.tsx:84` + shop `page.tsx:173` both call it). Buyer web only (mobile = P5-16 deferred); no migration.
@@ -291,7 +315,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 ### `(platform-admin)/` — super-admin panel (role-guarded)
 
 - `admin/dashboard/page.tsx` — platform stats (tenants, users, plans, MRR).
-- `admin/tenants/page.tsx`, `new/page.tsx`, `[id]/page.tsx` (edit plan, trial, suspend, impersonate, audit).
+- `admin/tenants/page.tsx`, `new/page.tsx`, `[id]/page.tsx` (edit plan, trial, suspend, impersonate, audit). Its `AVAILABLE_ADDONS` array is the **only** toggle for the hidden `DEVELOPER_MODE_ADDON` ("Developer Mode" — unlocks dispatch/routes/drivers); no API change was needed since the enable/disable endpoints take free-text addon keys and an unset `stripePriceId` creates no Stripe item.
 - `admin/buyers/page.tsx` + `[id]/page.tsx`; `admin/buyers/merge-requests/page.tsx` + `[id]/page.tsx`.
 - `admin/plans/page.tsx`, `admin/billing/page.tsx`, `admin/audit-logs/page.tsx`, `admin/{profile,settings}/page.tsx`.
 
