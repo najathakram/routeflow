@@ -21,7 +21,8 @@
     "db:up": "docker compose up -d postgres redis",
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f postgres",
-    "prepare": "husky"
+    "prepare": "husky",
+    "bogo-check": "node scripts/bogo-live-check.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.0",
