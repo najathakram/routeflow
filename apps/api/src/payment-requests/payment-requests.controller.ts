@@ -30,7 +30,10 @@ export class PaymentRequestsController {
   @Get()
   @ApiOperation({ summary: "Buyer payment requests, with allocation preview on pending ones" })
   list(@Query("status") status?: string) {
-    return this.payments.listForTenant(status);
+    // Whitelist rather than pass through: an arbitrary string reaches a Prisma
+    // enum filter and 500s (review finding). Unknown values read as "all".
+    const VALID = ["PENDING", "APPROVED", "REJECTED", "CANCELLED", "FAILED", "EXPIRED"];
+    return this.payments.listForTenant(status && VALID.includes(status) ? status : undefined);
   }
 
   @Post(":id/approve")

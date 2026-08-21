@@ -38,13 +38,21 @@ export class ConnectWebhookController {
   async handle(@Req() req: Request & { rawBody?: Buffer }, @Res() res: Response): Promise<void> {
     const signature = req.headers["stripe-signature"] as string | undefined;
     const secret = this.config.get<AppConfig["stripe"]>("stripe")?.connectWebhookSecret;
-    if (!signature || !secret || !this.stripe.isConfigured || !req.rawBody) {
-      // Misconfiguration is logged loudly but acknowledged — redelivering a
-      // webhook cannot fix a missing secret.
-      this.logger.warn(
-        `Connect webhook dropped (signature=${!!signature} secret=${!!secret} configured=${this.stripe.isConfigured} rawBody=${!!req.rawBody})`,
-      );
+    if (!signature) {
+      // No signature = not a Stripe delivery. Drop it.
       res.status(HttpStatus.OK).json({ received: true });
+      return;
+    }
+    if (!secret || !this.stripe.isConfigured || !req.rawBody) {
+      // A REAL Stripe delivery while the secret/key is not yet configured. A
+      // 200 here would permanently acknowledge the event — a payment made in
+      // that window would be charged but never recorded. 503 instead: Stripe
+      // redelivers with backoff for days, so events survive until the env vars
+      // land. (Review finding — the earlier 200-ACK silently lost money.)
+      this.logger.error(
+        `Connect webhook arrived but Stripe is not configured (secret=${!!secret} key=${this.stripe.isConfigured} rawBody=${!!req.rawBody}) — returning 503 so Stripe redelivers`,
+      );
+      res.status(HttpStatus.SERVICE_UNAVAILABLE).json({ error: "Webhook not configured yet" });
       return;
     }
 

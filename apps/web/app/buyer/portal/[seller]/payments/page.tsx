@@ -106,7 +106,7 @@ function Field({ label, value }: { label: string; value?: string }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function BuyerPaymentsPage() {
+function BuyerPaymentsPageInner() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -457,5 +457,16 @@ export default function BuyerPaymentsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// Suspense wrapper required because the page (and MakePaymentPanel inside it)
+// uses useSearchParams() — Next 14 fails the production build without a
+// boundary above the call. Same pattern as buyer/portal/page.tsx.
+export default function BuyerPaymentsPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <BuyerPaymentsPageInner />
+    </React.Suspense>
   );
 }

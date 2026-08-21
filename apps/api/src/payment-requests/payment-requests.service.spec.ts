@@ -73,6 +73,7 @@ describe("PaymentRequestsService", () => {
   };
   const mockStripe = {
     client: {},
+    isConfigured: true,
   };
   const mockTenantContext = {
     get: jest.fn(),
@@ -338,6 +339,19 @@ describe("PaymentRequestsService", () => {
       stripeSessionId: "cs_test_1",
     };
 
+    // cancelOwn reads the stored Connect ROW (not chargeableAccount()) so a
+    // tenant that disconnected mid-flight still gets the safety checks.
+    let tenantStripeConnect: { findUnique: jest.Mock };
+    beforeEach(() => {
+      tenantStripeConnect = {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ tenantId: "tenant-1", stripeAccountId: "acct_1" }),
+      };
+      (prisma as any).tenantStripeConnect = tenantStripeConnect;
+      (mockStripe as any).isConfigured = true;
+    });
+
     function stubCheckout(session: any) {
       const sessions = {
         retrieve: jest.fn().mockResolvedValue(session),
@@ -416,6 +430,73 @@ describe("PaymentRequestsService", () => {
         cancelled: true,
       });
       expect(sessions.retrieve).not.toHaveBeenCalled();
+    });
+
+    it("refuses to blind-cancel a card request when no Connect row exists", async () => {
+      // Disconnecting Stripe after a checkout opened must NOT skip the safety
+      // checks — a blind cancel would strand a possibly-charged session.
+      buyerPaymentRequest.findFirst.mockResolvedValue(cardRequest);
+      tenantStripeConnect.findUnique.mockResolvedValue(null);
+      const sessions = stubCheckout({ id: "cs_test_1", payment_status: "unpaid" });
+
+      await expect(service.cancelOwn("buyer-1", "cust-1", "req-card")).rejects.toThrow(
+        "can't be cancelled automatically",
+      );
+      expect(sessions.retrieve).not.toHaveBeenCalled();
+      expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses when expire fails and the session is still open", async () => {
+      // A generic 400 from expire is NOT proof the session is dead. The code
+      // must re-read the session and only proceed on expired/complete.
+      buyerPaymentRequest.findFirst.mockResolvedValue(cardRequest);
+      const retrieve = jest
+        .fn()
+        .mockResolvedValueOnce({ id: "cs_test_1", payment_status: "unpaid", status: "open" })
+        .mockResolvedValueOnce({ id: "cs_test_1", payment_status: "unpaid", status: "open" });
+      const expire = jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("rate limited"), { statusCode: 400 }));
+      (mockStripe as any).client = { checkout: { sessions: { retrieve, expire } } };
+
+      await expect(service.cancelOwn("buyer-1", "cust-1", "req-card")).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(retrieve).toHaveBeenCalledTimes(2);
+      expect(buyerPaymentRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("settles from the post-expire re-read when the payment raced in", async () => {
+      // expire fails because the buyer PAID between the first read and the
+      // expire call — the re-read sees paid and the money must be recorded.
+      buyerPaymentRequest.findFirst.mockResolvedValue(cardRequest);
+      buyerPaymentRequest.findUnique.mockResolvedValue(cardRequest);
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.forTenant().invoice.findMany.mockResolvedValue([]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({
+        paymentGroupId: "grp-2",
+        excess: 0,
+      });
+      const retrieve = jest
+        .fn()
+        .mockResolvedValueOnce({ id: "cs_test_1", payment_status: "unpaid", status: "open" })
+        .mockResolvedValueOnce({
+          id: "cs_test_1",
+          payment_status: "paid",
+          status: "complete",
+          payment_intent: "pi_9",
+        });
+      const expire = jest
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("Session is already complete"), { statusCode: 400 }),
+        );
+      (mockStripe as any).client = { checkout: { sessions: { retrieve, expire } } };
+
+      await expect(service.cancelOwn("buyer-1", "cust-1", "req-card")).rejects.toThrow(
+        "already went through",
+      );
+      expect(mockInvoices.recordStandalonePayment).toHaveBeenCalledTimes(1);
     });
   });
 });

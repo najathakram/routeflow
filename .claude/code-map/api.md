@@ -487,7 +487,13 @@ neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there
   instead and tell the buyer; otherwise `checkout.sessions.expire` (so a stale tab cannot pay
   a cancelled request) and only then cancel; if Stripe is unreadable, refuse. Cancel cannot
   simply be removed — nothing server-side reaps a stuck PENDING row and one blocks every later
-  request. Pinned by `payment-requests.service.spec.ts` ("cancelOwn").
+  request. Two refinements from the pre-ship adversarial review (both refuter-confirmed, both
+  pinned): the account comes from the stored `tenantStripeConnect` ROW, never
+  `chargeableAccount()` — a tenant that disconnected after the checkout opened would null that
+  helper and skip every safety check (no row at all ⇒ refuse, no blind cancel); and an
+  `expire` failure proves nothing — the old guard waved through ANY 400 — so the session is
+  RE-READ and only its own `expired`/`complete` status (or `paid` ⇒ settle) may proceed.
+  Pinned by `payment-requests.service.spec.ts` ("cancelOwn", 7 cases).
 - **⚠️ `BuyerPaymentRequest` is a SEPARATE TABLE, deliberately not a `PaymentStatus` member.**
   `recomputeStatus` sums `InvoicePayment` rows, so a pending declaration living in that table
   would mark invoices paid on the buyer's say-so — the DRAFT-payment trap. `InvoicePayment`
@@ -501,6 +507,18 @@ neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there
   PENDING→APPROVED `updateMany` claim (`count === 0` ⇒ already settled). A settlement failure
   reopens the request and returns non-2xx **on purpose** so Stripe redelivers. Runs with no
   request context, so it establishes tenant scope via `tenantContext.run(...)`.
+  **⚠️ A signature-bearing delivery while the secret/key env vars are unset returns 503, never
+  200** — a 200 permanently ACKs the event, so a payment made in that window would be charged
+  but never recorded; 503 makes Stripe redeliver for days until the vars land. Only
+  signature-less garbage gets the 200 drop.
+- **Post-review hardening (2026-08-21):** `recordStandalonePayment` takes
+  `opts.assertAllocationsWithinBalance` — buyer-payment paths pass true so an allocation
+  computed OUTSIDE the tx (stale vs a concurrent operator payment) throws Conflict inside the
+  row locks and rolls back instead of overpaying an invoice (approve reopens for retry; webhook
+  redelivery recomputes). Operator flows keep deliberate-overpay behavior. Connect OAuth
+  `state` carries a single-use `jti` (in-memory consumed map, 20-min sweep) — the state rides a
+  URL query param, so a leaked value must not replay within its 15-min life.
+  `GET /payment-requests?status=` whitelists the enum (garbage reads as "all", not a 500).
 - **Wiring gotcha:** `BuyerPaymentsController` lives in `payment-requests/` but is registered
   by **`BuyerModule`** — it rides that module's `BuyerJwtAuthGuard` / `BuyerSellerContextGuard`
   / `BuyerTenantInterceptor`, which are not exported.

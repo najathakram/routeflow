@@ -324,37 +324,67 @@ export class PaymentRequestsService {
     if (!request) throw new NotFoundException("No pending request to cancel");
 
     if (request.kind === "CARD" && request.stripeSessionId) {
-      const account = await this.connect.chargeableAccount(request.tenantId);
-      if (account) {
-        let session: any = null;
-        try {
-          session = await this.stripe.client.checkout.sessions.retrieve(request.stripeSessionId, {
-            stripeAccount: account,
-          });
-        } catch (err: any) {
-          this.logger.warn(
-            `Could not read session ${request.stripeSessionId} before cancel: ${err?.message}`,
-          );
-          // Unknown state — refuse rather than risk cancelling a paid charge.
-          throw new BadRequestException(
-            "Could not confirm the card payment's status. Please try again in a moment.",
-          );
-        }
-        if (session?.payment_status === "paid") {
-          await this.settleCardBySession(session);
-          throw new BadRequestException(
-            "That card payment already went through — it has been applied to your account.",
-          );
-        }
+      // The stored Connect ROW, not chargeableAccount(): if the tenant
+      // disconnected Stripe (or chargesEnabled flipped) AFTER this checkout was
+      // opened, chargeableAccount() returns null and a naive gate would skip
+      // every safety check below and blind-cancel a possibly-charged session —
+      // review finding, refuter-confirmed. The platform key can still read and
+      // expire sessions on the account as long as the OAuth grant exists.
+      const row = await this.prisma.tenantStripeConnect.findUnique({
+        where: { tenantId: request.tenantId },
+      });
+      const account = row?.stripeAccountId ?? null;
+      if (!account || !this.stripe.isConfigured) {
+        // No way to learn the session's fate — refusing is the only safe answer.
+        throw new BadRequestException(
+          "This card payment can't be cancelled automatically right now. Contact the seller to resolve it.",
+        );
+      }
+      let session: any = null;
+      try {
+        session = await this.stripe.client.checkout.sessions.retrieve(request.stripeSessionId, {
+          stripeAccount: account,
+        });
+      } catch (err: any) {
+        this.logger.warn(
+          `Could not read session ${request.stripeSessionId} before cancel: ${err?.message}`,
+        );
+        // Unknown state — refuse rather than risk cancelling a paid charge.
+        throw new BadRequestException(
+          "Could not confirm the card payment's status. Please try again in a moment.",
+        );
+      }
+      if (session?.payment_status === "paid") {
+        await this.settleCardBySession(session);
+        throw new BadRequestException(
+          "That card payment already went through — it has been applied to your account.",
+        );
+      }
+      if (session?.status !== "expired") {
         try {
           await this.stripe.client.checkout.sessions.expire(request.stripeSessionId, {
             stripeAccount: account,
           });
         } catch (err: any) {
-          // Already expired/complete is fine; anything else still leaves a
-          // payable session, so do not cancel behind it.
-          const code = err?.raw?.code ?? err?.code;
-          if (code !== "checkout_session_expired" && err?.statusCode !== 400) {
+          // Only a confirmed already-expired/completed session may pass. The old
+          // guard waved through ANY 400, which includes real failures that leave
+          // the session payable — review finding, refuter-confirmed. On any
+          // doubt, re-read the session and trust only its own status.
+          let after: any = null;
+          try {
+            after = await this.stripe.client.checkout.sessions.retrieve(request.stripeSessionId, {
+              stripeAccount: account,
+            });
+          } catch {
+            /* fall through to refusal below */
+          }
+          if (after?.payment_status === "paid") {
+            await this.settleCardBySession(after);
+            throw new BadRequestException(
+              "That card payment already went through — it has been applied to your account.",
+            );
+          }
+          if (after?.status !== "expired" && after?.status !== "complete") {
             this.logger.warn(
               `Could not expire session ${request.stripeSessionId}: ${err?.message}`,
             );
@@ -462,14 +492,19 @@ export class PaymentRequestsService {
         request.customerId,
         Number(request.amount),
       );
-      const result = await this.invoices.recordStandalonePayment({
-        customerId: request.customerId,
-        totalAmount: Number(request.amount),
-        method: "CASH",
-        reference: request.reference ?? undefined,
-        notes: request.note ? `Buyer declared: ${request.note}` : "Buyer-declared cash payment",
-        allocations,
-      } as any);
+      const result = await this.invoices.recordStandalonePayment(
+        {
+          customerId: request.customerId,
+          totalAmount: Number(request.amount),
+          method: "CASH",
+          reference: request.reference ?? undefined,
+          notes: request.note ? `Buyer declared: ${request.note}` : "Buyer-declared cash payment",
+          allocations,
+          // The allocation above was computed outside the transaction's row
+          // locks; this makes a stale preview roll back instead of overpaying.
+        } as any,
+        { assertAllocationsWithinBalance: true },
+      );
       await this.prisma.buyerPaymentRequest.update({
         where: { id: requestId },
         data: { paymentGroupId: result.paymentGroupId },
@@ -541,19 +576,25 @@ export class PaymentRequestsService {
           request.customerId,
           Number(request.amount),
         );
-        const result = await this.invoices.recordStandalonePayment({
-          customerId: request.customerId,
-          totalAmount: Number(request.amount),
-          method: "CREDIT_CARD",
-          reference:
-            typeof session.payment_intent === "string"
-              ? session.payment_intent
-              : (session.payment_intent?.id ?? sessionId),
-          notes: "Card payment via Stripe",
-          // The card cleared the moment Stripe said so.
-          settledAt: new Date().toISOString(),
-          allocations,
-        } as any);
+        const result = await this.invoices.recordStandalonePayment(
+          {
+            customerId: request.customerId,
+            totalAmount: Number(request.amount),
+            method: "CREDIT_CARD",
+            reference:
+              typeof session.payment_intent === "string"
+                ? session.payment_intent
+                : (session.payment_intent?.id ?? sessionId),
+            notes: "Card payment via Stripe",
+            // The card cleared the moment Stripe said so.
+            settledAt: new Date().toISOString(),
+            allocations,
+            // Stale-preview guard: on conflict the tx rolls back, the request
+            // reopens below, and Stripe's redelivery recomputes a fresh
+            // allocation.
+          } as any,
+          { assertAllocationsWithinBalance: true },
+        );
         await this.prisma.buyerPaymentRequest.update({
           where: { id: request.id },
           data: { paymentGroupId: result.paymentGroupId },

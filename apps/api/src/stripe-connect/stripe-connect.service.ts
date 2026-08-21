@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
@@ -23,6 +24,8 @@ import { AppConfig } from "../config/configuration";
 @Injectable()
 export class StripeConnectService {
   private readonly logger = new Logger(StripeConnectService.name);
+  /** Consumed OAuth `state` jtis (single-use guard), jti -> consumed-at ms. */
+  private readonly usedStateJtis = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -74,7 +77,7 @@ export class StripeConnectService {
       );
     }
     const state = await this.jwt.signAsync(
-      { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null },
+      { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti: randomUUID() },
       { expiresIn: "15m" },
     );
     const params = new URLSearchParams({
@@ -93,7 +96,7 @@ export class StripeConnectService {
    * BadRequestException with an operator-readable message.
    */
   async completeOAuth(code: string, state: string) {
-    let payload: { purpose?: string; tid?: string; by?: string | null };
+    let payload: { purpose?: string; tid?: string; by?: string | null; jti?: string };
     try {
       payload = await this.jwt.verifyAsync(state);
     } catch {
@@ -101,6 +104,21 @@ export class StripeConnectService {
     }
     if (payload.purpose !== "stripe-connect" || !payload.tid) {
       throw new BadRequestException("Invalid connect state.");
+    }
+    // Single-use: the state travels as a URL query param (referrers, history,
+    // logs), so a leaked value must not be replayable inside its 15m lifetime.
+    // In-memory is acceptable defense-in-depth for a single-instance API; a
+    // restart only re-allows states that are still unexpired and unleaked.
+    if (payload.jti) {
+      if (this.usedStateJtis.has(payload.jti)) {
+        throw new BadRequestException(
+          "This connect link was already used — start again from Settings.",
+        );
+      }
+      this.usedStateJtis.set(payload.jti, Date.now());
+      for (const [jti, at] of this.usedStateJtis) {
+        if (Date.now() - at > 20 * 60 * 1000) this.usedStateJtis.delete(jti);
+      }
     }
     const tenantId = payload.tid;
     const tenant = await this.prisma.tenant.findUnique({
