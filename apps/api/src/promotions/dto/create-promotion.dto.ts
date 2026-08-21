@@ -74,4 +74,16 @@ export class CreatePromotionDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  /**
+   * Explicit confirmation that this rule may sell in-scope products for $0.00 —
+   * NEVER persisted. The pricing engine floors a promoted net price at 0, so a
+   * FIXED amount larger than a product's selling-unit price bills that product at
+   * nothing; without this flag such a rule is refused with a 400 naming how many
+   * products it would zero (`code: "PROMOTION_ZERO_PRICE"`). See
+   * `common/pricing.ts#scanPromotionZeroPrice`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  allowZeroPrice?: boolean;
 }
