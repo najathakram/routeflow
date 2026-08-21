@@ -155,7 +155,7 @@ export class BuyerService {
   async requestSeller(buyerAccountId: string, dto: RequestSellerDto) {
     const account = await this.prisma.buyerAccount.findUnique({
       where: { id: buyerAccountId },
-      select: { email: true, name: true },
+      select: { email: true, name: true, emailVerified: true },
     });
     if (!account) throw new UnauthorizedException();
     const signInEmail = account.email.toLowerCase();
@@ -187,17 +187,20 @@ export class BuyerService {
     // `emailAtSeller` is a claim; auto-approving on it let any buyer type any
     // customer's email and instantly read their invoices and pricing.
     //
-    // KNOWN RESIDUAL EXPOSURE (accepted, not an oversight): buyer self-registration issues
-    // tokens with no mailbox check — `BuyerAuthService.register` writes `emailVerified:
-    // false` and nothing anywhere reads that flag — so an attacker who REGISTERS under a
-    // customer's address still lands in this branch. Closing it requires a registration
-    // verification email first; gating on `emailVerified` today would push EVERY
-    // password-registered buyer into the seller-review path, because no password account is
-    // ever marked verified.
+    // AND that sign-in email must be VERIFIED (mailbox proven). Registration alone
+    // issues tokens without any mailbox check, so before this gate an attacker could
+    // simply REGISTER under a victim customer's address and auto-connect. Now
+    // `emailVerified` is set only by clicking the emailed link
+    // (BuyerAuthService.verifyEmail), by Google sign-in (Google attests the mailbox),
+    // or by the one-time migration that grandfathered accounts predating this gate
+    // (20260823_add_buyer_email_verification — without it every existing password
+    // buyer would have dropped into seller-review, since the flag was write-only).
+    // An unverified match falls through to PENDING_SELLER_APPROVAL, never ACTIVE.
     const customerEmails = [customer.email, customer.user?.email]
       .filter(Boolean)
       .map((e) => String(e).toLowerCase());
-    const emailProven = customerEmails.includes(signInEmail);
+    const signInEmailMatches = customerEmails.includes(signInEmail);
+    const emailProven = signInEmailMatches && account.emailVerified;
 
     // Check for existing link
     const existing = await this.prisma.customerLink.findFirst({
@@ -313,7 +316,9 @@ export class BuyerService {
         });
 
     this.logger.log(
-      `BuyerAccount ${buyerAccountId} requested access to customer ${customer.id} at tenant ${tenant.id} (sign-in email unproven — pending seller approval)`,
+      `BuyerAccount ${buyerAccountId} requested access to customer ${customer.id} at tenant ${tenant.id} (${
+        signInEmailMatches ? "sign-in email matches but is unverified" : "sign-in email unproven"
+      } — pending seller approval)`,
     );
 
     const tenantConfig = await this.prisma.tenantConfig.findFirst({
@@ -335,10 +340,17 @@ export class BuyerService {
       requestedAt: new Date().toISOString(),
     });
 
+    // A matching-but-unverified owner gets told the faster path. This leaks nothing:
+    // the only way to hit it is signing in with the customer's email, and if that
+    // account isn't the customer's, its holder registered it and knows the address.
+    const needsEmailVerification = signInEmailMatches && !account.emailVerified;
     return {
-      message: `Request sent — ${sellerName} will review it. You'll see them in your seller list once approved.`,
+      message: needsEmailVerification
+        ? `Request sent — ${sellerName} will review it. Tip: your sign-in email matches this seller's records, so verifying it (check your inbox for the RouteFlow verification link) connects you instantly.`
+        : `Request sent — ${sellerName} will review it. You'll see them in your seller list once approved.`,
       linkId: link.id,
       pending: true,
+      ...(needsEmailVerification ? { needsEmailVerification: true } : {}),
     };
   }
 

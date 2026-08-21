@@ -20,8 +20,11 @@ export default function ConnectSellerScreen() {
     requestMut.mutate(
       { sellerSlug: sellerSlug.trim().toLowerCase(), emailAtSeller: emailAtSeller.trim() },
       {
-        onSuccess: () => {
-          showToast("Connection request sent");
+        onSuccess: (res) => {
+          // The server's message is the real outcome — instant connect, pending
+          // review, or pending-with-a-verify-your-email hint (mirrors web's
+          // ConnectSellerModal, which stopped hardcoding "will review" copy).
+          showToast(res?.message ?? "Connection request sent");
           router.back();
         },
         onError: (e: any) =>

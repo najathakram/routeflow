@@ -23,6 +23,13 @@ import type { RequestSellerDto } from "./dto/request-seller.dto";
  * linked `User.email`) — a typed-email-only match becomes a
  * `PENDING_SELLER_APPROVAL` request instead, notified out via socket + email
  * (both fire-and-forget), never blocking or failing the request.
+ *
+ * Second gate (closes the #378 residual exposure): the sign-in email must also
+ * be VERIFIED (`BuyerAccount.emailVerified`). Registration issues tokens with
+ * no mailbox check, so a matching-but-unverified account — exactly what an
+ * attacker gets by registering under a victim customer's address — must fall
+ * into the pending path too. Both gates are independent: a verified
+ * non-matching account (the impostor cases below) stays pending as well.
  */
 
 const TENANT = {
@@ -83,6 +90,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "buyer@example.com",
       name: "Buyer One",
+      emailVerified: true,
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue(null);
@@ -110,10 +118,40 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     expect(emailService.send).not.toHaveBeenCalled();
   });
 
+  it("1b. sign-in email matches but account is UNVERIFIED -> PENDING with verification hint, never ACTIVE", async () => {
+    // The #378 residual exposure: registration issues tokens with no mailbox
+    // check, so a matching-but-unverified account is exactly what an attacker
+    // gets by registering under a victim customer's address.
+    prisma.buyerAccount.findUnique.mockResolvedValue({
+      email: "buyer@example.com", // matches the customer record...
+      name: "Attacker Or Owner",
+      emailVerified: false, // ...but the mailbox was never proven
+    } as any);
+    prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
+    prisma.customerLink.findFirst.mockResolvedValue(null);
+    prisma.customerLink.upsert.mockResolvedValue({ id: "link-1b" } as any);
+
+    const result = await service.requestSeller("buyer-1b", DTO);
+    await flush();
+
+    expect(JSON.stringify(prisma.customerLink.upsert.mock.calls)).not.toContain("ACTIVE");
+    expect(prisma.customerLink.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "PENDING_SELLER_APPROVAL" }),
+      }),
+    );
+    expect(result.pending).toBe(true);
+    expect(result.needsEmailVerification).toBe(true);
+    expect(result.message).toContain("verifying");
+    expect(gateway.emitBuyerAutoLinked).not.toHaveBeenCalled();
+    expect(gateway.emitBuyerConnectRequest).toHaveBeenCalled(); // seller still reviews it
+  });
+
   it("2. sign-in email matches the linked user.email (not customer.email) -> ACTIVE", async () => {
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "login@example.com",
       name: "Buyer Two",
+      emailVerified: true,
     } as any);
     prisma.customer.findFirst.mockResolvedValue(
       makeCustomer({
@@ -137,6 +175,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     // Customer's real emails: buyer@example.com / login@example.com — the impostor
     // typed one of these into `emailAtSeller` but never authenticated as it.
@@ -182,6 +221,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "Buyer@Example.com",
       name: "Buyer One",
+      emailVerified: true,
     } as any);
     prisma.customer.findFirst.mockResolvedValue(
       makeCustomer({ email: "buyer@example.com" }) as any,
@@ -209,6 +249,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -231,10 +272,37 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     expect(emailService.send).not.toHaveBeenCalled();
   });
 
+  it("5b. existing PENDING same buyer + matching-but-unverified -> idempotent no-op (no bell spam)", async () => {
+    // Unverified counts as unproven, so the idempotent PENDING branch applies —
+    // resubmitting must not re-notify the seller or rewrite the row.
+    prisma.buyerAccount.findUnique.mockResolvedValue({
+      email: "buyer@example.com",
+      name: "Unverified Owner",
+      emailVerified: false,
+    } as any);
+    prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
+    prisma.customerLink.findFirst.mockResolvedValue({
+      id: "link-5b",
+      status: "PENDING_SELLER_APPROVAL",
+      buyerAccountId: "buyer-5b",
+    } as any);
+
+    const result = await service.requestSeller("buyer-5b", DTO);
+    await flush();
+
+    expect(result.pending).toBe(true);
+    expect(result.linkId).toBe("link-5b");
+    expect(prisma.customerLink.update).not.toHaveBeenCalled();
+    expect(prisma.customerLink.upsert).not.toHaveBeenCalled();
+    expect(gateway.emitBuyerConnectRequest).not.toHaveBeenCalled();
+    expect(gateway.emitBuyerAutoLinked).not.toHaveBeenCalled();
+  });
+
   it("6. existing PENDING same buyer + now proven (sign-in email changed) -> upgraded to ACTIVE", async () => {
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "buyer@example.com", // now matches the customer record
       name: "Buyer One",
+      emailVerified: true,
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -261,6 +329,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -332,6 +401,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -366,6 +436,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -386,6 +457,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "buyer@example.com", // on the customer record — proven
       name: "Buyer One",
+      emailVerified: true,
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue({
@@ -410,6 +482,7 @@ describe("BuyerService.requestSeller — identity-gated auto-connect (security)"
     prisma.buyerAccount.findUnique.mockResolvedValue({
       email: "impostor@evil.example",
       name: "Impostor",
+      emailVerified: true, // verified — but verification alone must never grant access
     } as any);
     prisma.customer.findFirst.mockResolvedValue(makeCustomer() as any);
     prisma.customerLink.findFirst.mockResolvedValue(null);

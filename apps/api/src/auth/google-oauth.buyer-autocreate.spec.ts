@@ -88,11 +88,86 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     const service = buildService(prisma);
     const result: any = await service.findOrCreateUser(profile as any);
 
-    // googleId gets linked, but passwordHash/passwordSet are untouched
+    // googleId gets linked, but passwordHash/passwordSet are untouched — and
+    // emailVerified is NOT set: Google attested new-buyer@example.com, not this
+    // account's own (different) email.
     expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
       where: { id: "buyer-1" },
       data: { googleId: "google-1" },
     });
     expect(result.buyer).toMatchObject({ hasPassword: true });
+  });
+
+  // ── Google attests the mailbox → satisfies the registration verification gate ──
+
+  it("auto-link with a MATCHING email also flips emailVerified (Google attested the mailbox)", async () => {
+    const prisma = createMockPrisma();
+    prisma.buyerAccount.findFirst.mockResolvedValue({
+      id: "buyer-1",
+      email: "new-buyer@example.com", // same mailbox Google just authenticated
+      name: "Existing",
+      googleId: null,
+      passwordSet: true,
+      emailVerified: false,
+      status: "ACTIVE",
+      deletedAt: null,
+    } as any);
+    prisma.buyerAccount.update.mockResolvedValue({} as any);
+    prisma.customerLink.count.mockResolvedValue(1);
+    prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+
+    const service = buildService(prisma);
+    await service.findOrCreateUser(profile as any);
+
+    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
+      where: { id: "buyer-1" },
+      data: { googleId: "google-1", emailVerified: true },
+    });
+  });
+
+  it("an already-linked unverified account gets verified on a matching Google sign-in", async () => {
+    const prisma = createMockPrisma();
+    prisma.buyerAccount.findFirst.mockResolvedValue({
+      id: "buyer-1",
+      email: "new-buyer@example.com",
+      name: "Existing",
+      googleId: "google-1", // linked before the verification gate existed
+      passwordSet: true,
+      emailVerified: false,
+      status: "ACTIVE",
+      deletedAt: null,
+    } as any);
+    prisma.buyerAccount.update.mockResolvedValue({} as any);
+    prisma.customerLink.count.mockResolvedValue(1);
+    prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+
+    const service = buildService(prisma);
+    await service.findOrCreateUser(profile as any);
+
+    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
+      where: { id: "buyer-1" },
+      data: { emailVerified: true },
+    });
+  });
+
+  it("an already-linked VERIFIED account triggers no account write at all", async () => {
+    const prisma = createMockPrisma();
+    prisma.buyerAccount.findFirst.mockResolvedValue({
+      id: "buyer-1",
+      email: "new-buyer@example.com",
+      name: "Existing",
+      googleId: "google-1",
+      passwordSet: true,
+      emailVerified: true,
+      status: "ACTIVE",
+      deletedAt: null,
+    } as any);
+    prisma.customerLink.count.mockResolvedValue(1);
+    prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
+
+    const service = buildService(prisma);
+    await service.findOrCreateUser(profile as any);
+
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
   });
 });

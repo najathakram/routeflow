@@ -242,6 +242,24 @@ export async function buyerResetPassword(token: string, newPassword: string): Pr
   await axios.post(`${BASE_URL}/buyer/auth/reset-password`, { token, newPassword });
 }
 
+export async function buyerVerifyEmail(token: string): Promise<{ message: string }> {
+  const { data } = await axios.post<{ message: string }>(`${BASE_URL}/buyer/auth/verify-email`, {
+    token,
+  });
+  return data;
+}
+
+export async function buyerResendVerification(
+  accessToken: string,
+): Promise<{ message: string; sent: boolean; alreadyVerified?: boolean }> {
+  const { data } = await axios.post<{ message: string; sent: boolean; alreadyVerified?: boolean }>(
+    `${BASE_URL}/buyer/auth/resend-verification`,
+    {},
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  return data;
+}
+
 export async function requestSellerConnection(
   sellerSlug: string,
   emailAtSeller: string,

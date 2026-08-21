@@ -2918,6 +2918,7 @@ model BuyerAccount {
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
   passwordResetTokens      BuyerPasswordResetToken[]
+  emailVerificationTokens  BuyerEmailVerificationToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[]       @relation("MergeAsPrimary")
   mergeRequestsAsSecondary BuyerMergeRequest[]       @relation("MergeAsSecondary")
   favorites                BuyerFavorite[]
@@ -2973,6 +2974,24 @@ model BuyerRefreshToken {
 // RefreshToken/BuyerRefreshToken) so staff and buyer reset tokens can never be
 // confused for one another.
 model BuyerPasswordResetToken {
+  id             String    @id @default(uuid())
+  buyerAccountId String
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+// Registration email-verification token — proves the registrant controls the
+// mailbox before `emailVerified` unlocks auto-connect in requestSeller. Kept as
+// a separate model from BuyerPasswordResetToken so a verification token can
+// never be replayed to change a password (and vice versa).
+model BuyerEmailVerificationToken {
   id             String    @id @default(uuid())
   buyerAccountId String
   tokenHash      String    @unique

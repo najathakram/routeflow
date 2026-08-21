@@ -2,13 +2,27 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, ArrowRight, RefreshCw, CheckCircle, X, Plus, Link2 } from "lucide-react";
+import {
+  Building2,
+  ArrowRight,
+  RefreshCw,
+  CheckCircle,
+  X,
+  Plus,
+  Link2,
+  MailWarning,
+} from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { requestSellerConnection, getBuyerAccessToken } from "@/lib/buyer-auth";
+import {
+  requestSellerConnection,
+  getBuyerAccessToken,
+  getBuyerProfile,
+  buyerResendVerification,
+} from "@/lib/buyer-auth";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -344,6 +358,61 @@ function LinkedBanner({ sellerName }: { sellerName?: string }) {
       >
         <X className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+// ─── Unverified email banner ──────────────────────────────────────────────────
+
+function VerifyEmailBanner() {
+  const [unverified, setUnverified] = React.useState(false);
+  const [sending, setSending] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const token = getBuyerAccessToken();
+    if (!token) return;
+    getBuyerProfile(token)
+      .then((profile) => setUnverified(!profile.emailVerified))
+      .catch(() => {}); // banner is best-effort — never break the portal over it
+  }, []);
+
+  if (!unverified) return null;
+
+  const resend = async () => {
+    const token = getBuyerAccessToken();
+    if (!token) return;
+    setSending(true);
+    try {
+      const res = await buyerResendVerification(token);
+      if (res.alreadyVerified) {
+        setUnverified(false);
+        return;
+      }
+      setNotice(res.message);
+    } catch {
+      setNotice("Could not send the email right now — please try again shortly.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3"
+    >
+      <MailWarning className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning" />
+      <div className="flex-1">
+        <p className="text-sm font-medium text-navy">Verify your email address</p>
+        <p className="mt-0.5 text-sm text-navy/70">
+          {notice ??
+            "Sellers who have your email on file connect you instantly once it's verified. Check your inbox for the verification link."}
+        </p>
+      </div>
+      <Button variant="secondary" size="sm" onClick={resend} loading={sending}>
+        Resend email
+      </Button>
     </div>
   );
 }
