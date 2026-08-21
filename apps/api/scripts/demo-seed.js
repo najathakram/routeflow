@@ -845,20 +845,31 @@ async function copyProducts(sourceProducts, descriptions, catMap, subMap) {
  * order (ledger → payments → credit notes → invoice lines → invoices → order
  * lines → orders → stock movements). Foundation rows are left alone so product
  * ids — and therefore already-uploaded images — survive.
+ *
+ * Children are matched on their OWN tenantId **or their parent's**. Filtering on
+ * tenantId alone is not safe: a child written through a nested create can land
+ * with tenantId NULL (the forTenant extension only stamps the top level — see
+ * prisma.service.ts), and such a row then survives the delete and blocks its
+ * parent with a foreign-key error. This bit the refresh for real: four OrderItem
+ * rows edited through the app outlived the sweep and broke the order delete.
  */
 async function clearTransactions() {
-  const where = { tenantId: DEMO_TENANT_ID };
+  const tenantId = DEMO_TENANT_ID;
+  const where = { tenantId };
+  /** Own tenantId, or reachable through the named parent relation. */
+  const orVia = (relation) => ({ OR: [{ tenantId }, { [relation]: { tenantId } }] });
+
   const counts = {};
   counts.ledger = (await prisma.regulatedSalesLedger.deleteMany({ where })).count;
-  counts.payments = (await prisma.invoicePayment.deleteMany({ where })).count;
-  counts.creditNotes = (await prisma.creditNote.deleteMany({ where })).count;
-  counts.invoiceItems = (await prisma.invoiceItem.deleteMany({ where })).count;
-  counts.invoices = (await prisma.invoice.deleteMany({ where })).count;
-  counts.orderItems = (await prisma.orderItem.deleteMany({ where })).count;
-  counts.orders = (await prisma.order.deleteMany({ where })).count;
-  counts.routeRunStops = (await prisma.routeRunStop.deleteMany({ where })).count;
-  counts.routeRuns = (await prisma.routeRun.deleteMany({ where })).count;
-  counts.movements = (await prisma.stockMovement.deleteMany({ where })).count;
+  counts.payments = (await prisma.invoicePayment.deleteMany({ where: orVia("invoice") })).count;
+  counts.creditNotes = (await prisma.creditNote.deleteMany({ where: orVia("customer") })).count;
+  counts.invoiceItems = (await prisma.invoiceItem.deleteMany({ where: orVia("invoice") })).count;
+  counts.invoices = (await prisma.invoice.deleteMany({ where: orVia("customer") })).count;
+  counts.orderItems = (await prisma.orderItem.deleteMany({ where: orVia("order") })).count;
+  counts.orders = (await prisma.order.deleteMany({ where: orVia("customer") })).count;
+  counts.routeRunStops = (await prisma.routeRunStop.deleteMany({ where: orVia("routeRun") })).count;
+  counts.routeRuns = (await prisma.routeRun.deleteMany({ where: orVia("route") })).count;
+  counts.movements = (await prisma.stockMovement.deleteMany({ where: orVia("product") })).count;
   await prisma.paymentCounter.deleteMany({ where: { id: DEMO_TENANT_ID } });
   return counts;
 }
@@ -1477,6 +1488,65 @@ async function linkOwnerBuyerAccount(customers) {
   return `linked to buyer account ${account.id}`;
 }
 
+/**
+ * Licence the owner's customer for every regulated section that gates on one.
+ *
+ * A category with `requiresLicense` blocks a real (non-draft) sale to a customer
+ * without a VERIFIED, unexpired CustomerAuthorization — see
+ * authorizations/authorization-guard.service.ts. Without this the demo cannot
+ * put a tobacco line on an order at all, so the owner's account carries the
+ * permit and the other four customers deliberately do not: that contrast IS the
+ * feature, and it lets the block be demonstrated on demand.
+ *
+ * `Customer.tobaccoLicenseNo`/`Expiry` are the separate customer-file fields the
+ * UI shows; they are set to match so the record reads consistently.
+ */
+async function licenseOwnerForRegulated(customers, categories) {
+  const owner = customers.find((c) => c.email === OWNER_EMAIL);
+  if (!owner) return "no owner customer";
+  const gated = [...categories.values()].filter((c) => c.requiresLicense);
+  if (gated.length === 0) return "no licence-gated categories in this catalog";
+
+  const licenseNumber = "TX-TOB-4471902";
+  const expiresAt = addDays(RUN_AT, 300);
+
+  for (const cat of gated) {
+    await prisma.customerAuthorization.upsert({
+      where: {
+        customerId_trackedCategoryId: {
+          customerId: owner.customerId,
+          trackedCategoryId: cat.id,
+        },
+      },
+      create: {
+        tenantId: DEMO_TENANT_ID,
+        customerId: owner.customerId,
+        trackedCategoryId: cat.id,
+        status: "VERIFIED",
+        source: "WHOLESALER_ADDED",
+        licenseNumber,
+        expiresAt,
+        verifiedByName: "RouteFlow Demo",
+        verifiedAt: RUN_AT,
+      },
+      update: {
+        status: "VERIFIED",
+        licenseNumber,
+        expiresAt,
+        verifiedByName: "RouteFlow Demo",
+        verifiedAt: RUN_AT,
+      },
+    });
+  }
+
+  await prisma.customer.update({
+    where: { id: owner.customerId },
+    data: { tobaccoLicenseNo: licenseNumber, tobaccoLicenseExpiry: expiresAt },
+  });
+
+  return `${owner.businessName} licensed for ${gated.map((c) => c.name).join(", ")} (${licenseNumber}, expires ${expiresAt.toISOString().slice(0, 10)})`;
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1589,8 +1659,10 @@ async function main() {
 
   const credits = await writeCreditNotes(orders);
   const linkNote = await linkOwnerBuyerAccount(customers);
+  const licenceNote = await licenseOwnerForRegulated(customers, categories);
   console.log(`   ${credits} open credit notes`);
   console.log(`🔗 Buyer portal: ${linkNote}`);
+  console.log(`🪪 Regulated licence: ${licenceNote}`);
 
   console.log(`\n✅ Demo tenant ready.`);
   console.log(`   Operator login: ${OPERATOR_USERNAME} / ${DEMO_PASSWORD}  (tenant ${DEMO_SLUG})`);
