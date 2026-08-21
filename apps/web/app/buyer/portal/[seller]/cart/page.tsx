@@ -52,11 +52,12 @@ export default function BuyerCartPage() {
   // Whether we'll merge into the existing order
   const willMerge = !forceNew && activeOrder != null;
 
-  // Fetch products matching cart items only (not the entire catalog)
-  // We pass the cart product IDs as a search hint so the API doesn't return thousands of items
+  // Resolve prices for exactly the cart's products. This MUST be an id filter:
+  // a plain page of the catalog silently omits any product outside it, and the
+  // lookup below then prices those lines at 0.
   const cartProductIds = React.useMemo(() => cart.items.map((i) => i.productId), [cart.items]);
   const { data: productsResult } = useBuyerProducts(
-    cartProductIds.length > 0 ? { limit: 100 } : { limit: 0 },
+    cartProductIds.length > 0 ? { ids: cartProductIds } : { limit: 0 },
   );
   const { data: promotions } = useBuyerPromotions();
 
@@ -86,6 +87,9 @@ export default function BuyerCartPage() {
   const pricedLines = React.useMemo(() => {
     return cart.items.map((item) => {
       const meta = productMeta.get(item.productId);
+      // No catalog row = the product was removed, deactivated, or is gated by
+      // the regulated-category rules. Never quietly price it at 0 — say so.
+      const unresolved = meta == null;
       const base = meta?.buyerPrice ?? 0;
       const unitsPerBox = item.unitsPerBox ?? meta?.unitsPerBox ?? null;
       const qtyPieces = normalizeBoxesPieces({
@@ -112,6 +116,7 @@ export default function BuyerCartPage() {
         base,
         net,
         original,
+        unresolved,
         appliedPromoId: promo.appliedPromoId,
         lineSubtotal: computeLineSubtotal({ unitPrice: net, ...lineArgs }),
         lineOriginalSubtotal: computeLineSubtotal({ unitPrice: original ?? net, ...lineArgs }),
@@ -124,9 +129,12 @@ export default function BuyerCartPage() {
     [pricedLines],
   );
 
-  const subtotal = pricedLines.reduce((sum, l) => sum + l.lineSubtotal, 0);
+  // Unpriceable lines are excluded rather than counted as $0, so the estimate
+  // never understates what the seller will actually invoice.
+  const unresolvedCount = pricedLines.filter((l) => l.unresolved).length;
+  const subtotal = pricedLines.reduce((sum, l) => sum + (l.unresolved ? 0 : l.lineSubtotal), 0);
   const savings = pricedLines.reduce(
-    (sum, l) => sum + (l.lineOriginalSubtotal - l.lineSubtotal),
+    (sum, l) => sum + (l.unresolved ? 0 : l.lineOriginalSubtotal - l.lineSubtotal),
     0,
   );
 
@@ -429,7 +437,9 @@ export default function BuyerCartPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right text-sm">
-                        {original != null && original > price ? (
+                        {priced?.unresolved ? (
+                          <span className="text-[11px] text-navy/50">Price unavailable</span>
+                        ) : original != null && original > price ? (
                           <span className="flex flex-col items-end leading-tight">
                             <span className="text-[11px] text-navy/40 line-through">
                               {fmt(original)}
@@ -441,7 +451,11 @@ export default function BuyerCartPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                        {fmt(priced?.lineSubtotal ?? 0)}
+                        {priced?.unresolved ? (
+                          <span className="text-navy/40">—</span>
+                        ) : (
+                          fmt(priced?.lineSubtotal ?? 0)
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
@@ -527,6 +541,14 @@ export default function BuyerCartPage() {
               <span className="text-sm font-semibold text-navy">Estimated Total</span>
               <span className="text-lg font-bold text-navy">{fmt(subtotal)}</span>
             </div>
+            {unresolvedCount > 0 && (
+              <p className="text-xs text-navy/60">
+                {unresolvedCount === 1
+                  ? "1 item isn't priced here and is excluded from this estimate."
+                  : `${unresolvedCount} items aren't priced here and are excluded from this estimate.`}{" "}
+                Your seller will confirm the price when they review the order.
+              </p>
+            )}
           </div>
 
           {/* Actions */}

@@ -49,6 +49,9 @@ import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 
+/** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
+const MAX_PRODUCT_IDS = 200;
+
 /**
  * Builds a JwtPayload that looks like a tenant user.
  * Used so existing tenant services can scope their queries correctly:
@@ -351,14 +354,28 @@ export class BuyerController {
     @Query("limit") limit?: string,
     @Query("sort") sort?: string,
     @Query("collection") collection?: string,
+    @Query("ids") ids?: string,
   ) {
     const parsedPage = page ? Number(page) : undefined;
     const parsedLimit = limit ? Number(limit) : undefined;
     const validCollections = ["usuals", "favorites", "new", "deals"];
+    // Explicit id filter (cart pricing): resolve exactly these products rather
+    // than paging the catalog. Capped so a crafted query can't fetch-all.
+    const parsedIds = ids
+      ? [
+          ...new Set(
+            ids
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, MAX_PRODUCT_IDS)
+      : undefined;
     return this.catalogService.getCatalog(
       {
         search,
         category,
+        ids: parsedIds?.length ? parsedIds : undefined,
         page: Number.isFinite(parsedPage) && parsedPage! >= 1 ? parsedPage : undefined,
         limit: Number.isFinite(parsedLimit) && parsedLimit! >= 1 ? parsedLimit : undefined,
         sort,

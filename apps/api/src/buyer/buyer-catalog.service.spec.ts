@@ -308,6 +308,27 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       expect(p3.stockLeft).toBeNull();
     });
 
+    it("ids filters via andWhere and fetches ALL of them (never a truncated page)", async () => {
+      gated([]);
+      await service.getCatalog({ ids: ["p9", "p42"], limit: 20 }, "c1");
+      expect(products.findAll).toHaveBeenCalledWith(
+        // limit 0 = fetch-all: a page boundary would drop cart lines, and the
+        // cart prices anything missing at 0.
+        expect.objectContaining({ page: 1, limit: 0 }),
+        { andWhere: [{ id: { in: ["p9", "p42"] } }] },
+      );
+    });
+
+    it("ids composes with the regulated-visibility gate rather than bypassing it", async () => {
+      gated([{ id: "cat-alc", name: "Alcohol" }]);
+      auths([]);
+      await service.getCatalog({ ids: ["p9"] }, "c1");
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
+        excludeTrackedCategoryIds: ["cat-alc"],
+        andWhere: [{ id: { in: ["p9"] } }],
+      });
+    });
+
     it("collection=new filters via andWhere [{ isNew: true }]", async () => {
       gated([]);
       await service.getCatalog({ collection: "new" }, "c1");
