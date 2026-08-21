@@ -69,6 +69,16 @@ test.describe("Operator — Tenant Dashboard", () => {
     await expect(card).toBeVisible({ timeout: 15_000 });
   });
 
+  test("OP-03b developer_mode canary — Dispatch nav group visible in sidebar", async ({ page }) => {
+    // The e2e tenant keeps the developer_mode addon active via e2e-seed.js, so
+    // the Dispatch nav group (Overview / Routes / Drivers) must render. This
+    // fails fast and clearly on a broken/missing seed row, instead of OP-10
+    // failing vaguely later when it can't find the /routes nav link.
+    await expect(page.getByRole("button", { name: "Dispatch", exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
   // ── Orders ────────────────────────────────────────────────────────────────
 
   test("OP-04 orders list loads with search functionality", async ({ page }) => {

@@ -104,6 +104,12 @@ export const FLAG_TO_ADDON_SKU: Record<string, AddonSkuCode> = {
  * addon (read by products/analytics/tobacco) keeps working and resolves to the
  * REGULATED_ITEMS SKU so it grants `addon.regulated_items` without any edit to
  * those modules.
+ *
+ * Pending bridge: "developer_mode" (packages/types DEVELOPER_MODE_ADDON) is a
+ * hidden platform-admin-toggled legacy addon that unlocks in-development
+ * dispatch/driver/route UI (web + mobile, gated client-side via useDeveloperMode).
+ * No DEV_MODE AddonSku exists yet — when the catalog grows one, map it here to
+ * grant `flag.dispatch_live`. Do not add the mapping until that SKU exists.
  */
 export const LEGACY_ADDON_KEY_TO_SKU: Record<string, AddonSkuCode> = {
   tobacco_dealer: "REGULATED_ITEMS",

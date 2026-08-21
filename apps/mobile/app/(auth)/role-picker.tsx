@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -7,13 +8,26 @@ import { useRouter } from "expo-router";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 import { useScheduledRouteRuns } from "../../lib/api/routes";
+import { useDeveloperMode } from "../../lib/api/addons";
 
+// This screen has no in-app entry point today — nothing navigates here. The
+// gate below is defense in depth: if it ever does get reached for a non-dev
+// tenant, it auto-selects Operator instead of showing a Driver option that
+// leads nowhere.
 export default function RolePickerScreen() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const setActiveRole = useAuthStore((s) => s.setActiveRole);
   const tenantName = useTenantStore((s) => s.branding?.businessName);
+  const { enabled: devMode, isLoading: devLoading } = useDeveloperMode();
   const { data: scheduledData } = useScheduledRouteRuns();
+
+  useEffect(() => {
+    if (!devLoading && !devMode) {
+      setActiveRole("operator");
+      router.replace("/(operator)/home");
+    }
+  }, [devLoading, devMode, setActiveRole, router]);
   const nextRun = scheduledData?.data?.[0];
   const nextRunStops = nextRun?.stops?.length ?? 0;
 
@@ -61,40 +75,42 @@ export default function RolePickerScreen() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Driver (recommended) */}
-        <Pressable onPress={chooseDriver}>
-          <LinearGradient
-            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.cardHero}
-          >
-            <View style={styles.cardHead}>
-              <View style={styles.roleIconHero}>
-                <Ionicons name="car-outline" size={26} color="#fff" />
+        {devMode ? (
+          <Pressable onPress={chooseDriver}>
+            <LinearGradient
+              colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.cardHero}
+            >
+              <View style={styles.cardHead}>
+                <View style={styles.roleIconHero}>
+                  <Ionicons name="car-outline" size={26} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.eyebrowOn}>{nextRun ? "Recommended" : "Driver"}</Text>
+                  <Text style={styles.roleTitleOn}>Driver</Text>
+                  <Text style={styles.roleDescOn}>{driverDesc}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={22} color="#fff" />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eyebrowOn}>{nextRun ? "Recommended" : "Driver"}</Text>
-                <Text style={styles.roleTitleOn}>Driver</Text>
-                <Text style={styles.roleDescOn}>{driverDesc}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={22} color="#fff" />
-            </View>
-            {nextRun ? (
-              <View style={styles.heroStats}>
-                <HeroStat label="Stops" value={String(nextRunStops)} />
-                {nextRun.scheduledDate ? (
-                  <HeroStat
-                    label="Date"
-                    value={new Date(nextRun.scheduledDate).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  />
-                ) : null}
-              </View>
-            ) : null}
-          </LinearGradient>
-        </Pressable>
+              {nextRun ? (
+                <View style={styles.heroStats}>
+                  <HeroStat label="Stops" value={String(nextRunStops)} />
+                  {nextRun.scheduledDate ? (
+                    <HeroStat
+                      label="Date"
+                      value={new Date(nextRun.scheduledDate).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+            </LinearGradient>
+          </Pressable>
+        ) : null}
 
         {/* Operator */}
         <Pressable onPress={chooseOperator} style={styles.cardPlain}>

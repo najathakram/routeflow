@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { DEVELOPER_MODE_ADDON } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
 import { AdminTabs } from "../../../_components/AdminTabs";
@@ -127,6 +128,11 @@ const AVAILABLE_ADDONS = [
     name: "Tobacco Dealer Compliance",
     description:
       "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
+  },
+  {
+    key: DEVELOPER_MODE_ADDON,
+    name: "Developer Mode",
+    description: "Unlock in-development features (dispatch, routes, drivers) for this tenant",
   },
 ];
 

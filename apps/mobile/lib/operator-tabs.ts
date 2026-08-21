@@ -60,6 +60,19 @@ const SECTION_TO_TAB: Readonly<Record<string, OperatorTabKey>> = {
   more: "more",
 };
 
+/**
+ * Which tabs the bar should render for the current tenant/loading state.
+ *
+ * `developer_mode` (hidden platform-admin addon) gates the Dispatch tab: it
+ * fronts the in-development driver/route/fleet surfaces, which are hidden for
+ * every tenant except the ones the addon has been enabled for. Pure — pass
+ * `false` while the addon fetch is loading so the tab never flashes then
+ * vanishes (see `OperatorTabBar`, which does exactly that).
+ */
+export function visibleOperatorTabs(devMode: boolean): OperatorTabKey[] {
+  return devMode ? [...OPERATOR_TABS] : OPERATOR_TABS.filter((t) => t !== "dispatch");
+}
+
 /** expo-router segments keep their parens: "(operator)", "(tabs)". */
 const isGroup = (s: string) => s.startsWith("(") && s.endsWith(")");
 
