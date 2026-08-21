@@ -1,7 +1,8 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { json } from "express";
+
 import helmet from "helmet";
 import { Pool } from "pg";
 import { AppModule } from "./app.module";
@@ -109,7 +110,7 @@ async function bootstrap() {
     await runStartupMigration();
   }
   assertSecrets();
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification
     rawBody: true,
   });
@@ -129,7 +130,13 @@ async function bootstrap() {
   // ─── Body size limit ────────────────────────────────────────────────────────
   // 2mb covers all regular payloads. Bulk-import endpoints that need more
   // should stream uploads to object storage (R2/S3) directly.
-  app.use(json({ limit: "2mb" }));
+  // MUST go through Nest's useBodyParser, never `app.use(json(...))`: a manual
+  // express.json() consumes the stream ahead of Nest's parser, so the
+  // `rawBody: true` capture above silently never happens and every Stripe
+  // webhook (platform AND connect) fails signature verification with
+  // req.rawBody undefined. Found live: all connect webhooks 503'd with
+  // "rawBody=false" while the secret and key were fine.
+  app.useBodyParser("json", { limit: "2mb" });
 
   // ─── WebSocket adapter (Redis pub/sub) ──────────────────────────────────────
   app.useWebSocketAdapter(new RedisIoAdapter(app));
