@@ -106,6 +106,10 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   earned rate, never above the snapshot, capped at `units - 1`) and feeds BOTH the `lineTotal` preview
   and the submitted `CreateInvoiceItem.promoFreeUnits`. The PATCH delete-and-recreates every line, so
   omitting the field re-prices an agreed $350 (12 × $35, 2 free) line to $420.
+  **Line-type round-trip (2026-08-21):** the snapshot is declared on the edit-form line types in
+  BOTH `lib/api/orders.ts` (`OrderItem.promoFreeUnits`) and `lib/api/invoices.ts` (`InvoiceItem` +
+  `CreateInvoiceItem.promoFreeUnits`). Any form that PATCHes items MUST echo it back — those paths
+  replace every line, so a dropped field silently re-prices a free-unit line to full.
   **Order/invoice display + edit previews (money):** `OrderItem.promoFreeUnits` (`lib/api/orders.ts`),
   `BuyerOrder.lineItems[].promoFreeUnits` + `BuyerInvoiceDetail.items[].promoFreeUnits`
   (`lib/api/buyer.ts`) surface the API's already-returned column. Both order edit previews now net it
