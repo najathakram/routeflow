@@ -411,6 +411,52 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   - **Duplicate matcher v2 + post recovery (2026-08-07):** `findVendorBillDuplicate` is now LAYERED and returns an enriched `VendorBillDuplicateMatch` (`{id, billNumber, status, totalOwed, billDate, receivedDate, supplierId, itemCount, matchedBy:"number"|"fuzzy", totalMatches}`): (1) exact on the new `VendorBill.supplierInvoiceNumber` column, `status != VOID`, narrowed by supplier when known — without a supplier it additionally requires total ±0.005 so a number shared across suppliers can't collide; (2) the legacy `notes`-regex fallback (billDate ±1d + total ±0.005) for pre-backfill and old-mobile rows, also VOID-excluded; (3) numberless fuzzy ONLY when supplier+date+total are all present — deliberately tighter than the old first-candidate-wins. **Line items are never compared** (operators edit lines during review, so item equality yields false negatives); document identity is supplier + number + total agreement, surfaced for the operator to judge. An exact-NUMBER lookup must NOT hard-filter on supplier — it matches `{OR:[{supplierId},{supplierId:null}]}` via `supplierScope()` and ranks with `pickNumberMatch()` (caller's supplier wins, supplier-less row is the fallback), because batch import posts `supplierId: item.supplierMatchId ?? undefined` and mobile only links a supplier on exact case-insensitive name equality, so NULL-supplier bills are routine and were previously unreachable on an exact match. Bills owned by a DIFFERENT supplier stay excluded; the notes layer gets the same relaxation (`includeUnassignedSupplier`), the numberless fuzzy layer stays strictly supplier-scoped. Layer-1 `take` is 20 so a run of null-supplier rows cannot push the exact-supplier row out of the page before ranking. Lives in its own **`duplicate-match.module.ts`** (imports PrismaModule, exports the service) so `VendorBillsModule` can consume it without importing `ImportModule` — that would be a cycle. `postBatch` passes `supplierInvoiceNumber` and CATCHES `DUPLICATE_VENDOR_BILL` to recover: it attaches the queue item to the existing bill (receiving it when DRAFT, swallowing the already-received conflict) and marks POSTED + `duplicateOfInvoiceId` — closing the create-succeeded-but-POSTED-update-never-ran window that used to double-create on retry. **Adoption requires `matchedBy === "number"`** (a payload without it is treated as non-identity): adopting a fuzzy match would mark the item POSTED against a possibly-different document and silently discard its own reviewed lines, or receive the adopted bill's lines instead of them — so a fuzzy hit leaves the item `DUPLICATE` + `errorMessage` for a human. Return shape is `{posted, adopted, duplicates, batchStatus}`; `posted` counts only bills this run actually created.
   - **P5 batch-queue defect fixes (2026-07-11, fix/batch-import-queue):** `classifyAndPersist` now resolves `extracted.supplier` to a real `Supplier` via the scored `matchSupplier` (since 2026-08-18 the shared `import/supplier-match.ts`, spec'd in `supplier-match.spec.ts` and also used by `vendor-bills.service.ts`; exact → unique startsWith → unique substring; ambiguous/none → `supplierMatchId: null` + routes to NEEDS_REVIEW) and persists it to `ImportQueueItem.supplierMatchId` (was declared on the model but never written — every posted bill had no supplier). Duplicate check switched from `DuplicateMatchService.findInvoiceDuplicate` (wrong table — customer `Invoice`) to new **`findVendorBillDuplicate`** (same shape, over `VendorBill`, narrowed by the resolved supplier; matches a supplier invoice # embedded in `notes` via new exported `formatSupplierInvoiceNote`/`extractSupplierInvoiceNumber` helpers in `duplicate-match.service.ts`). `postBatch` now uses the extracted `invoiceDate` for `billDate` (was always `new Date()`) and writes notes via `formatSupplierInvoiceNote`. **Review gate**: `resolveItem` no longer blindly flips to CLEAN — it now throws unless every line is either matched (`matchedProductId`) or explicitly `reviewed:true` (set only via the new **`updateItemLines`** — `PATCH /import/batch/items/:itemId`, body `{supplierId?, lines?: [{index, productId?, keepCustom?}]}` — the actual line-remap endpoint) AND, if a supplier was detected, it's linked. New `deriveStatus`/`annotateItem` private helpers centralize the CLEAN/NEEDS_REVIEW decision (`unreviewedLines`/`supplierUnresolved` computed fields added to `getBatch`'s item response, not persisted). New `listBatches()` → `GET /import/batch` (list, most-active-first) backs the web page's refresh-persistence (localStorage `batchId` + list fallback). Web: new `apps/web/components/BatchItemReviewModal.tsx` (SupplierSelect + per-line SearchableProductPicker/"Keep custom") is the only path that can clear `unreviewedLines`/`supplierUnresolved`; `batch-import/page.tsx` gained the drag-and-drop handlers its empty-state copy always claimed to have, plus a "Start new batch" affordance. `duplicate-match.service.ts`'s class doc now states `findInvoiceDuplicate` (customer Invoice) and `findVendorBillDuplicate` (VendorBill) must never be cross-checked. Specs extended in `batch-import.service.spec.ts` (21 tests, incl. supplier resolution/ambiguity, vendor-bill dedup, date/notes, line-review gating).
 
+### `stripe-connect/` + `payment-requests/` (buyer-initiated payments, 2026-08-21)
+
+Buyers paying their SELLER — orthogonal to `billing/`, which is tenants paying
+RouteFlow. **Stripe Connect, Standard accounts, DIRECT charges, no application fee**: the
+tenant links the Stripe account they already own and buyers pay it; RouteFlow never touches
+the funds. Every call is made on that account (`{ stripeAccount }` per-call option) reusing
+`billing/stripe.service.ts`'s client. Config: `stripe.connectClientId`,
+`stripe.connectWebhookSecret` (`STRIPE_CONNECT_CLIENT_ID` / `STRIPE_CONNECT_WEBHOOK_SECRET`;
+neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there).
+
+- **`stripe-connect.service.ts`** — `buildAuthorizeUrl` / `completeOAuth` / `disconnect` /
+  `chargeableAccount(tenantId)` (the gate in front of every card action; returns null, never
+  throws, so reads render "card unavailable") / `syncAccountStatus` (account.updated).
+  **The OAuth `state` is a signed 15-min tenant-bound JWT and the callback trusts NOTHING
+  else** — the callback is necessarily public (Stripe redirects a browser to it with no auth
+  headers), so an unsigned state would let a crafted URL bind one tenant's Stripe account to
+  another. Two controllers on purpose: `StripeConnectController` (`@Roles(OPERATOR)`) and a
+  separate public `StripeConnectCallbackController` that always redirects back to the web
+  `/settings?stripe=connected|error`.
+- **`payment-requests.service.ts`** — `buildOldestFirstAllocation(customerId, amount)` is the
+  policy: buyer payments are against the ACCOUNT and settle `issueDate` asc (tie-break
+  `invoiceNumber`), capping each invoice at its balance and partially covering the last one
+  reached. `BuyerPaymentRequest.invoiceId` is PROVENANCE ONLY (which screen it started from);
+  allocation ignores it. Buyer: `paymentContext` / `previewAllocation` / `createCardRequest`
+  (Checkout Session on the connected account, amount capped at balance so a card can never
+  mint credit) / `createCashRequest` (+ `gateway.emitBuyerPaymentRequest` bell) / `cancelOwn`.
+  Tenant: `listForTenant` (pending rows carry an `allocationPreview`) / `approve` / `reject`.
+- **⚠️ `BuyerPaymentRequest` is a SEPARATE TABLE, deliberately not a `PaymentStatus` member.**
+  `recomputeStatus` sums `InvoicePayment` rows, so a pending declaration living in that table
+  would mark invoices paid on the buyer's say-so — the DRAFT-payment trap. `InvoicePayment`
+  rows are written ONLY on operator approval (cash) or a signature-verified webhook (card),
+  and always via `InvoicesService.recordStandalonePayment`, so `PAY-…` numbering,
+  `paymentGroupId` and per-invoice status recompute stay in the one existing path.
+- **`connect-webhook.controller.ts`** — `POST /billing/webhook/connect`, its OWN signing
+  secret (Stripe signs connected-account events differently from the platform endpoint).
+  **Card settlement is webhook-only — the `success_url` redirect proves nothing**, a buyer can
+  open it without paying. Replays are absorbed by `@unique stripeSessionId` + an atomic
+  PENDING→APPROVED `updateMany` claim (`count === 0` ⇒ already settled). A settlement failure
+  reopens the request and returns non-2xx **on purpose** so Stripe redelivers. Runs with no
+  request context, so it establishes tenant scope via `tenantContext.run(...)`.
+- **Wiring gotcha:** `BuyerPaymentsController` lives in `payment-requests/` but is registered
+  by **`BuyerModule`** — it rides that module's `BuyerJwtAuthGuard` / `BuyerSellerContextGuard`
+  / `BuyerTenantInterceptor`, which are not exported.
+- Migration `20260823000000_stripe_connect_buyer_payments` — additive (2 tables, 2 enums), no
+  existing table touched; dated 08-23 because 20260821000000 was already taken.
+
 ### `audit/`
 
 - **module** — global, no controller. `AuditService.log(userId, action, resource, resourceId, before?, after?, changes?)` → AuditLog writes. Injected by other modules.
