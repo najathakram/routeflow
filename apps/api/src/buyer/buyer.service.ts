@@ -4,10 +4,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { ConfigService } from "@nestjs/config";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import type { RequestSellerDto } from "./dto/request-seller.dto";
 
 @Injectable()
@@ -18,6 +20,7 @@ export class BuyerService {
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
     private readonly config: ConfigService,
+    private readonly gateway: RouteFlowGateway,
   ) {}
 
   // ─── Seller listing ───────────────────────────────────────────────────────────
@@ -74,7 +77,11 @@ export class BuyerService {
     if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) {
       throw new GoneException("This invite link has expired");
     }
-    if (link.status !== "INVITED") {
+    // PENDING_SELLER_APPROVAL is also redeemable: a buyer-initiated request against an
+    // INVITED row flips the status but PRESERVES inviteToken/inviteExpiresAt, and the
+    // true invitee's emailed link must keep working (acceptInvite then flips the row to
+    // ACTIVE under THEIR account). Any other status means the token was consumed.
+    if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
       throw new ConflictException("This invite has already been used");
     }
 
@@ -106,7 +113,10 @@ export class BuyerService {
       if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) {
         throw new GoneException("This invite link has expired");
       }
-      if (link.status !== "INVITED") {
+      // Same gate as getInviteDetails: a row still carrying the token is still redeemable
+      // even after a buyer-initiated request moved it to PENDING_SELLER_APPROVAL. The
+      // update below overwrites buyerAccountId with the token holder and clears the token.
+      if (link.status !== "INVITED" && link.status !== "PENDING_SELLER_APPROVAL") {
         throw new ConflictException("This invite has already been used");
       }
 
@@ -143,6 +153,13 @@ export class BuyerService {
   // ─── Customer requests seller (buyer-initiated flow) ──────────────────────────
 
   async requestSeller(buyerAccountId: string, dto: RequestSellerDto) {
+    const account = await this.prisma.buyerAccount.findUnique({
+      where: { id: buyerAccountId },
+      select: { email: true, name: true },
+    });
+    if (!account) throw new UnauthorizedException();
+    const signInEmail = account.email.toLowerCase();
+
     // Resolve tenant
     const tenant = await this.prisma.tenant.findUnique({ where: { slug: dto.sellerSlug } });
     if (!tenant) throw new NotFoundException("Seller not found");
@@ -150,20 +167,37 @@ export class BuyerService {
       throw new NotFoundException("Seller not found");
     }
 
-    // Find customer at that tenant matching the provided email
-    // Check both the customer's own email field AND their linked User's login email
-    const normalizedEmail = dto.emailAtSeller.toLowerCase();
+    // Find customer at that tenant matching the email the buyer TYPED (a claim, not proof).
+    // Check both the customer's own email field AND their linked User's login email.
+    const claimedEmail = dto.emailAtSeller.toLowerCase();
     const customer = await this.prisma.customer.findFirst({
       where: {
         tenantId: tenant.id,
-        OR: [{ email: normalizedEmail }, { user: { email: normalizedEmail } }],
+        OR: [{ email: claimedEmail }, { user: { email: claimedEmail } }],
       },
+      include: { user: { select: { email: true } } },
     });
     if (!customer) {
       throw new NotFoundException(
         "No customer account found with that email at this seller. Contact the seller to send you an invite.",
       );
     }
+
+    // Ownership is proven ONLY by the email the buyer AUTHENTICATED with.
+    // `emailAtSeller` is a claim; auto-approving on it let any buyer type any
+    // customer's email and instantly read their invoices and pricing.
+    //
+    // KNOWN RESIDUAL EXPOSURE (accepted, not an oversight): buyer self-registration issues
+    // tokens with no mailbox check — `BuyerAuthService.register` writes `emailVerified:
+    // false` and nothing anywhere reads that flag — so an attacker who REGISTERS under a
+    // customer's address still lands in this branch. Closing it requires a registration
+    // verification email first; gating on `emailVerified` today would push EVERY
+    // password-registered buyer into the seller-review path, because no password account is
+    // ever marked verified.
+    const customerEmails = [customer.email, customer.user?.email]
+      .filter(Boolean)
+      .map((e) => String(e).toLowerCase());
+    const emailProven = customerEmails.includes(signInEmail);
 
     // Check for existing link
     const existing = await this.prisma.customerLink.findFirst({
@@ -178,54 +212,133 @@ export class BuyerService {
           "This customer account is already claimed by another buyer. Contact the seller.",
         );
       }
-      if (
-        existing.status === "PENDING_SELLER_APPROVAL" &&
-        existing.buyerAccountId === buyerAccountId
-      ) {
-        // Upgrade the existing pending request to ACTIVE (email ownership already proven)
-        const upgraded = await this.prisma.customerLink.update({
-          where: { id: existing.id },
-          data: { status: "ACTIVE", linkedAt: new Date() },
-        });
-        this.logger.log(
-          `BuyerAccount ${buyerAccountId} upgraded PENDING_SELLER_APPROVAL link ${existing.id} to ACTIVE`,
+      // The PENDING branches apply ONLY while ownership is unproven. A buyer whose
+      // SIGN-IN email is on the customer record falls through to the ACTIVE upsert below
+      // and takes the pending row over — otherwise any stranger's un-proven request would
+      // lock the legitimate owner out of self-connecting until the seller declined it.
+      if (existing.status === "PENDING_SELLER_APPROVAL" && !emailProven) {
+        if (existing.buyerAccountId === buyerAccountId) {
+          // Idempotent no-op. No new writes, no re-notification, so a buyer can't spam
+          // the seller's bell by resubmitting the same request.
+          return {
+            message: "Request already pending — the seller will review it soon.",
+            linkId: existing.id,
+            pending: true,
+          };
+        }
+        throw new ConflictException(
+          "This customer account already has a pending request from another buyer. Contact the seller.",
         );
-        return {
-          message: "Connected! You can now view your orders and invoices from this seller.",
-          linkId: upgraded.id,
-        };
       }
     }
 
-    // The buyer proved ownership of this email by authenticating with it on the buyer
-    // platform. Since the seller already has a customer record with this email, auto-approve
-    // the connection immediately — no manual seller review needed.
-    const now = new Date();
-    const link = await this.prisma.customerLink.upsert({
-      where: { customerId: customer.id },
-      create: {
-        buyerAccountId,
+    if (emailProven) {
+      // The buyer proved ownership of this email by authenticating with it on the buyer
+      // platform. Since the seller already has a customer record with this email, auto-approve
+      // the connection immediately — no manual seller review needed. The upsert's `update`
+      // path also covers taking over an INVITED row or a pending request (this buyer's own,
+      // or a stranger's un-proven one) — the proven owner wins the single link slot.
+      const now = new Date();
+      const link = await this.prisma.customerLink.upsert({
+        where: { customerId: customer.id },
+        create: {
+          buyerAccountId,
+          customerId: customer.id,
+          tenantId: tenant.id,
+          status: "ACTIVE",
+          linkedAt: now,
+        },
+        update: {
+          buyerAccountId,
+          status: "ACTIVE",
+          linkedAt: now,
+          inviteToken: null,
+          inviteExpiresAt: null,
+        },
+      });
+
+      this.logger.log(
+        `BuyerAccount ${buyerAccountId} auto-approved link to tenant ${tenant.id} (customer ${customer.id}) via email match`,
+      );
+
+      this.gateway.emitBuyerAutoLinked(tenant.id, {
         customerId: customer.id,
-        tenantId: tenant.id,
-        status: "ACTIVE",
-        linkedAt: now,
-      },
-      update: {
-        buyerAccountId,
-        status: "ACTIVE",
-        linkedAt: now,
-        inviteToken: null,
-        inviteExpiresAt: null,
-      },
-    });
+        customerName: customer.businessName,
+        buyerName: account.name,
+        buyerEmail: account.email,
+      });
+
+      return {
+        message: "Connected! You can now view your orders and invoices from this seller.",
+        linkId: link.id,
+      };
+    }
+
+    // Not proven — this becomes a request the seller must review, not a connection.
+    // `update` (rather than a fresh create) when a row already exists — e.g. an
+    // INVITED link — so inviteToken/inviteExpiresAt are left untouched and the true
+    // invitee's link still works.
+    //
+    // ONLY an INVITED row keeps its token. Every other status is cleared, so a
+    // token-bearing PENDING row provably descends from an outstanding invite: a
+    // DISCONNECTED row can still carry the token of an invite the seller revoked (the
+    // disconnect writers below clear it now, but rows disconnected before this fix do
+    // not), and carrying that into PENDING would make getInviteDetails/acceptInvite
+    // honour the revoked link again — and a later decline revert it to INVITED.
+    const link = existing
+      ? await this.prisma.customerLink.update({
+          where: { id: existing.id },
+          data:
+            existing.status === "INVITED"
+              ? { status: "PENDING_SELLER_APPROVAL", buyerAccountId }
+              : {
+                  status: "PENDING_SELLER_APPROVAL",
+                  buyerAccountId,
+                  inviteToken: null,
+                  inviteExpiresAt: null,
+                },
+        })
+      : // `customerId` is @unique, and two concurrent requests for the same customer both
+        // read `existing === null` — upsert so the loser of that race resolves to the same
+        // pending row instead of surfacing a raw P2002 as a 500.
+        await this.prisma.customerLink.upsert({
+          where: { customerId: customer.id },
+          create: {
+            status: "PENDING_SELLER_APPROVAL",
+            buyerAccountId,
+            tenantId: tenant.id,
+            customerId: customer.id,
+          },
+          update: { status: "PENDING_SELLER_APPROVAL", buyerAccountId },
+        });
 
     this.logger.log(
-      `BuyerAccount ${buyerAccountId} auto-approved link to tenant ${tenant.id} (customer ${customer.id}) via email match`,
+      `BuyerAccount ${buyerAccountId} requested access to customer ${customer.id} at tenant ${tenant.id} (sign-in email unproven — pending seller approval)`,
     );
 
+    const tenantConfig = await this.prisma.tenantConfig.findFirst({
+      where: { tenantId: tenant.id },
+      select: { businessName: true },
+    });
+    const sellerName = tenantConfig?.businessName ?? tenant.name;
+
+    // Fire-and-forget both notification channels — email delivery must never fail
+    // the request the buyer is waiting on.
+    void this.notifySellerOfRequest(tenant.id, customer, account.email).catch((err) => {
+      this.logger.warn(`Failed to email seller about buyer connect request: ${err}`);
+    });
+    this.gateway.emitBuyerConnectRequest(tenant.id, {
+      customerId: customer.id,
+      customerName: customer.businessName,
+      buyerName: account.name,
+      buyerEmail: account.email,
+      requestedAt: new Date().toISOString(),
+    });
+
     return {
-      message: "Connected! You can now view your orders and invoices from this seller.",
+      message: `Request sent — ${sellerName} will review it. You'll see them in your seller list once approved.`,
       linkId: link.id,
+      pending: true,
     };
   }
 
@@ -245,6 +358,10 @@ export class BuyerService {
         status: "DISCONNECTED",
         disconnectedBy: "SELLER",
         disconnectedAt: new Date(),
+        // Disconnecting revokes the link — burn any outstanding invite token with it,
+        // so it can never be redeemed or revived by a later connect request.
+        inviteToken: null,
+        inviteExpiresAt: null,
       },
     });
 
@@ -285,7 +402,8 @@ export class BuyerService {
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: { status: "ACTIVE", linkedAt: new Date() },
+      // Approving consumes the slot — any invite token the pending row inherited is spent.
+      data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
     });
 
     return { message: "Buyer connection approved" };
@@ -306,7 +424,14 @@ export class BuyerService {
 
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: { status: "DISCONNECTED", disconnectedBy: "BUYER", disconnectedAt: new Date() },
+      data: {
+        status: "DISCONNECTED",
+        disconnectedBy: "BUYER",
+        disconnectedAt: new Date(),
+        // See disconnectPortal: a severed link must not leave a redeemable token behind.
+        inviteToken: null,
+        inviteExpiresAt: null,
+      },
     });
 
     return { message: "Disconnected from seller. Your order history remains accessible to them." };

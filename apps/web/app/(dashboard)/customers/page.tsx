@@ -44,9 +44,8 @@ import {
   useCustomerTags,
   useExportCustomers,
   useMergeCustomers,
-  usePendingPortalApprovals,
-  useApprovePortalFromList,
 } from "@/lib/api/customers";
+import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -313,7 +312,7 @@ export default function CustomersPage() {
 
   // ── Pending portal approvals ──────────────────────────────────────────────
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
-  const approveFromList = useApprovePortalFromList();
+  const approveFromList = useApprovePortalRequest();
   const [approvalsExpanded, setApprovalsExpanded] = React.useState(true);
 
   // ── Filter: unassigned only ───────────────────────────────────────────────

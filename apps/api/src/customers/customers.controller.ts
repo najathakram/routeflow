@@ -367,6 +367,12 @@ export class CustomersController {
     return this.customersService.approveBuyerRequest(id, user.tenantId!);
   }
 
+  @Post(":id/portal-decline")
+  @Roles(UserRole.OPERATOR)
+  declineBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.declineBuyerRequest(id, user.tenantId!);
+  }
+
   // ─── Delete ───────────────────────────────────────────────────────────────
 
   @Delete(":id")

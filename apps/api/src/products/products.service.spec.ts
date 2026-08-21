@@ -164,7 +164,7 @@ describe("ProductsService", () => {
       expect(where.trackedCategoryId).toBeNull();
     });
 
-    it("AND-folds the section filter with the internal buyer-catalog exclusion instead of overwriting it", async () => {
+    it("keeps BOTH the section filter and the internal buyer-catalog exclusion — neither overwrites the other", async () => {
       prisma.product.findMany.mockResolvedValue([]);
       prisma.product.count.mockResolvedValue(0);
 
@@ -174,8 +174,12 @@ describe("ProductsService", () => {
       });
 
       const where = prisma.product.findMany.mock.calls[0][0].where;
-      expect(where.trackedCategoryId).toEqual({ notIn: ["excluded-1"] });
-      expect(where.AND).toEqual([{ trackedCategoryId: sectionId }]);
+      // The exclusion rides in AND as (NULL OR notIn) so untracked products survive…
+      expect(where.AND).toEqual([
+        { OR: [{ trackedCategoryId: null }, { trackedCategoryId: { notIn: ["excluded-1"] } }] },
+      ]);
+      // …leaving the section filter its own top-level slot.
+      expect(where.trackedCategoryId).toBe(sectionId);
       expect(prisma.product.count.mock.calls[0][0].where).toBe(where);
     });
   });

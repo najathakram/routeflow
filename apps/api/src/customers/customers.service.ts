@@ -2031,7 +2031,16 @@ export class CustomersService {
     }
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: { status: "DISCONNECTED", disconnectedBy: "SELLER", disconnectedAt: new Date() },
+      data: {
+        status: "DISCONNECTED",
+        disconnectedBy: "SELLER",
+        disconnectedAt: new Date(),
+        // Disconnecting revokes the link (this button also cancels an outstanding INVITED
+        // invite) — burn the token with it so it can never be redeemed, or revived by a
+        // later buyer connect request flipping the row to PENDING_SELLER_APPROVAL.
+        inviteToken: null,
+        inviteExpiresAt: null,
+      },
     });
     return { message: "Customer disconnected from buyer portal. All business data preserved." };
   }
@@ -2042,6 +2051,7 @@ export class CustomersService {
       include: { buyerAccount: { select: { id: true, email: true, name: true } } },
     });
     if (!link) return { status: "NOT_INVITED" };
+    const isPending = link.status === "PENDING_SELLER_APPROVAL";
     return {
       status: link.status,
       inviteMethod: link.inviteMethod,
@@ -2050,19 +2060,55 @@ export class CustomersService {
       disconnectedAt: link.disconnectedAt,
       disconnectedBy: link.disconnectedBy,
       buyerAccount: link.status === "ACTIVE" ? link.buyerAccount : null,
+      // Additive: who is asking, so the Buyer Portal card can say WHO wants to connect
+      // while the request is pending (buyerAccount above stays gated to ACTIVE only).
+      buyerName: isPending ? (link.buyerAccount?.name ?? null) : null,
+      buyerEmail: isPending ? (link.buyerAccount?.email ?? null) : null,
     };
   }
 
   async approveBuyerRequest(customerId: string, tenantId: string) {
-    const link = await this.prisma.customerLink.findFirst({
-      where: { customerId, tenantId, status: "PENDING_SELLER_APPROVAL" },
-    });
+    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
     if (!link) throw new NotFoundException("No pending buyer request found");
+    if (link.status !== "PENDING_SELLER_APPROVAL") {
+      throw new ConflictException("This request is no longer pending");
+    }
     await this.prisma.customerLink.update({
       where: { id: link.id },
-      data: { status: "ACTIVE", linkedAt: new Date() },
+      // Approving consumes the customer's single link slot — any invite token the pending
+      // row inherited from an INVITED invite is spent and must not outlive the approval.
+      data: { status: "ACTIVE", linkedAt: new Date(), inviteToken: null, inviteExpiresAt: null },
     });
     return { message: "Buyer connection approved" };
+  }
+
+  async declineBuyerRequest(customerId: string, tenantId: string) {
+    const link = await this.prisma.customerLink.findFirst({ where: { customerId, tenantId } });
+    if (!link) throw new NotFoundException("No pending buyer request found");
+    if (link.status !== "PENDING_SELLER_APPROVAL") {
+      throw new ConflictException("This request is no longer pending");
+    }
+    // A row that still carries a LIVE invite token was an INVITED link a buyer requested
+    // against (the request preserves inviteToken/inviteExpiresAt so the true invitee's
+    // emailed link keeps working). Deleting it would destroy an invite the seller already
+    // sent — revert it to INVITED and drop the requester instead. An expired token is
+    // worthless, so those rows fall through to the delete and free the slot.
+    const inviteStillLive =
+      !!link.inviteToken && (!link.inviteExpiresAt || link.inviteExpiresAt > new Date());
+    if (inviteStillLive) {
+      await this.prisma.customerLink.update({
+        where: { id: link.id },
+        data: { status: "INVITED", buyerAccountId: null },
+      });
+      return { declined: true };
+    }
+    // customerId is @unique on CustomerLink — one link row per customer, ever. A declined
+    // stranger must not permanently occupy that one slot (it would block a future legitimate
+    // invite), so decline DELETES the row rather than marking it DISCONNECTED. DISCONNECTED
+    // stays reserved for severing a previously ACTIVE link. A re-request simply creates a
+    // fresh pending row the seller can decline again.
+    await this.prisma.customerLink.delete({ where: { id: link.id } });
+    return { declined: true };
   }
 
   async listPendingPortalApprovals(tenantId: string) {
@@ -2078,7 +2124,15 @@ export class CustomersService {
       },
       orderBy: { createdAt: "asc" },
     });
-    return links;
+    // Additive: flatten the requesting buyer's identity onto each row so consumers (the
+    // web bell's pinned "Action needed" list) don't need to reach into nested relations.
+    return links.map((link) => ({
+      ...link,
+      customerName: link.customer?.businessName || link.customer?.contactName || "Unknown customer",
+      buyerName: link.buyerAccount?.name ?? null,
+      buyerEmail: link.buyerAccount?.email ?? null,
+      requestedAt: link.updatedAt,
+    }));
   }
 
   // ─── Suggest buyer account merge (tenant-initiated) ───────────────────────────
