@@ -116,6 +116,15 @@ export interface BuyerAutoLinkedPayload {
   buyerEmail: string;
 }
 
+export interface BuyerPaymentRequestPayload {
+  requestId: string;
+  customerId: string;
+  customerName: string;
+  kind: "CARD" | "CASH";
+  amount: number;
+  requestedAt: string;
+}
+
 // ─── Gateway ──────────────────────────────────────────────────────────────────
 
 @WebSocketGateway({
@@ -259,5 +268,10 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server
       .to(this.tenantRoom(tenantId, "operators"))
       .emit("buyer.connect.autolinked", payload);
+  }
+
+  /** A buyer declared a cash payment (or a card payment settled) — seller attention. */
+  emitBuyerPaymentRequest(tenantId: string | null, payload: BuyerPaymentRequestPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("buyer.payment.requested", payload);
   }
 }

@@ -45,6 +45,8 @@ import { EmailModule } from "./email/email.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
+import { StripeConnectModule } from "./stripe-connect/stripe-connect.module";
+import { PaymentRequestsModule } from "./payment-requests/payment-requests.module";
 import { BuyerModule } from "./buyer/buyer.module";
 import { TobaccoModule } from "./tobacco/tobacco.module";
 import { DraftsModule } from "./drafts/drafts.module";
@@ -149,6 +151,9 @@ import { AppService } from "./app.service";
     AuditModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
+    // ─── Stripe Connect (tenant's own account) + buyer payment requests ────────
+    StripeConnectModule,
+    PaymentRequestsModule,
     // ─── Buyer Portal (multi-tenant customer identity) ─────────────────────────
     BuyerModule,
     // ─── Tobacco compliance (tobacco_dealer addon) ─────────────────────────────
