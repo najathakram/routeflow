@@ -38,6 +38,13 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 - **`src/main.ts`** — startup: `assertSecrets()` (JWT required in all envs; **`STORAGE_URL_SIGNING_SECRET` now FATAL in production too — F5-001 fail-closed**; `ENCRYPTION_KEY` still warn-only), `runStartupMigration()`
   (idempotent TenantConfig columns), helmet, trust proxy 2 (Railway CDN), CORS wildcard
   patterns, global `ValidationPipe` (whitelist/forbidNonWhitelisted/transform),
+  **⚠️ the 2mb body limit MUST go through `app.useBodyParser("json", {limit})` on a
+  `NestExpressApplication` — NEVER `app.use(json({limit}))`.** A manual express.json consumes
+  the request stream ahead of Nest's own parser, so the `rawBody: true` passed to
+  `NestFactory.create` never captures anything and `req.rawBody` is undefined — which breaks
+  signature verification for EVERY Stripe webhook, platform and connect alike. Found live
+  2026-08-21: every connect delivery 503'd with `rawBody=false` while the secret and key were
+  correct, so card payments charged but never settled (fixed in #400),
   ThrottlerExceptionFilter (429 + Retry-After), Swagger dev-only, graceful shutdown.
 - **`src/app.module.ts`** — ConfigModule, PrismaModule, CommonModule, TenantModule, AuthModule,
   feature modules, BullModule (Redis queue), ScheduleModule (cron), ThrottlerModule (100/60s,
