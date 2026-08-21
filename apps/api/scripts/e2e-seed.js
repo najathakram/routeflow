@@ -32,6 +32,28 @@ const OPERATOR_USERNAME = "admin";
 const OPERATOR_PASSWORD = "Admin@123";
 const CUSTOMER_USERNAME = "harbor_cafe";
 const CUSTOMER_PASSWORD = "Customer1!";
+// Hidden platform-admin addon that unlocks dispatch/routes/drivers UI — the
+// web e2e suite (OP-10 and friends) exercises /routes, so this tenant must
+// keep it active. See .claude/pipeline/plans/2026-08-20-developer-mode-hide-dispatch.md.
+const DEVELOPER_MODE_ADDON = "developer_mode";
+
+// Idempotent upsert of an ACTIVE TenantAddon row for developer_mode. Row shape
+// matches what AddonService.hasAddon/getActiveAddons match on (see
+// apps/api/src/billing/addon.service.ts): stripePriceId/stripeItemId stay
+// null — this is a free, non-Stripe addon.
+async function ensureDeveloperMode(tenantId) {
+  await prisma.tenantAddon.upsert({
+    where: { tenantId_addonKey: { tenantId, addonKey: DEVELOPER_MODE_ADDON } },
+    create: {
+      tenantId,
+      addonKey: DEVELOPER_MODE_ADDON,
+      stripePriceId: null,
+      stripeItemId: null,
+      active: true,
+    },
+    update: { active: true },
+  });
+}
 
 async function main() {
   const isRailway = dbUrl.includes("railway") || dbUrl.includes("rlwy");
@@ -86,6 +108,10 @@ async function main() {
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
     }
+
+    // ── Developer mode addon (unlocks dispatch/routes/drivers UI) ───────────────
+    await ensureDeveloperMode(existing.id);
+    console.log(`  ✓ Developer mode addon active`);
 
     // ── Sweep stale parked drafts left by the web e2e suite ─────────────────────
     // 08-create-order-escape's ESC tests auto-park REAL drafts ("Order, <name>",
@@ -170,6 +196,10 @@ async function main() {
     },
   });
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
+
+  // ── Developer mode addon (unlocks dispatch/routes/drivers UI) ─────────────────
+  await ensureDeveloperMode(tenant.id);
+  console.log(`  ✓ Developer mode addon active`);
 
   console.log("\n✅ E2E seed complete.\n");
 }

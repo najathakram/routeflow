@@ -42,7 +42,9 @@ export class TenantsController {
 
   @Get("me/addons")
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  // Widened for developer_mode: pure DRIVER-role users of a dev-mode tenant
+  // must be able to read this flag (useDeveloperMode runs on driver screens).
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   @ApiBearerAuth()
   @ApiOperation({ summary: "Active add-on keys for the current tenant (feature flags)" })
   async getMyAddons(@CurrentUser() user: JwtPayload) {

@@ -119,3 +119,12 @@ export interface ApiResponse<T> {
 
 export type { PackSizeConfidence, PackSizeParse, PackSizeSuggestion } from "./pack-size";
 export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-size";
+
+// ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
+
+/**
+ * Legacy TenantAddon.addonKey for the hidden platform-admin "developer mode" flag.
+ * Unlocks in-development dispatch/driver/route surfaces on web + mobile.
+ * Bridge-to-catalog (later): LEGACY_ADDON_KEY_TO_SKU -> DEV_MODE sku granting flag.dispatch_live.
+ */
+export const DEVELOPER_MODE_ADDON = "developer_mode";

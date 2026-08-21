@@ -61,6 +61,7 @@ import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { useDeveloperMode } from "@/lib/api/addons";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
@@ -156,14 +157,28 @@ const DRIVER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
+function getNavForRole(
+  role: string | undefined,
+  canActAsDriver: boolean | undefined,
+  devMode: boolean,
+): NavEntry[] {
   if (role === "CUSTOMER") return CUSTOMER_NAV;
-  if (role === "DRIVER") return DRIVER_NAV;
+  if (role === "DRIVER") {
+    // Non-dev-mode tenants have no driver UI to route to — a pure DRIVER sees
+    // Dashboard + Settings only.
+    if (!devMode) return DRIVER_NAV.filter((e) => e.kind !== "leaf" || e.href !== "/routes");
+    return DRIVER_NAV;
+  }
+  // Non-dev-mode tenants never see the Dispatch group (dispatch/routes/drivers
+  // are in-development surfaces gated by the hidden developer_mode addon).
+  const baseNav = devMode
+    ? OPERATOR_NAV
+    : OPERATOR_NAV.filter((entry) => !(entry.kind === "group" && entry.label === "Dispatch"));
   // Operators who can also act as drivers get "My Routes" inside the Dispatch
   // group (alongside Overview / Routes / Drivers) instead of as a stand-alone
   // top-level item — keeps the sidebar tidy and groups all dispatch tools.
-  if (canActAsDriver) {
-    return OPERATOR_NAV.map((entry): NavEntry => {
+  if (canActAsDriver && devMode) {
+    return baseNav.map((entry): NavEntry => {
       if (entry.kind === "group" && entry.label === "Dispatch") {
         const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
         if (alreadyHasMyRoutes) return entry;
@@ -178,7 +193,7 @@ function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavE
       return entry;
     });
   }
-  return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
+  return baseNav; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
 
 // ─── Role-based route guard ───────────────────────────────────────────────────
@@ -187,6 +202,8 @@ function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavE
 const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
 /** Paths that DRIVER users may access (prefix-matched) */
 const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
+/** In-development dispatch/driver/route surfaces — hidden without developer_mode */
+const DEV_MODE_PREFIXES: string[] = ["/dispatch", "/routes", "/drivers"];
 
 function isPathAllowed(pathname: string, allowed: string[]): boolean {
   return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -196,6 +213,7 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const { enabled: devMode, resolved: devResolved } = useDeveloperMode();
 
   React.useEffect(() => {
     const role = user?.role;
@@ -205,8 +223,16 @@ function RouteGuard({ children }: { children: React.ReactNode }) {
     if (role === "DRIVER") allowed = DRIVER_ALLOWED;
     if (allowed && !isPathAllowed(pathname, allowed)) {
       router.replace("/dashboard");
+      return;
     }
-  }, [user?.role, pathname, router]);
+    // Non-dev-mode tenants can't deep-link into dispatch/routes/drivers either.
+    // Gating on devResolved (not just "not loading") is mandatory: it fails OPEN
+    // while the addons query is in flight AND when it errored, so a dev-mode
+    // tenant deep-linking to /routes is never bounced on an unknown answer.
+    if (devResolved && !devMode && isPathAllowed(pathname, DEV_MODE_PREFIXES)) {
+      router.replace("/dashboard");
+    }
+  }, [user?.role, pathname, router, devMode, devResolved]);
 
   return <>{children}</>;
 }
@@ -490,6 +516,7 @@ function Header({
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
   const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
+  const { enabled: devMode } = useDeveloperMode();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
   const isSubPage = pathname.split("/").filter(Boolean).length > 1;
@@ -521,7 +548,7 @@ function Header({
         {title && <h1 className="text-base font-semibold text-navy truncate">{title}</h1>}
         {/* Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4) — lets the
             operator leave the field layout without hunting through the avatar menu. */}
-        {driveMode && (
+        {devMode && driveMode && (
           <button
             onClick={() => setDriveMode(false)}
             className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
@@ -741,7 +768,7 @@ function Header({
                   change, or draft loss — and jumps to My Routes; turning it off (here or
                   via the topbar Exit affordance) just restores the normal layout in place.
                   pos-cost-roles-spec §4. */}
-              {(user as { canActAsDriver?: boolean })?.canActAsDriver && (
+              {(user as { canActAsDriver?: boolean })?.canActAsDriver && devMode && (
                 <DropdownMenu.Item
                   className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                   onSelect={() => {
@@ -833,11 +860,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  const { enabled: devMode } = useDeveloperMode();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
   const { data: regulatedSections } = useTrackedCategories({ active: true }, { enabled: isStaff });
   const navStructure = React.useMemo(() => {
-    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver);
+    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver, devMode);
     if (!isStaff) return nav;
 
     // "Regulated Items" nav group — one child per active regulated section, each
@@ -868,7 +896,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     return idx === -1
       ? [...nav, ...inject]
       : [...nav.slice(0, idx + 1), ...inject, ...nav.slice(idx + 1)];
-  }, [user, isStaff, hasTobacco, regulatedSections]);
+  }, [user, isStaff, hasTobacco, regulatedSections, devMode]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
@@ -947,10 +975,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         shellRouter.push("/orders");
         sequence = "";
       } else if (sequence === "gr") {
-        shellRouter.push("/routes");
+        if (devMode) shellRouter.push("/routes");
         sequence = "";
       } else if (sequence === "gd") {
-        shellRouter.push("/drivers");
+        if (devMode) shellRouter.push("/drivers");
         sequence = "";
       } else if (sequence === "gc") {
         shellRouter.push("/customers");
@@ -971,20 +999,24 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter]);
+  }, [shellRouter, devMode]);
 
-  const SHORTCUTS = [
-    { keys: ["g", "h"], label: "Go to Dashboard" },
-    { keys: ["g", "o"], label: "Go to Orders" },
-    { keys: ["g", "r"], label: "Go to Routes" },
-    { keys: ["g", "d"], label: "Go to Drivers" },
-    { keys: ["g", "c"], label: "Go to Customers" },
-    { keys: ["g", "i"], label: "Go to Invoices" },
-    { keys: ["g", "f"], label: "Go to Finance" },
-    { keys: ["g", "s"], label: "Go to Settings" },
-    { keys: ["⌘", "K"], label: "Open Command Palette" },
-    { keys: ["?"], label: "Show Keyboard Shortcuts" },
-  ];
+  const SHORTCUTS = React.useMemo(
+    () =>
+      [
+        { keys: ["g", "h"], label: "Go to Dashboard" },
+        { keys: ["g", "o"], label: "Go to Orders" },
+        { keys: ["g", "r"], label: "Go to Routes" },
+        { keys: ["g", "d"], label: "Go to Drivers" },
+        { keys: ["g", "c"], label: "Go to Customers" },
+        { keys: ["g", "i"], label: "Go to Invoices" },
+        { keys: ["g", "f"], label: "Go to Finance" },
+        { keys: ["g", "s"], label: "Go to Settings" },
+        { keys: ["⌘", "K"], label: "Open Command Palette" },
+        { keys: ["?"], label: "Show Keyboard Shortcuts" },
+      ].filter((s) => devMode || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")),
+    [devMode],
+  );
 
   return (
     <div className="surface-operator flex h-screen overflow-hidden">

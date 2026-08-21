@@ -31,6 +31,7 @@ import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
+import { useDeveloperMode } from "@/lib/api/addons";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -497,6 +498,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  const { enabled: devMode } = useDeveloperMode();
 
   const baseIsOperator =
     !user?.role ||
@@ -506,7 +508,7 @@ export default function DashboardPage() {
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
 
-  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator;
+  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && devMode;
 
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
@@ -641,10 +643,12 @@ export default function DashboardPage() {
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
             </Button>
-            <Button href="/routes/create" size="sm" variant="secondary">
-              <Truck className="mr-1.5 h-3.5 w-3.5" />
-              New Route
-            </Button>
+            {devMode && (
+              <Button href="/routes/create" size="sm" variant="secondary">
+                <Truck className="mr-1.5 h-3.5 w-3.5" />
+                New Route
+              </Button>
+            )}
             <Button href="/orders?action=new" size="sm" variant="primary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               New Order
@@ -710,6 +714,7 @@ export default function DashboardPage() {
           </Link>
         )}
         {(isOperator || isDriver) &&
+          devMode &&
           (runsLoading ? (
             <StatSkeleton />
           ) : (
@@ -723,6 +728,7 @@ export default function DashboardPage() {
             </Link>
           ))}
         {isOperator &&
+          devMode &&
           (driversLoading ? (
             <StatSkeleton />
           ) : (
@@ -883,87 +889,91 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            <Card>
-              <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
-                <Link
-                  href="/routes"
-                  className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
-                >
-                  All routes <ArrowRight className="h-3 w-3" />
-                </Link>
-              </div>
-              {runsLoading ? (
-                <div className="animate-pulse space-y-3 py-4">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-10 rounded bg-navy/10" />
-                  ))}
+            {devMode && (
+              <Card>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
+                  <Link
+                    href="/routes"
+                    className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
+                  >
+                    All routes <ArrowRight className="h-3 w-3" />
+                  </Link>
                 </div>
-              ) : (
-                <div className="-mx-6 -mb-6">
-                  <Table
-                    data={activeRoutes}
-                    columns={routeColumns}
-                    onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
-                    emptyState={
-                      <EmptyState
-                        variant="routes"
-                        size={56}
-                        title="No runs scheduled"
-                        description="Dispatch a route to see today's runs here."
-                      />
-                    }
-                  />
-                </div>
-              )}
-            </Card>
+                {runsLoading ? (
+                  <div className="animate-pulse space-y-3 py-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-10 rounded bg-navy/10" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="-mx-6 -mb-6">
+                    <Table
+                      data={activeRoutes}
+                      columns={routeColumns}
+                      onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+                      emptyState={
+                        <EmptyState
+                          variant="routes"
+                          size={56}
+                          title="No runs scheduled"
+                          description="Dispatch a route to see today's runs here."
+                        />
+                      }
+                    />
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
 
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              <Card title="Driver Status">
-                {driversLoading ? (
-                  <div className="animate-pulse space-y-4 py-2">
-                    {[1, 2, 3].map((i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className="h-2 w-2 rounded-full bg-navy/10" />
-                        <div className="flex-1 space-y-1">
-                          <div className="h-3 w-24 rounded bg-navy/10" />
-                          <div className="h-3 w-16 rounded bg-navy/10" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                    {drivers.length === 0 ? (
-                      <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
-                    ) : (
-                      drivers.map((driver: Driver) => (
-                        <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
-                          <span
-                            className={cn(
-                              "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                              driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
-                            )}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-navy">{driver.contactName}</p>
-                            <p className="mt-0.5 text-xs text-navy/70">
-                              {driver.vehiclePlate ?? driver.user?.username}
-                            </p>
+              {devMode && (
+                <Card title="Driver Status">
+                  {driversLoading ? (
+                    <div className="animate-pulse space-y-4 py-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <div className="h-2 w-2 rounded-full bg-navy/10" />
+                          <div className="flex-1 space-y-1">
+                            <div className="h-3 w-24 rounded bg-navy/10" />
+                            <div className="h-3 w-16 rounded bg-navy/10" />
                           </div>
-                          <Badge
-                            variant={driver.status === "ACTIVE" ? "success" : "neutral"}
-                            label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
-                          />
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                )}
-              </Card>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                      {drivers.length === 0 ? (
+                        <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
+                      ) : (
+                        drivers.map((driver: Driver) => (
+                          <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
+                            <span
+                              className={cn(
+                                "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                                driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
+                              )}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-navy">{driver.contactName}</p>
+                              <p className="mt-0.5 text-xs text-navy/70">
+                                {driver.vehiclePlate ?? driver.user?.username}
+                              </p>
+                            </div>
+                            <Badge
+                              variant={driver.status === "ACTIVE" ? "success" : "neutral"}
+                              label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
+                            />
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  )}
+                </Card>
+              )}
 
               {/* Low stock items */}
               <LowStockPanel

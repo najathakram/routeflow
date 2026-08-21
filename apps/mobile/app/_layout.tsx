@@ -18,6 +18,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { useAuthStore } from "../lib/auth-store";
 import { useTenantStore } from "../lib/tenant-store";
 import { useBuyerSessionStore } from "../lib/buyer-session-store";
+import { useDeveloperMode } from "../lib/api/addons";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 Notifications.setNotificationHandler({
@@ -34,7 +35,7 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
-  const { user, isLoading, activeRole, initialize } = useAuthStore();
+  const { user, isLoading, activeRole, setActiveRole, initialize } = useAuthStore();
   const { slug: tenantSlug, isLoading: tenantLoading, initialize: initTenant } = useTenantStore();
   const {
     buyer,
@@ -42,6 +43,9 @@ function RootLayoutNav() {
     isLoading: buyerLoading,
     initialize: initBuyer,
   } = useBuyerSessionStore();
+  // Self-disables pre-auth (see lib/api/addons.ts); safe to call unconditionally
+  // here since this component is inside QueryClientProvider.
+  const { enabled: devMode, isLoading: devLoading, resolved: devResolved } = useDeveloperMode();
   const router = useRouter();
   const segments: string[] = useSegments();
   const notificationListener = useRef<ReturnType<
@@ -165,6 +169,26 @@ function RootLayoutNav() {
       return;
     }
     if (activeRole === "driver") {
+      if (devLoading) return; // bootstrapping spinner covers this
+      // Fail OPEN when the addon read did not land (offline, timeout, API 5xx):
+      // a failed fetch leaves devMode false, and treating that as "not a dev
+      // tenant" would strand a dev-mode tenant's pure DRIVER user on
+      // operator-blocked — whose only control is Sign Out — with no refetch to
+      // rescue them. Block only on a positively-read flag.
+      if (devResolved && !devMode) {
+        if (user.role === "DRIVER") {
+          // Pure driver of a non-dev-mode tenant: no driver UI exists for them.
+          // Guarded like the SUPER_ADMIN/CUSTOMER blocks above so a driver who
+          // is already on operator-blocked doesn't get repeatedly replaced.
+          if (segments[0] !== "(auth)" || segments[1] !== "operator-blocked") {
+            router.replace("/(auth)/operator-blocked");
+          }
+          return;
+        }
+        // Dual-role user snaps back; effect re-runs into the operator branch.
+        setActiveRole("operator");
+        return;
+      }
       if (segments[0] !== "(driver)" && !onCustomerLogin) {
         router.replace("/(driver)/route");
       }
@@ -180,13 +204,20 @@ function RootLayoutNav() {
     activeSeller,
     buyerLoading,
     segments,
+    devMode,
+    devLoading,
+    devResolved,
   ]);
 
   // While auth/tenant/buyer state is being rehydrated from storage, render a
   // spinner instead of <Slot/>. Without this, on a hard URL refresh the child
   // routes mount with no auth context, fire API calls that 401, and the
   // interceptor can wipe tokens before bootstrap finishes.
-  const bootstrapping = isLoading || tenantLoading || buyerLoading;
+  // Also covers the in-flight developer-mode addons fetch for a driver-role
+  // active user, so the routing effect above never flashes driver UI (or the
+  // operator-blocked screen) before the addon check resolves.
+  const bootstrapping =
+    isLoading || tenantLoading || buyerLoading || (!!user && activeRole === "driver" && devLoading);
 
   // On web viewed from a desktop browser the phone-sized layout stretches
   // uncomfortably wide. Clamp the app to a phone-ish width and center it
