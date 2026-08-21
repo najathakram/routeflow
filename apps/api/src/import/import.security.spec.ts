@@ -14,6 +14,7 @@ import { BadRequestException } from "@nestjs/common";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
@@ -27,6 +28,13 @@ describe("ImportService — security (F8-003 / F9-008)", () => {
         ImportService,
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
+        {
+          provide: CustomersService,
+          useValue: {
+            assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
+            maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);

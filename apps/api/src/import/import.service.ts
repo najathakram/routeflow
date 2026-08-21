@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { CustomersService } from "../customers/customers.service";
 import { roundMoney } from "../common/pricing";
 import { parse } from "csv-parse/sync";
 import { InvoiceStatus, UserRole } from "@prisma/client";
@@ -32,6 +33,7 @@ export class ImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly vendorBillsService: VendorBillsService,
+    private readonly customersService: CustomersService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -194,6 +196,12 @@ export class ImportService {
     buffer: Buffer,
     userId: string,
   ): Promise<{ created: number; updated: number; skipped: number; errors: string[] }> {
+    // Same CUSTOMERS soft-cap gate as the single-create path: a no-op unless the
+    // tenant is over cap AND its grace window already expired. Checked once up
+    // front rather than per row — an import is one user action, and the gate
+    // blocks only brand-new customers (updates to existing ones stay allowed).
+    await this.customersService.assertCustomerCapNotExceeded();
+
     const rows = this.parseCsv(buffer);
     let created = 0,
       updated = 0,
@@ -493,6 +501,11 @@ export class ImportService {
         }
       }
     }
+
+    // The import ALWAYS succeeds — this only opens a grace window when the rows
+    // just written pushed the tenant over cap. Never throws.
+    if (created > 0) await this.customersService.maybeStartCustomerGrace();
+
     return { created, updated, skipped, errors };
   }
 
@@ -504,6 +517,11 @@ export class ImportService {
     let imported = 0,
       updated = 0,
       skipped = 0;
+    // Invoice import auto-creates missing customers as a side effect; track that so
+    // the CUSTOMERS grace window still opens if those rows push the tenant over cap.
+    // No pre-check here — the soft cap blocks only a deliberate new-customer create,
+    // never a finance import.
+    let autoCreatedCustomers = false;
     const errors: string[] = [];
 
     // Group by Invoice ID
@@ -588,6 +606,7 @@ export class ImportService {
               });
             }
           });
+          autoCreatedCustomers = true;
         } catch (e: any) {
           skipped++;
           this.pushRowError(errors, customerName, e);
@@ -785,6 +804,10 @@ export class ImportService {
         skipped++;
       }
     }
+    // Never throws — opens a grace window only if the auto-created customers took
+    // the tenant over cap, so the next deliberate create is gated as it should be.
+    if (autoCreatedCustomers) await this.customersService.maybeStartCustomerGrace();
+
     return { imported, updated, skipped, errors };
   }
 

@@ -1,13 +1,18 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
-import { TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { roundMoney } from "../common/pricing";
 import { EntitlementsService } from "./entitlements.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
-import { BILLING_EVENTS } from "./plan-catalog.constants";
+import { MeterService } from "./meter.service";
+import {
+  BILLING_EVENTS,
+  findPlanDefinition,
+  GRACE_DAYS,
+  planKeyToEnum,
+} from "./plan-catalog.constants";
 
 /** Add whole months (or a year) to a UTC date, clamping the day to the target month. */
 function addCycle(from: Date, cycle: string): Date {
@@ -19,9 +24,6 @@ function addCycle(from: Date, cycle: string): Date {
   d.setUTCDate(Math.min(day, lastDay));
   return d;
 }
-
-/** 7-day soft-cap grace window. */
-const GRACE_DAYS = 7;
 
 /**
  * Plan lifecycle crons (Plans & Billing Phase 5). Operate cross-tenant with explicit
@@ -38,11 +40,12 @@ export class BillingCronService {
     private readonly entitlements: EntitlementsService,
     private readonly tenantStatus: TenantStatusGuard,
     private readonly catalog: PlanCatalogService,
+    private readonly meters: MeterService,
   ) {}
 
   private planMonthly(version: PlanVersionWithCatalog | null, planKey: string | null): number {
     if (!version || !planKey) return 0;
-    const d = version.definitions.find((x) => x.planKey === planKey);
+    const d = findPlanDefinition(version.definitions, planKey);
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
   }
 
@@ -66,23 +69,50 @@ export class BillingCronService {
     if (expired.length) this.logger.log(`Expired ${expired.length} trials → READ_ONLY`);
   }
 
-  /** Clear soft-cap grace windows older than 7 days (new over-cap work queues afterward). */
+  /**
+   * Clear soft-cap grace windows older than {@link GRACE_DAYS} (new over-cap work queues
+   * afterward).
+   *
+   * A CUSTOMERS window is the exception: it is left in place while the tenant is STILL
+   * over cap. Clearing it reads as "no grace window was ever opened" to the synchronous
+   * customer-create gate, which would then open a brand-new window on the very next
+   * create — a tenant could sit indefinitely over its customer cap, blocked for at most
+   * the hour between this cron tick and the next create. The window is cleared (and
+   * grace.expired emitted) as soon as the tenant is back within cap, e.g. after buying a
+   * CUSTOMER_PACK_100, upgrading, or deleting customers.
+   */
   @Cron(CronExpression.EVERY_HOUR)
   async expireGrace(): Promise<void> {
     const cutoff = new Date(Date.now() - GRACE_DAYS * 24 * 60 * 60 * 1000);
     const subs = await this.prisma.tenantSubscription.findMany({
       where: { graceStartedAt: { not: null, lt: cutoff } },
-      select: { tenantId: true },
+      select: { tenantId: true, graceMeter: true },
     });
+    let cleared = 0;
     for (const s of subs) {
+      if (s.graceMeter === "CUSTOMERS" && (await this.stillOverCustomerCap(s.tenantId))) continue;
       await this.prisma.tenantSubscription.update({
         where: { tenantId: s.tenantId },
         data: { graceStartedAt: null, graceMeter: null },
       });
       await this.events.emit(s.tenantId, BILLING_EVENTS.GRACE_EXPIRED, {});
       this.entitlements.invalidate(s.tenantId);
+      cleared++;
     }
-    if (subs.length) this.logger.log(`Expired ${subs.length} grace windows`);
+    if (cleared) this.logger.log(`Expired ${cleared} grace windows`);
+  }
+
+  /** Is the tenant still above its CUSTOMERS cap? A failed lookup answers `false` so a
+   *  billing/catalog outage releases the window rather than stranding the tenant behind
+   *  the create gate (same fail-open rule the gate itself applies). */
+  private async stillOverCustomerCap(tenantId: string): Promise<boolean> {
+    try {
+      const reading = await this.meters.read(tenantId, "CUSTOMERS");
+      return reading.included != null && reading.used > reading.included;
+    } catch (err) {
+      this.logger.warn(`Customer cap lookup failed for tenant ${tenantId}; expiring grace.`, err);
+      return false;
+    }
   }
 
   /** Apply scheduled downgrades whose effective date has passed. Nothing is deleted;
@@ -105,14 +135,14 @@ export class BillingCronService {
       const target = s.downgradeToPlanKey as string;
       // Price the MRR delta + caps from the tenant's PINNED version (grandfathering),
       // not the published one. Skip loudly if the catalog can't be resolved.
-      let version;
+      let version: PlanVersionWithCatalog;
       try {
         version = await this.catalog.getVersionForTenant(s.planVersionId);
       } catch {
         this.logger.error(`Skipping downgrade for ${s.tenantId} — catalog unresolvable`);
         continue;
       }
-      const targetDef = version.definitions.find((d) => d.planKey === target);
+      const targetDef = findPlanDefinition(version.definitions, target);
       const amountDelta = roundMoney(
         this.planMonthly(version, target) - this.planMonthly(version, s.planKey),
       );
@@ -123,14 +153,17 @@ export class BillingCronService {
           where: { tenantId: s.tenantId },
           data: {
             planKey: target,
-            currentPlan: target as TenantPlan,
+            currentPlan: planKeyToEnum(target),
             basePriceSnapshot: targetDef?.monthlyPrice ?? null,
             downgradeToPlanKey: null,
             downgradeEffectiveAt: null,
             retainedUserIds: [],
           },
         });
-        await tx.tenant.update({ where: { id: s.tenantId }, data: { plan: target as TenantPlan } });
+        await tx.tenant.update({
+          where: { id: s.tenantId },
+          data: { plan: planKeyToEnum(target) },
+        });
         // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
         // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
         if (seatCap != null) {

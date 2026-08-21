@@ -53,8 +53,19 @@ function make(
       ],
     }),
   } as any;
-  const svc = new BillingCronService(prisma, events, entitlements, tenantStatus, catalog);
-  return { svc, prisma, tx, events, entitlements, tenantStatus };
+  // Defaults to "unlimited" so grace windows expire exactly as they did before the
+  // CUSTOMERS soft-cap; the tests below narrow it where the cap matters.
+  const meters = {
+    read: jest.fn().mockResolvedValue({
+      meter: "CUSTOMERS",
+      used: 0,
+      included: null,
+      remaining: null,
+      resetsAt: null,
+    }),
+  } as any;
+  const svc = new BillingCronService(prisma, events, entitlements, tenantStatus, catalog, meters);
+  return { svc, prisma, tx, events, entitlements, tenantStatus, meters };
 }
 
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
@@ -78,6 +89,47 @@ describe("BillingCronService", () => {
   it("expireGrace clears grace windows older than 7 days", async () => {
     const { svc, prisma, events } = make({ graceSubs: [{ tenantId: "t1" }] });
     await svc.expireGrace();
+    expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toEqual({
+      graceStartedAt: null,
+      graceMeter: null,
+    });
+    expect(emitted(events)).toContain(BILLING_EVENTS.GRACE_EXPIRED);
+  });
+
+  it("expireGrace keeps an expired CUSTOMERS window in place while the tenant is still over cap", async () => {
+    const { svc, prisma, events, meters } = make({
+      graceSubs: [{ tenantId: "t1", graceMeter: "CUSTOMERS" }],
+    });
+    meters.read.mockResolvedValue({
+      meter: "CUSTOMERS",
+      used: 101,
+      included: 100,
+      remaining: 0,
+      resetsAt: null,
+    });
+
+    await svc.expireGrace();
+
+    // Clearing it would read as "no grace window was ever opened" to the customer-create
+    // gate, which would open a fresh one on the next create — the cap could never engage.
+    expect(prisma.tenantSubscription.update).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.GRACE_EXPIRED);
+  });
+
+  it("expireGrace clears a CUSTOMERS window once the tenant is back within cap", async () => {
+    const { svc, prisma, events, meters } = make({
+      graceSubs: [{ tenantId: "t1", graceMeter: "CUSTOMERS" }],
+    });
+    meters.read.mockResolvedValue({
+      meter: "CUSTOMERS",
+      used: 90,
+      included: 100,
+      remaining: 10,
+      resetsAt: null,
+    });
+
+    await svc.expireGrace();
+
     expect(prisma.tenantSubscription.update.mock.calls[0][0].data).toEqual({
       graceStartedAt: null,
       graceMeter: null,

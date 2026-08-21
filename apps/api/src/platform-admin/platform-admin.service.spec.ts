@@ -5,10 +5,12 @@ import { PlatformAdminService } from "./platform-admin.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { BillingService } from "../billing/billing.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { MeterService } from "../billing/meter.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { estimatePlatformMrrUsd } from "./plan-pricing.constant";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -22,6 +24,9 @@ describe("PlatformAdminService — audit provenance", () => {
   let service: PlatformAdminService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let auditLog: jest.Mock;
+  let planCatalogService: { getPublishedVersion: jest.Mock };
+  let entitlementsService: { resolve: jest.Mock };
+  let meterService: { readAll: jest.Mock };
 
   const ADMIN_ID = "super-1";
   const TENANT_ID = "tenant-1";
@@ -36,6 +41,10 @@ describe("PlatformAdminService — audit provenance", () => {
     };
 
     auditLog = jest.fn().mockResolvedValue(undefined);
+    // Default: unseeded catalog — MRR/entitlements tests override per-case.
+    planCatalogService = { getPublishedVersion: jest.fn().mockResolvedValue(null) };
+    entitlementsService = { resolve: jest.fn() };
+    meterService = { readAll: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -51,6 +60,9 @@ describe("PlatformAdminService — audit provenance", () => {
           provide: BillingService,
           useValue: { createCheckoutSession: jest.fn().mockRejectedValue(new Error("no stripe")) },
         },
+        { provide: PlanCatalogService, useValue: planCatalogService },
+        { provide: EntitlementsService, useValue: entitlementsService },
+        { provide: MeterService, useValue: meterService },
         { provide: TenantStatusGuard, useValue: { invalidate: jest.fn() } },
         { provide: AuditService, useValue: { log: auditLog } },
       ],
@@ -204,21 +216,67 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   describe("getStats enrichment", () => {
-    beforeEach(() => {
-      (prisma.tenant as any).groupBy = jest.fn().mockResolvedValue([
-        { plan: "STARTER", _count: { plan: 2 } },
-        { plan: "PROFESSIONAL", _count: { plan: 1 } },
-      ]);
+    it("computes estMrrUsd from basePriceSnapshot else the catalog price for the tenant's normalized planKey — a GROWTH tenant contributes its real price, never $0", async () => {
+      prisma.tenant.findMany.mockImplementation((args: any) => {
+        if (args?.where?.status?.not === "CANCELLED") {
+          return Promise.resolve([
+            // Grandfathered: keeps its pinned $59 snapshot even though the catalog
+            // now prices STARTER at $99.
+            {
+              status: "ACTIVE",
+              plan: "STARTER",
+              subscription: { planKey: "STARTER", basePriceSnapshot: 59 },
+            },
+            // No snapshot; only the legacy `plan` enum. planKeyFromEnum("TEAM") now
+            // maps to GROWTH (the v8 rename) — this is exactly what
+            // STOPGAP_PLAN_MONTHLY_USD priced at $0.
+            { status: "ACTIVE", plan: "TEAM", subscription: null },
+            // TRIAL: counted in planBreakdown, excluded from MRR.
+            { status: "TRIAL", plan: "STARTER", subscription: null },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "GROWTH", monthlyPrice: 249 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+          { planKey: "ENTERPRISE", monthlyPrice: null },
+        ],
+      });
+
+      const stats = await service.getStats();
+
+      expect(stats.estMrrUsd).toBe(59 + 249);
+      expect(stats.planBreakdown).toEqual({ STARTER: 2, GROWTH: 1 });
     });
 
-    it("computes stopgap estMrrUsd from the plan breakdown", async () => {
+    it("prices tenants against a still-published legacy catalog — TEAM/BUSINESS rows answer GROWTH/SCALE lookups", async () => {
+      prisma.tenant.findMany.mockImplementation((args: any) => {
+        if (args?.where?.status?.not === "CANCELLED") {
+          return Promise.resolve([
+            { status: "ACTIVE", plan: "TEAM", subscription: null },
+            { status: "ACTIVE", plan: "PROFESSIONAL", subscription: null },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+      // The publish script is a manual post-deploy step: until it runs, the
+      // published version is still keyed TEAM/BUSINESS.
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 59 },
+          { planKey: "TEAM", monthlyPrice: 149 },
+          { planKey: "BUSINESS", monthlyPrice: 349 },
+          { planKey: "ENTERPRISE", monthlyPrice: null },
+        ],
+      });
+
       const stats = await service.getStats();
-      expect(stats.estMrrUsd).toBe(2 * 29 + 79); // 137
-      expect(stats.planBreakdown).toEqual({ STARTER: 2, PROFESSIONAL: 1 });
-      // MRR is computed from an ACTIVE-only groupBy; the donut excludes cancelled.
-      const groupByArgs = ((prisma.tenant as any).groupBy as jest.Mock).mock.calls.map((c) => c[0]);
-      expect(groupByArgs.some((a) => a?.where?.status?.not === "CANCELLED")).toBe(true);
-      expect(groupByArgs.some((a) => a?.where?.status === "ACTIVE")).toBe(true);
+
+      expect(stats.estMrrUsd).toBe(149 + 349);
+      expect(stats.planBreakdown).toEqual({ GROWTH: 1, SCALE: 1 });
     });
 
     it("attaches userCount to trials and a human riskReason to at-risk tenants", async () => {
@@ -294,13 +352,39 @@ describe("PlatformAdminService — audit provenance", () => {
     });
   });
 
-  describe("estimatePlatformMrrUsd", () => {
-    it("sums plan counts × stopgap prices and ignores unknown plans", () => {
-      expect(estimatePlatformMrrUsd({ STARTER: 2, PROFESSIONAL: 1, ENTERPRISE: 1 })).toBe(
-        2 * 29 + 79 + 199,
-      );
-      expect(estimatePlatformMrrUsd({ MYSTERY: 5 })).toBe(0);
-      expect(estimatePlatformMrrUsd({})).toBe(0);
+  describe("getTenantEntitlements", () => {
+    it("returns flags, addons, caps, and the resolved planKey from EntitlementsService plus meter usage from MeterService", async () => {
+      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      entitlementsService.resolve.mockResolvedValue({
+        tenantId: TENANT_ID,
+        planKey: "GROWTH",
+        flags: ["flag.returns", "flag.reports"],
+        addons: ["BUYER_PORTAL"],
+        caps: { seats: 10, routes: 3, scans: 100, msgs: 200 },
+      });
+      meterService.readAll.mockResolvedValue([
+        { meter: "SEATS", used: 4, included: 10, remaining: 6, resetsAt: null },
+      ]);
+
+      const result = await service.getTenantEntitlements(TENANT_ID);
+
+      expect(result).toEqual({
+        planKey: "GROWTH",
+        flags: ["flag.returns", "flag.reports"],
+        addons: ["BUYER_PORTAL"],
+        caps: { seats: 10, routes: 3, scans: 100, msgs: 200 },
+        usage: [{ meter: "SEATS", used: 4, included: 10, remaining: 6, resetsAt: null }],
+      });
+      expect(entitlementsService.resolve).toHaveBeenCalledWith(TENANT_ID);
+      expect(meterService.readAll).toHaveBeenCalledWith(TENANT_ID);
+    });
+
+    it("404s for a tenant that doesn't exist, without calling the entitlements/meter services", async () => {
+      prisma.tenant.findUnique.mockResolvedValue(null);
+
+      await expect(service.getTenantEntitlements("nope")).rejects.toThrow("Tenant nope not found");
+      expect(entitlementsService.resolve).not.toHaveBeenCalled();
+      expect(meterService.readAll).not.toHaveBeenCalled();
     });
   });
 });
