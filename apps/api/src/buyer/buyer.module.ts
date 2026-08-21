@@ -16,6 +16,7 @@ import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { StockAlertsModule } from "../stock-alerts/stock-alerts.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { GatewaysModule } from "../gateways/gateways.module";
 
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
@@ -55,6 +56,7 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     AuthorizationsModule,
     StockAlertsModule,
     SystemConfigModule,
+    GatewaysModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

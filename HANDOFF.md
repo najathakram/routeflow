@@ -215,3 +215,22 @@ create/edit UI for `priceTier2..5` · 9 products priced at $0.00 and junk unit n
   `ux-audit-*`); never put a live client's slug/names/numbers in code, docs or the code
   map; money math through `pricing.ts`; code-map update with every change (Stop-hook
   enforced).
+
+### 6.1 Verification layers
+
+Four layers, each closing the previous one's blind spot — full matrix (feature →
+layer → command/spec) at `docs/testing/verification-matrix.md`:
+
+1. **Unit specs** — `npm run verify` (Jest, mocked at the Prisma boundary).
+2. **Post-deploy check** — `npm run post-deploy-check` (authenticated read-only
+   probe of the live API: login, list endpoints, money-format checks).
+3. **Feature smoke** — `npm run feature-smoke` (authenticated WRITE-path smoke on
+   the `e2e-routeflow` test tenant; provisions `E2E-SMOKE-` fixtures, exercises the
+   2026-08-20 batch's write paths, cleans up in `finally`).
+4. **Playwright e2e** — `cd apps/web && npx playwright test` (role/UI coverage,
+   including the read-only-or-cancel specs for the new UI surfaces).
+
+`npm run regression` chains 1 → 2 → 3. `nightly.yml` runs 2 + 3 + 4 against
+production but only fires while the repo is public; while private (the normal
+state) it is dormant, and the recurring gates are the post-deploy webhook and
+`npm run regression` run locally before every push.

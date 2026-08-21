@@ -57,6 +57,7 @@ import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api/authorizations";
+import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
@@ -446,6 +447,12 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
         <Truck className="h-4 w-4 text-brand-500" />
       </span>
     );
+  if (type === "buyer")
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50">
+        <Users className="h-4 w-4 text-brand-500" />
+      </span>
+    );
   // stock
   return (
     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-bg">
@@ -477,7 +484,11 @@ function Header({
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
   const { data: expiring = [] } = useExpiringAuthorizations();
-  const bellCount = unreadCount + expiring.length;
+  // Buyer-connect requests whose sign-in email didn't match the customer
+  // record — pinned in the bell until the seller approves or declines
+  // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).
+  const { data: pendingApprovals = [] } = usePendingPortalApprovals();
+  const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
@@ -586,6 +597,41 @@ function Header({
 
               {/* List */}
               <div className="max-h-[60vh] overflow-y-auto">
+                {/* Buyer-connect approval requests — pinned above everything else,
+                    server-derived so it stays until the seller acts (not cleared
+                    by "mark all read"/"clear", not lost on localStorage clear).
+                    Clicking a row goes to the customer page where Approve/Decline
+                    live (lib/api/portal-approvals.ts). */}
+                {pendingApprovals.length > 0 && (
+                  <div className="border-b border-surface-border">
+                    <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
+                      Action needed
+                    </p>
+                    <ul className="divide-y divide-surface-border">
+                      {pendingApprovals.map((a) => (
+                        <DropdownMenu.Item
+                          key={a.customerId}
+                          asChild
+                          onSelect={() => router.push(`/customers/${a.customerId}`)}
+                        >
+                          <li className="flex cursor-pointer items-start gap-3 bg-brand-50/40 px-4 py-3 outline-none transition-colors hover:bg-brand-50">
+                            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-600">
+                              <Users className="h-4 w-4" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-navy">
+                                {a.buyerName} wants to connect
+                              </p>
+                              <p className="mt-0.5 truncate text-xs text-navy/70 leading-snug">
+                                {a.buyerEmail} → {a.customerName}
+                              </p>
+                            </div>
+                          </li>
+                        </DropdownMenu.Item>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {/* W7b: license expiry section (30/7/1 + expired) */}
                 {expiring.length > 0 && (
                   <div className="border-b border-surface-border">
@@ -624,7 +670,9 @@ function Header({
                     </ul>
                   </div>
                 )}
-                {notifications.length === 0 && expiring.length === 0 ? (
+                {notifications.length === 0 &&
+                expiring.length === 0 &&
+                pendingApprovals.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-10 text-center">
                     <Bell className="h-8 w-8 text-navy/20" />
                     <p className="text-sm text-navy/70">No notifications yet</p>

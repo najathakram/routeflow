@@ -126,7 +126,23 @@ export class ProductsService {
     // internally by BuyerCatalogService — never from buyer input). In the query so
     // pagination counts stay correct.
     if (opts?.excludeTrackedCategoryIds?.length) {
-      where.trackedCategoryId = { notIn: opts.excludeTrackedCategoryIds };
+      // Hide license-gated categories WITHOUT hiding untracked products.
+      // Prisma's `notIn` never matches NULL rows, so the previous bare filter
+      // (`trackedCategoryId: { notIn: [...] }`) made every product with NO
+      // tracked category vanish the moment a tenant had one requiresLicense
+      // category — on a live tenant that hid 1,757 of 1,823 products from
+      // every unlicensed buyer. NULL must be allowed back in explicitly.
+      // AND-pushed (not where.trackedCategoryId) so it can't collide with the
+      // regulated fold-in below or a search OR.
+      where.AND = [
+        ...((where.AND as Record<string, unknown>[] | undefined) ?? []),
+        {
+          OR: [
+            { trackedCategoryId: null },
+            { trackedCategoryId: { notIn: opts.excludeTrackedCategoryIds } },
+          ],
+        },
+      ];
     }
 
     // Regulated-section filter ("any" | "none" | <sectionId>). When the internal

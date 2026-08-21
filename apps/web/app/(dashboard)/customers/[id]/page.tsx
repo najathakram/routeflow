@@ -59,6 +59,7 @@ import {
 } from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
+import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtDate } from "@/lib/formatting";
@@ -92,7 +93,6 @@ import {
   useSendPortalInvite,
   useResendPortalInvite,
   useDisconnectPortal,
-  useApprovePortalRequest,
   useSoftDeleteCustomer,
   useRestoreCustomer,
   useCustomerTaxDocuments,
@@ -106,6 +106,7 @@ import {
   type CustomerPrice,
   type ContactPerson,
   type CustomerTag,
+  type PortalStatus,
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
@@ -1572,12 +1573,24 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   // Buyer Portal management
   const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(params.id);
+  // The shared PortalStatus type (apps/web/lib/api/customers.ts) doesn't declare
+  // buyerName/buyerEmail — out of this package's file scope to touch — but the API's
+  // getPortalStatus now returns them (flat, not nested under buyerAccount) while a
+  // request is PENDING_SELLER_APPROVAL, so the card can say WHO is asking. Read them
+  // via a local, additive cast instead of widening the shared interface.
+  const pendingRequester = portalStatus as
+    | (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null })
+    | undefined;
   const sendInvite = useSendPortalInvite();
   const resendInvite = useResendPortalInvite();
   const disconnectPortal = useDisconnectPortal();
+  // Both hooks invalidate portal-status AND the bell's pending-approvals list, so
+  // approving or declining here makes the "Action needed" row disappear immediately.
   const approvePortal = useApprovePortalRequest();
+  const declinePortal = useDeclinePortalRequest();
   const [portalInviteEmail, setPortalInviteEmail] = React.useState("");
   const [portalMsg, setPortalMsg] = React.useState<string | null>(null);
+  const [declineConfirmOpen, setDeclineConfirmOpen] = React.useState(false);
 
   // Tax-exempt documents
   const { data: taxDocs = [] } = useCustomerTaxDocuments(params.id);
@@ -2489,6 +2502,20 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         </p>
                       )}
 
+                      {/* Pending approval: show WHO is asking to connect */}
+                      {portalStatus?.status === "PENDING_SELLER_APPROVAL" &&
+                        pendingRequester?.buyerName && (
+                          <div className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-navy/70">
+                            <p className="font-medium text-navy">
+                              {pendingRequester.buyerName}
+                              {pendingRequester.buyerEmail
+                                ? ` (${pendingRequester.buyerEmail})`
+                                : ""}
+                            </p>
+                            <p>wants to connect as this customer.</p>
+                          </div>
+                        )}
+
                       {/* Error/success message */}
                       {portalMsg && (
                         <p className="rounded-lg bg-success/10 px-3 py-2 text-xs text-success">
@@ -2553,19 +2580,31 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         )}
 
                         {portalStatus?.status === "PENDING_SELLER_APPROVAL" && (
-                          <Button
-                            size="sm"
-                            loading={approvePortal.isPending}
-                            onClick={() => {
-                              setPortalMsg(null);
-                              approvePortal.mutate(params.id, {
-                                onSuccess: () => setPortalMsg("Buyer connection approved!"),
-                                onError: () => setPortalMsg(null),
-                              });
-                            }}
-                          >
-                            Approve Connection
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              loading={approvePortal.isPending}
+                              onClick={() => {
+                                setPortalMsg(null);
+                                approvePortal.mutate(params.id, {
+                                  onSuccess: () => setPortalMsg("Buyer connection approved!"),
+                                  onError: () => setPortalMsg(null),
+                                });
+                              }}
+                            >
+                              Approve Connection
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => {
+                                setPortalMsg(null);
+                                setDeclineConfirmOpen(true);
+                              }}
+                            >
+                              Decline
+                            </Button>
+                          </div>
                         )}
 
                         {(portalStatus?.status === "ACTIVE" ||
@@ -3532,6 +3571,26 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deleteContact.isPending}
+      />
+
+      <ConfirmDialog
+        open={declineConfirmOpen}
+        onClose={() => setDeclineConfirmOpen(false)}
+        onConfirm={() => {
+          declinePortal.mutate(params.id, {
+            onSuccess: () => {
+              setDeclineConfirmOpen(false);
+              setPortalMsg("Request declined.");
+            },
+          });
+        }}
+        title="Decline this request?"
+        description={`Decline ${
+          pendingRequester?.buyerName ?? "this buyer"
+        }'s request? They will not be connected to this account.`}
+        confirmLabel="Yes, decline"
+        variant="danger"
+        loading={declinePortal.isPending}
       />
 
       {/* ── Remove customer modal — reversible soft-delete with 8s Undo ── */}

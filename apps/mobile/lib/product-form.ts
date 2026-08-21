@@ -185,10 +185,13 @@ export function buildProductPayload(
   if (price == null || price < 0) return { error: "Enter a valid price." };
   // unitsPerBox: any positive integer is allowed, but values <= 1 (or empty)
   // mean "no box packaging" — we omit the field so the API treats the product
-  // as sold by piece.
+  // as sold by piece. Floor BEFORE validating, never after: comparing the raw
+  // parsed value against the guard and only flooring afterwards let a
+  // fractional like "1.5" pass `upbRaw > 1` and then floor to 1 — exactly the
+  // meaningless "no packaging" sentinel the guard exists to reject.
   const upbRaw = parseOptionalNumber(form.unitsPerBox);
-  const unitsPerBox =
-    upbRaw != null && Number.isFinite(upbRaw) && upbRaw > 1 ? Math.floor(upbRaw) : undefined;
+  const upbFloored = upbRaw != null ? Math.floor(upbRaw) : undefined;
+  const unitsPerBox = upbFloored != null && upbFloored > 1 ? upbFloored : undefined;
   // Regulatory reporting config lives on the product but only makes sense under a
   // regulated section. Clearing the section (trackedCategoryId blank) must clear all
   // three, even if the caller didn't already reset them in form state — mirrors the

@@ -114,3 +114,8 @@ export interface ApiResponse<T> {
   message: string;
   success: boolean;
 }
+
+// ─── Pack size (Product.unitsPerBox capture) ──────────────────────────────────
+
+export type { PackSizeConfidence, PackSizeParse, PackSizeSuggestion } from "./pack-size";
+export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-size";

@@ -265,7 +265,15 @@ export class BuyerCatalogService {
   async getCatalogCounts(customerId: string, buyerAccountId: string) {
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
     const baseWhere: Record<string, unknown> = { isActive: true };
-    if (hiddenIds.size > 0) baseWhere.trackedCategoryId = { notIn: [...hiddenIds] };
+    // Same NULL trap as products.service.findAll: `notIn` never matches NULL,
+    // so keying this on trackedCategoryId zeroed every rail count for
+    // untracked products whenever a license-gated category existed.
+    if (hiddenIds.size > 0) {
+      baseWhere.OR = [
+        { trackedCategoryId: null },
+        { trackedCategoryId: { notIn: [...hiddenIds] } },
+      ];
+    }
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),

@@ -190,5 +190,59 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // ── Boxed order entry (WP2-13) ─────────────────────────────────────────────
+    // Cases/pieces proration read live off the order builder UI. Read-only: it
+    // never places the order — it Escapes out, which auto-parks a draft the
+    // spec's own afterEach deletes. Uses operator auth state.
+    {
+      name: "boxed-order-entry",
+      testMatch: /13-boxed-order-entry\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Pack-size prompt (WP2-14) ──────────────────────────────────────────────
+    // Product-create modal's parser refusal contract (HIGH pre-fills,
+    // AMBIGUOUS refuses empty, PIECE_UNIT renders nothing). Read-only: never
+    // saves — the modal is always closed by hand, "Create Product" never clicked.
+    {
+      name: "pack-size-prompt",
+      testMatch: /14-pack-size-prompt\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Stock-count UI (WP3-15) ────────────────────────────────────────────────
+    // Inventory → Stock Count tab session lifecycle. Discard-only: never
+    // commits a session, so zero stock impact by construction.
+    {
+      name: "stock-count-ui",
+      testMatch: /15-stock-count-ui\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Variant-split UI (WP3-16) ──────────────────────────────────────────────
+    // "Assign to variants" modal on a parent product. Cancel-only: never
+    // applies the split.
+    {
+      name: "variant-split-ui",
+      testMatch: /16-variant-split-ui\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });

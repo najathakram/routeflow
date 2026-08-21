@@ -572,8 +572,11 @@ export class GoogleOAuthService {
   // ─── Invite token helper ───────────────────────────────────────────────────
 
   private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
+    // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
+    // INVITED row flips the status while PRESERVING the token, and the true invitee's
+    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate.
     const link = await this.prisma.customerLink.findFirst({
-      where: { inviteToken: token, status: "INVITED" },
+      where: { inviteToken: token, status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] } },
     });
     if (!link) return;
     if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;

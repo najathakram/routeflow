@@ -4,7 +4,8 @@
 #
 # Jobs:
 #   api-smoke   — authenticated post-deploy-check.mjs (login, list endpoints,
-#                 float-artifact scan, invoice math assertion)
+#                 float-artifact scan, invoice math assertion) followed by
+#                 feature-smoke.mjs (write-path smoke of the 2026-08-20 batch)
 #   playwright  — full Playwright e2e suite against the production web URL
 #
 # Required GitHub secrets:
@@ -16,6 +17,11 @@
 # free plan. Toggle the repo public, run, then make it private again — or add
 # a self-hosted runner (see the post-deploy.yml comment for the Railway runner
 # setup instructions).
+#
+# NOTE: this workflow is dormant while the repo is private (the schedule never
+# fires). The recurring gates in practice are the post-deploy webhook and
+# `npm run regression` (verify + post-deploy-check + feature-smoke) run locally
+# before every push — see docs/testing/verification-matrix.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Nightly Regression
@@ -66,6 +72,12 @@ jobs:
           SMOKE_BASE_URL: ${{ env.API_URL }}
           SMOKE_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
           SMOKE_WAIT_RETRIES: "0" # production is already running; no need to wait
+
+      - name: Run feature smoke
+        run: npm run feature-smoke
+        env:
+          SMOKE_BASE_URL: ${{ env.API_URL }}
+          SMOKE_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
 
   # ─── Playwright E2E ──────────────────────────────────────────────────────────
   playwright:

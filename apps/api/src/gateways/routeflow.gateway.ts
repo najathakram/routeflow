@@ -101,6 +101,21 @@ export interface RouteDispatchedPayload {
   stopCount: number;
 }
 
+export interface BuyerConnectRequestPayload {
+  customerId: string;
+  customerName: string;
+  buyerName: string;
+  buyerEmail: string;
+  requestedAt: string;
+}
+
+export interface BuyerAutoLinkedPayload {
+  customerId: string;
+  customerName: string;
+  buyerName: string;
+  buyerEmail: string;
+}
+
 // ─── Gateway ──────────────────────────────────────────────────────────────────
 
 @WebSocketGateway({
@@ -232,5 +247,17 @@ export class RouteFlowGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server
       .to(this.tenantRoom(tenantId, `driver:${driverId}`))
       .emit("route.dispatched", payload);
+  }
+
+  /** A buyer's sign-in email didn't match the customer record — needs seller review. */
+  emitBuyerConnectRequest(tenantId: string | null, payload: BuyerConnectRequestPayload) {
+    this.server.to(this.tenantRoom(tenantId, "operators")).emit("buyer.connect.requested", payload);
+  }
+
+  /** Informational: a buyer connected directly (sign-in email matched). */
+  emitBuyerAutoLinked(tenantId: string | null, payload: BuyerAutoLinkedPayload) {
+    this.server
+      .to(this.tenantRoom(tenantId, "operators"))
+      .emit("buyer.connect.autolinked", payload);
   }
 }

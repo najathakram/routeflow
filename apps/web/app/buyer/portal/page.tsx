@@ -41,36 +41,63 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
 
+  // A pending request isn't a real connection yet — the buyer has no access
+  // to this seller's data until they approve. Rendering it clickable used to
+  // send the buyer straight into a wall of 403s.
+  const isPendingApproval = seller.linkStatus === "PENDING_SELLER_APPROVAL";
+
+  const logo = (
+    <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
+      {seller.tenant.logoKey ? (
+        /* /uploads/<key> requires a JWT (RF-075) that an <img> tag can never
+           send — broken since 2026-05-01. The public logo endpoint streams the
+           same file inline with no auth, and exists for exactly this. */
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`${apiUrl}/public/tenants/${encodeURIComponent(seller.tenant.slug)}/logo`}
+          alt={seller.tenant.name}
+          className="h-full w-full object-contain"
+        />
+      ) : (
+        <Building2 className="h-6 w-6 text-navy/30" />
+      )}
+    </div>
+  );
+
+  const info = (
+    <div className="flex-1 min-w-0">
+      <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
+      <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
+      <div className="mt-1">
+        <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
+          {formatLinkStatus(seller.linkStatus)}
+        </Badge>
+      </div>
+      {isPendingApproval && (
+        <p className="mt-1.5 text-xs text-navy/70">
+          Waiting for {seller.tenant.name} to approve your request.
+        </p>
+      )}
+    </div>
+  );
+
+  if (isPendingApproval) {
+    return (
+      <div className="flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm">
+        {logo}
+        {info}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={onClick}
       className="group flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm transition-all hover:border-buyer-300 hover:shadow-md"
     >
-      {/* Logo */}
-      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
-        {seller.tenant.logoKey ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`${apiUrl}/uploads/${seller.tenant.logoKey}`}
-            alt={seller.tenant.name}
-            className="h-full w-full object-contain"
-          />
-        ) : (
-          <Building2 className="h-6 w-6 text-navy/30" />
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
-        <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
-        <div className="mt-1">
-          <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
-            {formatLinkStatus(seller.linkStatus)}
-          </Badge>
-        </div>
-      </div>
+      {logo}
+      {info}
 
       {/* Arrow */}
       <ArrowRight className="h-5 w-5 flex-shrink-0 text-navy/30 transition-transform group-hover:translate-x-1 group-hover:text-buyer-500" />
@@ -104,6 +131,7 @@ function ConnectSellerModal({
 }) {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
+  const [resultMessage, setResultMessage] = React.useState<string | null>(null);
 
   const {
     register,
@@ -120,6 +148,7 @@ function ConnectSellerModal({
       reset();
       setApiError(null);
       setSubmitted(false);
+      setResultMessage(null);
     }
   }, [open, reset]);
 
@@ -131,7 +160,14 @@ function ConnectSellerModal({
       return;
     }
     try {
-      await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      const res = await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      // Show the server's ACTUAL outcome. The backend auto-approves an exact
+      // email match straight to an ACTIVE link (no seller review since
+      // 0a245e89), but this screen kept hardcoded "your seller will review"
+      // copy from the pre-auto-approve era — so a buyer who was connected
+      // instantly was told they were pending, and the owner heard "it sent a
+      // request without connecting" about a link that was already live.
+      setResultMessage(res.message ?? null);
       setSubmitted(true);
       onSuccess();
     } catch (err: unknown) {
@@ -179,10 +215,12 @@ function ConnectSellerModal({
                 <CheckCircle className="h-6 w-6 text-success" />
               </div>
               <div>
-                <p className="font-semibold text-navy">Request sent!</p>
+                <p className="font-semibold text-navy">
+                  {resultMessage?.startsWith("Connected") ? "Connected!" : "Request sent"}
+                </p>
                 <p className="mt-1 text-sm text-navy/70">
-                  Your seller will review and approve your connection. You&apos;ll see them in your
-                  seller list once approved.
+                  {resultMessage ??
+                    "Your seller will review and approve your connection. You'll see them in your seller list once approved."}
                 </p>
               </div>
               <Button onClick={onClose} variant="secondary" className="w-full mt-2">

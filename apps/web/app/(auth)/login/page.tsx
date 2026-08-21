@@ -172,7 +172,11 @@ export default function LoginPage() {
   // tenant's name and logo onto the platform-level login screen.
   const useTenantBranding = !!subdomainWorkspace && !!branding?.logoKey;
   const businessName = useTenantBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
-  const logoUrl = useTenantBranding ? `${apiUrl}/uploads/${branding!.logoKey}` : null;
+  // The guarded /uploads route rejects an <img>'s unauthenticated request
+  // (RF-075); the public logo endpoint streams the same file with no auth.
+  const logoUrl = useTenantBranding
+    ? `${apiUrl}/public/tenants/${encodeURIComponent(subdomainWorkspace!)}/logo`
+    : null;
 
   return (
     <div

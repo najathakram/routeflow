@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
+import { pendingApprovalsKey } from "../api/portal-approvals";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type NotificationType = "urgent" | "route" | "driver" | "stock";
+export type NotificationType = "urgent" | "route" | "driver" | "stock" | "buyer";
 
 export interface AppNotification {
   id: string;
@@ -44,6 +46,7 @@ function saveToStorage(notifications: AppNotification[]) {
 
 export function useNotifications() {
   const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
+  const queryClient = useQueryClient();
 
   // Hydrate from localStorage on mount (client only)
   React.useEffect(() => {
@@ -105,18 +108,55 @@ export function useNotifications() {
         description: `${data.productName} — ${data.stockLevel} unit${data.stockLevel === 1 ? "" : "s"} remaining`,
       });
 
+    // Buyer-connect: sign-in email didn't match the customer record, so the
+    // request needs seller review — actionable, and it also drives the
+    // pending-approvals query so the bell's pinned section picks it up
+    // immediately instead of waiting for its 60s poll.
+    const onBuyerConnectRequested = (data: {
+      customerId: string;
+      customerName: string;
+      buyerName: string;
+      buyerEmail: string;
+      requestedAt?: string;
+    }) => {
+      push({
+        type: "buyer",
+        title: "New buyer request",
+        description: `${data.buyerName} wants to connect to ${data.customerName}`,
+      });
+      void queryClient.invalidateQueries({ queryKey: pendingApprovalsKey });
+    };
+
+    // Buyer-connect: sign-in email matched, so it connected straight to
+    // ACTIVE — informational only, no pending-approvals row to invalidate.
+    const onBuyerAutoLinked = (data: {
+      customerId: string;
+      customerName: string;
+      buyerName: string;
+      buyerEmail: string;
+    }) =>
+      push({
+        type: "buyer",
+        title: "Buyer connected",
+        description: `${data.buyerName} connected to ${data.customerName}`,
+      });
+
     socket.on("order.urgent.placed", onUrgentOrder);
     socket.on("route.stop.completed", onStopCompleted);
     socket.on("driver.status.updated", onDriverStatus);
     socket.on("inventory.low.stock", onLowStock);
+    socket.on("buyer.connect.requested", onBuyerConnectRequested);
+    socket.on("buyer.connect.autolinked", onBuyerAutoLinked);
 
     return () => {
       socket.off("order.urgent.placed", onUrgentOrder);
       socket.off("route.stop.completed", onStopCompleted);
       socket.off("driver.status.updated", onDriverStatus);
       socket.off("inventory.low.stock", onLowStock);
+      socket.off("buyer.connect.requested", onBuyerConnectRequested);
+      socket.off("buyer.connect.autolinked", onBuyerAutoLinked);
     };
-  }, [push]);
+  }, [push, queryClient]);
 
   const markAllRead = React.useCallback(() => {
     setNotifications((prev) => {

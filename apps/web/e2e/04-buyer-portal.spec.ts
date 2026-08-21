@@ -80,6 +80,7 @@ test.describe("Buyer Portal", () => {
 
   test("BY-14 password login fires the authorized seller-list fetch (A5 regression)", async ({
     page,
+    context,
   }) => {
     // Pre-A5 bug: buyerLogin() wrote only the namespaced rf:buyer:accessToken
     // key while the auth context still read the legacy "buyerAccessToken"
@@ -88,12 +89,38 @@ test.describe("Buyer Portal", () => {
     // seller list stayed empty on any fresh device, and the buyer could never
     // reach a dashboard. Works for a zero-seller buyer too: the fetch itself
     // must happen and return 200.
+    //
+    // SELF-CONTAINED ON PURPOSE. This registers its own buyer rather than
+    // reusing the suite-level BUYER_EMAIL, which only exists once BY-01 has
+    // run — an ordering dependency that made this test pass in a full-file run
+    // and fail when run alone with `-g "BY-14"`. A regression test for a
+    // client-facing login bug has to be runnable on demand, and clearing
+    // storage below also makes it a truer reproduction: a brand-new account
+    // signing in on a device that has never held a token.
+    const email = `e2e_buyer_a5_${Date.now()}@example.com`;
+
+    await page.goto("/buyer/register");
+    await page.getByPlaceholder("Enter your full name").fill("A5 Regression Buyer");
+    await page.getByPlaceholder("Enter your email").fill(email);
+    await page.getByPlaceholder("8+ chars, upper & lower case, number or symbol").fill(BUYER_PASS);
+    await page.getByPlaceholder("Re-enter your password").fill(BUYER_PASS);
+    await page.getByRole("button", { name: /create|register|sign up/i }).click();
+    await page.waitForURL("**/buyer/portal", { timeout: 30_000 });
+
+    // Become a "different computer": no tokens, no cached active seller.
+    await page.evaluate(() => {
+      try {
+        localStorage.clear();
+      } catch {}
+    });
+    await context.clearCookies();
+
     const sellersRequest = page.waitForRequest(
       (req) => req.url().includes("/buyer/sellers") && !!req.headers()["authorization"],
-      { timeout: 20_000 },
+      { timeout: 30_000 },
     );
     await page.goto("/buyer/login");
-    await page.getByPlaceholder("Enter your email").fill(BUYER_EMAIL);
+    await page.getByPlaceholder("Enter your email").fill(email);
     await page.getByPlaceholder("Enter your password").fill(BUYER_PASS);
     await page.getByRole("button", { name: /sign in/i }).click();
 
