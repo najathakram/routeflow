@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Package, Heart, Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@/lib/pricing";
 import type { BuyerProduct, ReplenishmentEstimate } from "@/lib/api/buyer";
@@ -8,6 +9,7 @@ import type { CartItem } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { deriveTilePrice } from "./tile-pricing";
 import { QtyStepper } from "./QtyStepper";
+import type { ShopDensity } from "../page";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,8 @@ function stockText(p: BuyerProduct): { label: string; cls: string } {
 
 export interface ProductTileProps {
   product: BuyerProduct;
+  /** Seller slug — builds the detail link `/buyer/portal/{sellerSlug}/shop/{product.id}`. */
+  sellerSlug: string;
   /** undefined when the product is not in the cart. */
   cartItem: CartItem | undefined;
   promoRules: PromotionRule[];
@@ -75,10 +79,13 @@ export interface ProductTileProps {
   /** P5-03: Notify-me subscribed state + toggle. Only rendered when the tile is OOS and not in the cart. */
   isAlertSubscribed?: boolean;
   onToggleStockAlert?: () => void;
+  /** Grid density from the shop toolbar. Only "sm" trims paddings/type — "md"/"lg" render identically. */
+  size?: ShopDensity;
 }
 
 export function ProductTile({
   product,
+  sellerSlug,
   cartItem,
   promoRules,
   estimate,
@@ -88,6 +95,7 @@ export function ProductTile({
   onToggleFavorite,
   isAlertSubscribed,
   onToggleStockAlert,
+  size = "lg",
 }: ProductTileProps) {
   const images = product.imageUrls?.length
     ? product.imageUrls
@@ -103,22 +111,26 @@ export function ProductTile({
   const behavior = behaviorLabel(estimate);
   const stock = stockText(product);
   const outOfStock = (product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK";
+  const isCompact = size === "sm";
+  const detailHref = `/buyer/portal/${sellerSlug}/shop/${product.id}`;
 
   return (
     <div
       className={`group flex flex-col rounded-xl border border-surface-border bg-white overflow-hidden hover:shadow-md transition-shadow ${outOfStock ? "opacity-90" : ""}`}
+      data-testid="product-tile"
     >
-      {/* Image block */}
-      <div className="relative aspect-[4/5] overflow-hidden bg-surface-raised border-b border-surface-border">
+      {/* Image block — clicking it (or the name below) opens the detail page. */}
+      <Link
+        href={detailHref}
+        data-testid="product-tile-link"
+        className="relative block aspect-[4/5] overflow-hidden bg-surface-raised border-b border-surface-border"
+      >
         {currentUrl ? (
           <img
             src={currentUrl}
             alt={product.name}
-            className={`h-full w-full object-cover ${images.length > 1 ? "cursor-pointer" : ""}`}
+            className="h-full w-full object-cover"
             style={{ objectPosition: objectPositionForUrl(currentUrl) }}
-            onClick={() => {
-              if (images.length > 1) setImgIdx((i) => (i + 1) % images.length);
-            }}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -136,10 +148,11 @@ export function ProductTile({
 
         <button
           onClick={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             onToggleFavorite();
           }}
-          className={`absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full shadow-sm transition-colors ${
+          className={`absolute top-2 right-2 flex items-center justify-center rounded-full shadow-sm transition-colors ${isCompact ? "h-7 w-7" : "h-8 w-8"} ${
             isFavorite
               ? "bg-danger/10 text-danger hover:bg-danger hover:text-white"
               : "bg-white/90 text-navy/30 hover:text-danger"
@@ -155,6 +168,7 @@ export function ProductTile({
               <button
                 key={i}
                 onClick={(e) => {
+                  e.preventDefault();
                   e.stopPropagation();
                   setImgIdx(i);
                 }}
@@ -166,14 +180,20 @@ export function ProductTile({
             ))}
           </div>
         )}
-      </div>
+      </Link>
 
       {/* Body */}
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div className={`flex flex-1 flex-col gap-2 ${isCompact ? "p-2" : "p-3"}`}>
         <div className="flex-1">
-          <h3 className="text-sm font-semibold text-navy line-clamp-2">{product.name}</h3>
-          <p className="mt-0.5 text-[11px] text-navy/70">
-            {behavior && <>{behavior} · </>}
+          <Link href={detailHref} className="block">
+            <h3
+              className={`font-semibold text-navy line-clamp-2 ${isCompact ? "text-xs" : "text-sm"}`}
+            >
+              {product.name}
+            </h3>
+          </Link>
+          <p className={`mt-0.5 text-navy/70 ${isCompact ? "text-[10px]" : "text-[11px]"}`}>
+            {!isCompact && behavior && <>{behavior} · </>}
             <span className={stock.cls}>{stock.label}</span>
           </p>
         </div>
@@ -181,12 +201,14 @@ export function ProductTile({
         <div className="flex items-end justify-between gap-2">
           <div>
             <div className="flex items-baseline gap-1.5">
-              <p className="text-lg font-bold text-navy">{fmt(priced.unitPrice)}</p>
+              <p className={`font-bold text-navy ${isCompact ? "text-base" : "text-lg"}`}>
+                {fmt(priced.unitPrice)}
+              </p>
               {priced.originalPrice != null && (
                 <p className="text-[11px] text-navy/40 line-through">{fmt(priced.originalPrice)}</p>
               )}
             </div>
-            <p className="text-[11px] text-navy/70">
+            <p className={`text-navy/70 ${isCompact ? "text-[10px]" : "text-[11px]"}`}>
               per {product.unit}
               {product.unitsPerBox ? ` (${product.unitsPerBox}/box)` : ""}
             </p>
@@ -210,7 +232,7 @@ export function ProductTile({
             <button
               onClick={onAdd}
               disabled={outOfStock}
-              className={`flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors ${
+              className={`flex items-center gap-1.5 rounded-lg bg-buyer-500 text-xs font-semibold text-white hover:bg-buyer-600 transition-colors ${isCompact ? "px-2 py-1.5" : "px-3 py-2"} ${
                 outOfStock ? "opacity-60 cursor-not-allowed" : ""
               }`}
             >

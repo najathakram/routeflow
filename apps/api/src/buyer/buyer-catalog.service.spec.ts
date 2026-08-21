@@ -101,6 +101,107 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     await expect(service.getProductDetail("p1", "c1")).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  // The detail payload must carry every field the listing does, or the buyer
+  // detail page silently degrades: a boxed Add drops to 1 loose piece and an
+  // out-of-stock product reads "In stock" with an enabled Add button.
+  it("getProductDetail returns the listing's box/stock/merch fields (tile↔detail parity)", async () => {
+    gated([]);
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      category: "Snacks",
+      pricePerUnit: 10,
+      unitsPerBox: 24,
+      isDeal: true,
+      currentStock: 0,
+      lowStockThreshold: 5,
+      isActive: true,
+      trackedCategoryId: null,
+      imageKeys: ["a.jpg", "b.jpg"],
+      imageUrls: ["https://signed/a.jpg", "https://signed/b.jpg"],
+      variants: [
+        {
+          id: "v1",
+          variantName: "Large",
+          sku: "V1",
+          unit: "ea",
+          pricePerUnit: 12,
+          category: "Snacks",
+          unitsPerBox: 6,
+        },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.unitsPerBox).toBe(24); // boxed Add puts 1 box in the cart, not 1 piece
+    expect(res.stockStatus).toBe("OUT_OF_STOCK"); // Notify-me reachable
+    expect(res.inStock).toBe(false);
+    expect(res.stockLeft).toBeNull();
+    expect(res.isDeal).toBe(true);
+    expect(res.thumbnailUrl).toBe("https://signed/a.jpg");
+    // Variant rows carry the promo inputs deriveTilePrice needs
+    expect(res.variants[0]).toMatchObject({ category: "Snacks", unitsPerBox: 6 });
+  });
+
+  // A variant with its own CustomerPrice row must price off ITS tier, not the
+  // parent's — otherwise the parent's Variants list and the variant's own
+  // tile/detail page quote two different prices for the same product.
+  it("getProductDetail prices each variant off its own tier override", async () => {
+    gated([]);
+    prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      pricePerUnit: 20,
+      priceTier3: 15,
+      isActive: true,
+      trackedCategoryId: null,
+      variants: [
+        { id: "v1", variantName: "Large", sku: "V1", unit: "ea", pricePerUnit: 10, priceTier3: 8 },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.buyerPrice).toBe(20); // parent has no override — customer default tier 1
+    expect(res.variants[0].buyerPrice).toBe(8); // variant's own tier-3 override
+  });
+
+  // A discontinued variant must not be listed with a price: its row links to a
+  // detail page that 404s on isActive, so the buyer is quoted a dead end.
+  it("getProductDetail omits deactivated variants", async () => {
+    gated([]);
+    prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      pricePerUnit: 20,
+      isActive: true,
+      trackedCategoryId: null,
+      variants: [
+        { id: "v1", variantName: "Large", unit: "ea", pricePerUnit: 10, isActive: true },
+        { id: "v2", variantName: "Discontinued", unit: "ea", pricePerUnit: 10, isActive: false },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.variants.map((v: any) => v.id)).toEqual(["v1"]);
+    // The tier-override lookup must not widen to the hidden variant either
+    expect(prisma.customerPrice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ productId: { in: ["p1", "v1"] } }),
+      }),
+    );
+  });
+
   it("getFavorites filters out products in a locked category", async () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([]);
