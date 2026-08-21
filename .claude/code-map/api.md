@@ -104,8 +104,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant
   named by **`DEMO_SOURCE_TENANT`** (env, never hardcoded — CLAUDE.md forbids a live slug in
   code) READ-ONLY, driven by `DEMO_ASSETS_DIR/manifest.json` (`uploaded:true` entries only) +
-  `descriptions.json`, then generates 5 customers, 3 suppliers, 2 routes, opening PURCHASE
-  stock, ~64 orders over 60 days and their invoices/payments/credit notes. Dry-run by default,
+  `descriptions.json`, then generates 5 customers, 3 suppliers, 2 routes (8 RouteRuns: 2 done +
+  2 scheduled each), opening PURCHASE stock, ~64 orders over 60 days and their
+  invoices/payments/credit notes. Dry-run by default,
   `--live` to write. Every row id is `stableId(ns, key)` (SHA-1 → UUIDv5 shape, `lib/demo-ids.js`)
   so a re-run addresses the same rows: foundation rows are upserted, transactional rows are
   deleted and rebuilt, and because product ids are stable **already-uploaded images survive a
@@ -115,7 +116,16 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   `invoiceTreatment: SEPARATE_INVOICE` into `-R1` siblings sharing an `invoiceGroupId` with the
   tax remainder + whole shipping fee on the largest group. A `scoped()` helper stamps and asserts
   the demo `tenantId` on **every** row (parent and nested child) so a nested create can never
-  leave a NULL tenantId. `demo-seed-images.js` uploads the staged photos through the audited
+  leave a NULL tenantId. **Invoice status is derived, not hardcoded** (`storedInvoiceStatus`):
+  the dashboard's overdue tile queries the STORED `OVERDUE` status (`useInvoices({status:"OVERDUE"})`
+  — the derived past-due path only fires on `isOverdue`), and `recomputeStatus` checks "any
+  payment at all" BEFORE the due date, so a part-paid late invoice stays `PARTIAL` and only an
+  untouched past-due one becomes `OVERDUE`; seed the two the same way or the tile reads 0 while AR
+  aging shows money. Same class of trap for the other landing tiles: the newest days need some
+  DELIVERED orders (else revenue-today is $0, guaranteed by a post-pass), unpaid invoices must be
+  older than `PAYMENT_TERMS_DAYS` to age at all, and a slice of products is bought to demand with
+  zero headroom — sized at PURCHASE, never docked afterwards, so `currentStock` still equals
+  (opening − sold) — or nothing is ever low stock. `demo-seed-images.js` uploads the staged photos through the audited
   `POST /products/:id/images` route (one `GET /products?limit=0` up front to skip products that
   already have an image, so a resumed run never double-uploads). `demo-verify.js` is READ-ONLY:
   money identities, NULL-tenantId children **reached via their parent** (a database-wide count
