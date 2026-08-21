@@ -43,7 +43,10 @@ function sh(cmd) {
 
 let changed = [];
 try {
-  const tracked = execSync("git diff --name-only HEAD", { encoding: "utf8" });
+  // --diff-filter=d drops DELETED paths: prettier errors out with "No files
+  // matching the pattern were found" on a path that no longer exists, which
+  // failed the gate with an unfixable complaint (formatting was already clean).
+  const tracked = execSync("git diff --name-only --diff-filter=d HEAD", { encoding: "utf8" });
   const untracked = execSync("git ls-files --others --exclude-standard", { encoding: "utf8" });
   changed = `${tracked}\n${untracked}`
     .split(/\r?\n/)
