@@ -88,3 +88,7 @@ apps/api/scripts/*-manifest-*.json
 
 # ─── Audit reports (list unfixed security findings; repo goes public for CI) ─
 docs/audit/
+
+# ─── Generated fuzz fixtures (reproduce via docs/qa/workers/w6-fuzz-pack/generate.js;
+#     the 26MB f20-huge.pdf alone was 84% of the repo pack) ──────────────────
+docs/qa/workers/w6-fuzz-pack/f20-huge.pdf
