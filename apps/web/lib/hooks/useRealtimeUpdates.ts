@@ -97,6 +97,20 @@ export function useRealtimeUpdates() {
       },
     );
 
+    // A buyer declared a cash payment from the portal — it sits PENDING until an
+    // operator approves it under Finance → Payment Requests.
+    socket.on(
+      "buyer.payment.requested",
+      (data: { customerName: string; kind: "CARD" | "CASH" }) => {
+        void qc.invalidateQueries({ queryKey: ["payment-requests"] });
+        if (data.kind !== "CASH") return;
+        toast({
+          title: "Cash payment declared",
+          description: `${data.customerName} — approve it under Finance → Payment Requests`,
+        });
+      },
+    );
+
     socket.on("creditNote.created", (data: { creditNoteNumber: string; creditNoteId: string }) => {
       void qc.invalidateQueries({ queryKey: ["credit-notes"] });
       void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
@@ -112,6 +126,7 @@ export function useRealtimeUpdates() {
       socket.off("inventory.low.stock");
       socket.off("return.created");
       socket.off("invoice.updated");
+      socket.off("buyer.payment.requested");
       socket.off("creditNote.created");
       disconnectSocket();
     };

@@ -34,7 +34,8 @@ for (const f of files) {
 
 if (offenders.length > 0) {
   console.error(`\n✖ Commit blocked: staged file(s) over ${LIMIT_KB} KiB:\n`);
-  for (const { f, kb } of offenders) console.error(`   ${Math.round(kb).toLocaleString()} KiB  ${f}`);
+  for (const { f, kb } of offenders)
+    console.error(`   ${Math.round(kb).toLocaleString()} KiB  ${f}`);
   console.error(
     "\nHeavy assets belong in Railway storage, not git. If this file is genuinely" +
       "\nmeant to be committed, re-run with SKIP_SIZE_CHECK=1.\n",

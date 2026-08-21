@@ -3906,7 +3906,20 @@ export class InvoicesService {
 
   // ─── Standalone (bulk-allocation) payment ────────────────────────────────
 
-  async recordStandalonePayment(dto: StandalonePaymentDto) {
+  async recordStandalonePayment(
+    dto: StandalonePaymentDto,
+    opts?: {
+      /**
+       * Reject any allocation exceeding the invoice's live balance, computed
+       * inside the transaction. Buyer-initiated payments compute their
+       * oldest-first allocation BEFORE this call, outside the row locks, so a
+       * concurrent operator payment can stale the preview — without this check
+       * the stale allocation would overpay an invoice. Operator flows keep the
+       * historical behavior (deliberate overpayment is allowed there).
+       */
+      assertAllocationsWithinBalance?: boolean;
+    },
+  ) {
     const paymentGroupId = randomUUID();
     const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
     // One bank date for the whole allocation group — the money landed once.
@@ -3936,6 +3949,16 @@ export class InvoicesService {
           throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
         if (invoice.status === "VOID")
           throw new BadRequestException(`Invoice ${alloc.invoiceId} is voided`);
+        if (opts?.assertAllocationsWithinBalance) {
+          const alreadyPaid = invoice.payments.reduce((s, p) => s + Number(p.amount), 0);
+          const balance = roundMoney(Number(invoice.total) - alreadyPaid);
+          if (alloc.amount > balance + 0.001) {
+            // Rolls back the whole group; the caller recomputes and retries.
+            throw new ConflictException(
+              `Payments on invoice ${invoice.invoiceNumber} changed while this payment was being prepared — please retry.`,
+            );
+          }
+        }
 
         const payment = await tx.invoicePayment.create({
           data: {

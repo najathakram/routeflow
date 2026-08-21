@@ -129,6 +129,47 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   2026-08-19). **2026-08-20:** `ensureDeveloperMode(tenantId)` upserts an ACTIVE
   `developer_mode` TenantAddon in BOTH the existing-tenant and fresh-create paths — the web
   suite exercises `/routes`, which is hidden without it (web e2e OP-03b is the canary).
+- **`scripts/demo-seed.js` + `demo-seed-images.js` + `demo-verify.js` + `lib/demo-ids.js`**
+  (2026-08-20) — the standing sales-demo tenant `routeflow-demo` (on the test-tenant allow-list;
+  operator `routeflow_demo`/`routeflow_demo`). `demo-seed.js` copies a catalog from the tenant
+  named by **`DEMO_SOURCE_TENANT`** (env, never hardcoded — CLAUDE.md forbids a live slug in
+  code) READ-ONLY, driven by `DEMO_ASSETS_DIR/manifest.json` (`uploaded:true` entries only) +
+  `descriptions.json`, then generates 5 customers, 3 suppliers, 2 routes (8 RouteRuns: 2 done +
+  2 scheduled each), opening PURCHASE stock, ~64 orders over 60 days and their
+  invoices/payments/credit notes. Dry-run by default,
+  `--live` to write. Every row id is `stableId(ns, key)` (SHA-1 → UUIDv5 shape, `lib/demo-ids.js`)
+  so a re-run addresses the same rows: foundation rows are upserted, transactional rows are
+  deleted and rebuilt, and because product ids are stable **already-uploaded images survive a
+  refresh**. Mirrors production money math exactly — `computeLineSubtotal`/`computeCategoryTax`
+  imported from `src/common/pricing.ts` via a transpile-only ts-node hook (never re-implemented),
+  `Order.tax` = REGULAR tax only with category tax folded into the total, and invoices split by
+  `invoiceTreatment: SEPARATE_INVOICE` into `-R1` siblings sharing an `invoiceGroupId` with the
+  tax remainder + whole shipping fee on the largest group. A `scoped()` helper stamps and asserts
+  the demo `tenantId` on **every** row (parent and nested child) so a nested create can never
+  leave a NULL tenantId. **Invoice status is derived, not hardcoded** (`storedInvoiceStatus`):
+  the dashboard's overdue tile queries the STORED `OVERDUE` status (`useInvoices({status:"OVERDUE"})`
+  — the derived past-due path only fires on `isOverdue`), and `recomputeStatus` checks "any
+  payment at all" BEFORE the due date, so a part-paid late invoice stays `PARTIAL` and only an
+  untouched past-due one becomes `OVERDUE`; seed the two the same way or the tile reads 0 while AR
+  aging shows money. Same class of trap for the other landing tiles: the newest days need some
+  DELIVERED orders (else revenue-today is $0, guaranteed by a post-pass), unpaid invoices must be
+  older than `PAYMENT_TERMS_DAYS` to age at all, and a slice of products is bought to demand with
+  zero headroom — sized at PURCHASE, never docked afterwards, so `currentStock` still equals
+  (opening − sold) — or nothing is ever low stock. The owner's customer gets a VERIFIED
+  `CustomerAuthorization` for every `requiresLicense` section (`licenseOwnerForRegulated`) — the
+  demo tenant's Tobacco section HAS `requiresLicense: true`, so without it every tobacco line is
+  refused by `authorization-guard.service.ts`; the other four customers stay unlicensed on purpose
+  so the block can be shown. **The refresh sweep matches children on their own `tenantId` OR their
+  parent's** — filtering on `tenantId` alone let four app-edited `OrderItem` rows with a NULL
+  tenantId survive and break the order delete with an FK error (the nested-create trap, live).
+  `demo-seed-images.js` uploads the staged photos through the audited
+  `POST /products/:id/images` route (one `GET /products?limit=0` up front to skip products that
+  already have an image, so a resumed run never double-uploads). `demo-verify.js` is READ-ONLY:
+  money identities, NULL-tenantId children **reached via their parent** (a database-wide count
+  would just surface unrelated legacy rows), stock, and source-tenant isolation.
+  **2026-08-21:** `demo-seed.js` also upserts the demo tenant's ACTIVE `developer_mode`
+  TenantAddon (same shape as e2e-seed's `ensureDeveloperMode`) — #380 hides driver/dispatch
+  UI without it, and the demo's driver walkthrough needs those screens.
 - **`prisma/migrations/`** (2026-08-15, baselined) — two migrations only. `0_init` is
   generated to equal PRODUCTION exactly, replacing 75 partial migrations that could not build
   a database from scratch (40 of 106 models were never created; deploy died at
@@ -455,6 +496,90 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   - **P5 batch queue:** `BatchImportService` (`ImportBatch`+`ImportQueueItem`; `scanAndRecord` calls `vendorBills.scanInvoice` → classify CLEAN/NEEDS_REVIEW/DUPLICATE/FAILED [unmatched via line.**matchedProductId**; CLEAN needs all matched lines high-confidence; dup via DupMatch on invoiceDate]; `postBatch` maps scan lines matchedProductId→productId then `vendorBills.create`+`receive` per clean item [stock+cost]; `resolveItem`). `BatchController` = `/import/batch` (+ `:id/{scan,post}`, `items/:id/resolve`). Web queue on `settings/batch-import`. **DEFERRED:** background worker (Bull), scan-meter cap (billing). Specs: `{external-ref,product-alias,duplicate-match,variant-resolution,migration,batch-import}.service.spec.ts` (51 import tests).
   - **Duplicate matcher v2 + post recovery (2026-08-07):** `findVendorBillDuplicate` is now LAYERED and returns an enriched `VendorBillDuplicateMatch` (`{id, billNumber, status, totalOwed, billDate, receivedDate, supplierId, itemCount, matchedBy:"number"|"fuzzy", totalMatches}`): (1) exact on the new `VendorBill.supplierInvoiceNumber` column, `status != VOID`, narrowed by supplier when known — without a supplier it additionally requires total ±0.005 so a number shared across suppliers can't collide; (2) the legacy `notes`-regex fallback (billDate ±1d + total ±0.005) for pre-backfill and old-mobile rows, also VOID-excluded; (3) numberless fuzzy ONLY when supplier+date+total are all present — deliberately tighter than the old first-candidate-wins. **Line items are never compared** (operators edit lines during review, so item equality yields false negatives); document identity is supplier + number + total agreement, surfaced for the operator to judge. An exact-NUMBER lookup must NOT hard-filter on supplier — it matches `{OR:[{supplierId},{supplierId:null}]}` via `supplierScope()` and ranks with `pickNumberMatch()` (caller's supplier wins, supplier-less row is the fallback), because batch import posts `supplierId: item.supplierMatchId ?? undefined` and mobile only links a supplier on exact case-insensitive name equality, so NULL-supplier bills are routine and were previously unreachable on an exact match. Bills owned by a DIFFERENT supplier stay excluded; the notes layer gets the same relaxation (`includeUnassignedSupplier`), the numberless fuzzy layer stays strictly supplier-scoped. Layer-1 `take` is 20 so a run of null-supplier rows cannot push the exact-supplier row out of the page before ranking. Lives in its own **`duplicate-match.module.ts`** (imports PrismaModule, exports the service) so `VendorBillsModule` can consume it without importing `ImportModule` — that would be a cycle. `postBatch` passes `supplierInvoiceNumber` and CATCHES `DUPLICATE_VENDOR_BILL` to recover: it attaches the queue item to the existing bill (receiving it when DRAFT, swallowing the already-received conflict) and marks POSTED + `duplicateOfInvoiceId` — closing the create-succeeded-but-POSTED-update-never-ran window that used to double-create on retry. **Adoption requires `matchedBy === "number"`** (a payload without it is treated as non-identity): adopting a fuzzy match would mark the item POSTED against a possibly-different document and silently discard its own reviewed lines, or receive the adopted bill's lines instead of them — so a fuzzy hit leaves the item `DUPLICATE` + `errorMessage` for a human. Return shape is `{posted, adopted, duplicates, batchStatus}`; `posted` counts only bills this run actually created.
   - **P5 batch-queue defect fixes (2026-07-11, fix/batch-import-queue):** `classifyAndPersist` now resolves `extracted.supplier` to a real `Supplier` via the scored `matchSupplier` (since 2026-08-18 the shared `import/supplier-match.ts`, spec'd in `supplier-match.spec.ts` and also used by `vendor-bills.service.ts`; exact → unique startsWith → unique substring; ambiguous/none → `supplierMatchId: null` + routes to NEEDS_REVIEW) and persists it to `ImportQueueItem.supplierMatchId` (was declared on the model but never written — every posted bill had no supplier). Duplicate check switched from `DuplicateMatchService.findInvoiceDuplicate` (wrong table — customer `Invoice`) to new **`findVendorBillDuplicate`** (same shape, over `VendorBill`, narrowed by the resolved supplier; matches a supplier invoice # embedded in `notes` via new exported `formatSupplierInvoiceNote`/`extractSupplierInvoiceNumber` helpers in `duplicate-match.service.ts`). `postBatch` now uses the extracted `invoiceDate` for `billDate` (was always `new Date()`) and writes notes via `formatSupplierInvoiceNote`. **Review gate**: `resolveItem` no longer blindly flips to CLEAN — it now throws unless every line is either matched (`matchedProductId`) or explicitly `reviewed:true` (set only via the new **`updateItemLines`** — `PATCH /import/batch/items/:itemId`, body `{supplierId?, lines?: [{index, productId?, keepCustom?}]}` — the actual line-remap endpoint) AND, if a supplier was detected, it's linked. New `deriveStatus`/`annotateItem` private helpers centralize the CLEAN/NEEDS_REVIEW decision (`unreviewedLines`/`supplierUnresolved` computed fields added to `getBatch`'s item response, not persisted). New `listBatches()` → `GET /import/batch` (list, most-active-first) backs the web page's refresh-persistence (localStorage `batchId` + list fallback). Web: new `apps/web/components/BatchItemReviewModal.tsx` (SupplierSelect + per-line SearchableProductPicker/"Keep custom") is the only path that can clear `unreviewedLines`/`supplierUnresolved`; `batch-import/page.tsx` gained the drag-and-drop handlers its empty-state copy always claimed to have, plus a "Start new batch" affordance. `duplicate-match.service.ts`'s class doc now states `findInvoiceDuplicate` (customer Invoice) and `findVendorBillDuplicate` (VendorBill) must never be cross-checked. Specs extended in `batch-import.service.spec.ts` (21 tests, incl. supplier resolution/ambiguity, vendor-bill dedup, date/notes, line-review gating).
+
+### `stripe-connect/` + `payment-requests/` (buyer-initiated payments, 2026-08-21)
+
+Buyers paying their SELLER — orthogonal to `billing/`, which is tenants paying
+RouteFlow. **Stripe Connect, Standard accounts, DIRECT charges, no application fee**: the
+tenant links the Stripe account they already own and buyers pay it; RouteFlow never touches
+the funds. Every call is made on that account (`{ stripeAccount }` per-call option) reusing
+`billing/stripe.service.ts`'s client. Config: `stripe.connectClientId`,
+`stripe.connectWebhookSecret` (`STRIPE_CONNECT_CLIENT_ID` / `STRIPE_CONNECT_WEBHOOK_SECRET`;
+neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there).
+
+- **`stripe-connect.service.ts`** — `buildAuthorizeUrl` / `completeOAuth` / `disconnect` /
+  `chargeableAccount(tenantId)` (the gate in front of every card action; returns null, never
+  throws, so reads render "card unavailable") / `syncAccountStatus` (account.updated).
+  **The OAuth `state` is a signed 15-min tenant-bound JWT and the callback trusts NOTHING
+  else** — the callback is necessarily public (Stripe redirects a browser to it with no auth
+  headers), so an unsigned state would let a crafted URL bind one tenant's Stripe account to
+  another. Two controllers on purpose: `StripeConnectController` (`@Roles(OPERATOR)`) and a
+  separate public `StripeConnectCallbackController` that always redirects back to the web
+  `/settings?stripe=connected|error`.
+- **`payment-requests.service.ts`** — `buildOldestFirstAllocation(customerId, amount)` is the
+  policy: buyer payments are against the ACCOUNT and settle `issueDate` asc (tie-break
+  `invoiceNumber`), capping each invoice at its balance and partially covering the last one
+  reached. `BuyerPaymentRequest.invoiceId` is PROVENANCE ONLY (which screen it started from);
+  allocation ignores it. Buyer: `paymentContext` / `previewAllocation` / `createCardRequest`
+  (Checkout Session on the connected account, amount capped at balance so a card can never
+  mint credit) / `createCashRequest` (+ `gateway.emitBuyerPaymentRequest` bell) / `cancelOwn`.
+  Tenant: `listForTenant` (pending rows carry an `allocationPreview`) / `approve` / `reject`.
+- **⚠️ `cancelOwn` on a CARD request must ask Stripe BEFORE flipping the row.** Cancelling
+  blindly leaves the later `checkout.session.completed` webhook with no PENDING row to claim,
+  so it reads itself as a replay and writes nothing — the card is charged and the money never
+  reaches an invoice. Order: retrieve the session → `payment_status === "paid"` ⇒ settle it
+  instead and tell the buyer; otherwise `checkout.sessions.expire` (so a stale tab cannot pay
+  a cancelled request) and only then cancel; if Stripe is unreadable, refuse. Cancel cannot
+  simply be removed — nothing server-side reaps a stuck PENDING row and one blocks every later
+  request. Two refinements from the pre-ship adversarial review (both refuter-confirmed, both
+  pinned): the account comes from the stored `tenantStripeConnect` ROW, never
+  `chargeableAccount()` — a tenant that disconnected after the checkout opened would null that
+  helper and skip every safety check (no row at all ⇒ refuse, no blind cancel); and an
+  `expire` failure proves nothing — the old guard waved through ANY 400 — so the session is
+  RE-READ and only its own `expired`/`complete` status (or `paid` ⇒ settle) may proceed.
+  Pinned by `payment-requests.service.spec.ts` ("cancelOwn", 7 cases).
+- **⚠️ `BuyerPaymentRequest` is a SEPARATE TABLE, deliberately not a `PaymentStatus` member.**
+  `recomputeStatus` sums `InvoicePayment` rows, so a pending declaration living in that table
+  would mark invoices paid on the buyer's say-so — the DRAFT-payment trap. `InvoicePayment`
+  rows are written ONLY on operator approval (cash) or a signature-verified webhook (card),
+  and always via `InvoicesService.recordStandalonePayment`, so `PAY-…` numbering,
+  `paymentGroupId` and per-invoice status recompute stay in the one existing path.
+- **`connect-webhook.controller.ts`** — `POST /billing/webhook/connect`, its OWN signing
+  secret (Stripe signs connected-account events differently from the platform endpoint).
+  **Card settlement is webhook-only — the `success_url` redirect proves nothing**, a buyer can
+  open it without paying. Replays are absorbed by `@unique stripeSessionId` + an atomic
+  PENDING→APPROVED `updateMany` claim (`count === 0` ⇒ already settled). A settlement failure
+  reopens the request and returns non-2xx **on purpose** so Stripe redelivers. Runs with no
+  request context, so it establishes tenant scope via `tenantContext.run(...)`.
+  **⚠️ A signature-bearing delivery while the secret/key env vars are unset returns 503, never
+  200** — a 200 permanently ACKs the event, so a payment made in that window would be charged
+  but never recorded; 503 makes Stripe redeliver for days until the vars land. Only
+  signature-less garbage gets the 200 drop.
+- **Post-review hardening (2026-08-21):** `recordStandalonePayment` takes
+  `opts.assertAllocationsWithinBalance` — buyer-payment paths pass true so an allocation
+  computed OUTSIDE the tx (stale vs a concurrent operator payment) throws Conflict inside the
+  row locks and rolls back instead of overpaying an invoice (approve reopens for retry; webhook
+  redelivery recomputes). Operator flows keep deliberate-overpay behavior. Connect OAuth
+  `state` carries a single-use `jti` (in-memory consumed map, 20-min sweep) — the state rides a
+  URL query param, so a leaked value must not replay within its 15-min life.
+  `GET /payment-requests?status=` whitelists the enum (garbage reads as "all", not a 500).
+- **Wiring gotcha:** `BuyerPaymentsController` lives in `payment-requests/` but is registered
+  by **`BuyerModule`** — it rides that module's `BuyerJwtAuthGuard` / `BuyerSellerContextGuard`
+  / `BuyerTenantInterceptor`, which are not exported.
+- Migration `20260823000000_stripe_connect_buyer_payments` — additive (2 tables, 2 enums), no
+  existing table touched; dated 08-23 because 20260821000000 was already taken.
+- **Specs: `payment-requests.service.spec.ts`** (7 tests, 2026-08-21) — oldest-first allocation
+  (issueDate asc + `invoiceNumber` tie-break, per-invoice cap, partial tail invoice, `excess` on
+  overpay, fully-settled invoices excluded), `settleCardBySession` idempotency (drive the atomic
+  claim by making `buyerPaymentRequest.updateMany` return `{count:1}` then `{count:0}` — the
+  replay must make NO further `recordStandalonePayment` call) and its no-op for a session whose
+  `payment_status` isn't `"paid"`, plus `approve`'s CARD-refusal (cash-only path) and
+  already-decided guards. `createMockPrisma()` predates `BuyerPaymentRequest`, so a local
+  `graftBuyerPaymentRequest` helper attaches the model to BOTH the top-level mock and the object
+  `forTenant()` hands back (same trick as `vendor-bills.service.spec.ts`) — otherwise the
+  tenant-scoped call sees a different jest mock than the direct one.
+- Web surfaces (Settings Connect card, operator review queue, buyer "Make a payment" panel):
+  web.md → the three "Stripe Connect buyer payments" bullets.
 
 ### `audit/`
 

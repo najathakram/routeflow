@@ -84,7 +84,7 @@ production data**. They are never test targets and never examples.
   tenant-scoped script/test entry point must call it before any write.
 - **`routeflow-demo`** is the standing sales-demo tenant (fictional customers, synthetic
   orders/invoices; catalog copied from a real tenant but written only to the demo). Reseed with
-  [`apps/api/scripts/demo-seed.ts`](apps/api/scripts/demo-seed.ts) — see its header for the
+  [`apps/api/scripts/demo-seed.js`](apps/api/scripts/demo-seed.js) — see its header for the
   refresh routine. Never demo on a live client tenant.
 - **Never reference a live client** (slug, business name, product names, order/invoice numbers,
   tenant UUIDs) in code, tests, fixtures, UI placeholders, examples, docs, or the code map — use
