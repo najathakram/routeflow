@@ -1,8 +1,35 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PromotionScope } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import {
+  ruleCanZeroPrice,
+  scanPromotionZeroPrice,
+  zeroPriceWarning,
+  type PromotionRule,
+} from "../common/pricing";
 import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
+
+/**
+ * The stored promotion fields the zero-price guard reads back. `value` is a Prisma
+ * `Decimal` at runtime — kept `unknown` here so the guard has to go through
+ * `Number()` (the money helpers coerce) instead of assuming a JS number.
+ *
+ * `type`/`scope` stay plain strings rather than borrowing the pricing unions: the
+ * Prisma enums grow independently (a new promotion type lands in the schema before
+ * the pricing mirrors model it), and the guard degrades safely when they do —
+ * `promoNetPrice` returns null for a type it does not model, so an unmodelled rule
+ * is simply never flagged instead of failing to compile here.
+ */
+interface StoredPromotion {
+  id: string;
+  type: string;
+  value: unknown;
+  minQty: number | null;
+  scope: string;
+  category: string | null;
+  products?: Array<{ productId: string }>;
+}
 
 /**
  * Phase 5 (P5-01): tenant-managed merchandising promotions. This service owns CRUD +
@@ -47,8 +74,77 @@ export class PromotionsService {
     }
   }
 
+  /**
+   * The rule a write would LEAVE in the database. A PATCH only carries the fields
+   * it changes, so the zero-price guard has to judge the merged rule and never the
+   * patch alone — flipping a live PERCENT promo to `{type: FIXED, value: 35}`
+   * arrives with no scope at all, yet inherits the existing ALL scope.
+   */
+  private mergedRule(dto: Partial<CreatePromotionDto>, existing?: StoredPromotion): PromotionRule {
+    return {
+      id: existing?.id ?? "draft",
+      type: (dto.type ?? existing?.type) as PromotionRule["type"],
+      value: Number(dto.value ?? existing?.value ?? 0),
+      minQty: dto.minQty ?? existing?.minQty ?? null,
+      scope: (dto.scope ?? existing?.scope) as PromotionRule["scope"],
+      category: dto.category ?? existing?.category ?? null,
+      productIds: dto.productIds ?? existing?.products?.map((p) => p.productId) ?? [],
+    };
+  }
+
+  /**
+   * Refuse a rule that would put in-scope products on the buyer portal — and on the
+   * invoice those orders bill — at $0.00. `promoNetPrice` floors the net at 0, so a
+   * FIXED amount larger than a product's selling-unit price sells it for nothing
+   * (2026-08-20: an ALL-scoped "$35 off" zeroed 699 of a tenant's 1,767 products).
+   *
+   * `allowZeroPrice` is the operator's explicit "yes, I mean it" — a confirmation
+   * flag only, never persisted. Ordinary rules never touch the catalog: the shape
+   * check short-circuits everything except FIXED and a full 100% off.
+   */
+  private async assertNoZeroPricedProducts(
+    dto: Partial<CreatePromotionDto>,
+    existing?: StoredPromotion,
+  ) {
+    if (dto.allowZeroPrice) return;
+    const rule = this.mergedRule(dto, existing);
+    if (!ruleCanZeroPrice(rule)) return;
+
+    // Narrow the scan in SQL where the scope allows it; scanPromotionZeroPrice
+    // re-checks the scope regardless, so these clauses are an optimisation only.
+    const where: Record<string, unknown> = { isActive: true };
+    if (rule.scope === PromotionScope.CATEGORY) where.category = rule.category ?? null;
+    else if (rule.scope === PromotionScope.PRODUCTS) where.id = { in: rule.productIds ?? [] };
+
+    const products = await this.prisma.forTenant().product.findMany({
+      where,
+      select: { id: true, name: true, category: true, pricePerUnit: true },
+    });
+    const impact = scanPromotionZeroPrice(
+      products.map((p) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        price: Number(p.pricePerUnit),
+      })),
+      rule,
+    );
+    if (impact.count === 0) return;
+
+    throw new BadRequestException({
+      statusCode: 400,
+      error: "Bad Request",
+      code: "PROMOTION_ZERO_PRICE",
+      message: `${zeroPriceWarning(impact)} Lower the amount, narrow the scope, or resend with allowZeroPrice: true to confirm.`,
+      zeroPriceCount: impact.count,
+      inScopeCount: impact.inScope,
+      examples: impact.examples,
+    });
+  }
+
   async create(dto: CreatePromotionDto) {
     this.validateRule(dto);
+    await this.assertNoZeroPricedProducts(dto);
     const tenantId = this.prisma.getTenantId();
     return this.prisma.tenantTransaction(async (tx: any) => {
       const promo = await tx.promotion.create({
@@ -91,8 +187,9 @@ export class PromotionsService {
   }
 
   async update(id: string, dto: UpdatePromotionDto) {
-    await this.findOne(id); // tenant-scoped existence + 404
+    const existing: StoredPromotion = await this.findOne(id); // tenant-scoped existence + 404
     this.validateRule(dto);
+    await this.assertNoZeroPricedProducts(dto, existing);
     const tenantId = this.prisma.getTenantId();
     return this.prisma.tenantTransaction(async (tx: any) => {
       await tx.promotion.update({

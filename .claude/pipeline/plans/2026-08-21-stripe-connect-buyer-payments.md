@@ -1,126 +1,148 @@
-# Stripe Connect — buyer-initiated payments
+# Stripe Connect — buyer payments, oldest-first allocation, statement visibility
 
 ## Context
 
-Buyers can see what they owe but cannot pay. `/buyer/portal/[seller]/payments` renders a
-read-only "How to pay" remittance card and a payment history; there is no payment action
-anywhere in the buyer portal. Stripe exists in the codebase only for **SaaS billing** —
-tenants paying RouteFlow for their subscription (`billing/stripe.service.ts`, one
-platform-level `STRIPE_SECRET_KEY`). Nothing connects a tenant's own Stripe account, and no
-money has ever flowed buyer → tenant.
+Buyers can see what they owe but cannot pay. Stripe exists only for SaaS billing (platform
+`STRIPE_SECRET_KEY`, not even set on prod). Owner decisions (2026-08-21):
 
-Owner decision (2026-08-21): **Stripe Connect, Standard accounts, direct charges, no
-application fee.** Each tenant links the Stripe account they already own; buyers pay that
-account directly; RouteFlow never touches the funds and takes no cut.
+1. **Stripe Connect, Standard accounts, direct charges, no application fee** — each tenant
+   links their own Stripe account; buyers pay the tenant directly.
+2. Buyers can alternatively **declare a cash payment**, which the tenant approves.
+3. Tenant-recorded payments already reflect to the buyer (works today — not rebuilt).
+4. **Payments apply to the OLDEST invoice first, then by age.** A payment is against the
+   ACCOUNT, not one invoice; partial coverage of the last-reached invoice is expected and
+   must be visible.
+5. Both sides must clearly show: running balance, which payments applied to which invoices,
+   partially-paid invoices, paid vs pending — and the buyer side needs an unmissable
+   "Make a payment".
 
-Goal: a buyer looking at an unpaid invoice can either **pay by card** (Stripe) or **declare a
-cash payment** that the tenant approves. A tenant recording a payment already reflects to the
-buyer — that half works today and is not rebuilt.
+## What already exists (reuse, don't rebuild)
+
+| Need                                | Existing mechanism                                                                                                                                                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One payment split across N invoices | `InvoicesService.recordStandalonePayment(StandalonePaymentDto)` — customer + totalAmount + method + `allocations[]`, writes an `InvoicePayment` per invoice sharing a `paymentGroupId`, `PAY-…` numbering, status recompute per invoice |
+| Oldest-first allocation precedent   | AP mirror: `vendor-bills.service.ts` `paySupplier` (~1879) — allocates across bills oldest-first, excess becomes `SupplierCredit`                                                                                                       |
+| Excess-over-balance landing place   | `AdvancePayment` (customer on-account credit) + `method: ADVANCE` application flow                                                                                                                                                      |
+| Running-balance ledger, buyer side  | `GET /buyer/statement` (`StatementService`) → transactions with `runningBalance`; rendered at `/buyer/portal/[seller]/finances`                                                                                                         |
+| Running-balance ledger, tenant side | Same `StatementService` (takes `customerId`), already imported by `customers.module`; customer file page renders it                                                                                                                     |
+| Payment → invoice visibility        | `InvoicePayment.invoiceId` rows (grouped by `paymentGroupId`); buyer payments page + invoice detail already list them                                                                                                                   |
+| Partial visibility                  | `InvoiceStatus.PARTIAL` + per-invoice `balanceDue` (derived in `findAll`)                                                                                                                                                               |
+| Seller notification bell            | `gateway.emitBuyerConnectRequest` pattern                                                                                                                                                                                               |
+| Stripe SDK + webhook verification   | `billing/stripe.service.ts`, `billing-webhook.controller.ts` (`rawBody` already enabled)                                                                                                                                                |
+
+The genuinely new pieces: the Connect link, the buyer-initiated request objects, the
+**oldest-first allocation builder**, the connect webhook, approve/reject UI, and the buyer
+"Make a payment" UI.
 
 ## Design decisions
 
-**Standard accounts over Express/Custom.** The tenant keeps their own Stripe dashboard,
-handles their own payouts, disputes and compliance. RouteFlow only needs an OAuth link. With
-no application fee there is no reason to take on Express's platform liability.
+- **Standard accounts, direct charges** (`stripeAccount` header per call). No
+  `application_fee_amount`, no `transfer_data`. Tenant keeps their own dashboard/payouts.
+- **Account-level payments, strictly oldest-first.** Every buyer payment (card or declared
+  cash) allocates `issueDate` asc (tie-break `invoiceNumber` asc) across open non-VOID/DRAFT
+  invoices, capped per invoice at its balance due. The invoice-detail "Pay" button is just an
+  entry point that prefills the amount with that invoice's balance — the UI states plainly
+  that payments settle oldest invoices first. Card amounts are capped at the account balance
+  (no card-created credit); a cash declaration above balance books the excess as
+  `AdvancePayment` at approval, mirroring the AP flow.
+- **A `BuyerPaymentRequest` table, NOT a new `PaymentStatus`.** A pending request must be
+  invisible to the money ledger (`recomputeStatus` sums `InvoicePayment` rows; the
+  DRAFT-payment trap is this class of bug). `InvoicePayment` rows are written only on
+  approval (cash) or verified webhook (card), through `recordStandalonePayment`, so
+  numbering/grouping/status stay in one place.
+- **Webhooks are the only proof of card payment.** The `success_url` redirect proves nothing.
+  Idempotency via unique `stripeSessionId` on the request row — Stripe retries webhooks.
 
-**Direct charges** (`stripeAccount` header on every call), so the charge, the customer and the
-funds all live on the tenant's account. No `application_fee_amount`, no `transfer_data`.
+## Owner prerequisites in Stripe (blocks go-live, not the build) — test mode is fine
 
-**A separate `BuyerPaymentRequest` table — NOT a new `PaymentStatus`.** A declared-but-
-unapproved cash payment must never be visible to the money ledger: `recomputeStatus` sums
-`InvoicePayment` rows to decide PAID/PARTIAL, so a pending row inside that table would mark
-invoices paid on a buyer's say-so. Adding a `PENDING` member to `PaymentStatus` would also
-mean auditing every `status` filter in the codebase, and the DRAFT-payment trap
-(`project_deep_dive_findings_2026-08-17`) is precisely this class of bug already biting. So a
-request lives in its own table and an `InvoicePayment` is written **only** on approval (cash)
-or on a verified webhook (card) — through the existing `recordPayment`, so numbering, status
-recompute and the row lock all stay in one place.
-
-## Prerequisites the owner must do in Stripe (blocks the connect flow, not the build)
-
-1. Stripe Dashboard → **Connect → Get started**, platform type **Standard**.
-2. Connect → Settings → **Integration**: copy the **client ID** (`ca_…`) and add the redirect
-   URI `https://routeflowapi-production.up.railway.app/api/v1/settings/stripe-connect/callback`.
-3. Developers → Webhooks → **Add endpoint**, "Events **on connected accounts**", URL
-   `https://routeflowapi-production.up.railway.app/api/v1/billing/webhook/connect`, events
+1. Dashboard → Connect → Get started → platform type **Standard**.
+2. Connect → Settings → Integration: copy **client ID** (`ca_…`); add redirect URI
+   `https://routeflowapi-production.up.railway.app/api/v1/settings/stripe-connect/callback`.
+3. Developers → Webhooks → Add endpoint → **"Events on connected accounts"**, URL
+   `https://routeflowapi-production.up.railway.app/api/v1/billing/webhook/connect`, events:
    `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
    `checkout.session.async_payment_failed`, `account.updated`. Copy the signing secret.
-4. Railway → `@routeflow/api` variables: `STRIPE_SECRET_KEY` (platform key, may already be
-   set), `STRIPE_CONNECT_CLIENT_ID`, `STRIPE_CONNECT_WEBHOOK_SECRET`.
-
-Test-mode keys are fine and preferable for a demo — Stripe's `4242…` test card then works.
+4. Railway `@routeflow/api` env: `STRIPE_SECRET_KEY` (**currently unset**),
+   `STRIPE_CONNECT_CLIENT_ID`, `STRIPE_CONNECT_WEBHOOK_SECRET`.
 
 ## Work packages
 
-### WP1 — Schema (one migration, additive)
+### WP1 — Schema (one additive migration)
 
-- `TenantStripeConnect` — `tenantId` (unique), `stripeAccountId`, `livemode`,
-  `chargesEnabled`, `detailsSubmitted`, `connectedAt`, `disconnectedAt`, `connectedByName`.
-  Kept off `Tenant` so the connect state can be revoked and re-established without touching
-  the tenant row, and so `account.updated` has an obvious landing place.
-- `BuyerPaymentRequest` — `tenantId`, `customerId`, `invoiceId`, `buyerAccountId`, `amount`,
-  `kind` (`CARD` | `CASH`), `status` (`PENDING` | `APPROVED` | `REJECTED` | `FAILED` |
-  `EXPIRED`), `note`, `stripeSessionId`, `stripePaymentIntentId`, `invoicePaymentId`
-  (set on approval), `decidedById`/`decidedByName`/`decidedAt`, `createdAt`.
-  `@@unique([stripeSessionId])` so a replayed webhook cannot double-pay.
+- `TenantStripeConnect`: `tenantId` unique, `stripeAccountId`, `livemode`, `chargesEnabled`,
+  `detailsSubmitted`, `connectedAt`, `disconnectedAt`, `connectedByName`.
+- `BuyerPaymentRequest`: `tenantId`, `customerId`, `buyerAccountId?`,
+  `invoiceId?` (**provenance only** — which screen it started from; allocation ignores it),
+  `kind` (CARD|CASH), `status` (PENDING|APPROVED|REJECTED|FAILED|EXPIRED|CANCELLED),
+  `amount`, `note?`, `stripeSessionId? @unique`, `stripePaymentIntentId?`,
+  `paymentGroupId?` (set on approval → joins the written `InvoicePayment` rows),
+  `failureReason?`, `decidedById/Name/At`, timestamps. Indexes on `[tenantId, status]`,
+  `[customerId]`.
+- Back-relations on Tenant, Customer, Invoice, BuyerAccount. Config: `stripe.connectClientId`,
+  `stripe.connectWebhookSecret`.
 
-### WP2 — API: connect the account (`src/stripe-connect/`)
+### WP2 — API: account linking (`src/stripe-connect/`)
 
-- `StripeConnectService` — wraps the existing `StripeService` client, adding `stripeAccount`
-  to each call. `oauthUrl()`, `exchangeCode()`, `getStatus()`, `disconnect()`,
-  `assertChargesEnabled()`.
-- `StripeConnectController` (`@Roles(OPERATOR)`, so TENANT_ADMIN passes):
-  `GET /settings/stripe-connect` (status), `POST /settings/stripe-connect/link` (OAuth URL,
-  signed `state` carrying tenantId), `GET /settings/stripe-connect/callback` (public, verifies
-  `state`, exchanges the code, stores the account, redirects to the web settings page),
-  `DELETE /settings/stripe-connect`.
+`StripeConnectService` (wraps existing `StripeService` client; signed single-use OAuth
+`state` carrying tenantId; `assertChargesEnabled`). `StripeConnectController`:
+`GET /settings/stripe-connect` · `POST /settings/stripe-connect/link` →
+`GET /settings/stripe-connect/callback` (public; verifies state, `oauth.token` exchange,
+upsert row, redirect to web settings) · `DELETE /settings/stripe-connect`.
 
-### WP3 — API: buyer pays
+### WP3 — API: allocation + buyer requests
 
-- `POST /buyer/invoices/:id/pay/card` → Checkout Session on the connected account
-  (`mode: payment`, line item = the invoice balance, `metadata.invoiceId`,
-  `success_url`/`cancel_url` back to the portal); records a `PENDING` CARD request; returns
-  the session URL.
-- `POST /buyer/invoices/:id/pay/cash` → records a `PENDING` CASH request with an optional
-  note and emits the seller bell (mirrors `emitBuyerConnectRequest`).
-- `GET /buyer/invoices/:id/payment-options` → `{ cardEnabled, balanceDue, pendingRequest }`
-  so the portal can render the right buttons.
-- Guard: balance must be > 0, invoice not VOID/DRAFT, no PENDING request already open.
+- `buildOldestFirstAllocations(customerId, amount)` in `InvoicesService` (or a small
+  `PaymentAllocationService`): open invoices → `AllocationDto[]` + `excess`.
+- `GET /buyer/payment-context` → `{ balanceDue, cardEnabled, openInvoices: [{id, number,
+issueDate, total, balanceDue, status}], pendingRequests }`.
+- `POST /buyer/payments/card` `{ amount }` → assert Connect + charges enabled, cap at
+  balance, Checkout Session on the connected account (metadata: requestId), PENDING CARD
+  request, return session URL.
+- `POST /buyer/payments/cash` `{ amount, note?, reference? }` → PENDING CASH request + seller
+  bell.
+- `POST /buyer/payments/requests/:id/cancel` (own, PENDING only).
 
-### WP4 — API: the money actually moves
+### WP4 — API: money movement
 
-- `POST /billing/webhook/connect` — separate controller, its own signing secret, verifies with
-  `constructEvent` then dispatches on `event.account`. On `checkout.session.completed` with
-  `payment_status: "paid"`: look up the request by `stripeSessionId`, and inside one
-  transaction mark it APPROVED and call `InvoicesService.recordPayment` with
-  `method: CREDIT_CARD`, `reference: <payment_intent>`, `settledAt: now`. Idempotent on the
-  unique `stripeSessionId` — Stripe retries webhooks and will replay this.
-- `GET /payment-requests` + `POST /payment-requests/:id/approve` | `/reject` for the tenant.
-  Approve writes the `InvoicePayment` (`method: CASH`) through `recordPayment`.
+- `POST /billing/webhook/connect` (own controller + `STRIPE_CONNECT_WEBHOOK_SECRET`).
+  `checkout.session.completed` (`payment_status: "paid"`) → in one tx: request PENDING→
+  APPROVED, `buildOldestFirstAllocations`, `recordStandalonePayment` (method CREDIT_CARD,
+  reference = payment intent, settledAt = now), store `paymentGroupId` on the request.
+  Replays no-op on the unique session id. `async_payment_failed` → FAILED.
+  `account.updated` → sync `chargesEnabled`/`detailsSubmitted`.
+- Tenant: `GET /payment-requests?status=` · `POST /payment-requests/:id/approve` (cash →
+  same allocation path, method CASH; excess → `AdvancePayment`) · `/reject` (with reason).
 
 ### WP5 — Web
 
-- Tenant settings → a Stripe card: connect / disconnect, account id, charges-enabled badge,
-  and a plain warning when charges are not yet enabled.
-- Tenant → pending payment requests: list + approve/reject, surfaced on the bell.
-- Buyer invoice detail → **Pay by card** and **I've paid cash** when a balance is due;
-  a "payment pending approval" state once a request is open.
-- Buyer payments page → pending requests alongside history.
+- **Tenant settings → Payments card**: connect/disconnect Stripe, status badges.
+- **Tenant → payment requests**: pending list (bell + invoices area), approve/reject with
+  allocation preview ("$X across INV-A, INV-B, $Y remains on INV-C").
+- **Buyer finances page**: keep the statement; add a prominent **Make a payment** panel —
+  balance due, amount input (default = full balance), "applies to your oldest invoices
+  first" note with the computed allocation preview, then [Pay by card] / [I paid cash].
+  Pending requests shown with status.
+- **Buyer invoice detail**: Pay button → same panel prefilled with that invoice's balance.
+- **Visibility audit** (mostly exists): per-invoice payment list shows its `InvoicePayment`
+  rows; a grouped payment links to every invoice it touched (via `paymentGroupId`); PARTIAL
+  rows show paid-vs-due. Only fill genuine gaps — do not rebuild the statement.
 
 ### WP6 — Verification
 
-- Unit: webhook idempotency (same session twice ⇒ one `InvoicePayment`), approval writes
-  exactly one payment, a pending request never counts toward the invoice balance, cross-tenant
-  request access is refused.
-- Manual, in Stripe **test mode**: connect the demo tenant, pay an open demo invoice with
-  `4242 4242 4242 4242`, confirm the invoice flips PARTIAL/PAID and the payment shows on both
-  sides; then a cash declaration approved by the operator.
+- Unit: allocation math (exact cover, partial tail, excess→advance, skips VOID/DRAFT/paid;
+  ordering by issueDate then number); webhook idempotency (same session twice ⇒ one group);
+  approval writes exactly once; pending request affects no balance; cross-tenant access
+  refused; buyer of tenant-without-Connect sees `cardEnabled: false` and no card button.
+- Manual on the demo tenant (Stripe test mode): connect → buyer pays $X covering 1.5
+  invoices with `4242…` → oldest goes PAID, next PARTIAL, statement + both payment pages
+  show the split; cash declare → approve → same; reject → nothing moves.
 
 ## Risks
 
-- **Webhooks are the only proof of payment.** Never mark paid from the `success_url` redirect —
-  a buyer can open it without paying.
-- Connect OAuth `state` must be signed and single-use, or one tenant could bind another
-  tenant's Stripe account.
-- The demo tenant is on the test-tenant allowlist, but this touches shared `invoices.service`
-  code paths used by live clients — nothing may change for a tenant with no Connect row.
+- Never mark paid from redirect; webhook only.
+- Signed single-use OAuth `state` or tenant A could bind tenant B's Stripe account.
+- Shared `invoices.service` paths — behavior for tenants without a Connect row must be
+  byte-identical (card UI hidden, cash declaration still fine? **No** — cash declaration is
+  independent of Stripe and works for every tenant).
+- `recordStandalonePayment` may reject over-allocation — excess handling verified/added in
+  WP3, mirroring AP's excess→credit.

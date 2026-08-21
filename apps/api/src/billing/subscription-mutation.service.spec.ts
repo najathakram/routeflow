@@ -19,7 +19,22 @@ function catalog() {
   };
 }
 
+/** Post-rename catalog (v8) — GROWTH/SCALE have NO matching Prisma TenantPlan enum member. */
+function catalogV8() {
+  return {
+    id: "v8",
+    definitions: [
+      { planKey: "STARTER", name: "Starter", monthlyPrice: 99, isCustom: false },
+      { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, isCustom: false },
+      { planKey: "SCALE", name: "Scale", monthlyPrice: 499, isCustom: false },
+      { planKey: "ENTERPRISE", name: "Enterprise", monthlyPrice: null, isCustom: true },
+    ],
+    addonSkus: [],
+  };
+}
+
 interface Opts {
+  catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
   sub?: any;
   priorAddons?: any[];
@@ -52,7 +67,9 @@ function make(opts: Opts = {}) {
     },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
   } as any;
-  const cat = { getPublishedCatalog: jest.fn().mockResolvedValue(catalog()) } as any;
+  const cat = {
+    getPublishedCatalog: jest.fn().mockResolvedValue(opts.catalog ?? catalog()),
+  } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
     prorationPreview: jest.fn().mockResolvedValue({ proratedToday: 6.4 }),
@@ -155,6 +172,18 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       make().svc.subscribe("t1", { planKey: "ENTERPRISE", cycle: "MONTHLY" }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it("writes the legacy TenantPlan enum for renamed keys (GROWTH → TEAM), never the raw key", async () => {
+    const { svc, tx } = make({ catalog: catalogV8() });
+    await svc.subscribe("t1", { planKey: "GROWTH", cycle: "MONTHLY" });
+    // The Prisma TenantPlan enum has no GROWTH/SCALE member — writing the catalog key
+    // straight into the shadow column fails enum validation at runtime (500).
+    expect(tx.tenantSubscription.upsert.mock.calls[0][0].create).toMatchObject({
+      planKey: "GROWTH",
+      currentPlan: "TEAM",
+    });
+    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "TEAM" });
+  });
 });
 
 describe("SubscriptionMutationService.upgrade", () => {
@@ -178,6 +207,19 @@ describe("SubscriptionMutationService.upgrade", () => {
   it("rejects a same/lower target", async () => {
     const { svc } = make({ sub: { planKey: "BUSINESS", cycle: "MONTHLY" } });
     await expect(svc.upgrade("t1", "STARTER")).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("writes the legacy TenantPlan enum for renamed keys (SCALE → BUSINESS)", async () => {
+    const { svc, tx } = make({
+      catalog: catalogV8(),
+      sub: { planKey: "GROWTH", cycle: "MONTHLY", periodStart: null, periodEnd: null },
+    });
+    await svc.upgrade("t1", "SCALE");
+    expect(tx.tenantSubscription.updateMany.mock.calls[0][0].data).toMatchObject({
+      planKey: "SCALE",
+      currentPlan: "BUSINESS",
+    });
+    expect(tx.tenant.update.mock.calls[0][0].data).toMatchObject({ plan: "BUSINESS" });
   });
 });
 

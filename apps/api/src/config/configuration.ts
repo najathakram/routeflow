@@ -93,6 +93,10 @@ export interface AppConfig {
     priceStarter: string;
     priceProfessional: string;
     priceEnterprise: string;
+    /** Connect platform client id (ca_…) — tenant-account OAuth linking. */
+    connectClientId: string;
+    /** Signing secret of the "events on connected accounts" webhook endpoint. */
+    connectWebhookSecret: string;
   };
 }
 
@@ -154,5 +158,7 @@ export const configuration = (): AppConfig => ({
     priceStarter: process.env.STRIPE_PRICE_STARTER ?? "",
     priceProfessional: process.env.STRIPE_PRICE_PROFESSIONAL ?? "",
     priceEnterprise: process.env.STRIPE_PRICE_ENTERPRISE ?? "",
+    connectClientId: process.env.STRIPE_CONNECT_CLIENT_ID ?? "",
+    connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
   },
 });

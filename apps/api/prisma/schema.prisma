@@ -56,6 +56,7 @@ enum MeterKey {
   ROUTES
   SCANS
   MSGS
+  CUSTOMERS
 }
 
 enum AddonUnit {
@@ -394,6 +395,8 @@ model Tenant {
   customerPrices         CustomerPrice[]
   systemConfigs          SystemConfig[]
   customerLinks          CustomerLink[]
+  stripeConnect          TenantStripeConnect?
+  buyerPaymentRequests   BuyerPaymentRequest[]
   buyerMergeRequests     BuyerMergeRequest[]
   buyerFavorites         BuyerFavorite[]
   deliveryBatches        DeliveryBatch[]
@@ -562,6 +565,7 @@ model PlanDefinition {
   routesConcurrent Int? // null = unlimited
   scansIncluded    Int? // null = unlimited (Enterprise)
   msgsIncluded     Int      @default(200)
+  customersIncluded Int? // null = unlimited (Enterprise)
   featureFlags     String[] // subset of the 16 flag keys granted at this plan
   sortOrder        Int      @default(0)
 
@@ -766,6 +770,7 @@ model Customer {
   tagAssignments       CustomerTagAssignment[]
   comments             CustomerComment[]
   customerLink         CustomerLink?
+  buyerPaymentRequests BuyerPaymentRequest[]
   buyerFavorites       BuyerFavorite[]
   deliveryBatches      DeliveryBatch[]
   documents            CustomerDocument[]
@@ -1790,6 +1795,7 @@ model Invoice {
   payments         InvoicePayment[]
   creditNotes      CreditNote[]
   recurringInvoice RecurringInvoice? @relation(fields: [recurringInvoiceId], references: [id])
+  paymentRequests  BuyerPaymentRequest[]
 
   @@unique([tenantId, invoiceNumber])
   @@index([customerId])
@@ -2916,9 +2922,11 @@ model BuyerAccount {
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
   passwordResetTokens      BuyerPasswordResetToken[]
+  emailVerificationTokens  BuyerEmailVerificationToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[]       @relation("MergeAsPrimary")
   mergeRequestsAsSecondary BuyerMergeRequest[]       @relation("MergeAsSecondary")
   favorites                BuyerFavorite[]
+  paymentRequests          BuyerPaymentRequest[]
 
   @@index([email])
   @@index([status])
@@ -2950,6 +2958,87 @@ model CustomerLink {
   @@index([status])
 }
 
+/// A tenant's own Stripe account, linked via Connect OAuth (Standard account,
+/// direct charges, no platform fee). Kept off Tenant so the link can be revoked
+/// and re-established without touching the tenant row, and so `account.updated`
+/// webhooks have an obvious landing place. `chargesEnabled` gates the buyer's
+/// card button — a linked-but-unverified account must not accept payments.
+model TenantStripeConnect {
+  id               String    @id @default(uuid())
+  tenantId         String    @unique
+  stripeAccountId  String
+  livemode         Boolean   @default(false)
+  chargesEnabled   Boolean   @default(false)
+  detailsSubmitted Boolean   @default(false)
+  connectedAt      DateTime  @default(now())
+  disconnectedAt   DateTime?
+  connectedByName  String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Non-unique on purpose: one business may run two tenants off one Stripe
+  // account. Payment webhooks resolve by session id, never by account id.
+  @@index([stripeAccountId])
+}
+
+enum BuyerPaymentRequestKind {
+  CARD
+  CASH
+}
+
+enum BuyerPaymentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+/// A buyer-initiated payment BEFORE it becomes money. Deliberately a separate
+/// table rather than a PaymentStatus member: `recomputeStatus` sums
+/// InvoicePayment rows, so a pending declaration inside that table would mark
+/// invoices paid on the buyer's say-so (the DRAFT-payment trap). InvoicePayment
+/// rows are written only on approval (cash) or a verified webhook (card), via
+/// recordStandalonePayment with an oldest-first allocation; `paymentGroupId`
+/// then joins this request to the rows it produced.
+model BuyerPaymentRequest {
+  id                    String                    @id @default(uuid())
+  tenantId              String
+  customerId            String
+  buyerAccountId        String?
+  /// Provenance only — the invoice screen the buyer started from. Allocation
+  /// is strictly oldest-first across the account and ignores this field.
+  invoiceId             String?
+  kind                  BuyerPaymentRequestKind
+  status                BuyerPaymentRequestStatus @default(PENDING)
+  amount                Decimal                   @db.Decimal(10, 2)
+  note                  String?
+  reference             String?
+  stripeSessionId       String?                   @unique
+  stripePaymentIntentId String?
+  paymentGroupId        String?
+  failureReason         String?
+  decidedById           String?
+  decidedByName         String?
+  decidedAt             DateTime?
+  expiresAt             DateTime?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice      Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  buyerAccount BuyerAccount? @relation(fields: [buyerAccountId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([customerId])
+  @@index([tenantId, createdAt])
+  @@index([paymentGroupId])
+}
+
 model BuyerRefreshToken {
   id             String    @id @default(uuid())
   buyerAccountId String
@@ -2971,6 +3060,24 @@ model BuyerRefreshToken {
 // RefreshToken/BuyerRefreshToken) so staff and buyer reset tokens can never be
 // confused for one another.
 model BuyerPasswordResetToken {
+  id             String    @id @default(uuid())
+  buyerAccountId String
+  tokenHash      String    @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+// Registration email-verification token — proves the registrant controls the
+// mailbox before `emailVerified` unlocks auto-connect in requestSeller. Kept as
+// a separate model from BuyerPasswordResetToken so a verification token can
+// never be replayed to change a password (and vice versa).
+model BuyerEmailVerificationToken {
   id             String    @id @default(uuid())
   buyerAccountId String
   tokenHash      String    @unique

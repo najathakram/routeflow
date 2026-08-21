@@ -5,13 +5,13 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
-  Calendar,
   DollarSign,
   Download,
   Loader2,
   AlertTriangle,
   CheckCircle2,
   Clock,
+  CreditCard,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
@@ -32,6 +32,13 @@ function formatDate(d: string | null) {
     year: "numeric",
   });
 }
+
+/**
+ * Statuses the payments API will actually allocate against — mirrors
+ * `OPEN_STATUSES` in `apps/api/src/payment-requests/payment-requests.service.ts`.
+ * The buyer invoice list also returns PAID/VOID/WRITTEN_OFF, which owe nothing.
+ */
+const PAYABLE_STATUSES: string[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "PAID") return "success";
@@ -142,6 +149,22 @@ export default function BuyerInvoiceDetailPage() {
           <Badge variant={getStatusVariant(invoice.status)}>
             {invoice.status.replace(/_/g, " ")}
           </Badge>
+          {PAYABLE_STATUSES.includes(invoice.status) && balanceDue > 0.001 && (
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/buyer/portal/${sellerSlug}/payments?amount=${encodeURIComponent(
+                    balanceDue.toFixed(2),
+                  )}`,
+                )
+              }
+              className="flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-600"
+            >
+              <CreditCard className="h-4 w-4" />
+              Pay this invoice
+            </button>
+          )}
           {invoice.pdfUrl && (
             <button
               type="button"

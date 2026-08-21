@@ -10,9 +10,9 @@ import {
 describe("billing-math — subscription money (regression lock)", () => {
   describe("annualPrice = monthly × 10 (exact)", () => {
     it.each([
-      [59, 590],
-      [149, 1490],
-      [349, 3490],
+      [99, 990],
+      [249, 2490],
+      [499, 4990],
       [12, 120],
       [19, 190],
     ])("monthly $%d → annual $%d", (m, y) => {
@@ -22,22 +22,22 @@ describe("billing-math — subscription money (regression lock)", () => {
 
   describe("annualEffectivePerMo = whole-dollar round(monthly×10/12) — matches pricing.html", () => {
     it.each([
-      [59, 49],
-      [149, 124],
-      [349, 291], // 290.83 rounds UP to 291, never floors to 290
+      [99, 83],
+      [249, 208],
+      [499, 416], // 415.83 rounds UP to 416, never floors to 415
     ])("monthly $%d → $%d/mo billed annually", (m, eff) => {
       expect(annualEffectivePerMo(m)).toBe(eff);
     });
   });
 
   it("annualSaving is exactly two months", () => {
-    expect(annualSaving(59)).toBe(118);
-    expect(annualSaving(349)).toBe(698);
+    expect(annualSaving(99)).toBe(198);
+    expect(annualSaving(499)).toBe(998);
   });
 
   it("cyclePrice picks monthly vs annual", () => {
-    expect(cyclePrice(149, "MONTHLY")).toBe(149);
-    expect(cyclePrice(149, "ANNUAL")).toBe(1490);
+    expect(cyclePrice(249, "MONTHLY")).toBe(249);
+    expect(cyclePrice(249, "ANNUAL")).toBe(2490);
   });
 
   describe("prorateDaily (30-day cycle, 16 days remaining) — spec figures", () => {
@@ -60,7 +60,7 @@ describe("billing-math — subscription money (regression lock)", () => {
     });
 
     it("full remaining cycle equals the full monthly price", () => {
-      expect(prorateDaily(59, 30, 30)).toBe(59);
+      expect(prorateDaily(99, 30, 30)).toBe(99);
     });
   });
 

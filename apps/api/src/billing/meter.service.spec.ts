@@ -5,9 +5,11 @@ function makeService(caps: {
   routes: number | null;
   scans: number | null;
   msgs: number | null;
+  customers: number | null;
 }) {
   const prisma = {
     user: { count: jest.fn().mockResolvedValue(3) },
+    customer: { count: jest.fn().mockResolvedValue(7) },
     routeRun: { count: jest.fn().mockResolvedValue(2) },
     meterUsage: {
       findUnique: jest.fn().mockResolvedValue({ used: 5 }),
@@ -19,7 +21,7 @@ function makeService(caps: {
   return { svc: new MeterService(prisma, entitlements), prisma };
 }
 
-const CAPS = { seats: 5, routes: 3, scans: 20, msgs: 200 };
+const CAPS = { seats: 5, routes: 3, scans: 20, msgs: 200, customers: 10 };
 
 describe("MeterService", () => {
   it("reads SEATS as a live user count", async () => {
@@ -36,6 +38,21 @@ describe("MeterService", () => {
     });
   });
 
+  it("reads CUSTOMERS as a live, tenant-scoped, non-deleted count", async () => {
+    const { svc, prisma } = makeService(CAPS);
+    const r = await svc.read("t1", "CUSTOMERS");
+    expect(r).toMatchObject({
+      meter: "CUSTOMERS",
+      used: 7,
+      included: 10,
+      remaining: 3,
+      resetsAt: null,
+    });
+    expect(prisma.customer.count).toHaveBeenCalledWith({
+      where: { tenantId: "t1", deletedAt: null, supplierOnly: false },
+    });
+  });
+
   it("reads a cycle meter (SCANS) from the current period bucket", async () => {
     const { svc } = makeService(CAPS);
     const r = await svc.read("t1", "SCANS");
@@ -46,8 +63,27 @@ describe("MeterService", () => {
   });
 
   it("reports unlimited caps as null included / null remaining", async () => {
-    const { svc } = makeService({ seats: null, routes: null, scans: null, msgs: 200 });
+    const { svc } = makeService({
+      seats: null,
+      routes: null,
+      scans: null,
+      msgs: 200,
+      customers: null,
+    });
     const r = await svc.read("t1", "SCANS");
+    expect(r.included).toBeNull();
+    expect(r.remaining).toBeNull();
+  });
+
+  it("reports unlimited CUSTOMERS cap as null included / null remaining", async () => {
+    const { svc } = makeService({
+      seats: 5,
+      routes: 3,
+      scans: 20,
+      msgs: 200,
+      customers: null,
+    });
+    const r = await svc.read("t1", "CUSTOMERS");
     expect(r.included).toBeNull();
     expect(r.remaining).toBeNull();
   });
@@ -75,10 +111,11 @@ describe("MeterService", () => {
     expect(arg.update).toEqual({ used: { increment: 1 } });
   });
 
-  it("ignores increments for live meters (SEATS/ROUTES)", async () => {
+  it("ignores increments for live meters (SEATS/ROUTES/CUSTOMERS)", async () => {
     const { svc, prisma } = makeService(CAPS);
     await svc.increment("t1", "SEATS", 1);
     await svc.increment("t1", "ROUTES", 1);
+    await svc.increment("t1", "CUSTOMERS", 1);
     expect(prisma.meterUsage.upsert).not.toHaveBeenCalled();
   });
 
@@ -94,5 +131,23 @@ describe("MeterService", () => {
     const { svc, prisma } = makeService(CAPS);
     prisma.meterUsage.upsert.mockRejectedValueOnce(new Error("db down"));
     await expect(svc.increment("t1", "SCANS", 1)).resolves.toBeUndefined();
+  });
+
+  it("readAll() includes all five meters, CUSTOMERS among them", async () => {
+    const { svc } = makeService(CAPS);
+    const readings = await svc.readAll("t1");
+    expect(readings.map((r) => r.meter).sort()).toEqual(
+      ["CUSTOMERS", "MSGS", "ROUTES", "SCANS", "SEATS"].sort(),
+    );
+    const customers = readings.find((r) => r.meter === "CUSTOMERS");
+    expect(customers).toMatchObject({ used: 7, included: 10, remaining: 3 });
+  });
+
+  it("customersUsed() counts only non-deleted, non-supplier-only, tenant-scoped rows", async () => {
+    const { svc, prisma } = makeService(CAPS);
+    await svc.customersUsed("t1");
+    expect(prisma.customer.count).toHaveBeenCalledWith({
+      where: { tenantId: "t1", deletedAt: null, supplierOnly: false },
+    });
   });
 });

@@ -41,6 +41,12 @@ export interface PromotionInput {
   startsAt: string;
   endsAt: string;
   isActive?: boolean;
+  /**
+   * Confirmation flag (never persisted): the operator has seen how many in-scope
+   * products this rule would sell for $0.00 and means it. Without it the API
+   * refuses such a rule with a 400 (`code: "PROMOTION_ZERO_PRICE"`).
+   */
+  allowZeroPrice?: boolean;
 }
 
 // ─── Reads ──────────────────────────────────────────────────────────────────────

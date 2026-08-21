@@ -178,6 +178,14 @@ export class PlatformAdminController {
     return this.svc.getTenantAdmin(id);
   }
 
+  @Get("tenants/:id/entitlements")
+  @ApiOperation({
+    summary: "Resolved entitlements (flags/addons/caps/planKey) + live meter usage for a tenant",
+  })
+  getTenantEntitlements(@Param("id") id: string) {
+    return this.svc.getTenantEntitlements(id);
+  }
+
   @Post("tenants/:id/admin")
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "Create a TENANT_ADMIN account for a tenant that has none" })
