@@ -300,9 +300,72 @@ export class PaymentRequestsService {
     return this.toBuyerView(request);
   }
 
+  /**
+   * Cancel the buyer's own pending request.
+   *
+   * A CARD request cannot simply be flipped to CANCELLED: if the buyer already
+   * completed Checkout, the later `checkout.session.completed` webhook would
+   * find no PENDING row to claim, read that as a replay and record nothing —
+   * the card is charged and the money never reaches an invoice. So ask Stripe
+   * what actually happened first:
+   *   • already paid  → settle it instead of cancelling, and say so.
+   *   • not paid      → expire the session so it can never be paid later, THEN
+   *                     cancel. Expiry is what makes the cancel safe; without
+   *                     it the buyer could still pay a cancelled request from a
+   *                     stale tab.
+   * Cancel has to remain possible (nothing server-side reaps a stuck PENDING
+   * row, and one blocks every later request), so the fix is ordering, not
+   * removal.
+   */
   async cancelOwn(buyerAccountId: string, customerId: string, requestId: string) {
-    const claimed = await this.prisma.buyerPaymentRequest.updateMany({
+    const request = await this.prisma.buyerPaymentRequest.findFirst({
       where: { id: requestId, buyerAccountId, customerId, status: "PENDING" },
+    });
+    if (!request) throw new NotFoundException("No pending request to cancel");
+
+    if (request.kind === "CARD" && request.stripeSessionId) {
+      const account = await this.connect.chargeableAccount(request.tenantId);
+      if (account) {
+        let session: any = null;
+        try {
+          session = await this.stripe.client.checkout.sessions.retrieve(request.stripeSessionId, {
+            stripeAccount: account,
+          });
+        } catch (err: any) {
+          this.logger.warn(
+            `Could not read session ${request.stripeSessionId} before cancel: ${err?.message}`,
+          );
+          // Unknown state — refuse rather than risk cancelling a paid charge.
+          throw new BadRequestException(
+            "Could not confirm the card payment's status. Please try again in a moment.",
+          );
+        }
+        if (session?.payment_status === "paid") {
+          await this.settleCardBySession(session);
+          throw new BadRequestException(
+            "That card payment already went through — it has been applied to your account.",
+          );
+        }
+        try {
+          await this.stripe.client.checkout.sessions.expire(request.stripeSessionId, {
+            stripeAccount: account,
+          });
+        } catch (err: any) {
+          // Already expired/complete is fine; anything else still leaves a
+          // payable session, so do not cancel behind it.
+          const code = err?.raw?.code ?? err?.code;
+          if (code !== "checkout_session_expired" && err?.statusCode !== 400) {
+            this.logger.warn(
+              `Could not expire session ${request.stripeSessionId}: ${err?.message}`,
+            );
+            throw new BadRequestException("Could not cancel the card payment. Try again shortly.");
+          }
+        }
+      }
+    }
+
+    const claimed = await this.prisma.buyerPaymentRequest.updateMany({
+      where: { id: requestId, status: "PENDING" },
       data: { status: "CANCELLED", decidedAt: new Date() },
     });
     if (claimed.count === 0) throw new NotFoundException("No pending request to cancel");

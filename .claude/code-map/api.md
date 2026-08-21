@@ -438,6 +438,14 @@ neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there
   (Checkout Session on the connected account, amount capped at balance so a card can never
   mint credit) / `createCashRequest` (+ `gateway.emitBuyerPaymentRequest` bell) / `cancelOwn`.
   Tenant: `listForTenant` (pending rows carry an `allocationPreview`) / `approve` / `reject`.
+- **⚠️ `cancelOwn` on a CARD request must ask Stripe BEFORE flipping the row.** Cancelling
+  blindly leaves the later `checkout.session.completed` webhook with no PENDING row to claim,
+  so it reads itself as a replay and writes nothing — the card is charged and the money never
+  reaches an invoice. Order: retrieve the session → `payment_status === "paid"` ⇒ settle it
+  instead and tell the buyer; otherwise `checkout.sessions.expire` (so a stale tab cannot pay
+  a cancelled request) and only then cancel; if Stripe is unreadable, refuse. Cancel cannot
+  simply be removed — nothing server-side reaps a stuck PENDING row and one blocks every later
+  request. Pinned by `payment-requests.service.spec.ts` ("cancelOwn").
 - **⚠️ `BuyerPaymentRequest` is a SEPARATE TABLE, deliberately not a `PaymentStatus` member.**
   `recomputeStatus` sums `InvoicePayment` rows, so a pending declaration living in that table
   would mark invoices paid on the buyer's say-so — the DRAFT-payment trap. `InvoicePayment`
@@ -456,6 +464,18 @@ neither, nor `STRIPE_SECRET_KEY`, is set on prod yet — Stripe is dormant there
   / `BuyerTenantInterceptor`, which are not exported.
 - Migration `20260823000000_stripe_connect_buyer_payments` — additive (2 tables, 2 enums), no
   existing table touched; dated 08-23 because 20260821000000 was already taken.
+- **Specs: `payment-requests.service.spec.ts`** (7 tests, 2026-08-21) — oldest-first allocation
+  (issueDate asc + `invoiceNumber` tie-break, per-invoice cap, partial tail invoice, `excess` on
+  overpay, fully-settled invoices excluded), `settleCardBySession` idempotency (drive the atomic
+  claim by making `buyerPaymentRequest.updateMany` return `{count:1}` then `{count:0}` — the
+  replay must make NO further `recordStandalonePayment` call) and its no-op for a session whose
+  `payment_status` isn't `"paid"`, plus `approve`'s CARD-refusal (cash-only path) and
+  already-decided guards. `createMockPrisma()` predates `BuyerPaymentRequest`, so a local
+  `graftBuyerPaymentRequest` helper attaches the model to BOTH the top-level mock and the object
+  `forTenant()` hands back (same trick as `vendor-bills.service.spec.ts`) — otherwise the
+  tenant-scoped call sees a different jest mock than the direct one.
+- Web surfaces (Settings Connect card, operator review queue, buyer "Make a payment" panel):
+  web.md → the three "Stripe Connect buyer payments" bullets.
 
 ### `audit/`
 

@@ -117,6 +117,12 @@ const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
       { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
+      {
+        kind: "leaf",
+        label: "Payment Requests",
+        href: "/finance/payment-requests",
+        icon: DollarSign,
+      },
       { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
       {
         kind: "leaf",

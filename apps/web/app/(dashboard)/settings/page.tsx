@@ -83,6 +83,7 @@ import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
 import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
+import { StripeConnectCard } from "./_components/StripeConnectCard";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -2580,6 +2581,12 @@ function SettingsPageInner() {
         <>
           <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
           <SettingsHub isAdmin={isAdmin} />
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
+              OAuth callback returns the operator to bare `/settings?stripe=...` and the
+              card renders that banner. */}
+          <div className="mt-5 max-w-3xl">
+            <StripeConnectCard />
+          </div>
         </>
       ) : (
         <>
