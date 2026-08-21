@@ -17,6 +17,7 @@ describe("test-tenant policy guard", () => {
   it("allows the named test tenants", () => {
     expect(isTestTenant("test")).toBe(true);
     expect(isTestTenant("e2e-routeflow")).toBe(true);
+    expect(isTestTenant("routeflow-demo")).toBe(true);
   });
 
   it("allows throwaway qa-* / e2e-* / ux-audit-* slugs", () => {
@@ -53,6 +54,6 @@ describe("test-tenant policy guard", () => {
   });
 
   it("the named allowlist stays deliberate (policy change = update this spec)", () => {
-    expect([...TEST_TENANT_SLUGS].sort()).toEqual(["e2e-routeflow", "test"]);
+    expect([...TEST_TENANT_SLUGS].sort()).toEqual(["e2e-routeflow", "routeflow-demo", "test"]);
   });
 });
