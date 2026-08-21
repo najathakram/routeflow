@@ -2137,29 +2137,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               >
                 Out for Delivery
               </Button>
+              {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
+                  reason, so the ONLY path is the DemoteReasonModal. A second
+                  "Unconfirm" button used to submit directly (predating the
+                  reason rule) and guaranteed a 400 with nowhere to type one. */}
               <Button
                 size="sm"
                 variant="secondary"
                 leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Unconfirm this order? It will return to Pending status.")) {
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" },
-                      { onSuccess: () => setLocalStatus("PENDING") },
-                    );
-                  }
-                }}
+                onClick={() => setDemoteTarget("PENDING")}
                 loading={updateStatus.isPending}
               >
                 Unconfirm
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("PENDING")}
-              >
-                Return to Pending
               </Button>
               <Button
                 size="sm"
