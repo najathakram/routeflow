@@ -459,6 +459,121 @@ export function applyBestPromotion(
   return { unitPrice: bestNet, originalPrice: base, appliedPromoId: bestId, freeUnits: 0 };
 }
 
+// ─── Zero-price guard: a rule that clamps in-scope products to $0.00 ──────────
+// promoNetPrice floors the net at 0, so a FIXED "$35 off" rule prices EVERY
+// in-scope product at or below $35 at exactly $0.00 — in the buyer catalog AND
+// on the invoice the order bills. The rule is legal; the operator just cannot
+// see its blast radius while typing it (2026-08-20: one ALL-scoped $35-off promo
+// put 699 of a tenant's 1,767 products on the portal at $0.00 with a -100% chip).
+// These pure helpers compute that blast radius from the catalog so the promotion
+// editor can warn and the API can refuse the write unless it is confirmed.
+// Keep all three mirrors in sync.
+
+/** How many product names a scan carries back for the operator-facing warning. */
+export const ZERO_PRICE_EXAMPLE_LIMIT = 5;
+
+/** The catalog facts the zero-price scan needs — a product row from any surface. */
+export interface PromoScopeProduct {
+  id: string;
+  name?: string | null;
+  category?: string | null;
+  /** Canonical SELLING-UNIT price (`Product.pricePerUnit` — the BOX price when boxed). */
+  price: number | string | null | undefined;
+}
+
+export interface ZeroPriceImpact {
+  /** In-scope products the rule would clamp to $0.00. */
+  count: number;
+  /** How many products the rule's scope covers at all — the denominator. */
+  inScope: number;
+  /** Up to {@link ZERO_PRICE_EXAMPLE_LIMIT} names of the clamped products. */
+  examples: string[];
+}
+
+/**
+ * Cheap shape check: can this rule zero ANY price at all? A FIXED amount always
+ * can (some product is always cheap enough); PERCENT/QTY_BREAK only at a full
+ * 100% off. Callers use it to skip the catalog scan for ordinary rules.
+ *
+ * Only the mechanics with a NET-PRICE form can reach $0.00, so the switch is
+ * explicit rather than a `!== "FIXED"` fallthrough — `value` does not mean
+ * "percent" for every type. BUY_N_GET_M stores M (free units) in `value`, and a
+ * bare `value >= 100` would send "buy 1 get 100 free" on a pointless full-catalogue
+ * scan. It could never be flagged anyway: `promoBogoFreeUnits` requires N >= 1, so
+ * `floor(qtyUnits / (N + M)) * M` is strictly less than `qtyUnits` — a free-unit
+ * rule can discount a line steeply but can never make one free.
+ */
+export function ruleCanZeroPrice(promo: Pick<PromotionRule, "type" | "value">): boolean {
+  const value = Number(promo.value) || 0;
+  if (value <= 0) return false;
+  switch (promo.type) {
+    case "FIXED":
+      return true;
+    case "PERCENT":
+    case "QTY_BREAK":
+      return value >= 100;
+    default:
+      return false; // no net-price form ⇒ nothing for the scan to find
+  }
+}
+
+/** The qty a rule is judged at — a QTY_BREAK bites at its own threshold. */
+function zeroScanQtyPieces(promo: PromotionRule): number {
+  return Math.max(1, Math.trunc(Number(promo.minQty ?? 0)) || 1);
+}
+
+/**
+ * Would this rule price ONE product at exactly $0.00? A product already priced at
+ * $0 is never counted — the promotion is not what makes that one free.
+ */
+export function promotionZeroesProduct(product: PromoScopeProduct, promo: PromotionRule): boolean {
+  const base = roundMoney(Number(product.price) || 0);
+  if (!(base > 0)) return false;
+  const net = promoNetPrice(base, promo, {
+    productId: product.id,
+    category: product.category ?? null,
+    qtyPieces: zeroScanQtyPieces(promo),
+    // One selling unit: the question is what a single unit would ring up at.
+    qtyUnits: 1,
+  });
+  return net === 0;
+}
+
+/**
+ * Scan a catalog for the products a rule would sell for $0.00. Callers may
+ * pre-filter to the rule's scope in SQL; the scope is re-checked here either way,
+ * so an unfiltered catalog is equally correct (just more work).
+ */
+export function scanPromotionZeroPrice(
+  products: PromoScopeProduct[],
+  promo: PromotionRule,
+): ZeroPriceImpact {
+  const impact: ZeroPriceImpact = { count: 0, inScope: 0, examples: [] };
+  const qtyPieces = zeroScanQtyPieces(promo);
+  for (const product of products) {
+    const inScope = promotionMatchesProduct(promo, {
+      productId: product.id,
+      category: product.category ?? null,
+      qtyPieces,
+      qtyUnits: 1,
+    });
+    if (!inScope) continue;
+    impact.inScope += 1;
+    if (!promotionZeroesProduct(product, promo)) continue;
+    impact.count += 1;
+    if (impact.examples.length < ZERO_PRICE_EXAMPLE_LIMIT) {
+      impact.examples.push(product.name || product.id);
+    }
+  }
+  return impact;
+}
+
+/** The one operator-facing sentence for a zero-price warning or refusal. */
+export function zeroPriceWarning(impact: ZeroPriceImpact): string {
+  const noun = impact.count === 1 ? "product" : "products";
+  return `This discount is larger than the price of ${impact.count} ${noun} in scope — they would sell for $0.00.`;
+}
+
 // ─── Price-override direction: upsell vs discount ─────────────────────────────
 // A one-time operator override stores the NET unitPrice + the catalog base as
 // originalPrice (the discount convention above). The DIRECTION is derived, not
