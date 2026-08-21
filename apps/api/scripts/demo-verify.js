@@ -175,6 +175,10 @@ async function main() {
     const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
     if (inv.status === "PAID" && Math.abs(paid - Number(inv.total)) > 0.01) badPaid += 1;
     if (inv.status === "PARTIAL" && !(paid > 0 && paid < Number(inv.total))) badPaid += 1;
+    // OVERDUE is what recomputeStatus returns for an untouched invoice past its
+    // due date, so it must carry no payment at all.
+    if (inv.status === "OVERDUE" && paid > 0) badPaid += 1;
+    if (inv.status === "SENT" && paid > 0) badPaid += 1;
   }
   check("invoice line sums match subtotal", badLineSums === 0, `${badLineSums} mismatched`);
   check("subtotal + tax + shipping = total", badTotals === 0, `${badTotals} mismatched`);

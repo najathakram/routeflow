@@ -569,14 +569,16 @@ async function ensureCustomers() {
 
 async function ensureRoutes(customers, driverIds) {
   const byKey = new Map(customers.map((c) => [c.key, c]));
+  const built = [];
   for (const r of ROUTES) {
     const routeId = stableId("route", r.key);
+    const driverId = r.key === "north-austin" ? driverIds.driver : driverIds.operator;
     await prisma.route.upsert({
       where: { id: routeId },
       create: scoped({
         id: routeId,
         name: r.name,
-        driverId: r.key === "north-austin" ? driverIds.driver : driverIds.operator,
+        driverId,
         isActive: true,
         depotAddress: "4200 S Congress Ave, Austin, TX 78745",
       }),
@@ -584,6 +586,7 @@ async function ensureRoutes(customers, driverIds) {
     });
 
     let stopNumber = 0;
+    const stops = [];
     for (const ck of r.customers) {
       const c = byKey.get(ck);
       if (!c) continue;
@@ -606,8 +609,69 @@ async function ensureRoutes(customers, driverIds) {
         }),
         update: { stopNumber, customerAddressId: c.addressId },
       });
+      stops.push({
+        id: rsId,
+        customerId: c.customerId,
+        customerAddressId: c.addressId,
+        stopNumber,
+      });
+    }
+    built.push({ key: r.key, routeId, driverId, stops });
+  }
+  return built;
+}
+
+/**
+ * Runs for each route: two already completed, plus one scheduled today and one
+ * tomorrow. The dashboard's route panel queries SCHEDULED runs with no date
+ * filter, so without these it renders an empty "no runs scheduled" card.
+ */
+async function writeRouteRuns(routes) {
+  let count = 0;
+  for (const route of routes) {
+    if (route.stops.length === 0) continue;
+    const runs = [
+      { key: "past-2", date: daysAgo(5), status: "COMPLETED" },
+      { key: "past-1", date: daysAgo(2), status: "COMPLETED" },
+      { key: "today", date: daysAgo(0), status: "SCHEDULED" },
+      { key: "tomorrow", date: addDays(daysAgo(0), 1), status: "SCHEDULED" },
+    ];
+    for (const run of runs) {
+      const runId = stableId("route-run", `${route.key}:${run.key}`);
+      const done = run.status === "COMPLETED";
+      await prisma.routeRun.create({
+        data: scoped({
+          id: runId,
+          routeId: route.routeId,
+          driverId: route.driverId,
+          status: run.status,
+          scheduledDate: run.date,
+          startTime: "08:00",
+          depotAddress: "4200 S Congress Ave, Austin, TX 78745",
+          startedAt: done ? run.date : null,
+          completedAt: done ? addDays(run.date, 0) : null,
+          createdAt: run.date,
+        }),
+      });
+      await prisma.routeRunStop.createMany({
+        data: route.stops.map((s) =>
+          scoped({
+            id: stableId("route-run-stop", `${route.key}:${run.key}:${s.stopNumber}`),
+            routeRunId: runId,
+            routeStopId: s.id,
+            customerId: s.customerId,
+            customerAddressId: s.customerAddressId,
+            stopNumber: s.stopNumber,
+            status: done ? "COMPLETED" : "PENDING",
+            arrivedAt: done ? run.date : null,
+            completedAt: done ? run.date : null,
+          }),
+        ),
+      });
+      count += 1;
     }
   }
+  return count;
 }
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
@@ -799,6 +863,22 @@ async function clearTransactions() {
   return counts;
 }
 
+/**
+ * Where an order of a given age sits in the pipeline. Old orders are done; the
+ * last few days hold the live workload. A distributor also delivers same-day off
+ * the route, so the newest days carry a mix rather than only unfulfilled orders
+ * — that mix is what puts revenue on today's dashboard.
+ */
+function orderStatusFor(d) {
+  if (d >= 12) return chance(0.05) ? "CANCELLED" : "DELIVERED";
+  if (d >= 7) return chance(0.3) ? "PARTIALLY_DELIVERED" : "DELIVERED";
+  if (d >= 3) return chance(0.4) ? "OUT_FOR_DELIVERY" : "CONFIRMED";
+  if (d >= 1) return chance(0.4) ? "DELIVERED" : "PENDING";
+  if (chance(0.35)) return "DELIVERED";
+  if (chance(0.4)) return "OUT_FOR_DELIVERY";
+  return chance(0.6) ? "PENDING" : "DRAFT";
+}
+
 /** Build every order in memory first, so opening stock can be sized to cover it. */
 function planOrders(customers, products) {
   const sellable = products.filter((p) => Number(p.pricePerUnit) > 0);
@@ -822,24 +902,7 @@ function planOrders(customers, products) {
     const n = d >= 12 ? (chance(0.62) ? 1 : chance(0.35) ? 2 : 0) : chance(0.55) ? 2 : 1;
     for (let k = 0; k < n; k++) {
       const customer = pick(weighted);
-      const status =
-        d >= 12
-          ? chance(0.05)
-            ? "CANCELLED"
-            : "DELIVERED"
-          : d >= 7
-            ? chance(0.3)
-              ? "PARTIALLY_DELIVERED"
-              : "DELIVERED"
-            : d >= 3
-              ? chance(0.4)
-                ? "OUT_FOR_DELIVERY"
-                : "CONFIRMED"
-              : d >= 1
-                ? "PENDING"
-                : chance(0.5)
-                  ? "DRAFT"
-                  : "PENDING";
+      const status = orderStatusFor(d);
 
       const lineCount = randInt(3, 9);
       const chosen = new Map();
@@ -885,6 +948,13 @@ function planOrders(customers, products) {
 
       plans.push({ daysAgo: d, orderDate: date, customer, status, lines });
     }
+  }
+
+  // The dice can leave today with nothing delivered, which shows a demo a $0
+  // revenue tile. Guarantee at least one same-day delivery.
+  const today = plans.filter((p) => p.daysAgo === 0);
+  if (today.length > 0 && !today.some((p) => p.status === "DELIVERED")) {
+    today[0].status = "DELIVERED";
   }
   return plans;
 }
@@ -1090,10 +1160,32 @@ function planInvoiceGroups(order, categories) {
 /** Where an invoice sits in its life: older invoices are settled, recent ones are not. */
 function invoiceOutcome(order) {
   const d = order.daysAgo;
-  if (d >= 30) return chance(0.92) ? "PAID" : "PARTIAL";
-  if (d >= 18) return chance(0.7) ? "PAID" : chance(0.6) ? "PARTIAL" : "SENT";
-  if (d >= 10) return chance(0.4) ? "PAID" : chance(0.5) ? "PARTIAL" : "SENT";
-  return "SENT";
+  // Today's deliveries are paid on the spot, so the dashboard's revenue-today
+  // and payments-received tiles are never a flat zero during a demo.
+  if (d <= 1) return "PAID";
+  if (d >= 35) return chance(0.9) ? "PAID" : "PARTIAL";
+  // Past Net-15 but not yet chased: this band is where a real ledger keeps its
+  // late payers, and it is the only band that can produce an OVERDUE invoice
+  // (younger ones are not due yet, older ones have been collected). Leaving a
+  // good share of it untouched is what fills the AR aging report.
+  if (d >= PAYMENT_TERMS_DAYS + 1) return chance(0.45) ? "PAID" : chance(0.5) ? "OPEN" : "PARTIAL";
+  if (d >= 10) return chance(0.4) ? "PAID" : chance(0.5) ? "PARTIAL" : "OPEN";
+  return chance(0.2) ? "PAID" : "OPEN";
+}
+
+/**
+ * The stored status for an unpaid or part-paid invoice, matching what
+ * invoices.service.ts recomputeStatus would land on: past its due date with a
+ * balance outstanding is OVERDUE, not SENT. The dashboard's overdue tile filters
+ * on the stored status, so getting this right is what makes it show anything.
+ */
+function storedInvoiceStatus(outcome, dueDate) {
+  if (outcome === "PAID") return "PAID";
+  // recomputeStatus checks "any payment at all" BEFORE it checks the due date, so
+  // a part-paid invoice stays PARTIAL even once it is late. Only an untouched
+  // invoice past its due date becomes OVERDUE.
+  if (outcome === "PARTIAL") return "PARTIAL";
+  return dueDate < RUN_AT ? "OVERDUE" : "SENT";
 }
 
 async function writeInvoicesAndPayments(orders, categories) {
@@ -1121,10 +1213,12 @@ async function writeInvoicesAndPayments(orders, categories) {
       const invoiceId = stableId("invoice", invoiceNumber);
       // Siblings share the parent's outcome so a split order is not half paid,
       // half unpaid — which no real payment run would produce.
-      const status = outcome === "PAID" ? "PAID" : outcome === "PARTIAL" ? "PARTIAL" : "SENT";
+      const status = storedInvoiceStatus(outcome, dueDate);
       const sentAt = addDays(issueDate, 1);
-      const paidAt =
-        status === "PAID" ? addDays(issueDate, randInt(3, PAYMENT_TERMS_DAYS + 4)) : null;
+      // Never date a payment in the future: a same-day delivery is paid today,
+      // not on a due date that has not arrived yet.
+      const settleWindow = Math.min(randInt(3, PAYMENT_TERMS_DAYS + 4), Math.max(0, order.daysAgo));
+      const paidAt = status === "PAID" ? addDays(issueDate, settleWindow) : null;
 
       const invoice = await prisma.invoice.create({
         data: scoped({
@@ -1308,9 +1402,15 @@ async function writeOpeningStock(products, orders, supplierIds, operatorId) {
   products.forEach((p, i) => {
     const used = consumed.get(p.id) ?? 0;
     const upb = Number(p.unitsPerBox ?? 0) > 1 ? Number(p.unitsPerBox) : 1;
-    // Headroom in whole boxes so the counts look like real receiving, plus a
-    // deliberate slice of low/out-of-stock rows for the reorder alerts.
-    const headroom = upb * randInt(4, 14);
+    // Headroom in whole boxes, so the counts read like real receiving. A thin
+    // slice is deliberately bought to demand and nothing more, which leaves it
+    // depleted or nearly so once the demo orders draw it down — that is what
+    // gives the low-stock and reorder screens rows to show. Sizing it here
+    // rather than docking the stock afterwards keeps currentStock equal to
+    // (opening − sold), so the movement history still explains the balance.
+    const runsDry = i % 40 === 0;
+    const runsLow = i % 40 === 20;
+    const headroom = runsDry ? 0 : runsLow ? upb : upb * randInt(8, 26);
     const opening = Math.max(upb, Math.ceil((used + headroom) / upb) * upb);
     const unitCost =
       Number(p.averageCost) > 0
@@ -1333,12 +1433,9 @@ async function writeOpeningStock(products, orders, supplierIds, operatorId) {
         createdAt: openedAt,
       }),
     );
-    // Every 29th product is left short so the low-stock and reorder screens have
-    // real rows to show.
-    const shortfall = i % 29 === 0 ? Math.min(opening - used, upb * randInt(1, 3)) : 0;
     stockUpdates.push({
       id: p.id,
-      currentStock: Math.max(0, opening - used - shortfall),
+      currentStock: Math.max(0, opening - used),
       averageCost: unitCost,
     });
   });
@@ -1454,7 +1551,7 @@ async function main() {
   const { operatorId, driverIds } = await ensureStaff();
   const supplierIds = await ensureSuppliers();
   const customers = await ensureCustomers();
-  await ensureRoutes(customers, driverIds);
+  const routes = await ensureRoutes(customers, driverIds);
   console.log(
     `   tenant + config + ${IRS_SYSTEM_CATEGORIES.length} expense categories, 2 staff, ${SUPPLIERS.length} suppliers, ${customers.length} customers, ${ROUTES.length} routes`,
   );
@@ -1478,6 +1575,10 @@ async function main() {
   console.log("📦 Opening stock…");
   const movementCount = await writeOpeningStock(products, orders, supplierIds, operatorId);
   console.log(`   ${movementCount} opening PURCHASE movements`);
+
+  console.log("🚚 Route runs…");
+  const runCount = await writeRouteRuns(routes);
+  console.log(`   ${runCount} runs across ${routes.length} routes`);
 
   console.log("💵 Invoices + payments…");
   const stats = await writeInvoicesAndPayments(orders, categories);
