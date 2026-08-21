@@ -74,6 +74,9 @@ export interface BuyerOrder {
     deliveredQty: number;
     boxes: number | null;
     pieces: number | null;
+    /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
+     *  boxed line). Drives the "{n} free" label and the edit preview's subtotal. */
+    promoFreeUnits?: number | null;
     product: { id: string; name: string; unit: string; unitsPerBox?: number | null };
   }>;
   invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
@@ -358,7 +361,7 @@ export interface BuyerPromotion {
   id: string;
   name: string;
   bannerText: string | null;
-  type: "PERCENT" | "FIXED" | "QTY_BREAK";
+  type: "PERCENT" | "FIXED" | "QTY_BREAK" | "BUY_N_GET_M";
   value: number;
   minQty: number | null;
   scope: "ALL" | "CATEGORY" | "PRODUCTS";
@@ -543,6 +546,9 @@ export interface BuyerInvoiceDetail {
     discount: number;
     subtotal: number;
     priceType: string;
+    /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
+     *  label so a reduced subtotal doesn't read as a pricing error. */
+    promoFreeUnits?: number | null;
   }>;
   payments: Array<{
     id: string;

@@ -35,6 +35,9 @@ export interface InvoiceTotalsLine {
   discount?: number;
   /** Tax FRACTION for this line (0.08 = 8%), applied to the post-discount subtotal. */
   taxRate?: number;
+  /** BUY_N_GET_M: whole free selling units, subtracted BEFORE pricing (exact —
+   *  never a rounded net unit price). 0/absent for every other line. */
+  freeUnits?: number;
 }
 
 export interface InvoiceTotals {
@@ -65,6 +68,7 @@ export function computeInvoiceTotals(input: {
       boxes: line.boxes ?? null,
       pieces: line.pieces ?? null,
       unitsPerBox: line.unitsPerBox ?? null,
+      freeUnits: line.freeUnits ?? 0,
     });
     const lineSub = roundMoney(before - (line.discount ?? 0));
     if (lineSub < 0) hasNegativeLine = true;
@@ -76,6 +80,31 @@ export function computeInvoiceTotals(input: {
   const taxTotal = input.isTaxExempt ? 0 : roundMoney(taxAccum);
   const total = roundMoney(subtotal - discount + shippingFee + taxTotal);
   return { subtotal, taxTotal, discount, shippingFee, total, hasNegativeLine };
+}
+
+/**
+ * BUY_N_GET_M free units for a line the operator is EDITING, rescaled to the
+ * quantity now on screen. Mirrors web's invoice edit page (and the order engine's
+ * `rescaleBogoFreeUnits` fallback): the snapshot was earned at `baseUnits` whole
+ * selling units, so a shrunk line earns proportionally fewer and a grown one never
+ * earns MORE than was already agreed. Capped at units − 1 — the buyer always pays
+ * the N in every (N + M), so no edit can make a line entirely free. Loose pieces
+ * never count: a boxed line's units are its BOXES.
+ */
+export function editedLineFreeUnits(line: {
+  promoFreeUnits?: number | null;
+  /** Whole selling units the snapshot was earned at (defaults to the line's own). */
+  promoBaseUnits?: number | null;
+  boxes?: number | null;
+  qty: number;
+}): number {
+  const stored = Math.max(0, Math.trunc(Number(line.promoFreeUnits ?? 0) || 0));
+  if (stored <= 0) return 0;
+  const units = Math.trunc(Number(line.boxes != null ? line.boxes : line.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(Number(line.promoBaseUnits ?? units) || 0));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
 }
 
 // ─── DTO serialisation ────────────────────────────────────────────────────────
@@ -94,6 +123,8 @@ export interface BuilderInvoiceLine {
    *  (apps/web/app/(dashboard)/invoices/new/page.tsx:992). */
   taxable?: boolean;
   notes?: string;
+  /** BUY_N_GET_M snapshot carried from the order line — see InvoiceTotalsLine. */
+  promoFreeUnits?: number;
 }
 
 /**
@@ -119,6 +150,11 @@ export function invoiceLineDto(
     ...(line.productId && upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
     ...(line.productId && upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
     ...(line.discount && line.discount > 0 ? { discount: line.discount } : {}),
+    // MONEY: the PATCH path replaces every line, so the BOGO snapshot must travel
+    // or an agreed 12-boxes-2-free line re-prices from $350 to $420 on save.
+    ...(line.promoFreeUnits && line.promoFreeUnits > 0
+      ? { promoFreeUnits: Math.trunc(line.promoFreeUnits) }
+      : {}),
     taxRate: line.taxable ? taxRateFraction : 0,
     ...(notes ? { notes } : {}),
   };

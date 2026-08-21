@@ -53,6 +53,16 @@ function fmtWindow(startsAt: string, endsAt: string): string {
   return `${s} → ${e}`;
 }
 
+/** "6th" from 6, "21st" from 21, etc. — for the BUY_N_GET_M live preview sentence. */
+function ordinalSuffix(n: number): string {
+  const j = n % 10;
+  const k = n % 100;
+  if (j === 1 && k !== 11) return `${n}st`;
+  if (j === 2 && k !== 12) return `${n}nd`;
+  if (j === 3 && k !== 13) return `${n}rd`;
+  return `${n}th`;
+}
+
 const STATUS_BADGE: Record<
   PromotionStatus,
   { variant: "success" | "warning" | "neutral" | "info"; label: string }
@@ -67,6 +77,7 @@ const TYPE_OPTIONS: { value: PromotionType; label: string }[] = [
   { value: "PERCENT", label: "Percent off" },
   { value: "FIXED", label: "Fixed $ off / unit" },
   { value: "QTY_BREAK", label: "Quantity break (% at threshold)" },
+  { value: "BUY_N_GET_M", label: "Buy N get M free" },
 ];
 
 const SCOPE_OPTIONS: { value: PromotionScope; label: string }[] = [
@@ -248,6 +259,16 @@ function PromotionFormModal({
     if (form.type === "QTY_BREAK" && !(parseInt(form.minQty, 10) > 0)) {
       return setError("Quantity-break promotions need a minimum quantity ≥ 1.");
     }
+    if (form.type === "BUY_N_GET_M") {
+      const n = form.minQty.trim();
+      const m = form.value.trim();
+      if (!/^\d+$/.test(n) || parseInt(n, 10) < 1) {
+        return setError("Buy quantity (N) must be a whole number ≥ 1.");
+      }
+      if (!/^\d+$/.test(m) || parseInt(m, 10) < 1) {
+        return setError("Free quantity (M) must be a whole number ≥ 1.");
+      }
+    }
     if (form.scope === "CATEGORY" && !form.category.trim()) {
       return setError("Pick a category for a category-scoped promotion.");
     }
@@ -264,7 +285,10 @@ function PromotionFormModal({
       bannerText: form.bannerText.trim() || undefined,
       type: form.type,
       value,
-      minQty: form.type === "QTY_BREAK" ? parseInt(form.minQty, 10) : undefined,
+      minQty:
+        form.type === "QTY_BREAK" || form.type === "BUY_N_GET_M"
+          ? parseInt(form.minQty, 10)
+          : undefined,
       scope: form.scope,
       category: form.scope === "CATEGORY" ? form.category.trim() : undefined,
       // Always send the array so switching scope away from PRODUCTS clears the
@@ -282,6 +306,13 @@ function PromotionFormModal({
   };
 
   const isPercentLike = form.type === "PERCENT" || form.type === "QTY_BREAK";
+  const isBogo = form.type === "BUY_N_GET_M";
+  const bogoN = parseInt(form.minQty, 10);
+  const bogoM = parseInt(form.value, 10);
+  const bogoPreview =
+    Number.isInteger(bogoN) && bogoN >= 1 && Number.isInteger(bogoM) && bogoM >= 1
+      ? `Buy ${bogoN}, get ${bogoM} free — every ${ordinalSuffix(bogoN + bogoM)} unit is free.`
+      : "Enter a whole-number buy quantity and free quantity to preview the deal.";
 
   return (
     <Modal
@@ -331,7 +362,7 @@ function PromotionFormModal({
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className={cn("grid gap-4", isBogo ? "grid-cols-1" : "grid-cols-2")}>
           <div>
             <label className="mb-1 block text-sm font-medium text-navy">Type *</label>
             <Select
@@ -340,31 +371,33 @@ function PromotionFormModal({
               onChange={(e) => set("type", e.target.value as PromotionType)}
             />
           </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-navy">
-              {isPercentLike ? "Percent off *" : "Amount off / unit *"}
-            </label>
-            <div className="flex items-center">
-              {!isPercentLike && (
-                <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
-                  $
-                </span>
-              )}
-              <input
-                type="number"
-                min="0"
-                step={isPercentLike ? "1" : "0.01"}
-                max={isPercentLike ? "100" : undefined}
-                value={form.value}
-                onChange={(e) => set("value", e.target.value)}
-                className={cn(
-                  "w-full border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 border-surface-border",
-                  isPercentLike ? "rounded" : "rounded-r",
+          {!isBogo && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">
+                {isPercentLike ? "Percent off *" : "Amount off / unit *"}
+              </label>
+              <div className="flex items-center">
+                {!isPercentLike && (
+                  <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">
+                    $
+                  </span>
                 )}
-              />
-              {isPercentLike && <span className="ml-2 text-sm text-navy/60">%</span>}
+                <input
+                  type="number"
+                  min="0"
+                  step={isPercentLike ? "1" : "0.01"}
+                  max={isPercentLike ? "100" : undefined}
+                  value={form.value}
+                  onChange={(e) => set("value", e.target.value)}
+                  className={cn(
+                    "w-full border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500 border-surface-border",
+                    isPercentLike ? "rounded" : "rounded-r",
+                  )}
+                />
+                {isPercentLike && <span className="ml-2 text-sm text-navy/60">%</span>}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {form.type === "QTY_BREAK" && (
@@ -381,6 +414,44 @@ function PromotionFormModal({
             />
             <p className="mt-0.5 text-xs text-navy/60">
               Discount applies only to lines at or above this piece count.
+            </p>
+          </div>
+        )}
+
+        {isBogo && (
+          <div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Buy quantity (N) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.minQty}
+                  onChange={(e) => set("minQty", e.target.value)}
+                  placeholder="e.g. 5"
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-navy">
+                  Free quantity (M) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.value}
+                  onChange={(e) => set("value", e.target.value)}
+                  placeholder="e.g. 1"
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            </div>
+            <p className="mt-2 rounded-lg border border-brand-100 bg-brand-50/60 px-3 py-2 text-xs text-navy/80">
+              {bogoPreview}
             </p>
           </div>
         )}

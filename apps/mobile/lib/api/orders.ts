@@ -34,6 +34,12 @@ export interface OrderItem {
   /** Boxed split persisted server-side; boxes==null means qty is in selling units. */
   boxes?: number | null;
   pieces?: number | null;
+  /**
+   * BUY_N_GET_M snapshot: whole free SELLING units on this line (BOXES for a
+   * boxed line). The stored `subtotal` already nets them off — any local
+   * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
+   */
+  promoFreeUnits?: number | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */

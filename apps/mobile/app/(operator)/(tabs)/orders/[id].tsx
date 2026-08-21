@@ -43,6 +43,7 @@ import {
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm } from "../../../../lib/confirm";
 import { formatQtySplit } from "../../../../lib/pricing";
+import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import {
   ACTIVATION_BUDGET_MS,
   canShareFilesHere,
@@ -790,6 +791,13 @@ export default function OrderDetailScreen() {
                         {qtyLine} · {formatCurrency(li.unitPrice)}
                         {isBoxed ? ` / box of ${upb}` : ""}
                       </Text>
+                      {/* BUY_N_GET_M: name the free units, or the reduced line
+                          total reads as a pricing error (web parity). */}
+                      {freeUnitsLabel(li.promoFreeUnits) ? (
+                        <Text style={styles.itemFreeLabel}>
+                          {freeUnitsLabel(li.promoFreeUnits)}
+                        </Text>
+                      ) : null}
                       {li.notes?.trim() ? (
                         <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
                           {li.notes}
@@ -1169,6 +1177,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   invoiceRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   invoiceNumber: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   itemTotal: {

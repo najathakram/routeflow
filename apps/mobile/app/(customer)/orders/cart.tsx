@@ -10,6 +10,7 @@ import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer"
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
 
 function formatDateInput(raw: string): string {
@@ -135,6 +136,7 @@ export default function CartScreen() {
                   const original = line?.original ?? null;
                   const lineTotal = line?.lineSubtotal ?? 0;
                   const promoted = original != null && original > net;
+                  const freeLabel = freeUnitsLabel(line?.freeUnits);
                   return (
                     <View
                       key={item.productId}
@@ -159,6 +161,7 @@ export default function CartScreen() {
                           </Text>
                           {boxed ? " / box" : item.unit ? ` / ${item.unit}` : ""}
                         </Text>
+                        {freeLabel ? <Text style={styles.itemFreeLabel}>{freeLabel}</Text> : null}
                       </View>
                       <View style={styles.qtyRow}>
                         <Pressable
@@ -344,6 +347,12 @@ const styles = StyleSheet.create({
   itemPrice: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemPriceWas: { color: ios.label3, textDecorationLine: "line-through" },
   itemPriceNet: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   qtyRow: {
     flexDirection: "row",
     alignItems: "center",

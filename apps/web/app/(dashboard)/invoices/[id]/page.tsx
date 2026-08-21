@@ -2220,6 +2220,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               pieces: item.pieces,
                             })}
                           </span>
+                          {/* BUY_N_GET_M: name the free units, or the reduced
+                              subtotal reads as a pricing error. */}
+                          {Number(item.promoFreeUnits ?? 0) > 0 && (
+                            <p className="mt-0.5 text-[10px] font-medium text-amber-700">
+                              {Number(item.promoFreeUnits)} free
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           {item.priceType === "SPECIAL" ? (

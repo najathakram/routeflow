@@ -18,6 +18,21 @@ export class PromotionsService {
     if (dto.type === "QTY_BREAK" && !(dto.minQty && dto.minQty > 0)) {
       throw new BadRequestException("QTY_BREAK promotions require a minQty >= 1");
     }
+    // BUY_N_GET_M ("buy 5, get the 6th free") reuses minQty/value as N/M — no
+    // dedicated columns. Both must be positive integers: a fractional or <1 N or M
+    // makes floor(qtyUnits / (N+M)) * M nonsensical (divide-by-tiny-N or no-op M).
+    if (dto.type === "BUY_N_GET_M") {
+      if (!(Number.isInteger(dto.minQty) && (dto.minQty as number) >= 1)) {
+        throw new BadRequestException(
+          "Buy N Get M promotions require an integer buy quantity (minQty) >= 1",
+        );
+      }
+      if (!(Number.isInteger(dto.value) && (dto.value as number) >= 1)) {
+        throw new BadRequestException(
+          "Buy N Get M promotions require an integer free quantity (value) >= 1",
+        );
+      }
+    }
     if (dto.scope === PromotionScope.CATEGORY && !dto.category) {
       throw new BadRequestException("CATEGORY-scoped promotions require a category");
     }

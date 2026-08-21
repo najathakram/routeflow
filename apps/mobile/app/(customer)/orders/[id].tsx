@@ -26,6 +26,7 @@ import {
   canReorder,
   trackingStepIndex,
 } from "../../../lib/order-tracking-logic";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 
@@ -313,6 +314,13 @@ export default function CustomerOrderDetailScreen() {
                         : `${Number(item.qty)} × $${Number(item.unitPrice).toFixed(2)}`}
                       {item.product?.unit ? ` / ${item.product.unit}` : ""}
                     </Text>
+                    {/* BUY_N_GET_M: name the free units, or the reduced line
+                        total reads as a pricing error (web parity). */}
+                    {freeUnitsLabel(item.promoFreeUnits) ? (
+                      <Text style={styles.itemFreeLabel}>
+                        {freeUnitsLabel(item.promoFreeUnits)}
+                      </Text>
+                    ) : null}
                   </View>
                   <Text style={styles.itemTotal}>
                     $
@@ -510,6 +518,12 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

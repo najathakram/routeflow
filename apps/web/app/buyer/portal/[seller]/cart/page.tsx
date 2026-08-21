@@ -92,16 +92,22 @@ export default function BuyerCartPage() {
       const unresolved = meta == null;
       const base = meta?.buyerPrice ?? 0;
       const unitsPerBox = item.unitsPerBox ?? meta?.unitsPerBox ?? null;
-      const qtyPieces = normalizeBoxesPieces({
+      const norm = normalizeBoxesPieces({
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
         qty: item.qty,
         unitsPerBox,
-      }).qty;
+      });
+      const qtyPieces = norm.qty;
+      // Whole selling units on the line — boxes for a boxed line (mixed
+      // lines count ONLY full boxes; loose pieces never earn a free unit),
+      // qty itself for a piece line. Feeds the BUY_N_GET_M gate.
+      const qtyUnits = norm.boxes != null ? norm.boxes : norm.qty;
       const promo = applyBestPromotion(base, promoRules, {
         productId: item.productId,
         category: meta?.category ?? null,
         qtyPieces,
+        qtyUnits,
       });
       const lineArgs = {
         qty: item.qty,
@@ -110,15 +116,19 @@ export default function BuyerCartPage() {
         unitsPerBox,
       };
       const net = promo.unitPrice;
-      const original = promo.originalPrice; // null when no promo applied
+      const original = promo.originalPrice; // null when no promo applied (incl. BUY_N_GET_M)
+      const freeUnits = promo.freeUnits ?? 0;
       return {
         item,
         base,
         net,
         original,
         unresolved,
+        freeUnits,
         appliedPromoId: promo.appliedPromoId,
-        lineSubtotal: computeLineSubtotal({ unitPrice: net, ...lineArgs }),
+        // freeUnits reduces the SUBTOTAL (whole selling units), never the
+        // unit price — never re-derive qty × unitPrice for this line.
+        lineSubtotal: computeLineSubtotal({ unitPrice: net, ...lineArgs, freeUnits }),
         lineOriginalSubtotal: computeLineSubtotal({ unitPrice: original ?? net, ...lineArgs }),
       };
     });
@@ -310,6 +320,7 @@ export default function BuyerCartPage() {
                   const priced = lineByProduct.get(item.productId);
                   const price = priced?.net ?? 0;
                   const original = priced?.original ?? null;
+                  const freeUnits = priced?.freeUnits ?? 0;
                   return (
                     <tr key={item.productId} className="hover:bg-surface-raised/50">
                       <td className="px-4 py-3">
@@ -329,6 +340,11 @@ export default function BuyerCartPage() {
                           <div>
                             <p className="text-sm font-medium text-navy">{item.name}</p>
                             <p className="text-xs text-navy/70">per {item.unit}</p>
+                            {freeUnits > 0 && (
+                              <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                                {freeUnits} free
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>

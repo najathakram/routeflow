@@ -165,6 +165,10 @@ export interface AdminOrder {
     /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
     priceType?: string;
     subtotal: number;
+    /** BUY_N_GET_M snapshot: whole free SELLING units (BOXES on a boxed line).
+     *  `subtotal` already nets them off — an edit preview that recomputes the
+     *  line MUST subtract them too or it shows the line at full price. */
+    promoFreeUnits?: number | null;
     status: string;
     overrideReason?: string | null;
     /** Per-line note — carried onto the invoice line (buyer-visible). */
@@ -388,6 +392,10 @@ export interface AdminInvoice {
     taxRate?: number | null;
     /** Per-line note carried from the order line (buyer-visible). */
     notes?: string | null;
+    /** BUY_N_GET_M snapshot: whole free selling units on this line. MUST be
+     *  round-tripped by an items PATCH — the server replaces every line, so
+     *  dropping it re-prices an agreed BOGO line to full. */
+    promoFreeUnits?: number | null;
     /** Product this line was cut from — needed to round-trip an items PATCH. */
     productId?: string | null;
   }>;
