@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import {
   computeLineSubtotal,
   roundMoney,
@@ -410,7 +412,7 @@ const promo = (
 });
 
 describe("promotionMatchesProduct — scope matching", () => {
-  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1 };
+  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1, qtyUnits: 1 };
   it("ALL matches every product", () => {
     expect(promotionMatchesProduct(promo({ id: "a", type: "PERCENT", scope: "ALL" }), ctx)).toBe(
       true,
@@ -455,11 +457,17 @@ describe("promotionMatchesProduct — scope matching", () => {
 
 describe("applyBestPromotion", () => {
   const ctx = (
-    over: Partial<{ productId: string; category: string | null; qtyPieces: number }> = {},
+    over: Partial<{
+      productId: string;
+      category: string | null;
+      qtyPieces: number;
+      qtyUnits: number;
+    }> = {},
   ) => ({
     productId: "p1",
     category: "Beverages",
     qtyPieces: 1,
+    qtyUnits: 1,
     ...over,
   });
 
@@ -517,6 +525,7 @@ describe("applyBestPromotion", () => {
       unitPrice: 50,
       originalPrice: null,
       appliedPromoId: null,
+      freeUnits: 0,
     });
     // Scope mismatch.
     const scoped = applyBestPromotion(
@@ -530,6 +539,7 @@ describe("applyBestPromotion", () => {
       unitPrice: 50,
       originalPrice: null,
       appliedPromoId: null,
+      freeUnits: 0,
     });
   });
 
@@ -542,6 +552,7 @@ describe("applyBestPromotion", () => {
       productId: "p1",
       category: "Beverages",
       qtyPieces: norm.qty,
+      qtyUnits: norm.boxes ?? norm.qty,
     });
     expect(r.unitPrice).toBe(35);
     const subtotal = computeLineSubtotal({
@@ -554,6 +565,234 @@ describe("applyBestPromotion", () => {
     expect(subtotal).toBe(70); // 2 boxes × $35.00
     // Guard the classic over-charge: net-per-piece × 12 pieces.
     expect(subtotal).not.toBe(420); // $35 × 12
+  });
+
+  it("REGRESSION PIN: an existing PERCENT scenario is bit-for-bit unchanged after adding BUY_N_GET_M", () => {
+    // Re-runs the exact scenario from "picks the promo that yields the lowest net
+    // price" above — locks that the savings-based comparison never perturbs
+    // legacy PERCENT/FIXED/QTY_BREAK output.
+    const promos = [
+      promo({ id: "a", type: "PERCENT", value: 10 }),
+      promo({ id: "b", type: "FIXED", value: 25 }),
+      promo({ id: "c", type: "PERCENT", value: 5 }),
+    ];
+    expect(applyBestPromotion(100, promos, ctx({ qtyUnits: 7 }))).toEqual({
+      unitPrice: 75,
+      originalPrice: 100,
+      appliedPromoId: "b",
+      freeUnits: 0,
+    });
+  });
+
+  it("REGRESSION PIN: with zero whole selling units the deepest discount still wins", () => {
+    // A boxed line holding only loose pieces normalizes to boxes = 0, so every
+    // price promo's dollar saving is $0. The winner must still be the LOWEST net
+    // price — never whichever promo id happens to sort first.
+    const promos = [
+      promo({ id: "aaa", type: "PERCENT", value: 5 }), // → 95
+      promo({ id: "zzz", type: "PERCENT", value: 50 }), // → 50
+    ];
+    expect(applyBestPromotion(100, promos, ctx({ qtyPieces: 5, qtyUnits: 0 }))).toEqual({
+      unitPrice: 50,
+      originalPrice: 100,
+      appliedPromoId: "zzz",
+      freeUnits: 0,
+    });
+  });
+});
+
+// ─── BUY_N_GET_M ("buy N get M free") ─────────────────────────────────────────
+
+describe("promoBogoFreeUnits (via applyBestPromotion) — the owner's exact table", () => {
+  const bogo = (id: string, n: number, m: number) =>
+    promo({ id, type: "BUY_N_GET_M", minQty: n, value: m });
+  const ctxUnits = (qtyUnits: number) => ({
+    productId: "p1",
+    category: "Beverages",
+    qtyPieces: qtyUnits,
+    qtyUnits,
+  });
+
+  it.each([
+    [5, 0],
+    [6, 1],
+    [11, 1],
+    [12, 2],
+    [18, 3],
+  ])("N=5,M=1: %i whole units → %i free", (qtyUnits, expectedFree) => {
+    const r = applyBestPromotion(35, [bogo("a", 5, 1)], ctxUnits(qtyUnits));
+    expect(r.freeUnits).toBe(expectedFree);
+    if (expectedFree > 0) {
+      expect(r.appliedPromoId).toBe("a");
+      expect(r.unitPrice).toBe(35); // unit price is NEVER faked for this type
+      expect(r.originalPrice).toBeNull(); // no strikethrough — it's not a net-price promo
+    } else {
+      expect(r.appliedPromoId).toBeNull();
+    }
+  });
+
+  it("PIECES NEVER COUNT: a boxed line's loose pieces never earn or receive free units", () => {
+    // 5 whole boxes + 40 loose pieces (way more than a 6th box) — still 0 free,
+    // because ctx.qtyUnits is whole SELLING units only (boxes), never pieces.
+    const r5 = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 5 * 24 + 40, // pieces the caller would compute — irrelevant here
+      qtyUnits: 5, // 5 whole boxes; the 40 loose pieces never count
+    });
+    expect(r5.freeUnits).toBe(0);
+    expect(r5.appliedPromoId).toBeNull();
+
+    // The 6th WHOLE box (not more loose pieces) is what earns the free unit.
+    const r6 = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 6 * 24,
+      qtyUnits: 6,
+    });
+    expect(r6.freeUnits).toBe(1);
+    expect(r6.appliedPromoId).toBe("a");
+  });
+
+  it("EXACTNESS: $35 base × 12 boxes, 2 free, is exactly $350.00 — never a rounded net-unit-price", () => {
+    // The naive (and WRONG) approach nets 35 × 5/6 = 29.1667 → rounds to 29.17,
+    // then 29.17 × 12 = 350.04 — a 4-cent drift. The correct mechanic keeps the
+    // true unitPrice and subtracts whole free units from the SUBTOTAL instead.
+    const r = applyBestPromotion(35, [bogo("a", 5, 1)], {
+      productId: "p1",
+      category: "Beverages",
+      qtyPieces: 12,
+      qtyUnits: 12,
+    });
+    expect(r.freeUnits).toBe(2);
+    expect(r.unitPrice).toBe(35); // base, unrounded-down, never a fake net price
+    const naiveDriftedNet = roundMoney((35 * 5) / 6); // 29.17 — the impossible drift value
+    expect(r.unitPrice).not.toBe(naiveDriftedNet);
+
+    const subtotal = computeLineSubtotal({
+      unitPrice: r.unitPrice,
+      qty: 12,
+      boxes: 12,
+      pieces: 0,
+      unitsPerBox: 6,
+      freeUnits: r.freeUnits,
+    });
+    expect(subtotal).toBe(350);
+    expect(subtotal).not.toBe(roundMoney(naiveDriftedNet * 12)); // 350.04 — guard the drift bug
+  });
+
+  it("computeLineSubtotal(freeUnits) clamps to the available whole units — never negative", () => {
+    // Only 3 boxes on the line; freeUnits (a stale/over-generous snapshot) can
+    // never take the subtotal below 0.
+    expect(
+      computeLineSubtotal({
+        unitPrice: 35,
+        qty: 18,
+        boxes: 3,
+        pieces: 0,
+        unitsPerBox: 6,
+        freeUnits: 9,
+      }),
+    ).toBe(0);
+  });
+
+  it("computeLineSubtotal defaults freeUnits to 0 — every existing call site is unaffected", () => {
+    expect(computeLineSubtotal({ unitPrice: 220, qty: 2 })).toBe(440);
+    expect(
+      computeLineSubtotal({ unitPrice: 220, qty: 22, boxes: 2, pieces: 0, unitsPerBox: 11 }),
+    ).toBe(440);
+  });
+
+  it("computeLineSubtotal(freeUnits) on a non-boxed (piece-priced) line subtracts whole pieces", () => {
+    // Piece product: 6 pieces @ $2, N=5 M=1 → 1 free piece → 5 × $2 = $10.
+    expect(computeLineSubtotal({ unitPrice: 2, qty: 6, freeUnits: 1 })).toBe(10);
+  });
+
+  it("best-of vs a PERCENT promo — BOTH directions, savings-based (not net-price-based)", () => {
+    const ctxUnits12 = { productId: "p1", category: "Beverages", qtyPieces: 12, qtyUnits: 12 };
+    // Direction 1: BOGO (saves $70 = 2 × $35) beats a modest 10% PERCENT (saves $42 = $3.50 × 12).
+    const beatsPercent = applyBestPromotion(
+      35,
+      [bogo("bogo", 5, 1), promo({ id: "pct", type: "PERCENT", value: 10 })],
+      ctxUnits12,
+    );
+    expect(beatsPercent.appliedPromoId).toBe("bogo");
+    expect(beatsPercent.freeUnits).toBe(2);
+    expect(beatsPercent.unitPrice).toBe(35);
+
+    // Direction 2: a steep 50% PERCENT (saves $210 = $17.50 × 12) beats the same BOGO ($70).
+    const percentWins = applyBestPromotion(
+      35,
+      [bogo("bogo", 5, 1), promo({ id: "pct", type: "PERCENT", value: 50 })],
+      ctxUnits12,
+    );
+    expect(percentWins.appliedPromoId).toBe("pct");
+    expect(percentWins.freeUnits).toBe(0);
+    expect(percentWins.unitPrice).toBe(17.5);
+    expect(percentWins.originalPrice).toBe(35);
+  });
+
+  it("value/minQty validation guards: non-integer or < 1 N/M is ignored, never a crash", () => {
+    const cases: PromotionRule[] = [
+      bogo("a", 0, 1), // N < 1
+      bogo("a", 5, 0), // M < 1
+      bogo("a", 5.5, 1), // N non-integer
+      bogo("a", 5, 1.5), // M non-integer
+      bogo("a", -5, 1), // N negative
+      promo({ id: "a", type: "BUY_N_GET_M", minQty: null, value: 1 }), // N missing
+    ];
+    for (const rule of cases) {
+      expect(() => applyBestPromotion(35, [rule], ctxUnits(12))).not.toThrow();
+      const r = applyBestPromotion(35, [rule], ctxUnits(12));
+      expect(r.appliedPromoId).toBeNull();
+      expect(r.freeUnits).toBe(0);
+      expect(r.unitPrice).toBe(35);
+    }
+  });
+
+  it("respects scope — a BUY_N_GET_M promo scoped to another product never applies", () => {
+    const scoped = promo({
+      id: "a",
+      type: "BUY_N_GET_M",
+      minQty: 5,
+      value: 1,
+      scope: "PRODUCTS",
+      productIds: ["other"],
+    });
+    const r = applyBestPromotion(35, [scoped], ctxUnits(12));
+    expect(r.appliedPromoId).toBeNull();
+    expect(r.freeUnits).toBe(0);
+  });
+});
+
+// ─── Mirror parity — the marked Promotions block stays byte-identical ─────────
+
+describe("mirror parity — the Promotions block is byte-identical across api/web/mobile", () => {
+  const START = "// ─── Promotions (P5-04, + BUY_N_GET_M)";
+  const END = "// ─── Price-override direction:";
+
+  function extractPromotionsBlock(filePath: string): string {
+    const src = fs.readFileSync(filePath, "utf8");
+    const start = src.indexOf(START);
+    const end = src.indexOf(END, start);
+    if (start === -1 || end === -1) {
+      throw new Error(`Promotions marker block not found in ${filePath}`);
+    }
+    return src.slice(start, end);
+  }
+
+  const apiBlock = extractPromotionsBlock(path.join(__dirname, "pricing.ts"));
+
+  it("apps/web/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
+    const webBlock = extractPromotionsBlock(path.join(__dirname, "../../../web/lib/pricing.ts"));
+    expect(webBlock).toBe(apiBlock);
+  });
+
+  it("apps/mobile/lib/pricing.ts matches apps/api/src/common/pricing.ts", () => {
+    const mobileBlock = extractPromotionsBlock(
+      path.join(__dirname, "../../../mobile/lib/pricing.ts"),
+    );
+    expect(mobileBlock).toBe(apiBlock);
   });
 });
 

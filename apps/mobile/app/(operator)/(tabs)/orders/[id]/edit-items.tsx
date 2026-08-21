@@ -35,6 +35,8 @@ import {
   priceForMarginFloor,
   roundMoney,
 } from "../../../../../lib/pricing";
+import { editedLineFreeUnits } from "../../../../../lib/invoice-totals";
+import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { incrementLine, incrementLinePiece, setLineUnits } from "../../../../../lib/sale-line";
 import { buildSubstituteLine } from "../../../../../lib/substitute-line";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../../lib/wedge-scan";
@@ -107,6 +109,14 @@ type DraftItem = {
   /** UI-only qty entry mode for a case-packed line. NEVER submitted — the
    *  diff always carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /**
+   * BUY_N_GET_M snapshot on the loaded line + the whole selling-unit count it
+   * was earned at. The preview MUST net these off or a BOGO line shows at full
+   * price and disagrees with both the stored subtotal and what the server
+   * re-derives on save (mirrors web's order edit builder).
+   */
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
 };
 
 /**
@@ -137,6 +147,22 @@ function toNumber(v: number | string | null | undefined): number {
     return Number.isFinite(n) ? n : 0;
   }
   return 0;
+}
+
+/**
+ * BUY_N_GET_M free units for THIS draft row, rescaled to the qty now on screen
+ * (shared helper, same rule as the invoice edit form and the server's
+ * `rescaleBogoFreeUnits` fallback). A pending SUBSTITUTION earns nothing — the
+ * snapshot belongs to the product being replaced, and undoing it restores them.
+ */
+function draftFreeUnits(item: DraftItem): number {
+  if (item.substituteProductId) return 0;
+  return editedLineFreeUnits({
+    promoFreeUnits: item.promoFreeUnits,
+    promoBaseUnits: item.promoBaseUnits,
+    boxes: item.boxes ?? null,
+    qty: item.qty,
+  });
 }
 
 /**
@@ -315,6 +341,12 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         // AdminOrder's TS type doesn't declare them yet (out of scope here).
         averageCost: product.averageCost ?? null,
         category: product.category ?? null,
+        // BUY_N_GET_M: the snapshot plus the selling-unit count it was earned
+        // at, so a qty edit rescales it exactly like the server does on save.
+        promoFreeUnits: li.promoFreeUnits ?? null,
+        promoBaseUnits: li.promoFreeUnits
+          ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+          : null,
       };
     }
     setDraft(next);
@@ -340,6 +372,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
         boxes: it.boxes ?? null,
         pieces: it.pieces ?? null,
         unitsPerBox: it.unitsPerBox ?? null,
+        // BUY_N_GET_M: free whole units come off before pricing, exactly like
+        // the server — otherwise the preview bills an agreed 12-boxes-2-free
+        // line at full price and disagrees with what the save writes back.
+        freeUnits: draftFreeUnits(it),
       });
     }
     for (const u of unlisted) {
@@ -999,12 +1035,15 @@ function DraftItemCard({
   const isBoxed = upb > 1 && canSplitBoxes;
   const sellBy = item.sellBy ?? "case";
   const qty = effectiveQty(item, item.unitsPerBox);
+  const freeUnits = draftFreeUnits(item);
+  const freeLabel = freeUnitsLabel(freeUnits);
   const lineTotal = computeLineSubtotal({
     unitPrice: item.unitPrice,
     qty,
     boxes: item.boxes ?? null,
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
+    freeUnits,
   });
 
   // Live cost/margin hint (P10-POS-1) — hides entirely when cost is unknown
@@ -1079,6 +1118,9 @@ function DraftItemCard({
               </View>
             )}
           </View>
+          {/* BUY_N_GET_M: name the free units, or the reduced line total reads
+              as a pricing error (mirrors web's order/invoice line rows). */}
+          {freeLabel ? <Text style={styles.freeLabel}>{freeLabel}</Text> : null}
         </View>
         <Text style={styles.cardTotal}>${lineTotal.toFixed(2)}</Text>
       </View>
@@ -1926,6 +1968,12 @@ const styles = StyleSheet.create({
   marginHint: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
+  },
+  freeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
   },
   floorFixBtn: {
     borderWidth: StyleSheet.hairlineWidth,

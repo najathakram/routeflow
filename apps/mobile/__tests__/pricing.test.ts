@@ -159,11 +159,12 @@ describe("applyBestPromotion (mobile mirror — must match the server to the cen
     productIds: null,
     ...o,
   });
-  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1 };
+  const ctx = { productId: "p1", category: "Beverages", qtyPieces: 1, qtyUnits: 1 };
 
   it("PERCENT nets the price + records the strikethrough original", () => {
     const r = applyBestPromotion(100, [p({ id: "a", type: "PERCENT", value: 10 })], ctx);
-    expect(r).toEqual({ unitPrice: 90, originalPrice: 100, appliedPromoId: "a" });
+    // Price promos carry freeUnits: 0 — only BUY_N_GET_M ever gives units away.
+    expect(r).toEqual({ unitPrice: 90, originalPrice: 100, appliedPromoId: "a", freeUnits: 0 });
   });
 
   it("QTY_BREAK gates on the piece threshold", () => {

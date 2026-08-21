@@ -38,6 +38,10 @@ export interface InvoiceItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Recompute this line with THIS, never the live product. */
   unitsPerBox?: number | null;
+  /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
+   *  boxed line). MUST be round-tripped by the edit form — the PATCH items path
+   *  replaces every line, and dropping it re-prices the line to full. */
+  promoFreeUnits?: number | null;
   /** Per-line note carried from the order line (buyer-visible; prints on the PDF). */
   notes?: string | null;
   /** Provenance back to the source order line (null for manual/freeform lines). */
@@ -232,6 +236,8 @@ export interface CreateInvoiceItem {
   discount?: number;
   boxes?: number;
   pieces?: number;
+  /** BUY_N_GET_M free selling units carried from the order line — see InvoiceItem. */
+  promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints on the PDF). */
   notes?: string;
 }

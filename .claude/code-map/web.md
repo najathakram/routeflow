@@ -81,6 +81,45 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
   those lines at $0; unresolvable lines now render "Price unavailable" and are EXCLUDED from the estimate,
   never counted as $0. Operator order-detail, buyer order-detail, and invoice-detail render the
   `PriceType.PROMO` strikethrough/badge (web `PriceType` unions in `lib/api/{orders,invoices}.ts` += `PROMO`).
+  **BUY_N_GET_M (2026-08-21, WP3):** cart `pricedLines` computes `qtyUnits` (whole selling units — boxes for a
+  boxed line via `normalizeBoxesPieces(...).boxes`, loose pieces never count; `qty` for a piece line) alongside
+  `qtyPieces` and passes both into `applyBestPromotion`'s `PromoContext`; `promo.freeUnits` feeds
+  `computeLineSubtotal`'s new `freeUnits` param so the subtotal — never a rounded net-unit-price — carries the
+  exact saving. Line UI shows a "{freeUnits} free" pill next to the product name (unit price cell stays
+  unstruck: `originalPrice` is always null for this type). `shop/_components/tile-pricing.ts` `deriveTilePrice`
+  mirrors the same `qtyUnits` sourcing (1 unit default-add qty / cart item's units when present) so tile and
+  cart stay cent-parity for BOGO too. Tile/detail deal chip: `tile-pricing.ts` also exports
+  `bogoChipLabel(product, promotions)` + `BOGO_FALLBACK_BANNER` — the scope-matching BUY_N_GET_M promo's
+  `bannerText` (else "Buy N get M free"), qty-agnostic (the chip shows before enough is carted to earn a free
+  unit), lowest promo id wins on a tie. `ProductTile.tsx`/`DetailActions.tsx` `computeChip` take it as a
+  `bogoLabel` arg checked FIRST (so BOGO never falls through to the `originalPrice`-derived "Deal -N%", which
+  it can't produce anyway — `originalPrice` is null for this type); both components gained an optional
+  `promotions?: BuyerPromotion[]` prop (chip text ONLY, never pricing) fed from `shop/page.tsx` and
+  `shop/[productId]/page.tsx`'s existing `useBuyerPromotions()` data. `BuyerPromotion.type` widened with
+  `"BUY_N_GET_M"`. Admin form: `(dashboard)/promotions/page.tsx` gains "Buy N get M free" with two integer
+  fields (Buy qty N → `minQty`, Free qty M → `value`, same field-reuse as the rest of the pricing mirrors) +
+  a live preview sentence; `lib/api/promotions.ts`'s `PromotionType` union carries `"BUY_N_GET_M"` and
+  `promotionRuleLabel` renders "Buy N, get M free" for it (no local widening/wrapper in the page).
+  **Invoice edit round-trip (money):** `invoices/[id]/edit/page.tsx`'s `LineItemState` carries
+  `promoFreeUnits` + `promoBaseUnits` (the whole-unit count it was earned at), hydrated from
+  `InvoiceItem.promoFreeUnits`; local `lineFreeUnits(it)` rescales on a qty edit (proportional at the
+  earned rate, never above the snapshot, capped at `units - 1`) and feeds BOTH the `lineTotal` preview
+  and the submitted `CreateInvoiceItem.promoFreeUnits`. The PATCH delete-and-recreates every line, so
+  omitting the field re-prices an agreed $350 (12 × $35, 2 free) line to $420.
+  **Line-type round-trip (2026-08-21):** the snapshot is declared on the edit-form line types in
+  BOTH `lib/api/orders.ts` (`OrderItem.promoFreeUnits`) and `lib/api/invoices.ts` (`InvoiceItem` +
+  `CreateInvoiceItem.promoFreeUnits`). Any form that PATCHes items MUST echo it back — those paths
+  replace every line, so a dropped field silently re-prices a free-unit line to full.
+  **Order/invoice display + edit previews (money):** `OrderItem.promoFreeUnits` (`lib/api/orders.ts`),
+  `BuyerOrder.lineItems[].promoFreeUnits` + `BuyerInvoiceDetail.items[].promoFreeUnits`
+  (`lib/api/buyer.ts`) surface the API's already-returned column. Both order edit previews now net it
+  off — buyer `orders/[id]/page.tsx` `buyerLineSplit`/`buyerLineFreeUnits`/`buyerLineAmountFreeUnits`
+  feeding `buyerLineAmount`, operator `(dashboard)/orders/[id]/page.tsx` `editLineFreeUnits` feeding
+  `editLineSubtotal` (returns 0 while a substitution is pending — the snapshot belongs to the replaced
+  product, and undo restores it); both rescale exactly like the invoice edit form. Same clamp is applied
+  to the operator read view's `computeLineSubtotal` fallback. "{n} free" now renders on the buyer + operator
+  order-detail qty cells (read + edit rows) and on the buyer + operator invoice-detail qty cells, matching
+  the cart's pill — without it the reduced subtotal reads as a pricing error.
 - **`lib/api/margin.ts`** — `useMarginConfig()`/`useUpdateMarginConfig()` (tenant costing method +
   margin floors via `/settings/margin`) + `floorForCategory()`. Shared **`components/MarginHint.tsx`**
   (cost·margin under a line, red below floor, Set-to-floor / Sell-anyway) is used by both the order-detail

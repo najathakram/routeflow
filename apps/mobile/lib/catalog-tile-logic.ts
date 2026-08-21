@@ -10,7 +10,13 @@ import {
   type PromotionRule,
   type PromoResult,
 } from "./pricing";
-import type { BuyerProduct, BuyerStockAlerts, ReplenishmentEstimate } from "./api/buyer";
+import { bogoBannerText, matchingBogoPromo, sellingUnits } from "./buyer-cart-logic";
+import type {
+  BuyerProduct,
+  BuyerPromotion,
+  BuyerStockAlerts,
+  ReplenishmentEstimate,
+} from "./api/buyer";
 import type { CartItem } from "../store/cartStore";
 
 export type TileCta = "stepper" | "notify" | "add";
@@ -47,10 +53,21 @@ export function deriveTilePrice(
     qty: cartItem?.qty ?? (upb > 1 ? upb : 1),
     unitsPerBox,
   }).qty;
+  // The would-be-added quantity outside a cart is 1 whole selling unit (1 box
+  // or 1 piece) — mirrors how qtyPieces is sourced above.
+  const qtyUnits = cartItem
+    ? sellingUnits({
+        qty: cartItem.qty,
+        boxes: cartItem.boxes ?? null,
+        pieces: cartItem.pieces ?? null,
+        unitsPerBox,
+      })
+    : 1;
   return applyBestPromotion(base, promoRules, {
     productId: product.id,
     category: product.category ?? null,
     qtyPieces,
+    qtyUnits,
   });
 }
 
@@ -78,6 +95,26 @@ export function computeTileChip(
   if (estimate?.state === "low") return { kind: "low", label: "Running low" };
   if (product.isFeatured) return { kind: "featured", label: "Featured" };
   return null;
+}
+
+/**
+ * BUY_N_GET_M deal chip: shown whenever a matching promo exists for this
+ * product, regardless of the tile's current (pre-cart) quantity — so a
+ * shopper sees "Buy 5 get 1 free" before adding enough to actually earn a
+ * free unit. Takes priority over `computeTileChip` (call this FIRST); never a
+ * fake percent — this promo type never changes the unit price. Additive: does
+ * not alter `computeTileChip`'s existing Deal/New/Low/Featured behavior.
+ */
+export function bogoTileChip(
+  product: Pick<BuyerProduct, "id" | "category">,
+  promotions: BuyerPromotion[] | undefined,
+): TileChip | null {
+  const promo = matchingBogoPromo(promotions, {
+    productId: product.id,
+    category: product.category ?? null,
+  });
+  if (!promo) return null;
+  return { kind: "deal", label: bogoBannerText(promo) };
 }
 
 export function behaviorLabel(est?: ReplenishmentEstimate): string | null {

@@ -19,8 +19,10 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   applyBestPromotion,
+  promotionMatchesProduct,
   effectiveBuyerPrice,
   type PromotionRule,
+  type PromoContext,
   type CategoryTaxType,
 } from "../common/pricing";
 import {
@@ -112,8 +114,15 @@ export class OrdersService implements OnApplicationBootstrap {
     tierForProduct: number,
     promos: PromotionRule[],
     qtyPieces: number,
+    qtyUnits: number,
     rememberedPrice?: number | null,
-  ): { unitPrice: number; originalPrice: number | null; priceType: PriceType } {
+  ): {
+    unitPrice: number;
+    originalPrice: number | null;
+    priceType: PriceType;
+    /** BUY_N_GET_M: whole free selling units this line earned. 0 for every other case. */
+    freeUnits: number;
+  } {
     const listPrice = Number(product.pricePerUnit);
     const tierBase = getTierPrice(product, tierForProduct);
     const remembered = rememberedPrice ?? null;
@@ -128,6 +137,7 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice: roundMoney(Number(remembered)),
         originalPrice: listPrice,
         priceType: PriceType.MANUAL,
+        freeUnits: 0,
       };
     }
     const base = tierBase;
@@ -135,18 +145,25 @@ export class OrdersService implements OnApplicationBootstrap {
       productId: product.id,
       category: product.category,
       qtyPieces,
+      qtyUnits,
     });
     if (promo.appliedPromoId) {
       return {
         unitPrice: promo.unitPrice,
         originalPrice: promo.originalPrice,
         priceType: PriceType.PROMO,
+        freeUnits: promo.freeUnits,
       };
     }
     if (tierForProduct !== 1) {
-      return { unitPrice: base, originalPrice: listPrice, priceType: PriceType.SPECIAL };
+      return {
+        unitPrice: base,
+        originalPrice: listPrice,
+        priceType: PriceType.SPECIAL,
+        freeUnits: 0,
+      };
     }
-    return { unitPrice: base, originalPrice: null, priceType: PriceType.STANDARD };
+    return { unitPrice: base, originalPrice: null, priceType: PriceType.STANDARD, freeUnits: 0 };
   }
 
   /**
@@ -519,6 +536,91 @@ export class OrdersService implements OnApplicationBootstrap {
    */
 
   /**
+   * BUY_N_GET_M free units for a line whose QUANTITY changed while its stored
+   * (agreed) unitPrice is kept — pending-order merges and every stored-price qty
+   * edit. Reusing the sale-time snapshot verbatim is wrong in BOTH directions: a
+   * merged (bigger) line loses the units it just earned and bills at full price,
+   * and a shrunk line keeps free units it no longer earns (a 12→2 box door edit
+   * billed $0.00). Lines that never earned free units return 0 untouched, so no
+   * operator/driver line can gain a promo it never had — UNLESS `canEarnNew` says
+   * this is a buyer's own consolidation of buyer-priced lines, where the combined
+   * quantity must earn what a single cart of the same size would have (3 + 3 boxes
+   * under a live buy-5-get-1 = 1 free, not 0).
+   *
+   * Preference order: re-run the LIVE BUY_N_GET_M rule against the new whole-unit
+   * count (exact — `floor(qtyUnits / (N + M)) * M`); if no active rule still
+   * covers the product (the promo ended after the sale) rescale the earned
+   * snapshot at the rate it was earned at, capped at the snapshot, so an
+   * already-agreed discount is never silently revoked by a later qty tweak.
+   */
+  private rescaleBogoFreeUnits(input: {
+    /** Active promo rules (any type — only BUY_N_GET_M ones are consulted). */
+    promos: PromotionRule[];
+    productId: string | null;
+    category: string | null;
+    /** The line's stored selling-unit price — BOGO never alters it, so it IS the base. */
+    unitPrice: number;
+    storedFreeUnits: number | null | undefined;
+    /** Whole selling units the snapshot was earned at. */
+    oldUnits: number;
+    /** Whole selling units after the change. */
+    newUnits: number;
+    /**
+     * Allow a line with NO snapshot to earn free units from the live rule. Only a
+     * buyer-driven merge of buyer-priced lines sets this; every staff qty edit and
+     * the hourly sweep leave it false, so an operator/driver line is never silently
+     * discounted by a customer promo it never had.
+     */
+    canEarnNew?: boolean;
+  }): number {
+    const stored = Math.max(0, Math.trunc(Number(input.storedFreeUnits ?? 0) || 0));
+    if (stored <= 0 && !input.canEarnNew) return 0;
+    const newUnits = Math.max(0, Math.trunc(Number(input.newUnits) || 0));
+    if (newUnits <= 0) return 0;
+    // A line is never entirely free — the buyer always pays the N in every (N + M).
+    const ceiling = Math.max(0, newUnits - 1);
+    if (input.productId) {
+      const ctx: PromoContext = {
+        productId: input.productId,
+        category: input.category,
+        // BUY_N_GET_M reads only qtyUnits; qtyPieces gates QTY_BREAK, which the
+        // filtered list below cannot contain.
+        qtyPieces: newUnits,
+        qtyUnits: newUnits,
+      };
+      const live = input.promos.filter(
+        (p) => p.type === "BUY_N_GET_M" && promotionMatchesProduct(p, ctx),
+      );
+      if (live.length > 0) {
+        return Math.min(ceiling, applyBestPromotion(input.unitPrice, live, ctx).freeUnits);
+      }
+    }
+    const oldUnits = Math.max(0, Math.trunc(Number(input.oldUnits) || 0));
+    if (oldUnits <= 0) return 0;
+    return Math.min(ceiling, stored, Math.floor((stored * newUnits) / oldUnits));
+  }
+
+  /**
+   * Is this line's price the buyer's own (the tier/promo ladder), rather than an
+   * operator-set one? Only such a line may EARN BUY_N_GET_M free units it never had
+   * when a buyer-driven merge grows its quantity — a MANUAL upsell or a DISCOUNTED
+   * override is a deliberate operator price and is never discounted further by a
+   * customer promo (same rule as the manual-override branch in updateOrderItems).
+   * A missing priceType counts as NOT buyer-priced (money-safe default).
+   */
+  private isBuyerPricedLine(li: {
+    priceType?: PriceType | null;
+    overriddenBy?: string | null;
+  }): boolean {
+    return (
+      li.overriddenBy == null &&
+      (li.priceType === PriceType.STANDARD ||
+        li.priceType === PriceType.SPECIAL ||
+        li.priceType === PriceType.PROMO)
+    );
+  }
+
+  /**
    * Combine one or more contributing order lines for the SAME product into a
    * single merged line total. Boxed products price by the BOX, so every
    * contribution is normalized to a total PIECE count first, then re-split and
@@ -529,42 +631,121 @@ export class OrdersService implements OnApplicationBootstrap {
    * count, so its pieces are `qty * unitsPerBox`. The merged line is always
    * emitted piece-denominated (heals the inconsistency). Non-boxed products fall
    * back to a simple qty sum × unit price.
+   *
+   * BUY_N_GET_M: the merged quantity earns its OWN free units — the contributing
+   * snapshots are re-derived against the combined whole-unit count (see
+   * `rescaleBogoFreeUnits`) and returned so the caller persists `promoFreeUnits`
+   * alongside the subtotal. Without this a merged BOGO line silently repriced to
+   * full price while the row kept a stale, contradicting `promoFreeUnits`.
+   * `bogo.canEarnNew` additionally lets the combined quantity earn free units none
+   * of the contributions had (a buyer's split carts) — granted only when EVERY
+   * contribution is buyer-priced, so one operator-priced contribution keeps the
+   * whole merged line on the conservative "never gain a promo it never had" path.
    */
   private mergeBoxedContributions(
-    contributions: Array<{ qty: unknown; boxes: number | null; pieces: number | null }>,
+    contributions: Array<{
+      qty: unknown;
+      boxes: number | null;
+      pieces: number | null;
+      promoFreeUnits?: number | null;
+      priceType?: PriceType | null;
+      overriddenBy?: string | null;
+    }>,
     unitPrice: number,
     unitsPerBox: number | null | undefined,
-  ): { qty: number; boxes: number | null; pieces: number | null; subtotal: number } {
+    bogo?: {
+      promos: PromotionRule[];
+      productId: string | null;
+      category: string | null;
+      canEarnNew?: boolean;
+      /**
+       * The merged line's surviving unitPrice already carries a price-promo
+       * discount (winner/meta line is PROMO with a strikethrough). Promotions
+       * never stack — a buyer splitting one cart in two must not merge back to
+       * a percent discount PLUS free units — so both the stored-snapshot rescale
+       * and canEarnNew are suppressed and the merged line keeps price-off only.
+       */
+      pricePromoApplied?: boolean;
+    },
+  ): {
+    qty: number;
+    boxes: number | null;
+    pieces: number | null;
+    subtotal: number;
+    freeUnits: number;
+    /** Σ of the contributions' BUY_N_GET_M snapshots — 0 when no line carried one. */
+    storedFreeUnits: number;
+  } {
     const upb = Number(unitsPerBox ?? 0);
     const totalPieces = contributions.reduce((sum, c) => {
       const q = Number(c.qty);
       const sellingUnit = upb > 1 && c.boxes == null && c.pieces == null;
       return sum + (sellingUnit ? q * upb : q);
     }, 0);
+    // Free-unit snapshots and the whole selling units they were earned at. A
+    // box-split line counts its BOXES (its `qty` is pieces); every other shape
+    // already stores selling units in `qty`.
+    const storedFreeUnits = contributions.reduce(
+      (sum, c) => sum + Math.max(0, Number(c.promoFreeUnits ?? 0) || 0),
+      0,
+    );
+    const oldUnits = contributions.reduce(
+      (sum, c) => sum + (c.boxes != null ? Number(c.boxes) : Number(c.qty)),
+      0,
+    );
+    const canEarnNew =
+      bogo?.canEarnNew === true && contributions.every((c) => this.isBuyerPricedLine(c));
+    const freeUnitsFor = (newUnits: number) =>
+      bogo?.pricePromoApplied === true
+        ? 0
+        : this.rescaleBogoFreeUnits({
+            promos: bogo?.promos ?? [],
+            productId: bogo?.productId ?? null,
+            category: bogo?.category ?? null,
+            unitPrice,
+            storedFreeUnits,
+            oldUnits,
+            newUnits,
+            canEarnNew,
+          });
     if (upb > 1) {
       const split = normalizeBoxesPieces({ qty: totalPieces, unitsPerBox: upb });
+      const freeUnits = freeUnitsFor(Number(split.boxes ?? 0));
       return {
         qty: split.qty,
         boxes: split.boxes,
         pieces: split.pieces,
+        freeUnits,
+        storedFreeUnits,
         subtotal: computeLineSubtotal({
           unitPrice,
           qty: split.qty,
           boxes: split.boxes,
           pieces: split.pieces,
           unitsPerBox: upb,
+          freeUnits,
         }),
       };
     }
+    const freeUnits = freeUnitsFor(totalPieces);
     return {
       qty: totalPieces,
       boxes: null,
       pieces: null,
-      subtotal: computeLineSubtotal({ unitPrice, qty: totalPieces }),
+      freeUnits,
+      storedFreeUnits,
+      subtotal: computeLineSubtotal({ unitPrice, qty: totalPieces, freeUnits }),
     };
   }
 
-  async mergeAllPendingForCustomer(customerId: string) {
+  /**
+   * `buyerInitiated`: the customer themselves triggered this consolidation from the
+   * buyer portal / their own app. Only then may a merged BUY_N_GET_M line earn free
+   * units none of the contributing lines had — the buyer splitting one cart in two
+   * must not lose the promo the combined quantity qualifies for. Left false for the
+   * hourly sweep and every staff path so operator/driver pricing stays untouched.
+   */
+  async mergeAllPendingForCustomer(customerId: string, options: { buyerInitiated?: boolean } = {}) {
     const pendingOrders = await this.prisma.forTenant().order.findMany({
       where: {
         customerId,
@@ -597,7 +778,16 @@ export class OrdersService implements OnApplicationBootstrap {
     // price/metadata.
     const loserContribsByProduct = new Map<
       string,
-      Array<{ qty: unknown; boxes: number | null; pieces: number | null }>
+      Array<{
+        qty: unknown;
+        boxes: number | null;
+        pieces: number | null;
+        // BUY_N_GET_M snapshot so the merged line re-derives its free units.
+        promoFreeUnits: number | null;
+        // Whether the contribution is buyer-priced — gates earning NEW free units.
+        priceType: PriceType;
+        overriddenBy: string | null;
+      }>
     >();
     const newItemMetaByProduct = new Map<
       string,
@@ -640,7 +830,14 @@ export class OrdersService implements OnApplicationBootstrap {
           continue;
         }
         const contribs = loserContribsByProduct.get(li.productId) ?? [];
-        contribs.push({ qty: li.qty, boxes: li.boxes, pieces: li.pieces });
+        contribs.push({
+          qty: li.qty,
+          boxes: li.boxes,
+          pieces: li.pieces,
+          promoFreeUnits: (li as any).promoFreeUnits ?? null,
+          priceType: li.priceType,
+          overriddenBy: li.overriddenBy,
+        });
         loserContribsByProduct.set(li.productId, contribs);
         if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
           newItemMetaByProduct.set(li.productId, {
@@ -659,23 +856,38 @@ export class OrdersService implements OnApplicationBootstrap {
     }
 
     // unitsPerBox for every product involved so boxed lines prorate by the box.
+    const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
     const involvedProductIds = [
-      ...new Set(
-        [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)]
-          .map((li) => li.productId)
-          .filter((id): id is string => !!id),
-      ),
+      ...new Set(contributingLines.map((li) => li.productId).filter((id): id is string => !!id)),
     ];
     const upbByProduct = new Map<string, number>();
+    // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
+    // free units are re-derived below.
+    const catByProduct = new Map<string, string | null>();
     if (involvedProductIds.length > 0) {
       const prods = await this.prisma.forTenant().product.findMany({
         where: { id: { in: involvedProductIds } },
-        select: { id: true, unitsPerBox: true },
+        select: { id: true, unitsPerBox: true, category: true },
       });
-      for (const p of prods) upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+      for (const p of prods) {
+        upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+        catByProduct.set(p.id, p.category ?? null);
+      }
     }
 
     const taxRate = await this.getTaxRate();
+    // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
+    // quantity, so the live rule is re-run below. Loaded on a separate pooled
+    // connection before the tx (pool-starvation guard) and ONLY when a
+    // contributing line carries a free-unit snapshot, or the BUYER drove this
+    // merge and a buyer-priced line could newly earn one (split carts) — every
+    // other merge issues no extra query and is byte-for-byte unchanged.
+    const bogoPromos =
+      contributingLines.some((li: any) => Number(li.promoFreeUnits ?? 0) > 0) ||
+      (options.buyerInitiated === true &&
+        contributingLines.some((li) => this.isBuyerPricedLine(li)))
+        ? await this.loadActivePromotions(UserRole.CUSTOMER)
+        : [];
 
     await this.prisma.tenantTransaction(async (tx) => {
       // 1. Bump winner catalog lines that overlap losers — re-prorate boxed lines
@@ -685,9 +897,28 @@ export class OrdersService implements OnApplicationBootstrap {
         const loserContribs = loserContribsByProduct.get(li.productId);
         if (!loserContribs || loserContribs.length === 0) continue;
         const merged = this.mergeBoxedContributions(
-          [{ qty: li.qty, boxes: li.boxes, pieces: li.pieces }, ...loserContribs],
+          [
+            {
+              qty: li.qty,
+              boxes: li.boxes,
+              pieces: li.pieces,
+              promoFreeUnits: (li as any).promoFreeUnits ?? null,
+              priceType: li.priceType,
+              overriddenBy: li.overriddenBy,
+            },
+            ...loserContribs,
+          ],
           Number(li.unitPrice),
           upbByProduct.get(li.productId),
+          {
+            promos: bogoPromos,
+            productId: li.productId,
+            category: catByProduct.get(li.productId) ?? null,
+            canEarnNew: options.buyerInitiated === true,
+            // The winner line's unitPrice survives the merge — if it is already
+            // price-promo discounted, free units must not stack on top of it.
+            pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
+          },
         );
         await tx.orderItem.update({
           where: { id: li.id },
@@ -696,6 +927,12 @@ export class OrdersService implements OnApplicationBootstrap {
             boxes: merged.boxes,
             pieces: merged.pieces,
             subtotal: merged.subtotal,
+            // Keep the snapshot and the money consistent — a merged line that no
+            // longer earns free units must not keep a stale count. Untouched when
+            // no contribution carried one, so non-BOGO merges write exactly as before.
+            ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
+              ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
+              : {}),
           },
         });
       }
@@ -706,6 +943,15 @@ export class OrdersService implements OnApplicationBootstrap {
           loserContribsByProduct.get(productId) ?? [],
           meta.unitPrice,
           upbByProduct.get(productId),
+          {
+            promos: bogoPromos,
+            productId,
+            category: catByProduct.get(productId) ?? null,
+            canEarnNew: options.buyerInitiated === true,
+            // The new line is created at meta.unitPrice with meta.originalPrice —
+            // an already price-discounted PROMO line must not also earn free units.
+            pricePromoApplied: meta.priceType === PriceType.PROMO && meta.originalPrice != null,
+          },
         );
         await tx.orderItem.create({
           data: {
@@ -716,6 +962,9 @@ export class OrdersService implements OnApplicationBootstrap {
             pieces: merged.pieces,
             unitPrice: meta.unitPrice,
             subtotal: merged.subtotal,
+            // Carry the loser line's BUY_N_GET_M discount onto the new winner
+            // line, re-derived for the merged quantity (was dropped entirely).
+            promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
             status: ItemStatus.PENDING,
             priceType: meta.priceType,
             originalPrice: meta.originalPrice,
@@ -812,7 +1061,13 @@ export class OrdersService implements OnApplicationBootstrap {
     const winnerProductIds = new Set(winner.lineItems.map((li) => li.productId));
     const loserContribsByProduct = new Map<
       string,
-      Array<{ qty: unknown; boxes: number | null; pieces: number | null }>
+      Array<{
+        qty: unknown;
+        boxes: number | null;
+        pieces: number | null;
+        // BUY_N_GET_M snapshot so the merged line re-derives its free units.
+        promoFreeUnits: number | null;
+      }>
     >();
     const newItemMetaByProduct = new Map<
       string,
@@ -854,7 +1109,12 @@ export class OrdersService implements OnApplicationBootstrap {
           continue;
         }
         const contribs = loserContribsByProduct.get(li.productId) ?? [];
-        contribs.push({ qty: li.qty, boxes: li.boxes, pieces: li.pieces });
+        contribs.push({
+          qty: li.qty,
+          boxes: li.boxes,
+          pieces: li.pieces,
+          promoFreeUnits: (li as any).promoFreeUnits ?? null,
+        });
         loserContribsByProduct.set(li.productId, contribs);
         if (!winnerProductIds.has(li.productId) && !newItemMetaByProduct.has(li.productId)) {
           newItemMetaByProduct.set(li.productId, {
@@ -881,15 +1141,31 @@ export class OrdersService implements OnApplicationBootstrap {
       ),
     ];
     const upbByProduct = new Map<string, number>();
+    // Category feeds scope=CATEGORY matching when a merged line's BUY_N_GET_M
+    // free units are re-derived below.
+    const catByProduct = new Map<string, string | null>();
     if (involvedProductIds.length > 0) {
       const prods = await this.prisma.forTenant().product.findMany({
         where: { id: { in: involvedProductIds } },
-        select: { id: true, unitsPerBox: true },
+        select: { id: true, unitsPerBox: true, category: true },
       });
-      for (const p of prods) upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+      for (const p of prods) {
+        upbByProduct.set(p.id, Number(p.unitsPerBox ?? 0));
+        catByProduct.set(p.id, p.category ?? null);
+      }
     }
 
     const taxRate = await this.getTaxRate();
+    // BUY_N_GET_M: a merged line earns its own free units for the COMBINED
+    // quantity, so the live rule is re-run below. Loaded on a separate pooled
+    // connection before the tx (pool-starvation guard) and ONLY when a
+    // contributing line actually carries a free-unit snapshot — every non-BOGO
+    // merge issues no extra query and is byte-for-byte unchanged.
+    const bogoPromos = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)].some(
+      (li: any) => Number(li.promoFreeUnits ?? 0) > 0,
+    )
+      ? await this.loadActivePromotions(UserRole.CUSTOMER)
+      : [];
 
     await this.prisma.tenantTransaction(async (tx) => {
       for (const li of winner.lineItems) {
@@ -897,9 +1173,25 @@ export class OrdersService implements OnApplicationBootstrap {
         const loserContribs = loserContribsByProduct.get(li.productId);
         if (!loserContribs || loserContribs.length === 0) continue;
         const merged = this.mergeBoxedContributions(
-          [{ qty: li.qty, boxes: li.boxes, pieces: li.pieces }, ...loserContribs],
+          [
+            {
+              qty: li.qty,
+              boxes: li.boxes,
+              pieces: li.pieces,
+              promoFreeUnits: (li as any).promoFreeUnits ?? null,
+            },
+            ...loserContribs,
+          ],
           Number(li.unitPrice),
           upbByProduct.get(li.productId),
+          {
+            promos: bogoPromos,
+            productId: li.productId,
+            category: catByProduct.get(li.productId) ?? null,
+            // Non-stacking: a price-discounted winner line keeps its discount
+            // for the merged qty but never adds free units on top.
+            pricePromoApplied: li.priceType === PriceType.PROMO && li.originalPrice != null,
+          },
         );
         await tx.orderItem.update({
           where: { id: li.id },
@@ -908,6 +1200,12 @@ export class OrdersService implements OnApplicationBootstrap {
             boxes: merged.boxes,
             pieces: merged.pieces,
             subtotal: merged.subtotal,
+            // Keep the snapshot and the money consistent — a merged line that no
+            // longer earns free units must not keep a stale count. Untouched when
+            // no contribution carried one, so non-BOGO merges write exactly as before.
+            ...(merged.freeUnits > 0 || merged.storedFreeUnits > 0
+              ? { promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null }
+              : {}),
           },
         });
       }
@@ -916,6 +1214,13 @@ export class OrdersService implements OnApplicationBootstrap {
           loserContribsByProduct.get(productId) ?? [],
           meta.unitPrice,
           upbByProduct.get(productId),
+          {
+            promos: bogoPromos,
+            productId,
+            category: catByProduct.get(productId) ?? null,
+            // Non-stacking: the new line keeps meta's price discount only.
+            pricePromoApplied: meta.priceType === PriceType.PROMO && meta.originalPrice != null,
+          },
         );
         await tx.orderItem.create({
           data: {
@@ -926,6 +1231,9 @@ export class OrdersService implements OnApplicationBootstrap {
             pieces: merged.pieces,
             unitPrice: meta.unitPrice,
             subtotal: merged.subtotal,
+            // Carry the loser line's BUY_N_GET_M discount onto the new winner
+            // line, re-derived for the merged quantity (was dropped entirely).
+            promoFreeUnits: merged.freeUnits > 0 ? merged.freeUnits : null,
             status: ItemStatus.PENDING,
             priceType: meta.priceType,
             originalPrice: meta.originalPrice,
@@ -1332,12 +1640,21 @@ export class OrdersService implements OnApplicationBootstrap {
       let unitPrice: number;
       let priceType: PriceType;
       let originalPrice: number | null = null;
+      // BUY_N_GET_M: whole free selling units this line earned. Only ever set by
+      // resolveBuyerLinePrice (buyer path); a staff override never combines with a
+      // promo, so it stays 0 on the DISCOUNTED/upsell branches below.
+      let freeUnits = 0;
 
       // QTY_BREAK promo threshold is measured in PIECES. A box-split line stores qty
       // in pieces already; a box-UNAWARE boxed line (boxes==null) stores qty as a
       // SELLING-UNIT (box) count, so expand it — mirrors the merge path so the same
       // buyer line prices identically at create vs edit.
       const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
+      // BUY_N_GET_M threshold is measured in whole SELLING units — a box for a
+      // boxed line, a piece otherwise. `boxes` already holds the whole-box count
+      // once split; a box-unaware boxed line's `qty` IS the box count (no split
+      // was provided); a non-boxed line's `qty` is already in pieces = units.
+      const qtyUnits = boxes != null ? boxes : qty;
 
       // Price priority: operator one-time override (DISCOUNTED) > best buyer
       // promotion (PROMO) / tier price (SPECIAL) / list price (STANDARD). Promos
@@ -1369,21 +1686,26 @@ export class OrdersService implements OnApplicationBootstrap {
           tierForProduct,
           activePromos,
           qtyPieces,
+          qtyUnits,
           rememberedForLine,
         );
         unitPrice = resolved.unitPrice;
         priceType = resolved.priceType;
         originalPrice = resolved.originalPrice;
+        freeUnits = resolved.freeUnits;
       }
 
       // For boxed products `unitPrice` is the BOX price; loose pieces are
-      // prorated. See apps/api/src/common/pricing.ts for the full reasoning.
+      // prorated. BUY_N_GET_M's `freeUnits` subtracts whole selling units from the
+      // subtotal BEFORE pricing — never a rounded net-unit-price (a $35 line split
+      // 5-for-1-free would drift cents as 35*5/6=29.1667). See pricing.ts.
       const itemSubtotal = computeLineSubtotal({
         unitPrice,
         qty,
         boxes,
         pieces,
         unitsPerBox: upb,
+        freeUnits,
       });
       subtotal += itemSubtotal;
 
@@ -1417,6 +1739,8 @@ export class OrdersService implements OnApplicationBootstrap {
         unitPrice,
         priceType,
         originalPrice,
+        // BUY_N_GET_M sale-time snapshot; null for every other line (unaffected).
+        promoFreeUnits: freeUnits > 0 ? freeUnits : null,
         subtotal: itemSubtotal,
         notes: (item as any).itemNote || item.notes,
         // Phase 4 (W4): snapshot the product's regulated category at sale time so
@@ -2177,6 +2501,14 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
     const buyerPriceHistory =
       user?.role === UserRole.CUSTOMER ? await this.getCustomerPriceHistory(order.customerId) : {};
+    // BUY_N_GET_M: the stored-price qty edit below re-derives a line's free units
+    // for the NEW quantity. Loaded (on its own pooled connection, like the reads
+    // above) ONLY when a line already carries a free-unit snapshot, so no
+    // operator/driver edit gains a promo it never had and non-BOGO edits issue
+    // no extra query.
+    const bogoPromos = (order.lineItems ?? []).some((li: any) => Number(li.promoFreeUnits ?? 0) > 0)
+      ? await this.loadActivePromotions(UserRole.CUSTOMER)
+      : [];
 
     // P5-08b: the entire mutation phase — item writes, totals recompute, the
     // stock/credit guards, and the order-header update — runs in ONE tenant
@@ -2305,18 +2637,23 @@ export class OrdersService implements OnApplicationBootstrap {
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
             // DRIVER edits keep the legacy list price (unchanged).
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
+            // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
+            // pieces otherwise) — mirrors create()'s qtyUnits derivation.
+            const qtyUnits = boxes != null ? boxes : qty;
             const priced = isBuyerEdit
               ? this.resolveBuyerLinePrice(
                   product,
                   buyerCpMap.get(item.productId) ?? buyerDefaultTier,
                   buyerPromos,
                   qtyPieces,
+                  qtyUnits,
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
                 )
               : {
                   unitPrice: Number(product.pricePerUnit),
                   originalPrice: null as number | null,
                   priceType: PriceType.STANDARD,
+                  freeUnits: 0,
                 };
             await tx.orderItem.create({
               data: {
@@ -2330,6 +2667,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   boxes,
                   pieces,
                   unitsPerBox: upb,
+                  freeUnits: priced.freeUnits,
                 }),
                 boxes,
                 pieces,
@@ -2337,6 +2675,8 @@ export class OrdersService implements OnApplicationBootstrap {
                 unitsPerBox: boxes != null && upb > 1 ? upb : null,
                 originalPrice: priced.originalPrice,
                 priceType: priced.priceType,
+                // BUY_N_GET_M sale-time snapshot; null for every other line.
+                promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
                 status: "PENDING",
                 notes: item.notes,
                 // Snapshot the regulated category so an edited-in line invoices/ledgers
@@ -2553,7 +2893,15 @@ export class OrdersService implements OnApplicationBootstrap {
                 if ((li && Number(li.invoicedQty ?? 0) > 0) || hasDeliveries > 0) {
                   await tx.orderItem.update({
                     where: { id: item.id },
-                    data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+                    data: {
+                      status: "CANCELLED",
+                      qty: 0,
+                      subtotal: 0,
+                      boxes: null,
+                      pieces: null,
+                      // A zeroed line has no free units left to show against it.
+                      promoFreeUnits: null,
+                    },
                   });
                 } else {
                   await tx.orderItem.delete({ where: { id: item.id } });
@@ -2561,7 +2909,15 @@ export class OrdersService implements OnApplicationBootstrap {
               } else if (item.action === "CANCEL") {
                 await tx.orderItem.update({
                   where: { id: item.id },
-                  data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+                  data: {
+                    status: "CANCELLED",
+                    qty: 0,
+                    subtotal: 0,
+                    boxes: null,
+                    pieces: null,
+                    // A zeroed line has no free units left to show against it.
+                    promoFreeUnits: null,
+                  },
                 });
               } else if (item.substituteProductId) {
                 const product = await tx.product.findUniqueOrThrow({
@@ -2630,6 +2986,10 @@ export class OrdersService implements OnApplicationBootstrap {
                     pieces: split?.pieces ?? null,
                     // Re-snapshot the substitute's box size on box-split lines.
                     unitsPerBox: split ? upb : null,
+                    // The product changed — a BOGO discount computed for the REPLACED
+                    // product doesn't carry to a different one (this branch never
+                    // re-runs applyBestPromotion; B13 non-staff-price posture above).
+                    promoFreeUnits: null,
                     subtotal,
                     status: "PENDING",
                     notes: item.notes,
@@ -2714,12 +3074,42 @@ export class OrdersService implements OnApplicationBootstrap {
                   });
                   if (prod) catalogPrice = Number(prod.pricePerUnit);
                 }
+                // This branch keeps the line's stored (agreed) price — it never
+                // re-runs applyBestPromotion for the UNIT PRICE, same as every other
+                // promo type. The line's BUY_N_GET_M free units, though, are a
+                // function of the QUANTITY, so they are RE-DERIVED for the new qty
+                // (`rescaleBogoFreeUnits`) and written back: reusing the snapshot
+                // verbatim under-billed a shrunk line (12 → 2 boxes billed $0.00) and
+                // left the column contradicting the subtotal. A manual price override
+                // replaces the promo price outright, so the free units earned under it
+                // do not survive — they would discount the operator's own price.
+                const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
+                let promoCategory: string | null = null;
+                if (storedFreeUnits > 0 && !isManualOverride && li.productId) {
+                  const prod = await tx.product.findUnique({
+                    where: { id: li.productId },
+                    select: { category: true },
+                  });
+                  promoCategory = prod?.category ?? null;
+                }
+                const freeUnits = isManualOverride
+                  ? 0
+                  : this.rescaleBogoFreeUnits({
+                      promos: bogoPromos,
+                      productId: li.productId,
+                      category: promoCategory,
+                      unitPrice,
+                      storedFreeUnits,
+                      oldUnits: li.boxes != null ? Number(li.boxes) : Number(li.qty),
+                      newUnits: boxes != null ? boxes : qty,
+                    });
                 const subtotal = computeLineSubtotal({
                   unitPrice,
                   qty,
                   boxes,
                   pieces,
                   unitsPerBox: upb,
+                  freeUnits,
                 });
                 await tx.orderItem.update({
                   where: { id: item.id },
@@ -2734,6 +3124,12 @@ export class OrdersService implements OnApplicationBootstrap {
                     ...(isUnlisted && item.name !== undefined ? { name: item.name } : {}),
                     unitPrice,
                     subtotal,
+                    // Keep the snapshot and the money consistent (see above).
+                    // Untouched on a line that never earned free units, so every
+                    // non-BOGO edit writes exactly the same payload as before.
+                    ...(freeUnits > 0 || storedFreeUnits > 0
+                      ? { promoFreeUnits: freeUnits > 0 ? freeUnits : null }
+                      : {}),
                     ...(item.notes !== undefined ? { notes: item.notes } : {}),
                     ...(isManualOverride
                       ? isUnlisted
@@ -3304,8 +3700,11 @@ export class OrdersService implements OnApplicationBootstrap {
     // P5-08b posture: reference reads on separate pooled connections are
     // hoisted BEFORE the interactive tx (pool-starvation guard, :1660-1672).
     const taxRate = await this.getTaxRate();
+    // Also loaded for a qty change when a line carries a BUY_N_GET_M snapshot —
+    // the door edit re-derives that line's free units for the new quantity.
     const buyerPromos =
-      cr.type === ChangeRequestType.ADD_ITEM
+      cr.type === ChangeRequestType.ADD_ITEM ||
+      (order.lineItems ?? []).some((li: any) => Number(li.promoFreeUnits ?? 0) > 0)
         ? await this.loadActivePromotions(UserRole.CUSTOMER)
         : [];
     const priceHistory =
@@ -3353,7 +3752,15 @@ export class OrdersService implements OnApplicationBootstrap {
             // invoice line may reference it (mirrors updateOrderItems :2003-2007).
             await tx.orderItem.update({
               where: { id: li.id },
-              data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+              data: {
+                status: "CANCELLED",
+                qty: 0,
+                subtotal: 0,
+                boxes: null,
+                pieces: null,
+                // A zeroed line has no free units left to show against it.
+                promoFreeUnits: null,
+              },
             });
             mutationRow = {
               orderItemId: li.id,
@@ -3384,6 +3791,28 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: upb })
                 : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
             const unitPrice = Number(li.unitPrice);
+            // Agreed price wins (never re-runs applyBestPromotion for the unit
+            // price), but BUY_N_GET_M free units are a function of the QUANTITY —
+            // re-derive them for the new qty and write them back. Re-applying the
+            // snapshot verbatim billed a 12 → 2 box door edit at $0.00.
+            const storedFreeUnits = Number((li as any).promoFreeUnits ?? 0);
+            let promoCategory: string | null = null;
+            if (storedFreeUnits > 0 && li.productId) {
+              const prod = await tx.product.findUnique({
+                where: { id: li.productId },
+                select: { category: true },
+              });
+              promoCategory = prod?.category ?? null;
+            }
+            const freeUnits = this.rescaleBogoFreeUnits({
+              promos: buyerPromos,
+              productId: li.productId,
+              category: promoCategory,
+              unitPrice,
+              storedFreeUnits,
+              oldUnits: li.boxes != null ? Number(li.boxes) : Number(li.qty),
+              newUnits: split.boxes != null ? split.boxes : split.qty,
+            });
             await tx.orderItem.update({
               where: { id: li.id },
               data: {
@@ -3397,7 +3826,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   boxes: split.boxes,
                   pieces: split.pieces,
                   unitsPerBox: upb,
+                  freeUnits,
                 }),
+                // Keep the snapshot and the money consistent; untouched on a line
+                // that never earned free units.
+                ...(freeUnits > 0 || storedFreeUnits > 0
+                  ? { promoFreeUnits: freeUnits > 0 ? freeUnits : null }
+                  : {}),
               },
             });
             mutationRow = {
@@ -3433,6 +3868,19 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? normalizeBoxesPieces({ qty: newQty, unitsPerBox: lineUpb })
                 : { qty: newQty, boxes: null as number | null, pieces: null as number | null };
             const unitPrice = Number(existing.unitPrice);
+            // Agreed price wins (never re-runs applyBestPromotion for the unit
+            // price) — but the bigger quantity earns its OWN free units, so they
+            // are re-derived here, same as the CHANGE_QTY branch above.
+            const storedFreeUnits = Number((existing as any).promoFreeUnits ?? 0);
+            const freeUnits = this.rescaleBogoFreeUnits({
+              promos: buyerPromos,
+              productId: product.id,
+              category: product.category ?? null,
+              unitPrice,
+              storedFreeUnits,
+              oldUnits: existing.boxes != null ? Number(existing.boxes) : Number(existing.qty),
+              newUnits: split.boxes != null ? split.boxes : split.qty,
+            });
             await tx.orderItem.update({
               where: { id: existing.id },
               data: {
@@ -3446,7 +3894,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   boxes: split.boxes,
                   pieces: split.pieces,
                   unitsPerBox: lineUpb,
+                  freeUnits,
                 }),
+                // Keep the snapshot and the money consistent; untouched on a line
+                // that never earned free units.
+                ...(freeUnits > 0 || storedFreeUnits > 0
+                  ? { promoFreeUnits: freeUnits > 0 ? freeUnits : null }
+                  : {}),
               },
             });
             mutationRow = {
@@ -3479,11 +3933,15 @@ export class OrdersService implements OnApplicationBootstrap {
                 })
               : { qty: addQty, boxes: null as number | null, pieces: null as number | null };
             const qtyPieces = split.boxes != null ? split.qty : upb > 1 ? addQty * upb : addQty;
+            // BUY_N_GET_M threshold: whole SELLING units — mirrors create()/the buyer
+            // edit branch's qtyUnits derivation.
+            const qtyUnits = split.boxes != null ? split.boxes : split.qty;
             const priced = this.resolveBuyerLinePrice(
               product,
               cp?.pricingTier ?? buyerTier,
               buyerPromos,
               qtyPieces,
+              qtyUnits,
               priceHistory[product.id]?.lastPrice ?? null,
             );
             const created = await tx.orderItem.create({
@@ -3497,12 +3955,15 @@ export class OrdersService implements OnApplicationBootstrap {
                 unitPrice: priced.unitPrice,
                 originalPrice: priced.originalPrice,
                 priceType: priced.priceType,
+                // BUY_N_GET_M sale-time snapshot; null for every other line.
+                promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
                 subtotal: computeLineSubtotal({
                   unitPrice: priced.unitPrice,
                   qty: split.qty,
                   boxes: split.boxes,
                   pieces: split.pieces,
                   unitsPerBox: upb,
+                  freeUnits: priced.freeUnits,
                 }),
                 status: "PENDING",
                 notes: cr.note ?? null,

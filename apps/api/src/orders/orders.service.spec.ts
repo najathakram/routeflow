@@ -4409,7 +4409,15 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith({
         where: { id: "li-1" },
-        data: { status: "CANCELLED", qty: 0, subtotal: 0, boxes: null, pieces: null },
+        data: {
+          status: "CANCELLED",
+          qty: 0,
+          subtotal: 0,
+          boxes: null,
+          pieces: null,
+          // A zeroed line has no free units left to show against it.
+          promoFreeUnits: null,
+        },
       });
       expect(prisma.deliveryMutation.create).toHaveBeenCalledWith({
         data: expect.objectContaining({

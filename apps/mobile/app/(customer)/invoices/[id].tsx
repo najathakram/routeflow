@@ -14,6 +14,7 @@ import { sharePdf } from "../../../lib/share-pdf";
 import { showToast } from "../../../lib/toast";
 import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
@@ -238,6 +239,11 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {unit ? ` / ${unit}` : ""}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
+        {/* BUY_N_GET_M: name the free units, or the reduced line subtotal
+            reads as a pricing error (web parity). */}
+        {freeUnitsLabel(item.promoFreeUnits) ? (
+          <Text style={styles.itemFreeLabel}>{freeUnitsLabel(item.promoFreeUnits)}</Text>
+        ) : null}
       </View>
       <Text style={styles.itemTotal}>${Number(item.subtotal).toFixed(2)}</Text>
     </View>
@@ -316,6 +322,12 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

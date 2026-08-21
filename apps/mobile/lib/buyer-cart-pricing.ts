@@ -19,6 +19,7 @@ import {
   roundMoney,
   type PromotionRule,
 } from "./pricing";
+import { sellingUnits } from "./buyer-cart-logic";
 import type { BuyerPromotion } from "./api/buyer";
 
 export interface CartLineInput {
@@ -35,11 +36,13 @@ export interface CartLineInput {
 export interface PricedCartLine {
   productId: string;
   base: number;
-  /** Net (post-promo) selling-unit price. */
+  /** Net (post-promo) selling-unit price. Unchanged (== base) for a BUY_N_GET_M line. */
   net: number;
-  /** Strikethrough (pre-promo) price — null when no promo applied. */
+  /** Strikethrough (pre-promo) price — null when no promo applied (incl. BUY_N_GET_M). */
   original: number | null;
   appliedPromoId: string | null;
+  /** Whole selling units made free by a BUY_N_GET_M promo; 0 otherwise. */
+  freeUnits: number;
   lineSubtotal: number;
   lineOriginalSubtotal: number;
 }
@@ -75,10 +78,17 @@ export function priceCart(items: CartLineInput[], rules: PromotionRule[]): Price
       qty: item.qty,
       unitsPerBox,
     }).qty;
+    const qtyUnits = sellingUnits({
+      qty: item.qty,
+      boxes: item.boxes ?? null,
+      pieces: item.pieces ?? null,
+      unitsPerBox,
+    });
     const promo = applyBestPromotion(base, rules, {
       productId: item.productId,
       category: item.category ?? null,
       qtyPieces,
+      qtyUnits,
     });
     const lineArgs = {
       qty: item.qty,
@@ -92,7 +102,15 @@ export function priceCart(items: CartLineInput[], rules: PromotionRule[]): Price
       net: promo.unitPrice,
       original: promo.originalPrice,
       appliedPromoId: promo.appliedPromoId,
-      lineSubtotal: computeLineSubtotal({ unitPrice: promo.unitPrice, ...lineArgs }),
+      freeUnits: promo.freeUnits,
+      // freeUnits is 0 for every non-BOGO promo, so this is a no-op for existing
+      // PERCENT/FIXED/QTY_BREAK lines — computeLineSubtotal only subtracts free
+      // units, never the pre-promo reference total below.
+      lineSubtotal: computeLineSubtotal({
+        unitPrice: promo.unitPrice,
+        ...lineArgs,
+        freeUnits: promo.freeUnits,
+      }),
       lineOriginalSubtotal: computeLineSubtotal({
         unitPrice: promo.originalPrice ?? promo.unitPrice,
         ...lineArgs,

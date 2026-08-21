@@ -56,6 +56,55 @@ describe("PromotionsService", () => {
     );
   });
 
+  // BUY_N_GET_M ("buy 5, get the 6th free") reuses minQty=N, value=M — both required
+  // as positive integers for this type (owner misconfiguration that started this
+  // feature was exactly a missing guard here: a promo that can't express N/M got
+  // shoehorned into FIXED $off, $0-ing 40% of the catalog).
+  it("creates a BUY_N_GET_M promotion with integer minQty (N) + value (M)", async () => {
+    await service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 1 });
+    expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+    const data = prisma.promotion.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ type: "BUY_N_GET_M", minQty: 5, value: 1 });
+  });
+
+  it("rejects a BUY_N_GET_M without a minQty (N)", async () => {
+    await expect(service.create({ ...base, type: "BUY_N_GET_M", value: 1 })).rejects.toThrow(
+      /buy quantity \(minQty\)/,
+    );
+  });
+
+  it("rejects a BUY_N_GET_M with a fractional minQty (N)", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5.5, value: 1 }),
+    ).rejects.toThrow(/buy quantity \(minQty\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with minQty (N) < 1", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 0, value: 1 }),
+    ).rejects.toThrow(/buy quantity \(minQty\)/);
+  });
+
+  it("rejects a BUY_N_GET_M without a value (M)", async () => {
+    // `base.value` (8) would otherwise satisfy the integer>=1 check — explicitly
+    // blank it so this pins the "missing M" case, not "M present from base".
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: undefined as any }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with a fractional value (M)", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 1.5 }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with value (M) < 1", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 0 }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
   it("rejects a CATEGORY scope without a category", async () => {
     await expect(service.create({ ...base, scope: "CATEGORY" })).rejects.toThrow(
       /require a category/,

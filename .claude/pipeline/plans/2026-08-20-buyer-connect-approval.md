@@ -131,23 +131,16 @@ Files are DISJOINT.
     `gateway.emitBuyerAutoLinked(tenant.id, { customerId, customerName:
 customer.businessName, buyerName: account.name, buyerEmail: account.email })`
     (informational). Response message unchanged ("Connected! …").
-  - NOT proven → the link becomes a REQUEST:
-    - no existing link → `customerLink.create` with
-      `status: "PENDING_SELLER_APPROVAL"`, `buyerAccountId`, `tenantId`,
-      `customerId` (NOT nested — direct create).
-    - existing INVITED → `update` to PENDING + buyerAccountId, **preserving
-      inviteToken/inviteExpiresAt** (see design decisions).
-    - existing PENDING, same buyer → idempotent: return the
-      "request already pending" message, no new writes, NO re-notification.
-    - existing PENDING, other buyer → 409 "This customer account already has a
-      pending request from another buyer. Contact the seller."
-    - existing ACTIVE branches → keep today's two 409s verbatim.
-    - Then notify, both channels, both fire-and-forget (never fail the request):
-      `void this.notifySellerOfRequest(...)` — the existing dead helper, wired
-      up (adjust its args to what it actually needs; it already builds the
-      email) — and `gateway.emitBuyerConnectRequest(tenant.id, { customerId,
-customerName, buyerName, buyerEmail, requestedAt })`.
-    - Response: `{ message: "Request sent — <seller name> will review it. You'll
+  - NOT proven → the link becomes a REQUEST: - no existing link → `customerLink.create` with
+    `status: "PENDING_SELLER_APPROVAL"`, `buyerAccountId`, `tenantId`,
+    `customerId` (NOT nested — direct create). - existing INVITED → `update` to PENDING + buyerAccountId, **preserving
+    inviteToken/inviteExpiresAt** (see design decisions). - existing PENDING, same buyer → idempotent: return the
+    "request already pending" message, no new writes, NO re-notification. - existing PENDING, other buyer → 409 "This customer account already has a
+    pending request from another buyer. Contact the seller." - existing ACTIVE branches → keep today's two 409s verbatim. - Then notify, both channels, both fire-and-forget (never fail the request):
+    `void this.notifySellerOfRequest(...)` — the existing dead helper, wired
+    up (adjust its args to what it actually needs; it already builds the
+    email) — and `gateway.emitBuyerConnectRequest(tenant.id, { customerId,
+customerName, buyerName, buyerEmail, requestedAt })`. - Response: `{ message: "Request sent — <seller name> will review it. You'll
 see them in your seller list once approved.", linkId, pending: true }`.
   - **The unconditional PENDING→ACTIVE upgrade branch is the same hole — gate
     it on `emailProven` too.** Un-proven retry of an own pending request hits

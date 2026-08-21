@@ -42,31 +42,71 @@ const STATUS_STEPS = [
   "DELIVERED",
 ];
 
+interface BuyerEditLine {
+  unitPrice: number;
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+  /** BUY_N_GET_M snapshot on the loaded line + the whole-unit count it was earned at. */
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+}
+
+/**
+ * Only prorate lines the server will prorate: those stored box-aware (boxSplit).
+ * Selling-unit and newly-added lines stay unitPrice*qty, matching the server's
+ * denomination gate — otherwise the preview and the saved total would disagree.
+ */
+function buyerLineSplit(item: BuyerEditLine): { boxes: number | null; pieces: number | null } {
+  const upb = Number(item.unitsPerBox ?? 0);
+  if (upb > 1 && item.boxSplit) {
+    const s = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb });
+    return { boxes: s.boxes, pieces: s.pieces };
+  }
+  return { boxes: null, pieces: null };
+}
+
+/**
+ * BUY_N_GET_M free units for the edit preview, rescaled when the buyer changes
+ * the qty: the snapshot was earned at `promoBaseUnits` whole selling units, so a
+ * shrunk line earns proportionally fewer and a grown one never earns MORE than
+ * was agreed (mirrors the order engine's `rescaleBogoFreeUnits` fallback and the
+ * invoice edit form). Capped at units − 1 — the buyer always pays the N in every
+ * (N + M), so no line is ever entirely free.
+ */
+function buyerLineFreeUnits(item: BuyerEditLine, boxes: number | null): number {
+  const stored = Math.max(0, Math.trunc(Number(item.promoFreeUnits ?? 0) || 0));
+  if (stored <= 0) return 0;
+  const units = Math.trunc(Number(boxes != null ? boxes : item.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(Number(item.promoBaseUnits ?? units) || 0));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
+}
+
+/** The free whole units `buyerLineAmount` nets off this line — also the label. */
+function buyerLineAmountFreeUnits(item: BuyerEditLine): number {
+  return buyerLineFreeUnits(item, buyerLineSplit(item).boxes);
+}
+
 /**
  * Boxed-aware line amount for the edit preview: a boxed line prices by the BOX
  * (unitPrice is the box price, qty is the piece count), so it prorates as
  * `unitPrice * (boxes + pieces / unitsPerBox)`. Matches the server on save; a
  * plain unitPrice*qty over-shows boxed lines by unitsPerBox.
  */
-function buyerLineAmount(item: {
-  unitPrice: number;
-  qty: number;
-  unitsPerBox?: number | null;
-  boxSplit?: boolean;
-}): number {
+function buyerLineAmount(item: BuyerEditLine): number {
   const upb = Number(item.unitsPerBox ?? 0);
-  // Only prorate lines the server will prorate: those stored box-aware
-  // (boxSplit). Selling-unit and newly-added lines stay unitPrice*qty, matching
-  // the server's denomination gate — otherwise the preview and the saved total
-  // would disagree.
-  const split =
-    upb > 1 && item.boxSplit ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb }) : null;
+  const split = buyerLineSplit(item);
   return computeLineSubtotal({
     unitPrice: item.unitPrice,
     qty: item.qty,
-    boxes: split?.boxes ?? null,
-    pieces: split?.pieces ?? null,
+    boxes: split.boxes,
+    pieces: split.pieces,
     unitsPerBox: upb,
+    // BUY_N_GET_M: free whole units come off before pricing, exactly like the
+    // server — without this a 12-box line with 2 free previews at full price.
+    freeUnits: buyerLineFreeUnits(item, split.boxes),
   });
 }
 
@@ -454,15 +494,13 @@ export default function BuyerOrderDetailPage() {
 
   const [editMode, setEditMode] = React.useState(false);
   const [editItems, setEditItems] = React.useState<
-    Array<{
-      productId: string;
-      qty: number;
-      name: string;
-      unit: string;
-      unitPrice: number;
-      unitsPerBox?: number | null;
-      boxSplit?: boolean;
-    }>
+    Array<
+      BuyerEditLine & {
+        productId: string;
+        name: string;
+        unit: string;
+      }
+    >
   >([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -527,6 +565,12 @@ export default function BuyerOrderDetailPage() {
           unitPrice: Number(li.unitPrice),
           unitsPerBox: li.product.unitsPerBox ?? null,
           boxSplit: li.boxes != null || li.pieces != null,
+          // BUY_N_GET_M snapshot + the whole-unit count it was earned at, so the
+          // preview keeps the reduced subtotal the read-only row already shows.
+          promoFreeUnits: li.promoFreeUnits ?? null,
+          promoBaseUnits: li.promoFreeUnits
+            ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+            : null,
         })),
     );
     setEditMode(true);
@@ -761,6 +805,12 @@ export default function BuyerOrderDetailPage() {
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                         <span className="text-sm font-medium text-navy">{item.name}</span>
+                        {/* BUY_N_GET_M: the preview subtotal already nets these off. */}
+                        {buyerLineAmountFreeUnits(item) > 0 && (
+                          <span className="inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                            {buyerLineAmountFreeUnits(item)} free
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3">
@@ -847,6 +897,13 @@ export default function BuyerOrderDetailPage() {
                         <p className="text-[10px] text-navy/70">
                           {li.boxes} box{li.boxes > 1 ? "es" : ""}
                           {li.pieces ? ` + ${li.pieces} pcs` : ""}
+                        </p>
+                      )}
+                      {/* BUY_N_GET_M: without this the reduced subtotal reads as a
+                          pricing error to the buyer. */}
+                      {Number(li.promoFreeUnits ?? 0) > 0 && (
+                        <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                          {Number(li.promoFreeUnits)} free
                         </p>
                       )}
                     </td>

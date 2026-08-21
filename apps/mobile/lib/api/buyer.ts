@@ -93,6 +93,9 @@ export interface BuyerOrder {
     status?: string;
     deliveredQty?: number;
     categoryTaxAmount?: number; // RF-4: regulated category tax folded into order.total
+    /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
+     *  `subtotal` so it doesn't read as a pricing error. */
+    promoFreeUnits?: number | null;
     product?: { id: string; name: string; unit?: string };
   }>;
   /** P5-09: post-dispatch change requests, newest first. */
@@ -113,6 +116,9 @@ export interface BuyerInvoiceItem {
   unitPrice: number;
   discount?: number;
   subtotal: number;
+  /** BUY_N_GET_M: whole free SELLING units on this line — names the reduced
+   *  `subtotal` so it doesn't read as a pricing error. */
+  promoFreeUnits?: number | null;
   product?: { id: string; name: string; unit?: string };
 }
 
