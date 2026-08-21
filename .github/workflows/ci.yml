@@ -176,6 +176,9 @@ jobs:
 
       - name: Upload coverage reports
         if: always()
+        # Artifact-storage quota exhaustion must never fail the Test job — every
+        # test already passed by this step. Quota recalculates every 6-12h.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: coverage-reports
