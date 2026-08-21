@@ -125,7 +125,14 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
   DELIVERED orders (else revenue-today is $0, guaranteed by a post-pass), unpaid invoices must be
   older than `PAYMENT_TERMS_DAYS` to age at all, and a slice of products is bought to demand with
   zero headroom — sized at PURCHASE, never docked afterwards, so `currentStock` still equals
-  (opening − sold) — or nothing is ever low stock. `demo-seed-images.js` uploads the staged photos through the audited
+  (opening − sold) — or nothing is ever low stock. The owner's customer gets a VERIFIED
+  `CustomerAuthorization` for every `requiresLicense` section (`licenseOwnerForRegulated`) — the
+  demo tenant's Tobacco section HAS `requiresLicense: true`, so without it every tobacco line is
+  refused by `authorization-guard.service.ts`; the other four customers stay unlicensed on purpose
+  so the block can be shown. **The refresh sweep matches children on their own `tenantId` OR their
+  parent's** — filtering on `tenantId` alone let four app-edited `OrderItem` rows with a NULL
+  tenantId survive and break the order delete with an FK error (the nested-create trap, live).
+  `demo-seed-images.js` uploads the staged photos through the audited
   `POST /products/:id/images` route (one `GET /products?limit=0` up front to skip products that
   already have an image, so a resumed run never double-uploads). `demo-verify.js` is READ-ONLY:
   money identities, NULL-tenantId children **reached via their parent** (a database-wide count
