@@ -7,12 +7,14 @@ import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../../lib/auth-store";
 import { useTenantStore } from "../../../lib/tenant-store";
 import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
+import { useDeveloperMode } from "../../../lib/api/addons";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
   const { user, logout, setActiveRole } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
   const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  const { enabled: devMode } = useDeveloperMode();
 
   const initials =
     user?.username
@@ -150,30 +152,36 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/expenses")}
             chevron
           />
-          <ListRow
-            icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Routes"
-            subtitle="Templates & stops"
-            onPress={() => router.push("/(operator)/routes")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Fleet"
-            subtitle="Live map & driver tracking"
-            onPress={() => router.push("/(operator)/fleet")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Drivers"
-            subtitle="Team management"
-            onPress={() => router.push("/(operator)/drivers")}
-            chevron
-          />
+          {devMode ? (
+            <ListRow
+              icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Routes"
+              subtitle="Templates & stops"
+              onPress={() => router.push("/(operator)/routes")}
+              chevron
+            />
+          ) : null}
+          {devMode ? (
+            <ListRow
+              icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
+              iconBg={ios.system.purpleWash}
+              title="Fleet"
+              subtitle="Live map & driver tracking"
+              onPress={() => router.push("/(operator)/fleet")}
+              chevron
+            />
+          ) : null}
+          {devMode ? (
+            <ListRow
+              icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
+              iconBg={ios.system.greenWash}
+              title="Drivers"
+              subtitle="Team management"
+              onPress={() => router.push("/(operator)/drivers")}
+              chevron
+            />
+          ) : null}
         </ListGroup>
 
         <ListGroup header="WAREHOUSE">
@@ -266,7 +274,7 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/change-password")}
             chevron
           />
-          {user?.canActAsDriver ? (
+          {devMode && user?.canActAsDriver ? (
             <ListRow
               icon={<Ionicons name="car-outline" size={16} color={ios.system.orangeInk} />}
               iconBg={ios.system.orangeWash}

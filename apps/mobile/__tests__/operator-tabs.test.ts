@@ -6,6 +6,7 @@
  */
 import {
   activeOperatorTab,
+  visibleOperatorTabs,
   OPERATOR_TABS,
   OPERATOR_TAB_ROOT,
   type OperatorTabKey,
@@ -102,5 +103,17 @@ describe("table invariants", () => {
     for (const tab of OPERATOR_TABS) {
       expect(activeOperatorTab(["(operator)", "(tabs)", tab])).toBe(tab);
     }
+  });
+});
+
+describe("visibleOperatorTabs — developer_mode gate", () => {
+  it("returns every tab, including Dispatch, when devMode is true", () => {
+    expect(visibleOperatorTabs(true)).toEqual([...OPERATOR_TABS]);
+    expect(visibleOperatorTabs(true)).toContain("dispatch");
+  });
+
+  it("drops only Dispatch when devMode is false, preserving order", () => {
+    expect(visibleOperatorTabs(false)).toEqual(["home", "orders", "warehouse", "more"]);
+    expect(visibleOperatorTabs(false)).not.toContain("dispatch");
   });
 });

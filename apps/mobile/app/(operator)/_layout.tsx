@@ -1,10 +1,23 @@
-import { Stack } from "expo-router";
+import { Redirect, Stack, useSegments } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { useNetworkSync } from "../../hooks/useNetworkSync";
 import { useSocket } from "../../hooks/useSocket";
 import { OperatorTabBar } from "../../components/OperatorTabBar";
+import { useDeveloperMode } from "../../lib/api/addons";
+
+// Sections behind the developer_mode addon — mirrors lib/operator-tabs.ts
+// SECTION_TO_TAB's "dispatch" entries, the driver/route/fleet surfaces that
+// aren't ready for customers yet.
+const DEV_MODE_SECTIONS = new Set([
+  "dispatch",
+  "routes",
+  "route-runs",
+  "drivers",
+  "driver",
+  "fleet",
+]);
 
 function OfflineBanner() {
   const { isOnline, queueLength } = useNetworkSync();
@@ -25,6 +38,17 @@ export default function OperatorLayout() {
   // (order.created, order.statusChanged, route.stop.completed, etc.) keep
   // active queries fresh across every operator screen, not only the home tab.
   useSocket();
+  const { enabled: devMode, isLoading: devLoading } = useDeveloperMode();
+  const segments = useSegments() as string[];
+
+  // Single deep-link chokepoint for every dispatch/route/driver/fleet screen,
+  // instead of guarding ~15 individual screens. segments[0] is always
+  // "(operator)" here; the tabs live one group deeper under "(tabs)".
+  const section = segments[1] === "(tabs)" ? segments[2] : segments[1];
+  if (DEV_MODE_SECTIONS.has(section ?? "") && !devLoading && !devMode) {
+    return <Redirect href="/(operator)/home" />;
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <OfflineBanner />

@@ -1,11 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { useTenantStore } from "../tenant-store";
 
 // ─── Tenant addons (feature flags) — mirrors web lib/api/tobacco.ts ───────────
 
 export function useTenantAddons() {
+  // Tenant-scoped key: the QueryClient outlives a logout (module-scoped in
+  // app/_layout.tsx, never cleared), so a bare ["tenant","addons"] key would
+  // serve the previous tenant's flags to the next session on a shared device.
+  const tenantSlug = useTenantStore((s) => s.slug);
   return useQuery<{ addons: string[] }>({
-    queryKey: ["tenant", "addons"],
+    queryKey: ["tenant", tenantSlug, "addons"],
     queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
     staleTime: 5 * 60_000,
     retry: false,
