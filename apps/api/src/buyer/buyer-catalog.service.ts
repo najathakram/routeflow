@@ -113,6 +113,7 @@ export class BuyerCatalogService {
       limit?: number;
       sort?: string;
       collection?: "usuals" | "favorites" | "new" | "deals";
+      ids?: string[];
     },
     customerId: string,
     buyerAccountId?: string,
@@ -121,9 +122,13 @@ export class BuyerCatalogService {
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
     const isBestSort = query.sort === "best";
+    // An explicit id filter must return EVERY requested product, not a page of
+    // them — the cart prices its lines from this response, and a truncated page
+    // silently prices the missing lines at 0.
+    const byIds = (query.ids?.length ?? 0) > 0;
     // Price + best sorts rank on data resolved in-memory (buyer pricing /
     // replenishment frequency), so fetch ALL matches and paginate after sorting.
-    const fetchAll = isPriceSort || isBestSort;
+    const fetchAll = isPriceSort || isBestSort || byIds;
 
     // W7 gate: hide products in regulated categories the buyer isn't licensed for.
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
@@ -131,6 +136,11 @@ export class BuyerCatalogService {
     // Smart-collection filter → extra AND clauses (query-level so pagination
     // counts stay correct AND the regulated exclusion composes automatically).
     const andWhere: Record<string, unknown>[] = [];
+    // Composes with the regulated-visibility gate below, so an id filter can
+    // never surface a product the buyer isn't licensed to see.
+    if (byIds) {
+      andWhere.push({ id: { in: query.ids } });
+    }
     if (query.collection === "new") {
       andWhere.push({ isNew: true });
     } else if (query.collection === "deals") {

@@ -189,10 +189,14 @@ export function useBuyerProducts(params?: {
   limit?: number;
   sort?: string;
   collection?: "usuals" | "favorites" | "new" | "deals";
+  /** Resolve exactly these products (cart pricing) — returns all of them, unpaged. */
+  ids?: string[];
 }) {
+  const { ids, ...rest } = params ?? {};
+  const query = ids?.length ? { ...rest, ids: ids.join(",") } : rest;
   return useQuery<BuyerCatalogResult>({
-    queryKey: ["buyer", "products", params],
-    queryFn: () => buyerApiClient.get("/buyer/products", { params }).then((r) => r.data),
+    queryKey: ["buyer", "products", query],
+    queryFn: () => buyerApiClient.get("/buyer/products", { params: query }).then((r) => r.data),
   });
 }
 
