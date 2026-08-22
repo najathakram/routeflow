@@ -1,6 +1,69 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-20 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
+**Written:** 2026-08-21 · **Branch:** `feat/zelle-tier-quickwins` · **Visibility:** private · **Open PRs:** none
+
+## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21)
+
+Approved plan: `~/.claude/plans/imagine-you-are-a-breezy-ripple.md` (4 features, 4 PRs).
+Owner decisions locked: commissions **accrue on invoice issue, become payable as the invoice
+is paid** (pro-rata, no commission on bad debt) · agents are **records-only v1** (no login) ·
+commission base = **subtotal after discounts, excluding tax + shipping** · MSRP is **per piece**.
+Feature gating answer: **no per-tenant branches** — one trunk, entitlement flags
+(`flag.msrp`, `flag.sales_agents`) default OFF, per-tenant variation as `SystemConfig` JSON.
+
+**PR-A `feat/zelle-tier-quickwins` — CODE COMPLETE, committed `abe03c04`, NOT pushed/deployed.**
+44 files, +875/−263. Plan: `.claude/pipeline/plans/2026-08-21-zelle-tier-quickwins.md`.
+
+| Item                                                                                                                         | State                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `PaymentMethod` enum + `ZELLE` (schema.prisma:133)                                                                           | ✅                                                                                    |
+| Migration `20260830000000_payment_method_zelle` (hand-written; `ADD VALUE IF NOT EXISTS`, no txn block)                      | ✅ **verified: full 14-migration chain replayed clean on a fresh DB, enum confirmed** |
+| `packages/types` PaymentMethod backfilled to all 8 values (was a stale 4)                                                    | ✅                                                                                    |
+| `apps/{web,mobile}/lib/payment-methods.ts` — THE source for method lists (SELECTABLE\_\* pickers vs ALL\_\* display/filters) | ✅ new                                                                                |
+| Repointed every hand-rolled method list (~22 surfaces, more than the 14 first scoped)                                        | ✅                                                                                    |
+| Customer price-tier discoverability fix                                                                                      | ✅ **proven in-app: tier 1→3 persisted, header badge followed, restored to 1**        |
+
+**Review caught 8 surfaces the initial inventory missed** (3 Opus lenses, 20 findings, 0
+refuted, all fixed): vendor-bill payment modal, advance-payment modals (web + mobile),
+mobile payments filter, driver at-door screen, payment-receipt labels, invoice-detail badge
+colours, `paymentMethodPill` (Zelle showed as "Other"), and the edit-payment seed whitelist
+(a ZELLE payment reopened as "OTHER"). Plus two gaps that PREDATE Zelle: web
+`finance/reports` + `bookkeeping/[transactionId]` never offered CREDIT_CARD, and mobile
+`record-payment.tsx` offered only CASH/CHECK/ACH.
+
+Two fixes made by hand after the pipeline (it had deferred to the plan's "no API changes"):
+
+- `import.service.ts` folded a source method of `"zelle"` into ACH — now maps to ZELLE.
+- `customers/[id]/page.tsx` gated tier/credit edits on `role === "OPERATOR"`, hiding them
+  from **TENANT_ADMIN** — which `ROLE_SATISFIES` already authorizes server-side. **This is
+  the likeliest reason the tier looked missing**: a tenant admin saw read-only text.
+
+**Gate:** `check-types` clean (forced, uncached) · lint 0 errors · **2568 api + 1175 mobile
+tests pass** · prettier clean.
+
+**Left to do for PR-A:** push, CI, PR, merge, deploy (prod migration BEFORE merge, per the
+ordering note below). Not started — no outward action taken.
+
+> ⚠️ **LOCAL DEV DB IS ~6 MONTHS STALE (pre-existing, NOT caused by this work — needs a
+> decision).** `routeflow_dev`'s newest applied migration is `20260330000000_add_vendor_bill_items`;
+> it predates the #349 baselining, so `migrate deploy` tries to replay `0_init` and dies on
+> `type "UserRole" already exists`. Consequence: **orders and invoice pages 500 locally**
+> (`column OrderItem.promoFreeUnits does not exist`, same for `InvoiceItem`) — that is this
+> drift, not a regression. It also had an orphaned FAILED record for
+> `20260330100000_add_costing_method`, a migration deleted from the repo in `63376fe7`, now
+> marked rolled-back locally.
+>
+> - **To verify a migration safely today:** replay against a throwaway DB —
+>   `CREATE DATABASE <scratch>` in the `routeflow_postgres` container → `migrate deploy` →
+>   drop. That is what CI does and it leaves the working dev DB alone.
+> - **To actually fix local dev** (recommended, but DESTRUCTIVE to local data so it needs an
+>   explicit go-ahead): drop and recreate `routeflow_dev`, `migrate deploy`, then reseed the
+>   `e2e-routeflow` tenant. Until then the invoice/order surfaces can't be exercised locally.
+
+> **Prisma 7 does not auto-load `.env`** when `prisma.config.ts` is present — every prisma CLI
+> call needs `DATABASE_URL` exported explicitly, else "datasource.url property is required".
+> `prisma migrate dev` also HANGS in a non-interactive shell (it prompts); write the migration
+> SQL by hand and use `migrate deploy`.
 
 ## ✅ THE UX EXPANSION BATCH IS COMPLETE — all six PRs shipped and live
 
