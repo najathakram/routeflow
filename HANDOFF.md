@@ -1,6 +1,6 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-22 · **Branch:** `feat/zelle-tier-quickwins` · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#408](https://github.com/najathakram/routeflow/pull/408)
+**Written:** 2026-08-22 · **Branch:** `feat/msrp-on-invoices` (worktree `.claude/worktrees/msrp`) · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#407](https://github.com/najathakram/routeflow/pull/407) (parallel session, SMTP)
 
 ## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21/22)
 
