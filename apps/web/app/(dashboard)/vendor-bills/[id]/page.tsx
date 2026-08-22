@@ -45,6 +45,12 @@ import { useProduct } from "@/lib/api/products";
 import { roundMoney } from "@/lib/pricing";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 
 /**
  * Extra fields the API additively includes on a bill's `findOne` mapped-
@@ -61,7 +67,7 @@ type MappedProductVariantHint = {
 // ─── Record Payment Modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   amount: string;
   reference: string;
   notes: string;
@@ -140,10 +146,11 @@ function RecordPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -1422,7 +1429,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                         <span className="text-xs text-navy/70">{fmtDate(pmt.createdAt)}</span>
                       </div>
                       <p className="mt-0.5 text-xs text-navy/70">
-                        {pmt.method}
+                        {paymentMethodLabel(pmt.method)}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                       {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}

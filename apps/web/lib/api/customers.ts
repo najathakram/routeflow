@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { SelectablePaymentMethod } from "../payment-methods";
 
 export interface Customer {
   id: string;
@@ -203,7 +204,7 @@ export interface AdvancePayment {
   customerId: string;
   amount: number;
   balance: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
   createdAt: string;
@@ -222,7 +223,13 @@ export function useCreateAdvancePayment() {
   return useMutation<
     AdvancePayment,
     Error,
-    { customerId: string; amount: number; method: string; reference?: string; notes?: string }
+    {
+      customerId: string;
+      amount: number;
+      method: SelectablePaymentMethod;
+      reference?: string;
+      notes?: string;
+    }
   >({
     mutationFn: ({ customerId, ...data }) =>
       apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),

@@ -23,6 +23,10 @@ import {
 } from "../../../lib/api/customers";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../lib/payment-methods";
 import { roundMoney } from "../../../lib/pricing";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
@@ -446,7 +450,7 @@ function RecordAdvanceModal({
   onClose: () => void;
 }) {
   const mut = useCreateAdvancePayment();
-  const [method, setMethod] = useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -484,19 +488,19 @@ function RecordAdvanceModal({
             A pre-payment from {customerName} that can be applied to future invoices.
           </Text>
           <View style={styles.advChips}>
-            {(["CASH", "CHECK", "ACH", "OTHER"] as const).map((m) => (
+            {SELECTABLE_METHOD_OPTIONS.map((m) => (
               <Pressable
-                key={m}
-                style={[styles.advChip, method === m ? styles.advChipOn : styles.advChipOff]}
-                onPress={() => setMethod(m)}
+                key={m.id}
+                style={[styles.advChip, method === m.id ? styles.advChipOn : styles.advChipOff]}
+                onPress={() => setMethod(m.id)}
               >
                 <Text
                   style={[
                     styles.advChipText,
-                    method === m ? styles.advChipTextOn : styles.advChipTextOff,
+                    method === m.id ? styles.advChipTextOn : styles.advChipTextOff,
                   ]}
                 >
-                  {m === "ACH" ? "ACH" : m.charAt(0) + m.slice(1).toLowerCase()}
+                  {m.label}
                 </Text>
               </Pressable>
             ))}

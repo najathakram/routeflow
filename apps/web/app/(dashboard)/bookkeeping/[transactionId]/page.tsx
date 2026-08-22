@@ -16,6 +16,11 @@ import {
 } from "@/lib/api/bookkeeping";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+} from "@/lib/payment-methods";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -30,7 +35,8 @@ function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
 // ─── Record payment schema ────────────────────────────────────────────────────
 
 const paymentSchema = z.object({
-  method: z.enum(["CASH", "CHECK", "ACH", "OTHER"]),
+  // z.enum needs [string, ...string[]]; spread the readonly tuple through a cast.
+  method: z.enum([...SELECTABLE_PAYMENT_METHODS] as [string, ...string[]]),
   amount: z.coerce.number().positive("Enter an amount greater than 0"),
   reference: z.string().optional(),
 });
@@ -91,12 +97,10 @@ function RecordPaymentModal({
       <form id="payment-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
         <Select
           label="Payment Method"
-          options={[
-            { value: "CASH", label: "Cash" },
-            { value: "CHECK", label: "Check" },
-            { value: "ACH", label: "ACH / Bank Transfer" },
-            { value: "OTHER", label: "Other" },
-          ]}
+          options={SELECTABLE_PAYMENT_METHODS.map((m) => ({
+            value: m,
+            label: PAYMENT_METHOD_LABELS[m],
+          }))}
           register={register("method")}
           error={errors.method?.message}
         />
@@ -367,7 +371,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs text-navy/70">
-                        {pmt.method}
+                        {paymentMethodLabel(pmt.method)}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                     </div>

@@ -1,6 +1,162 @@
 # HANDOFF — current state & what to pick up next
 
-**Written:** 2026-08-20 · **Branch:** `master`, clean · **Visibility:** private · **Open PRs:** none
+**Written:** 2026-08-22 · **Branch:** `feat/zelle-tier-quickwins` · **Visibility:** private (CI runs private — no flips) · **Open PRs:** [#408](https://github.com/najathakram/routeflow/pull/408)
+
+## 🚧 IN FLIGHT — MSRP · Sales Agents · feature gating · quick wins (2026-08-21/22)
+
+Approved plan: `~/.claude/plans/imagine-you-are-a-breezy-ripple.md` (4 features, 4 PRs).
+Owner decisions locked: commissions **accrue on invoice issue, become payable as the invoice
+is paid** (pro-rata, no commission on bad debt) · agents are **records-only v1** (no login) ·
+commission base = **subtotal after discounts, excluding tax + shipping** · MSRP is **per piece**.
+Feature gating answer: **no per-tenant branches** — one trunk, entitlement flags
+(`flag.msrp`, `flag.sales_agents`) default OFF, per-tenant variation as `SystemConfig` JSON.
+
+**Sequence:** PR-A quick wins → **PR-B MSRP** → PR-C agents engine → PR-D agents UI.
+
+### ▶ RESUME HERE (if the session switched)
+
+1. **PR-A [#408](https://github.com/najathakram/routeflow/pull/408) is pushed and its
+   migration is ALREADY APPLIED TO PROD** (see below). Remaining: wait for the `Test` check
+   → `gh pr merge 408 --squash --delete-branch` → watch Railway → `npm run post-deploy-check`.
+   **Do NOT re-apply the migration.**
+2. Then start **PR-B (MSRP)**. Its full work-package plan is written but currently lives in a
+   session-scoped scratchpad — **if it is gone, re-derive it from the design summary in
+   "PR-B (MSRP) — ready to start" below**, which carries every decision that matters.
+   Intended home once branched: `.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md`.
+
+> ⚠️ **MULTI-SESSION TANGLE HAPPENED HERE — read before committing anything.** A peer session
+> switched the MAIN CHECKOUT onto `fix/smtp-provider-instructions` mid-turn, so two of my
+> commits landed on THEIR branch, and their `git add -A` swept MY uncommitted code-map edits
+> into THEIR pushed commit `3a35722b`. Resolved: their branch ref was reset to exactly what
+> they had pushed (`3a35722b`, matches remote), my commits were cherry-picked onto
+> `feat/zelle-tier-quickwins`, their stray plan file was removed from my commit, and my
+> code-map entries were re-applied to my branch. **Consequence to know:** `3a35722b` (their
+> PR) still contains code-map text describing `payment-methods.ts`, a file that only exists
+> in #408 — so whichever of the two PRs merges second will hit a small markdown conflict in
+> `code-map/{web,api}.md` + `_meta.json`. Resolve by keeping both sets of entries.
+> **Discipline: work in your own `git worktree`, never `git add -A` in the shared checkout.**
+
+**PR-A `feat/zelle-tier-quickwins` → [#408](https://github.com/najathakram/routeflow/pull/408) — PUSHED, CI running, PROD MIGRATION APPLIED, not yet merged.**
+Commits `ea943aa2` (feat) + `328ecb80` (docs). Plan:
+`.claude/pipeline/plans/2026-08-21-zelle-tier-quickwins.md`.
+
+| Step                                                 | State                                                                                                                                             |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run verify`                                     | ✅ 18/18 tasks · 2562 api + 1175 mobile tests · lint 0 errors                                                                                     |
+| Branch pushed + PR opened                            | ✅ #408 · `mergeable: MERGEABLE`                                                                                                                  |
+| CI (private repo)                                    | ✅ Lint · ✅ Type Check · ✅ Security Audit · ⏳ Test                                                                                             |
+| Pre-migration prod backup                            | ✅ `backups/pre-zelle-migration-2026-08-22.sql` (11 MB, **validated**: 117 CREATE TABLE = 117 COPY = 117 `\.`, dump-complete marker present)      |
+| **Prod migration applied**                           | ✅ `20260830000000_payment_method_zelle` — verified live: prod enum now reads `CASH, CHECK, ACH, OTHER, CREDIT_NOTE, ADVANCE, CREDIT_CARD, ZELLE` |
+| Merge → Railway deploy → `npm run post-deploy-check` | ⏳ **NEXT**                                                                                                                                       |
+
+| Item                                                                                                                         | State                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `PaymentMethod` enum + `ZELLE` (schema.prisma:133)                                                                           | ✅                                                                                    |
+| Migration `20260830000000_payment_method_zelle` (hand-written; `ADD VALUE IF NOT EXISTS`, no txn block)                      | ✅ **verified: full 14-migration chain replayed clean on a fresh DB, enum confirmed** |
+| `packages/types` PaymentMethod backfilled to all 8 values (was a stale 4)                                                    | ✅                                                                                    |
+| `apps/{web,mobile}/lib/payment-methods.ts` — THE source for method lists (SELECTABLE\_\* pickers vs ALL\_\* display/filters) | ✅ new                                                                                |
+| Repointed every hand-rolled method list (~22 surfaces, more than the 14 first scoped)                                        | ✅                                                                                    |
+| Customer price-tier discoverability fix                                                                                      | ✅ **proven in-app: tier 1→3 persisted, header badge followed, restored to 1**        |
+
+**Review caught 8 surfaces the initial inventory missed** (3 Opus lenses, 20 findings, 0
+refuted, all fixed): vendor-bill payment modal, advance-payment modals (web + mobile),
+mobile payments filter, driver at-door screen, payment-receipt labels, invoice-detail badge
+colours, `paymentMethodPill` (Zelle showed as "Other"), and the edit-payment seed whitelist
+(a ZELLE payment reopened as "OTHER"). Plus two gaps that PREDATE Zelle: web
+`finance/reports` + `bookkeeping/[transactionId]` never offered CREDIT_CARD, and mobile
+`record-payment.tsx` offered only CASH/CHECK/ACH.
+
+Two fixes made by hand after the pipeline (it had deferred to the plan's "no API changes"):
+
+- `import.service.ts` folded a source method of `"zelle"` into ACH — now maps to ZELLE.
+- `customers/[id]/page.tsx` gated tier/credit edits on `role === "OPERATOR"`, hiding them
+  from **TENANT_ADMIN** — which `ROLE_SATISFIES` already authorizes server-side. **This is
+  the likeliest reason the tier looked missing**: a tenant admin saw read-only text.
+
+**Gate:** `check-types` clean (forced, uncached) · lint 0 errors · **2562 api + 1175 mobile
+tests pass** · prettier clean. (2562 not 2568 — the extra 6 were the peer's
+`email-smtp-verify.spec.ts`, correctly no longer on this branch.)
+
+### PR-B (MSRP) — ready to start, everything needed is here
+
+Branch off master as `feat/msrp-on-invoices`. Full work-package plan was drafted to the
+session scratchpad and should be written to
+`.claude/pipeline/plans/2026-08-22-msrp-on-invoices.md` on the branch. If that draft is lost,
+this section is sufficient to rebuild it.
+
+**Verified facts (already checked against the code — do not re-research):**
+
+- **No MSRP field exists anywhere.** Greenfield.
+- `CustomerPrice` stores a **tier number, not a price** (`@@unique([customerId, productId])`,
+  CRUD at `/customers/:id/prices` → `customers.service.ts` `getCustomerPrices` ~L949 /
+  `upsertCustomerPrice` ~L974).
+- **Every `pricingTier` reader is already null-safe** (`?? default`) — `orders.service.ts`
+  ~L1526/~L1630/~L3941, `estimates.service.ts`, `buyer-catalog.service.ts` ×3,
+  `buyer-dashboard.service.ts` ×4. That is what makes the column safe to make nullable.
+- Invoice lines are built by `invoices.service.ts` `buildInvoiceItemData` (~L539); its four
+  callers: `createSplitInvoices` ~L742, `reconcileOrderDraftInvoice` ~L956,
+  `rebuildSiblingDrafts` ~L1234, `createPartialFromOrder` ~L1904. Also `create()` ~L145,
+  `update()` DRAFT path (~L2384), `duplicate()` ~L3145, NSF line ~L4190 (productless).
+- `recurring-invoices.service.ts` **delegates to `InvoicesService.create()`** → hooking
+  `create()` covers recurring for free.
+- `estimates.service.ts convertToInvoice` (~L214, items ~L252-261) writes `InvoiceItem`
+  **directly** — a separate write site that is easy to miss.
+- Render surfaces (all 4 money columns today): web `invoices/[id]/page.tsx` ~L2172-2309
+  (branches on `priceType`), buyer portal `buyer/portal/[seller]/invoices/[id]/page.tsx`
+  ~L214-243, PDF template `invoice-pdf-template.tsx` (`InvoicePdfData` ~L8-88, row ~L476-511),
+  email `email.service.ts buildInvoiceEmail` ~L815-825 fed by `sendEmail` map ~L2687-2692.
+- PDF uses `@react-pdf/renderer`, and `invoice-pdf.service.ts` loads items via `include` —
+  **so it needs NO change, and must NOT be changed**: it has to print the line snapshot, never
+  the live product.
+
+**Design decisions (locked):**
+
+- Schema: `Product.msrp Decimal?`, `CustomerPrice.msrp Decimal?` **+ `pricingTier Int` →
+  `Int?`** (a row may now be msrp-only), `InvoiceItem.msrp Decimal?`. One hand-written
+  migration `20260831000000_add_msrp_pricing`.
+- **MSRP is display-only and must never touch money math.** Per PIECE, rendered `MSRP $X.XX/pc`.
+  Null renders blank, never `$0.00` (0/negative/NaN all normalize to null).
+- **Snapshot on the invoice line at creation**, never re-read live — an issued invoice must not
+  change when the product's MSRP is later edited. `duplicate()` copies verbatim.
+- Resolver `apps/api/src/common/msrp.ts`: `resolveMsrp({customerMsrp, segmentMsrp, productMsrp})`
+  — customer → **segment (present in the signature from day one, nothing populates it in v1)**
+  → product. That stub is what makes future per-state MSRP one new table + one lookup inside
+  `loadMsrpMap`, with no data migration and no call-site churn. Plus `wholesalePerPiece`,
+  `isMsrpBelowWholesale` (warn, never block), and batch `loadMsrpMap(db, customerId, ids)`.
+  **Server-only — no 3-way mirror**, because MSRP never prices a cart (contrast `pricing.ts`).
+- One orchestrator `applyMsrpSnapshots(db, customerId, itemsData)` in `invoices.service.ts`
+  that no-ops unless `EntitlementsService.hasFlag(tenantId, "flag.msrp")`.
+- Flag gating: `flag.msrp` + `MSRP` AddonSku in `plan-catalog.constants.ts`, published by a new
+  `publish-plan-catalog-v9.ts` (clone v8), `AVAILABLE_ADDONS` entry so the existing audited
+  admin enable/disable works. **Gate inside the service** when `dto.msrp !== undefined` — do
+  NOT decorate the shared product/customer routes or un-flagged tenants get 403s on ordinary
+  edits. Only the new `POST /products/msrp/bulk` carries `@RequirePlanFlag`.
+- UI reads key off `item.msrp != null`, not the flag, so historical invoices still render if
+  the addon is later removed.
+
+**Watch out for:** the nullable `pricingTier` is the riskiest edit — add a spec proving a
+`{pricingTier: null, msrp: 5}` row still prices at the customer's default tier.
+
+> ⚠️ **LOCAL DEV DB IS ~6 MONTHS STALE (pre-existing, NOT caused by this work — needs a
+> decision).** `routeflow_dev`'s newest applied migration is `20260330000000_add_vendor_bill_items`;
+> it predates the #349 baselining, so `migrate deploy` tries to replay `0_init` and dies on
+> `type "UserRole" already exists`. Consequence: **orders and invoice pages 500 locally**
+> (`column OrderItem.promoFreeUnits does not exist`, same for `InvoiceItem`) — that is this
+> drift, not a regression. It also had an orphaned FAILED record for
+> `20260330100000_add_costing_method`, a migration deleted from the repo in `63376fe7`, now
+> marked rolled-back locally.
+>
+> - **To verify a migration safely today:** replay against a throwaway DB —
+>   `CREATE DATABASE <scratch>` in the `routeflow_postgres` container → `migrate deploy` →
+>   drop. That is what CI does and it leaves the working dev DB alone.
+> - **To actually fix local dev** (recommended, but DESTRUCTIVE to local data so it needs an
+>   explicit go-ahead): drop and recreate `routeflow_dev`, `migrate deploy`, then reseed the
+>   `e2e-routeflow` tenant. Until then the invoice/order surfaces can't be exercised locally.
+
+> **Prisma 7 does not auto-load `.env`** when `prisma.config.ts` is present — every prisma CLI
+> call needs `DATABASE_URL` exported explicitly, else "datasource.url property is required".
+> `prisma migrate dev` also HANGS in a non-interactive shell (it prompts); write the migration
+> SQL by hand and use `migrate deploy`.
 
 ## ✅ THE UX EXPANSION BATCH IS COMPLETE — all six PRs shipped and live
 

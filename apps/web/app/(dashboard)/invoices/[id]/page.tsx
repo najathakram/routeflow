@@ -65,6 +65,14 @@ import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
 import { fmt, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
 import { formatQtySplit } from "@/lib/pricing";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHOD_COLORS,
+  paymentMethodLabel,
+  type AnyPaymentMethod,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -88,38 +96,10 @@ function creditNoteOf(pmt: InvoicePayment): PaymentCreditNoteInfo | null {
   return withCn.creditNote ?? null;
 }
 
-function methodLabel(method: string) {
-  switch (method) {
-    case "CASH":
-      return "Cash";
-    case "CHECK":
-      return "Check";
-    case "ACH":
-      return "ACH / Bank Transfer";
-    case "CREDIT_NOTE":
-      return "Credit Note";
-    case "ADVANCE":
-      return "Advance Payment";
-    default:
-      return method;
-  }
-}
+const methodLabel = paymentMethodLabel;
 
 function methodBadgeClass(method: string) {
-  switch (method) {
-    case "CREDIT_NOTE":
-      return "bg-purple-100 text-purple-700";
-    case "ADVANCE":
-      return "bg-teal-100 text-teal-700";
-    case "CASH":
-      return "bg-green-100 text-green-700";
-    case "CHECK":
-      return "bg-blue-100 text-blue-700";
-    case "ACH":
-      return "bg-indigo-100 text-indigo-700";
-    default:
-      return "bg-gray-100 text-gray-600";
-  }
+  return PAYMENT_METHOD_COLORS[method as AnyPaymentMethod] ?? "bg-gray-100 text-gray-600";
 }
 
 // ─── Check lifecycle (Recorded → Deposited → Cleared → Bounced) ───────────────
@@ -305,7 +285,7 @@ function WhatsNextBanner({
 // ─── Record payment modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: string;
   /** YYYY-MM-DD. */
   paidAt: string;
@@ -402,11 +382,11 @@ function RecordPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -629,11 +609,11 @@ function EditPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
         <div>
@@ -1629,7 +1609,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     recordPayment.mutate(
       {
         id: invoice.id,
-        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        method: data.method,
         amount: parseFloat(data.amount),
         paidAt: data.paidAt || undefined,
         settledAt: data.settledAt || undefined,
@@ -1685,7 +1665,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       {
         invoiceId: invoice.id,
         paymentId: editingPayment.id,
-        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        method: data.method,
         amount: parseFloat(data.amount),
         paidAt: data.paidAt || undefined,
         // Explicit null so emptying the field clears the stored bank date.

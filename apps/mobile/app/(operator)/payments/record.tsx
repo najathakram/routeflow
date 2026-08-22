@@ -15,12 +15,15 @@ import {
   useUploadPaymentImage,
   type StandalonePaymentAllocation,
 } from "../../../lib/api/payments";
-import type { EditablePaymentMethod } from "../../../lib/api/payments";
 import {
   allocationTotals,
   oldestInvoicesFirst,
   waterfallAllocations,
 } from "../../../lib/payments-logic";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../lib/payment-methods";
 import { roundMoney } from "../../../lib/pricing";
 import { productImageFile } from "../../../lib/product-image";
 import { showToast } from "../../../lib/toast";
@@ -35,13 +38,7 @@ import { showToast } from "../../../lib/toast";
  * over-allocation. Unallocated excess becomes an ADVANCE for the customer.
  */
 
-const METHODS: { id: EditablePaymentMethod; label: string }[] = [
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "OTHER", label: "Other" },
-];
+const METHODS = SELECTABLE_METHOD_OPTIONS;
 
 const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
@@ -164,7 +161,7 @@ function PaymentForm({
     [invoicesData],
   );
 
-  const [method, setMethod] = useState<EditablePaymentMethod>("CASH");
+  const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");

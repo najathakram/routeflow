@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { AnyPaymentMethod } from "../payment-methods";
 
 export interface Transaction {
   id: string;
@@ -19,7 +20,7 @@ export interface Transaction {
 export interface Payment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
   createdAt: string;
