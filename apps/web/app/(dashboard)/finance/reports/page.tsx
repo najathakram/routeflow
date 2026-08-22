@@ -26,6 +26,11 @@ import {
 import { ReportToolbar } from "@/components/ReportToolbar";
 import { exportReportCSV, printReport } from "@/lib/report-export";
 import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
+import {
   BarChart,
   Bar,
   XAxis,
@@ -1931,7 +1936,7 @@ function LedgerReport() {
   const [page, setPage] = useUrlPage();
   const [paymentModal, setPaymentModal] = React.useState<Transaction | null>(null);
   const [payAmount, setPayAmount] = React.useState("");
-  const [payMethod, setPayMethod] = React.useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
   const recordPayment = useRecordPayment();
   const { toast } = React.useContext(ToastContext);
@@ -2134,15 +2139,14 @@ function LedgerReport() {
                 <label className="mb-1 block text-xs font-medium text-navy/70">Method</label>
                 <select
                   value={payMethod}
-                  onChange={(e) =>
-                    setPayMethod(e.target.value as "CASH" | "CHECK" | "ACH" | "OTHER")
-                  }
+                  onChange={(e) => setPayMethod(e.target.value as SelectablePaymentMethod)}
                   className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  <option value="CASH">Cash</option>
-                  <option value="CHECK">Check</option>
-                  <option value="ACH">ACH</option>
-                  <option value="OTHER">Other</option>
+                  {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>

@@ -660,7 +660,12 @@ CANCELLED) · InvoiceStatus(DRAFT, SENT, VIEWED, PARTIAL, PAID, OVERDUE, VOID) �
 EstimateStatus(DRAFT, SENT, ACCEPTED, DECLINED, CONVERTED) · ReturnStatus(PENDING, APPROVED,
 REJECTED, IN_TRANSIT, RECEIVED, REFUNDED, PROCESSED, CANCELLED) · VendorBillStatus(DRAFT,
 RECEIVED, PARTIAL, PAID, OVERDUE, VOID) · PaymentMethod(CASH, CHECK, ACH, OTHER, CREDIT_NOTE,
-ADVANCE, CREDIT_CARD) · MovementType(PURCHASE, SALE, ADJUSTMENT, RETURN, WRITE_OFF) ·
+ADVANCE, CREDIT_CARD, **ZELLE** — added 2026-08-21, migration
+`20260830000000_payment_method_zelle`; enum-only, no backfill. DTOs validate with
+`@IsEnum(PaymentMethod)` from `@prisma/client` so new values need NO API change; the client
+lists live in `apps/{web,mobile}/lib/payment-methods.ts`. `import.service.ts`
+`mapPaymentMethod` maps a source `"zelle"` to ZELLE — it used to fold it into ACH) ·
+MovementType(PURCHASE, SALE, ADJUSTMENT, RETURN, WRITE_OFF) ·
 CreditNoteStatus(ISSUED, APPLIED, VOID).
 
 ## Deep-dive backlog B4–B14 (2026-08-20) — 2 security, 2 money, 3 duplicate-document races

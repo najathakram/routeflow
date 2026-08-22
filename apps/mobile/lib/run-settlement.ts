@@ -8,7 +8,7 @@
  */
 import { roundMoney } from "./pricing";
 
-export type CollectedMethod = "CASH" | "CHECK" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
+export type CollectedMethod = "CASH" | "CHECK" | "ZELLE" | "CREDIT_CARD" | "ADVANCE" | "OTHER";
 
 export interface CollectionEntry {
   stopId: string;

@@ -21,27 +21,14 @@ import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  ALL_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS as METHOD_LABELS,
+  PAYMENT_METHOD_COLORS as METHOD_COLORS,
+} from "@/lib/payment-methods";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-
-const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash",
-  CHECK: "Check",
-  ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card",
-  OTHER: "Other",
-  CREDIT_NOTE: "Credit Note",
-  ADVANCE: "Advance",
-};
-const METHOD_COLORS: Record<string, string> = {
-  CASH: "bg-success-bg text-success",
-  CHECK: "bg-brand-50 text-brand-600",
-  ACH: "bg-indigo-50 text-indigo-700",
-  CREDIT_CARD: "bg-orange-50 text-orange-700",
-  OTHER: "bg-surface-raised text-navy/70",
-  CREDIT_NOTE: "bg-purple-100 text-purple-800",
-  ADVANCE: "bg-teal-50 text-teal-700",
-};
 
 const fieldCls =
   "w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -273,11 +260,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 onChange={(e) => setMethod(e.target.value)}
                 className={fieldCls}
               >
-                <option value="CASH">Cash</option>
-                <option value="CHECK">Check</option>
-                <option value="ACH">ACH / Bank Transfer</option>
-                <option value="CREDIT_CARD">Credit Card</option>
-                <option value="OTHER">Other</option>
+                {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {METHOD_LABELS[m]}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -646,13 +633,11 @@ export default function FinancePaymentsPage() {
             className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="">All Methods</option>
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
-            <option value="CREDIT_NOTE">Credit Note</option>
-            <option value="ADVANCE">Advance</option>
+            {ALL_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
           <select
             value={status}

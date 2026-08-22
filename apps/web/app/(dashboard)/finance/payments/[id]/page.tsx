@@ -13,16 +13,7 @@ import {
 } from "@/lib/api/invoices";
 import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
 import { fmt, fmtDate } from "@/lib/formatting";
-
-const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash",
-  CHECK: "Check",
-  ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card",
-  OTHER: "Other",
-  CREDIT_NOTE: "Credit Note",
-  ADVANCE: "Advance",
-};
+import { paymentMethodLabel } from "@/lib/payment-methods";
 
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
@@ -189,7 +180,7 @@ export default function PaymentDetailPage() {
             <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
               <span className="text-navy/70">Payment mode</span>
               <span className="text-right font-medium text-navy">
-                {METHOD_LABELS[payment.method] ?? payment.method}
+                {paymentMethodLabel(payment.method)}
               </span>
             </div>
             {payment.reference && (

@@ -53,6 +53,7 @@ import { displayProductName } from "@/lib/product-display";
 import { fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@/lib/pricing";
 import { apiClient } from "@/lib/api-client";
+import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -2076,11 +2077,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                               onChange={(e) => setExpensePaymentMethod(e.target.value)}
                               className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                             >
-                              <option value="CASH">Cash</option>
-                              <option value="CHECK">Check</option>
-                              <option value="ACH">Bank Transfer</option>
-                              <option value="CREDIT_CARD">Credit Card</option>
-                              <option value="OTHER">Other</option>
+                              {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                                <option key={m} value={m}>
+                                  {PAYMENT_METHOD_LABELS[m]}
+                                </option>
+                              ))}
                             </select>
                           </div>
                           <div className="col-span-2">

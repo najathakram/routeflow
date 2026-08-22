@@ -138,6 +138,7 @@ enum PaymentMethod {
   CREDIT_NOTE
   ADVANCE
   CREDIT_CARD
+  ZELLE
 }
 
 enum PaymentStatus {

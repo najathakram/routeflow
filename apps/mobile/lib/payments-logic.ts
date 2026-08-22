@@ -24,6 +24,8 @@ export function paymentMethodPill(method: PaymentMethod): {
       return { variant: "green", label: "Cash", icon: "cash-outline" };
     case "CHECK":
       return { variant: "brand", label: "Check", icon: "document-text-outline" };
+    case "ZELLE":
+      return { variant: "purple", label: "Zelle", icon: "flash-outline" };
     case "ACH":
       return { variant: "purple", label: "ACH", icon: "swap-horizontal-outline" };
     case "CREDIT_CARD":

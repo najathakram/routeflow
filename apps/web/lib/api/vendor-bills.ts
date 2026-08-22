@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +27,8 @@ export interface VendorBillItem {
 export interface VendorBillPayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  /** Display type — BillPayment.method is the full Prisma `PaymentMethod` enum. */
+  method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
   createdAt: string;
@@ -326,7 +328,7 @@ export function useVoidVendorBill() {
 export interface RecordVendorBillPaymentDto {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
 }

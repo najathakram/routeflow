@@ -12,6 +12,11 @@ import {
 } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { fmt } from "@/lib/formatting";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 
 const fieldCls =
   "w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -65,7 +70,7 @@ export function CustomerRecordPaymentModal({
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
   const [settledAt, setSettledAt] = React.useState("");
-  const [method, setMethod] = React.useState<StandalonePaymentDto["method"]>("CASH");
+  const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [allocations, setAllocations] = React.useState<AllocRow[]>([]);
@@ -239,14 +244,14 @@ export function CustomerRecordPaymentModal({
               <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
               <select
                 value={method}
-                onChange={(e) => setMethod(e.target.value as StandalonePaymentDto["method"])}
+                onChange={(e) => setMethod(e.target.value as SelectablePaymentMethod)}
                 className={fieldCls}
               >
-                <option value="CASH">Cash</option>
-                <option value="CHECK">Check</option>
-                <option value="ACH">ACH / Bank Transfer</option>
-                <option value="CREDIT_CARD">Credit Card</option>
-                <option value="OTHER">Other</option>
+                {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {PAYMENT_METHOD_LABELS[m]}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

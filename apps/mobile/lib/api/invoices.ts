@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
+import type { AnyPaymentMethod } from "../payment-methods";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,14 +28,7 @@ export interface InvoiceItem {
   subtotal: number;
 }
 
-export type PaymentMethod =
-  | "CASH"
-  | "CHECK"
-  | "ACH"
-  | "CREDIT_CARD"
-  | "CREDIT_NOTE"
-  | "ADVANCE"
-  | "OTHER";
+export type PaymentMethod = AnyPaymentMethod;
 
 export interface InvoicePayment {
   id: string;

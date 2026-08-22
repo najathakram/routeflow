@@ -63,6 +63,17 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 - **`lib/socket.ts`** — Socket.io singleton, token auth, reconnect.
 - **`lib/auth-keys.ts`** — `OP_KEYS`/`BUYER_KEYS`/`DRIVER_KEYS` (prevent cross-context token bleed).
 - **`lib/page-title-context.tsx`** — `usePageTitle()`.
+- **`lib/payment-methods.ts`** (new 2026-08-21) — **THE single source for payment-method lists in web.**
+  `SELECTABLE_PAYMENT_METHODS` (`CASH,CHECK,ZELLE,ACH,CREDIT_CARD,OTHER` — pickers) vs
+  `ALL_PAYMENT_METHODS` (+`CREDIT_NOTE`,`ADVANCE` — display/filters ONLY; the server rejects
+  those two on `POST /invoices/:id/payments`), `PAYMENT_METHOD_LABELS`/`_COLORS`,
+  `paymentMethodLabel()`, types `SelectablePaymentMethod`/`AnyPaymentMethod`. Created when
+  Zelle was added: the list had been hand-rolled in ~12 web files that had already drifted
+  (finance/reports + bookkeeping/[transactionId] were missing CREDIT_CARD; the three expense-side
+  pickers — `finance/expenses/new/page.tsx`, `finance/expenses/page.tsx` bulk mark-paid,
+  `components/ScanInvoiceModal.tsx` — each had their own 4–5 option list and disagreed on the ACH
+  label). **Never re-declare a method list — import from here**; mirror is
+  `apps/mobile/lib/payment-methods.ts`, source of truth is the Prisma `PaymentMethod` enum.
 - **`lib/pricing.ts`** — `getTierPrice`, `computeLineSubtotal`, `normalizeBoxesPieces`, `roundMoney`,
   the margin helpers `costPerSellingUnit`/`computeMarginFraction`/`priceForMarginFloor`/`classifyMargin`
   (box-vs-piece aware; the sale-builder "negotiation floor"), **`applyBestPromotion`/`promotionMatchesProduct`**

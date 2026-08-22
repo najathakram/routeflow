@@ -17,6 +17,11 @@ import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
+import {
+  PAYMENT_METHOD_LABELS,
+  SELECTABLE_METHOD_OPTIONS,
+  type AnyPaymentMethod,
+} from "../../../lib/payment-methods";
 
 function statusPill(status: ExpenseStatus) {
   switch (status) {
@@ -36,7 +41,10 @@ function formatCurrency(n: number | string | undefined): string {
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
 
-const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "CHECK", "OTHER"];
+/** Shared labels, with a title-case fallback for legacy values (CARD, BANK_TRANSFER). */
+const methodLabel = (m: string): string =>
+  PAYMENT_METHOD_LABELS[m as AnyPaymentMethod] ??
+  m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 
 export default function ExpenseDetailScreen() {
   const router = useRouter();
@@ -195,13 +203,7 @@ export default function ExpenseDetailScreen() {
                 <DetailRow label="Supplier" value={expense.supplier.name} />
               ) : null}
               {expense.paymentMethod ? (
-                <DetailRow
-                  label="Payment"
-                  value={
-                    expense.paymentMethod.charAt(0) +
-                    expense.paymentMethod.slice(1).toLowerCase().replace("_", " ")
-                  }
-                />
+                <DetailRow label="Payment" value={methodLabel(expense.paymentMethod)} />
               ) : null}
               {expense.referenceNumber ? (
                 <DetailRow label="Reference #" value={expense.referenceNumber} />
@@ -256,10 +258,7 @@ export default function ExpenseDetailScreen() {
               <EditRow label="Payment method">
                 <Pressable style={styles.editPicker} onPress={pickPaymentMethod}>
                   <Text style={[styles.editPickerText, !paymentMethod && styles.placeholder]}>
-                    {paymentMethod
-                      ? paymentMethod.charAt(0) +
-                        paymentMethod.slice(1).toLowerCase().replace("_", " ")
-                      : "Select…"}
+                    {paymentMethod ? methodLabel(paymentMethod) : "Select…"}
                   </Text>
                 </Pressable>
               </EditRow>
@@ -339,10 +338,7 @@ export default function ExpenseDetailScreen() {
       <OptionPickerSheet
         visible={pmPickerOpen}
         title="Payment method"
-        options={PAYMENT_METHODS.map((m) => ({
-          id: m,
-          label: m.charAt(0) + m.slice(1).toLowerCase().replace("_", " "),
-        }))}
+        options={SELECTABLE_METHOD_OPTIONS}
         selectedId={paymentMethod}
         onClose={() => setPmPickerOpen(false)}
         onSelect={(opt) => {

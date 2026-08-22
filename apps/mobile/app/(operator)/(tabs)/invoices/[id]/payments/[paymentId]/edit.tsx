@@ -18,8 +18,11 @@ import {
   useUploadPaymentImage,
   useDeletePaymentImage,
   useGetPaymentImageUrl,
-  type EditablePaymentMethod,
 } from "../../../../../../../lib/api/payments";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../../../lib/product-image";
 import { isPaymentEditable } from "../../../../../../../lib/invoices-logic";
 import { showToast } from "../../../../../../../lib/toast";
@@ -27,13 +30,7 @@ import { confirm, chooseAction } from "../../../../../../../lib/confirm";
 
 // Advance/Credit-Note are not editable (server rejects them); the invoice list
 // gates the pencil affordance via isPaymentEditable so only these reach here.
-const METHODS: { id: EditablePaymentMethod; label: string }[] = [
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "OTHER", label: "Other" },
-];
+const METHODS = SELECTABLE_METHOD_OPTIONS;
 
 // Distinct from paidAt (the recorded payment date) and from the server-stamped
 // check-lifecycle clearedAt: this is when the funds hit the account.
@@ -57,7 +54,7 @@ export default function EditPaymentScreen() {
     .reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
   const maxAmount = Math.max(0, Number(invoice?.total ?? 0) - others);
 
-  const [method, setMethod] = useState<EditablePaymentMethod | null>(null);
+  const [method, setMethod] = useState<SelectablePaymentMethod | null>(null);
   const [amount, setAmount] = useState<string | null>(null);
   const [reference, setReference] = useState<string | null>(null);
   const [notes, setNotes] = useState<string | null>(null);
@@ -72,8 +69,8 @@ export default function EditPaymentScreen() {
     if (!payment) return;
     const m = payment.method;
     setMethod(
-      (["CASH", "CHECK", "ACH", "CREDIT_CARD", "OTHER"] as const).includes(m as any)
-        ? (m as EditablePaymentMethod)
+      (SELECTABLE_METHOD_OPTIONS.map((o) => o.id) as string[]).includes(m)
+        ? (m as SelectablePaymentMethod)
         : "OTHER",
     );
     setAmount(String(Number(payment.amount ?? 0).toFixed(2)));
